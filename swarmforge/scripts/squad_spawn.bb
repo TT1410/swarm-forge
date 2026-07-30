@@ -187,6 +187,16 @@
                                (java.time.Instant/now))
                       "\n")))
 
+(defn write-metadata! [agent-dir {:keys [agent-id template task-id worktree session display agent]}]
+  (write-atomic! (fs/path agent-dir "metadata")
+                 (str "agent_id: " agent-id "\n"
+                      "template: " template "\n"
+                      "task_id: " task-id "\n"
+                      "worktree: " worktree "\n"
+                      "session: " session "\n"
+                      "display: " display "\n"
+                      "backend: " agent "\n")))
+
 (defn spawn! [template task-id assignment-file]
   (validate-template! template)
   (validate-task-id! task-id)
@@ -242,6 +252,13 @@
             (fs/copy assignment (fs/path task-dir "assignments" (str agent-id ".md")) {:replace-existing true})
             (append-role-atomic! roles-file row)
             (sync-runtime-files! root worktree)
+            (write-metadata! agent-dir {:agent-id agent-id
+                                        :template template
+                                        :task-id task-id
+                                        :worktree (str worktree)
+                                        :session session
+                                        :display display
+                                        :agent agent})
             (write-status! agent-dir "spawned" "registered transient agent")
             (when-not (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
               (let [socket (str/trim (slurp (str (fs/path state-dir "tmux-socket"))))

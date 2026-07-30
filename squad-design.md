@@ -416,6 +416,12 @@ Success condition: the squad leader can inspect structured status for a running
 invisible agent, and long-running commands can report status without using
 handoffs.
 
+Status: implemented. `squad_event.sh` records non-handoff telemetry by updating
+`.squad/agents/<agent-id>/status`, `.squad/agents/<agent-id>/heartbeat`, and
+`.squad/tasks/<task-id>/events.log`. `squad_run.sh` wraps a command and records
+started/passed/failed telemetry. `squad_status.sh` prints current telemetry for
+one agent or all known squad agents.
+
 ### Slice 5: Status Daemon
 
 Add a narrow watchdog/reminder daemon:

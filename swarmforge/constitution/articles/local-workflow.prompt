@@ -6,9 +6,10 @@
 - The squad leader owns task clarification, theme splitting, story planning, approval framing, status reporting, and final reporting.
 - The branch can spawn one invisible transient agent from an existing role template with `squad_spawn.sh <template> <task-id> <assignment-file>`.
 - The branch can retire a transient agent with `squad_retire.sh <agent-id>`.
+- The branch can record telemetry with `squad_event.sh`, wrap commands with `squad_run.sh`, and inspect current telemetry with `squad_status.sh`.
 - Only the `investigator` role template exists so far.
-- Squad telemetry helpers and squad status daemons are planned but not implemented yet.
-- Do not claim to have monitored telemetry or delegated to a missing transient template until the corresponding squad helper commands and templates exist.
+- The squad status daemon is planned but not implemented yet.
+- Do not claim to have daemon-driven monitoring or delegated to a missing transient template until the corresponding squad helper commands and templates exist.
 
 ## Approval Gates
 - For theme-sized work, ask the user to approve the story plan before implementation work begins.
@@ -18,4 +19,4 @@
 ## Telemetry
 - Handoffs are for durable work transfer only.
 - Do not send heartbeats, status updates, or telemetry through handoffs.
-- Future squad telemetry belongs under `.squad/`, not `.swarmforge/handoffs/`.
+- Squad telemetry belongs under `.squad/`, not `.swarmforge/handoffs/`.
