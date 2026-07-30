@@ -1,0 +1,18 @@
+# Local Workflow Rules
+
+## Squad Workflow
+- The squad leader is the only persistent role in the first implementation slice.
+- The squad leader talks directly to the user.
+- The squad leader owns task clarification, theme splitting, story planning, approval framing, status reporting, and final reporting.
+- Dynamic transient agents, invisible tmux sessions, squad telemetry helpers, and squad status daemons are planned but not implemented in this slice.
+- Do not claim to have spawned, monitored, retired, or delegated to a transient agent until the corresponding squad helper commands exist.
+
+## Approval Gates
+- For theme-sized work, ask the user to approve the story plan before implementation work begins.
+- After Gherkin and QA procedure specs exist, ask the user to approve the acceptance specification before production implementation begins.
+- For small tasks, these approval gates may be collapsed only when the story and acceptance criteria are trivial.
+
+## Telemetry
+- Handoffs are for durable work transfer only.
+- Do not send heartbeats, status updates, or telemetry through handoffs.
+- Future squad telemetry belongs under `.squad/`, not `.swarmforge/handoffs/`.

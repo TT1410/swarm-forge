@@ -1,0 +1,10 @@
+# Local Engineering Rules
+
+## Slice Discipline
+- Build squad features in vertical slices.
+- Keep the first slice limited to static squad boot with one visible squad leader.
+- Do not implement transient spawning, status telemetry, or daemon behavior unless the current task explicitly asks for that slice.
+
+## Verification
+- Run the relevant local verification command before handoff whenever the project has one.
+- For this repository, `bb test` is the normal helper test command.

@@ -1,0 +1,18 @@
+# Project Rules
+
+## Project Shape
+- This project is configured for SwarmForge with one persistent Codex-backed squad leader agent.
+- Transient agents are planned but not implemented in the first slice.
+- Project language: Babashka.
+
+## Local Configuration
+- Preserve project-local SwarmForge configuration under `swarmforge/`.
+- Keep swarm state local under `.swarmforge/`, worktrees under `.worktrees/`, and shared scripts under `swarmforge/scripts/`.
+- Keep squad design notes in `squad-design.md`.
+
+## Handoffs
+- Prefer terse, explicit handoffs that report state and request role-appropriate review.
+- Do not include verification logs or sender process narrative in handoffs.
+
+## Ownership
+- Do not change squad workflow ownership, role templates, or branch-local constitution articles without explicit user direction.
