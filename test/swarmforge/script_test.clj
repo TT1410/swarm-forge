@@ -258,6 +258,7 @@
         (is (fs/exists? (fs/path worktree ".git")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_spawn.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_event.sh")))
+        (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_statusd.sh")))
         (is (fs/exists? (fs/path worktree ".swarmforge/handoffs/inbox/new")))
         (is (fs/exists? (fs/path root ".squad/agents/investigator-001/prompt.md")))
         (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/metadata")))
@@ -293,6 +294,22 @@
           (is (str/includes? (:out status) "STATE: verifying_passed"))
           (is (str/includes? (slurp (str (fs/path root ".squad/tasks/wumpus-theme/events.log")))
                              "investigator-001\tverifying_passed\tquick command")))
+        (write-file (fs/path root ".squad/agents/investigator-001/heartbeat")
+                    (str "agent: investigator-001\n"
+                         "task_id: wumpus-theme\n"
+                         "state: working\n"
+                         "detail: stale for test\n"
+                         "updated_at: 2000-01-01T00:00:00Z\n"))
+        (let [statusd (run {:dir root
+                            :env {"SWARMFORGE_SQUAD_STALE_SECONDS" "1"
+                                  "SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX" "1"}}
+                           (script "squad_statusd.sh")
+                           "--once"
+                           "--no-notify"
+                           (str root))]
+          (is (str/includes? (:out statusd) "SQUAD_STATUS_ALERT: agent investigator-001 heartbeat stale"))
+          (is (str/includes? (slurp (str (fs/path root ".swarmforge/daemon/squad-statusd.log")))
+                             "alert agent investigator-001 heartbeat stale")))
         (let [retire (run {:dir root}
                           (script "squad_retire.sh")
                           "investigator-001")

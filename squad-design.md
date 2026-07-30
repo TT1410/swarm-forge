@@ -436,6 +436,14 @@ Add a narrow watchdog/reminder daemon:
 Success condition: the daemon wakes the squad leader when an invisible agent is
 stale, exits, or a user status report is due.
 
+Status: implemented as a command. `squad_statusd.sh` supports
+`--once --no-notify` for manual/test audits and long-running mode for polling.
+It detects missing, invalid, and stale heartbeats; checks tmux session
+existence and dead panes when tmux checks are enabled; logs alerts under
+`.swarmforge/daemon/squad-statusd.log`; and sends a generic wake-up to
+`squad-leader` in notifying mode. Launcher-managed startup of this daemon is
+not implemented yet.
+
 ### Slice 6: Full Squad Workflow
 
 Add the remaining templates and quality gates:
