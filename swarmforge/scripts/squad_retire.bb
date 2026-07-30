@@ -50,7 +50,12 @@
     (fs/move tmp file {:replace-existing true})))
 
 (defn acquire-lock! [lock-dir]
-  (loop []
+  (let [deadline (+ (System/currentTimeMillis) 10000)]
+    (loop []
+      (when (> (System/currentTimeMillis) deadline)
+        (exit! 2
+               (str "Timed out waiting for squad registry lock: " lock-dir)
+               "If no squad_spawn.sh or squad_retire.sh process is running, remove the stale lock directory and retry."))
     (if (try
           (fs/create-dir lock-dir)
           true
@@ -59,7 +64,7 @@
       nil
       (do
         (Thread/sleep 50)
-        (recur)))))
+        (recur))))))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
