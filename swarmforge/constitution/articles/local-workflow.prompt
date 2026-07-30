@@ -8,7 +8,7 @@
 - The branch can retire a transient agent with `squad_retire.sh <agent-id>`.
 - The branch can record telemetry with `squad_event.sh`, wrap commands with `squad_run.sh`, and inspect current telemetry with `squad_status.sh`.
 - The branch can run manual daemon checks with `squad_statusd.sh --once --no-notify`; long-running daemon mode exists but is not started automatically by the launcher yet.
-- Only the `investigator` role template exists so far.
+- Available transient role templates are `investigator`, `specifier`, `acceptance-builder`, `implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
 - Do not claim to have launcher-managed daemon monitoring or delegated to a missing transient template until the corresponding squad helper commands and templates exist.
 
 ## Approval Gates

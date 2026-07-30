@@ -461,6 +461,12 @@ Success condition: the squad leader can execute a theme-sized workflow with
 theme splitting, user approval, acceptance-spec approval, implementation,
 review, hardening, QA, completion reporting, and transient retirement.
 
+Status: partially implemented. The remaining full-workflow role templates now
+exist and can be spawned dynamically: `specifier`, `acceptance-builder`,
+`implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
+Launcher-managed status daemon startup and a fully exercised theme-sized
+end-to-end workflow remain future work.
+
 ## Implementation Deficits
 
 Future implementation plans must resolve these open details before coding the

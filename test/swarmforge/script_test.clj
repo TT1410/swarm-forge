@@ -36,6 +36,18 @@
 (defn script [name]
   (str (fs/path scripts-dir name)))
 
+(deftest squad-role-templates-exist
+  (doseq [template ["investigator"
+                    "specifier"
+                    "acceptance-builder"
+                    "implementer"
+                    "reviewer"
+                    "cleaner"
+                    "architect"
+                    "hardener"
+                    "qa"]]
+    (is (fs/exists? (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))))
+
 (deftest handoff-lib-parses-and-prints-handoff-files
   (let [root (tmp-dir)
         handoff-file (fs/path root "task.handoff")]
@@ -321,8 +333,40 @@
           (is (fs/exists? worktree))
           (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/status")))
                              "state: retired"))
-          (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/heartbeat")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/heartbeat")))
                              "state: retired"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-spawn-supports-non-investigator-templates
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/constitution.prompt")
+                  "Read articles.\n")
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window squad-leader codex master task\n")
+      (write-file (fs/path root "swarmforge/roles/squad-leader.prompt")
+                  "leader\n")
+      (write-file (fs/path root "swarmforge/role-templates/implementer.prompt")
+                  "implement\n")
+      (write-file (fs/path root "assignment.md")
+                  "Implement a tiny behavior slice.\n")
+      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+                        (script "squad_spawn.sh")
+                        "implementer"
+                        "tiny-story"
+                        "assignment.md")
+            roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))
+            fields (str/split (second roles) #"\t" -1)
+            prompt (slurp (str (fs/path root ".squad/agents/implementer-001/prompt.md")))]
+        (is (str/includes? (:out result) "SQUAD_AGENT: implementer-001"))
+        (is (= "implementer-001" (first fields)))
+        (is (= "Implementer 001" (nth fields 4)))
+        (is (str/includes? prompt "template: implementer"))
+        (is (str/includes? prompt "Implement a tiny behavior slice.")))
       (finally
         (fs/delete-tree root)))))
 
