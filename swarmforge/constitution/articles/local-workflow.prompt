@@ -5,9 +5,10 @@
 - The squad leader talks directly to the user.
 - The squad leader owns task clarification, theme splitting, story planning, approval framing, status reporting, and final reporting.
 - The branch can spawn one invisible transient agent from an existing role template with `squad_spawn.sh <template> <task-id> <assignment-file>`.
+- The branch can retire a transient agent with `squad_retire.sh <agent-id>`.
 - Only the `investigator` role template exists so far.
-- Squad telemetry helpers, retirement helpers, and squad status daemons are planned but not implemented yet.
-- Do not claim to have monitored, retired, or delegated to a missing transient template until the corresponding squad helper commands and templates exist.
+- Squad telemetry helpers and squad status daemons are planned but not implemented yet.
+- Do not claim to have monitored telemetry or delegated to a missing transient template until the corresponding squad helper commands and templates exist.
 
 ## Approval Gates
 - For theme-sized work, ask the user to approve the story plan before implementation work begins.

@@ -150,7 +150,7 @@
     (exit! 1 "Cannot launch transient agent: .swarmforge/tmux-socket is empty."))
   (when (sh-ok? "tmux" "-S" socket "has-session" "-t" session)
     (exit! 2 (str "Transient tmux session already exists: " session)))
-  (run! "tmux" "-S" socket "new-session" "-d" "-s" session "-n" display (str "zsh -lc " (sq command)))
+  (run! "tmux" "-S" socket "new-session" "-d" "-s" session "-n" display "zsh" "-lc" command)
   (run! "tmux" "-S" socket "set-window-option" "-t" session "allow-rename" "off"))
 
 (defn acquire-lock! [lock-dir]

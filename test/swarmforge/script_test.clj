@@ -262,7 +262,18 @@
         (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/prompt.md")))
                            "Find the original rules."))
         (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/status")))
-                           "state: spawned")))
+                           "state: spawned"))
+        (let [retire (run {:dir root}
+                          (script "squad_retire.sh")
+                          "investigator-001")
+              retired-roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))]
+          (is (str/includes? (:out retire) "SQUAD_AGENT_RETIRED: investigator-001"))
+          (is (str/includes? (:out retire) "SESSION_STOPPED: false"))
+          (is (= 1 (count retired-roles)))
+          (is (str/starts-with? (first retired-roles) "squad-leader\t"))
+          (is (fs/exists? worktree))
+          (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/status")))
+                             "state: retired"))))
       (finally
         (fs/delete-tree root)))))
 

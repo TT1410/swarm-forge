@@ -393,6 +393,14 @@ Close the first dynamic loop:
 Success condition: a spawned investigator can commit a small report, hand it
 back to the squad leader, and be retired cleanly.
 
+Status: implemented. The first dynamic loop has been observed with a spawned
+investigator committing work, sending a normal `git_handoff` back to
+`squad-leader`, and the squad leader completing the handoff. `squad_retire.sh`
+delegates to `squad_retire.bb`, removes the transient role from
+`.swarmforge/roles.tsv`, stops the detached tmux session when present, writes
+retired state under `.squad/agents/<agent-id>/status`, and preserves the
+transient worktree for audit.
+
 ### Slice 4: Status Baseline
 
 Add non-handoff telemetry:
