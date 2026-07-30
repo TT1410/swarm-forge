@@ -303,6 +303,8 @@
           (is (str/starts-with? (first retired-roles) "squad-leader\t"))
           (is (fs/exists? worktree))
           (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/status")))
+                             "state: retired"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/heartbeat")))
                              "state: retired"))))
       (finally
         (fs/delete-tree root)))))

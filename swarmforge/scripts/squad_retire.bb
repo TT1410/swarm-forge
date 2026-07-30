@@ -70,11 +70,28 @@
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
            (java.time.Instant/now)))
 
+(defn read-value [file field]
+  (when (fs/exists? file)
+    (let [prefix (str field ": ")]
+      (some (fn [line]
+              (when (str/starts-with? line prefix)
+                (subs line (count prefix))))
+            (str/split-lines (slurp (str file)))))))
+
 (defn write-status! [agent-dir state detail]
   (write-atomic! (fs/path agent-dir "status")
                  (str "state: " state "\n"
                       "detail: " detail "\n"
                       "updated_at: " (timestamp) "\n")))
+
+(defn write-heartbeat! [agent-dir agent-id state detail]
+  (let [task-id (or (read-value (fs/path agent-dir "metadata") "task_id") "unknown")]
+    (write-atomic! (fs/path agent-dir "heartbeat")
+                   (str "agent: " agent-id "\n"
+                        "task_id: " task-id "\n"
+                        "state: " state "\n"
+                        "detail: " detail "\n"
+                        "updated_at: " (timestamp) "\n"))))
 
 (defn remove-role! [roles-file agent-id]
   (let [rows (read-role-rows roles-file)
@@ -113,10 +130,11 @@
                      (str/trim (slurp (str socket-file))))
             stopped? (stop-session! socket session)]
         (fs/create-dirs agent-dir)
-        (write-status! agent-dir "retired"
-                       (if stopped?
-                         "tmux session stopped; worktree preserved"
-                         "tmux session was not running; worktree preserved"))
+        (let [detail (if stopped?
+                       "tmux session stopped; worktree preserved"
+                       "tmux session was not running; worktree preserved")]
+          (write-status! agent-dir "retired" detail)
+          (write-heartbeat! agent-dir agent-id "retired" detail))
         (println "SQUAD_AGENT_RETIRED:" agent-id)
         (println "SESSION:" session)
         (println "SESSION_STOPPED:" stopped?)
