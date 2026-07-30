@@ -4,8 +4,10 @@
 - The squad leader is the only persistent role in the first implementation slice.
 - The squad leader talks directly to the user.
 - The squad leader owns task clarification, theme splitting, story planning, approval framing, status reporting, and final reporting.
-- Dynamic transient agents, invisible tmux sessions, squad telemetry helpers, and squad status daemons are planned but not implemented in this slice.
-- Do not claim to have spawned, monitored, retired, or delegated to a transient agent until the corresponding squad helper commands exist.
+- The branch can spawn one invisible transient agent from an existing role template with `squad_spawn.sh <template> <task-id> <assignment-file>`.
+- Only the `investigator` role template exists so far.
+- Squad telemetry helpers, retirement helpers, and squad status daemons are planned but not implemented yet.
+- Do not claim to have monitored, retired, or delegated to a missing transient template until the corresponding squad helper commands and templates exist.
 
 ## Approval Gates
 - For theme-sized work, ask the user to approve the story plan before implementation work begins.

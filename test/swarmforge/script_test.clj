@@ -219,6 +219,53 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-spawn-registers-one-invisible-transient-without-launch
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/constitution.prompt")
+                  "Read articles.\n")
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window squad-leader codex master task\n")
+      (write-file (fs/path root "swarmforge/roles/squad-leader.prompt")
+                  "leader\n")
+      (write-file (fs/path root "swarmforge/role-templates/investigator.prompt")
+                  "investigate\n")
+      (write-file (fs/path root "assignment.md")
+                  "Find the original rules.\n")
+      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+                        (script "squad_spawn.sh")
+                        "investigator"
+                        "wumpus-theme"
+                        "assignment.md")
+            out (:out result)
+            roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))
+            transient-row (second roles)
+            fields (str/split transient-row #"\t" -1)
+            worktree (fs/path (nth fields 2))]
+        (is (str/includes? out "SQUAD_AGENT: investigator-001"))
+        (is (= 2 (count roles)))
+        (is (= 7 (count fields)))
+        (is (= "investigator-001" (nth fields 0)))
+        (is (= "investigator-001" (nth fields 1)))
+        (is (str/ends-with? (nth fields 2) "/.worktrees/investigator-001"))
+        (is (= "swarmforge-investigator-001" (nth fields 3)))
+        (is (= "Investigator 001" (nth fields 4)))
+        (is (= "codex" (nth fields 5)))
+        (is (= "task" (nth fields 6)))
+        (is (fs/exists? (fs/path worktree ".git")))
+        (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_spawn.sh")))
+        (is (fs/exists? (fs/path worktree ".swarmforge/handoffs/inbox/new")))
+        (is (fs/exists? (fs/path root ".squad/agents/investigator-001/prompt.md")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/prompt.md")))
+                           "Find the original rules."))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/status")))
+                           "state: spawned")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest grok-launch-command-passes-initial-prompt
   (let [root (tmp-dir)]
     (try

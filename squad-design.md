@@ -375,6 +375,11 @@ Implement the first transient spawn path:
 Success condition: the squad leader can spawn `investigator-001` in an
 invisible tmux session without restarting the handoff daemon.
 
+Status: implemented for the `investigator` template. `squad_spawn.sh` delegates
+to `squad_spawn.bb`, creates a transient worktree, generates a runtime prompt,
+creates handoff directories, atomically updates `.swarmforge/roles.tsv`, copies
+helper scripts into the transient worktree, and starts a detached tmux session.
+
 ### Slice 3: Transient Handoff And Retirement
 
 Close the first dynamic loop:
