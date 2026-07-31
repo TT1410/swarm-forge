@@ -98,20 +98,60 @@ Recommended user reporting triggers:
 The squad leader should suppress noisy "still working" reports when there has
 been no meaningful change unless the quiet period itself is noteworthy.
 
-## Squad Status Daemon
+## Unified Squad Daemon
 
-A future `squad-statusd` should be narrow:
+The squad should use one launcher-owned daemon, tentatively `squadd.bb`, rather
+than accumulating separate long-running processes for handoffs, status, spawn
+requests, and recovery.
 
+Current and proposed daemon responsibilities include:
+
+- deliver handoff files and wake recipients
+- process transient spawn requests
+- create transient git worktrees and tmux sessions
+- update dynamic transient role rows in `.swarmforge/roles.tsv`
 - monitor task, agent, heartbeat, and event files
 - check whether tmux sessions and panes still exist
 - check whether pane processes are dead
 - detect stale agents
 - detect long periods with no status events
 - send generic wake-up notifications to the squad leader
+- record stale, blocked, or spawn-failed daemon events
 
-It should not make planning decisions, merge decisions, QA decisions, or
-technical interpretations of agent prose. Those remain squad leader
-responsibilities.
+It should not make planning decisions, merge decisions, QA decisions, recovery
+decisions, or technical interpretations of agent prose. Those remain squad
+leader responsibilities.
+
+The agent-facing helpers should remain file-oriented:
+
+```text
+swarm_handoff.sh          -> write outbound handoff files
+squad_spawn_request.sh    -> write spawn request files
+squad_event.sh            -> write telemetry
+squad_status.sh           -> read current status
+squad_report.sh           -> summarize durable squad state
+```
+
+This consolidation reduces:
+
+- pid files
+- stop files
+- teardown paths
+- long-running processes holding the trial directory open
+- direct agent access to tmux sockets
+- per-spawn sandbox escalations
+
+Migration strategy:
+
+1. Add `squadd.bb` while keeping `handoffd.bb` and `squad_statusd.bb`.
+2. Move handoff delivery into `squadd.bb`.
+3. Move status polling into `squadd.bb`.
+4. Add spawn-request processing to `squadd.bb`.
+5. Start only `squadd.bb` from `./swarm`.
+6. Keep old daemon scripts temporarily as compatibility wrappers or one-shot
+   test helpers.
+7. Remove old daemon startup after the unified daemon passes the Hunt the
+   Wumpus trial.
 
 ## Helper Script Convention
 
@@ -136,9 +176,9 @@ The `.sh` wrapper is the command surface placed on `PATH` for agents. The
 Babashka implementation should own structured parsing, state-file updates,
 atomic writes, time handling, process coordination, and tests.
 
-Not every script needs both files. Internal libraries and daemons may be `.bb`
-only when agents do not call them directly. Terminal and OS integration glue may
-remain shell-only when shell is the natural boundary.
+Not every script needs both files. Internal libraries and the unified daemon may
+be `.bb` only when agents do not call them directly. Terminal and OS integration
+glue may remain shell-only when shell is the natural boundary.
 
 ## Shared Tool Cache And Transient Launch Root
 
@@ -860,6 +900,27 @@ Status: implemented as constitution and role-prompt policy. A future slice may
 add helper-level enforcement that requires an assignment to name the intended
 template before artifacts can be recorded.
 
+### Slice 20: Unified Squad Daemon Migration
+
+Consolidate daemon responsibilities into one launcher-owned process:
+
+- add `squadd.bb`
+- use one daemon pid file and one stop file
+- move handoff delivery into the unified daemon
+- move status polling and stale-agent detection into the unified daemon
+- add spawn-request processing to the unified daemon
+- start only the unified daemon from `./swarm`
+- stop only the unified daemon from `close-swarm` and cleanup paths
+- keep `handoffd.bb` and `squad_statusd.bb` temporarily as compatibility
+  wrappers or one-shot test helpers
+
+Success condition: a squad leader can request transient spawns without direct
+tmux or git worktree escalation, handoffs still deliver, status alerts still
+wake the leader, and teardown has a single daemon lifecycle.
+
+Status: planned. This should happen before continuing the Hunt the Wumpus trial
+with real transient agents.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -921,6 +982,8 @@ They are tracked here as resolved, partially resolved, or still open.
       theme workflow manifest and assignment paths
 - [ ] direct transient spawn works, but squad-leader initiated spawning still
       needs a daemon-owned request path to avoid per-spawn sandbox escalations
+- [ ] handoff, status, and spawn-request daemons should be consolidated into a
+      single launcher-owned squad daemon
 - [ ] dynamic role registration currently appends to `roles.tsv`; daemon-owned
       spawning should become the normal writer for squad-leader initiated
       transients
@@ -948,6 +1011,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [ ] acceptance artifact schema and type policy beyond markdown files
 - [ ] helper-level enforcement that acceptance artifacts cite a producing
       assignment or transient agent
+- [ ] compatibility lifetime for old `handoffd.bb` and `squad_statusd.bb`
+      after `squadd.bb` exists
 
 ## Heartbeats
 
@@ -1000,6 +1065,8 @@ or report a blocker to the user.
 - Should direct `squad_spawn.sh` remain an unrestricted operator command, or
   should normal use move entirely to `squad_spawn_request.sh` plus
   `squad_spawnd.bb`?
+- How long should `handoffd.bb` and `squad_statusd.bb` remain as standalone
+  scripts after `squadd.bb` owns normal daemon lifecycle?
 - Should transient worktrees be created from role-specific branch names,
   task-specific branch names, or both?
 - What is the minimal set of squad helper scripts needed for the first
