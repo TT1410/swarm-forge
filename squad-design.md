@@ -488,6 +488,27 @@ Status: implemented. `squad_theme.sh` supports `create`, `story`, `approve`,
 and `status`. The command validates ids, preserves source text, records
 approval gates append-only, and writes a current status file.
 
+### Slice 8: Durable Assignment Files
+
+Connect theme/story state to concrete transient assignments:
+
+- `squad_assign.sh` as the command surface
+- `squad_assign.bb` as the Babashka implementation
+- `.squad/assignments/<assignment-id>/assignment.md`
+- `.squad/assignments/<assignment-id>/metadata`
+- `.squad/assignments/<assignment-id>/status`
+- `.squad/assignments/<assignment-id>/result-handoff.draft`
+- `.squad/themes/<theme-id>/assignments/<assignment-id>.md`
+
+Success condition: the squad leader can generate a durable assignment from a
+theme story and leader instructions, pass that generated assignment to
+`squad_spawn.sh`, and give the transient agent a standard result handoff shape.
+
+Status: implemented. `squad_assign.sh` supports `create` and `status`. It
+validates ids, verifies the referenced theme story and role template, creates a
+durable assignment file, writes a standard result `git_handoff` draft, records
+assignment metadata/status, and appends a theme event.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -507,6 +528,7 @@ They are tracked here as resolved, partially resolved, or still open.
       `roles.tsv`
 - [x] squad leader wake-up target and notification text for the current daemon
 - [x] command-wrapper behavior for current long-running command telemetry
+- [x] leader-to-transient assignment file convention for theme/story work
 - [x] retirement lifecycle for stopped and running sessions
 - [x] retired transient worktrees are preserved for audit
 - [x] branch-local constitution articles required for squad authority
@@ -519,7 +541,7 @@ They are tracked here as resolved, partially resolved, or still open.
 ### Partially Resolved
 
 - [ ] exact `.squad/` directory schema beyond implemented agent telemetry and
-      theme workflow manifest paths
+      theme workflow manifest and assignment paths
 - [ ] dynamic role registration currently appends to `roles.tsv`; a separate
       squad registry has not been justified or rejected for future workflows
 - [ ] role template composition rules are concrete for current templates but do
@@ -537,12 +559,11 @@ They are tracked here as resolved, partially resolved, or still open.
       downstream assignments
 - [ ] acceptance-spec decisions can be recorded as approval gates, but do not
       yet have dedicated acceptance artifact state
+- [ ] transient-to-leader result handoff drafts are generated for assignments,
+      but result intake and validation are not yet automated
 
 ### Open
 
-- [ ] handoff conventions for leader-to-transient assignments
-- [ ] handoff conventions for transient-to-leader results beyond the observed
-      first dynamic loop
 - [ ] merge policy for transient branches and worktrees
 - [ ] policy for rejected transient work
 - [ ] policy for merge conflicts created by transient work

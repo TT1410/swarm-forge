@@ -8,6 +8,7 @@
 - The branch can retire a transient agent with `squad_retire.sh <agent-id>`.
 - The branch can record telemetry with `squad_event.sh`, wrap commands with `squad_run.sh`, and inspect current telemetry with `squad_status.sh`.
 - The branch can record durable theme workflow state with `squad_theme.sh`.
+- The branch can generate durable transient assignment files from theme/story state with `squad_assign.sh`.
 - The launcher starts `squad_statusd.sh` automatically when the swarm starts; manual checks can still use `squad_statusd.sh --once --no-notify`.
 - Available transient role templates are `investigator`, `specifier`, `acceptance-builder`, `implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
 - Do not claim to have delegated to a missing transient template until the corresponding squad helper commands and templates exist.
@@ -17,6 +18,11 @@
 - After Gherkin and QA procedure specs exist, ask the user to approve the acceptance specification before production implementation begins.
 - For small tasks, these approval gates may be collapsed only when the story and acceptance criteria are trivial.
 - Record approval gates with `squad_theme.sh approve`.
+
+## Assignments
+- For theme/story work, create an assignment with `squad_assign.sh create` before spawning the transient agent.
+- Use the generated `.squad/assignments/<assignment-id>/assignment.md` as the assignment file passed to `squad_spawn.sh`.
+- Transient result handoffs should return to `squad-leader` as `git_handoff` drafts whose `task` is the assignment id.
 
 ## Telemetry
 - Handoffs are for durable work transfer only.

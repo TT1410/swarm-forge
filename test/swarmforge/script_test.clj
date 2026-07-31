@@ -269,6 +269,7 @@
         (is (= "task" (nth fields 6)))
         (is (fs/exists? (fs/path worktree ".git")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_spawn.sh")))
+        (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_assign.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_theme.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_event.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_statusd.sh")))
@@ -447,6 +448,61 @@
                            "\tstories\tuser approved story split"))
         (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
                            "\tapproved_acceptance\tuser approved acceptance spec")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-generates-durable-assignment-from-theme-story
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
+      (write-file (fs/path root "swarmforge/role-templates/implementer.prompt")
+                  "implement\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "story.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Write unit tests first, then production code.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "story.md")
+      (let [create (run {:dir root}
+                        (script "squad_assign.sh")
+                        "create"
+                        "wumpus"
+                        "cave-topology"
+                        "implementer"
+                        "wumpus-cave-impl"
+                        "instructions.md")
+            status (run {:dir root}
+                        (script "squad_assign.sh")
+                        "status"
+                        "wumpus-cave-impl")
+            assignment (fs/path root ".squad/assignments/wumpus-cave-impl/assignment.md")
+            draft (fs/path root ".squad/assignments/wumpus-cave-impl/result-handoff.draft")]
+        (is (str/includes? (:out create) "SQUAD_ASSIGNMENT: wumpus-cave-impl"))
+        (is (str/includes? (:out create) "TEMPLATE: implementer"))
+        (is (str/includes? (:out status) "STATE: assignment_created"))
+        (is (str/includes? (slurp (str assignment)) "assignment_id: wumpus-cave-impl"))
+        (is (str/includes? (slurp (str assignment)) "Story: cave topology and setup."))
+        (is (str/includes? (slurp (str assignment)) "Write unit tests first"))
+        (is (str/includes? (slurp (str assignment)) "swarm_handoff.sh"))
+        (is (str/includes? (slurp (str draft)) "type: git_handoff"))
+        (is (str/includes? (slurp (str draft)) "to: squad-leader"))
+        (is (str/includes? (slurp (str draft)) "task: wumpus-cave-impl"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
+                           "\tassignment_created\twumpus-cave-impl\timplementer\tcave-topology"))
+        (let [spawn (run {:dir root
+                          :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+                         (script "squad_spawn.sh")
+                         "implementer"
+                         "wumpus-cave-impl"
+                         (str assignment))]
+          (is (str/includes? (:out spawn) "SQUAD_AGENT: implementer-001"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/agents/implementer-001/prompt.md")))
+                             "assignment_id: wumpus-cave-impl"))))
       (finally
         (fs/delete-tree root)))))
 
