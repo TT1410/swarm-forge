@@ -724,6 +724,35 @@ conflicts, without automatically resolving or committing anything.
 Status: implemented for local commits visible to the project checkout. Fetching
 missing transient branches and committing accepted merges remain future slices.
 
+### Slice 17: Review, Rejection, And Replacement Bundle
+
+Record review and failure decisions as durable assignment state:
+
+- `squad_assign.sh review <assignment-id> <accepted|changes-requested>
+  <review-file>`
+- requires an existing assignment result
+- records review metadata under `.squad/assignments/<assignment-id>/review`
+- stores review text under `.squad/assignments/<assignment-id>/review.md`
+- updates assignment status to `review_accepted` or
+  `review_changes_requested`
+- `squad_assign.sh reject <assignment-id> <reason-file>`
+- records rejection metadata under `.squad/assignments/<assignment-id>/rejection`
+- stores rejection text under `.squad/assignments/<assignment-id>/rejection.md`
+- updates assignment status to `rejected`
+- `squad_assign.sh replace <old-assignment-id> <new-assignment-id>
+  <template> <instructions-file>`
+- creates a new assignment for the old assignment's theme and story
+- preserves the old assignment and records its replacement link
+- records the reverse `replaces` link in the new assignment
+- carries forward any explicit approval requirement from the old assignment
+
+Success condition: the squad leader can preserve rejected work, explain why it
+was rejected, and create an auditable replacement assignment without losing the
+original result or worktree context.
+
+Status: implemented for durable assignment records. Automatic transient spawn
+for replacements remains a future slice.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -759,6 +788,9 @@ They are tracked here as resolved, partially resolved, or still open.
       assignment results
 - [x] transient result intake can record merge-ready or merge-blocked state
       without committing a merge
+- [x] review decisions can be recorded as durable assignment state
+- [x] rejected transient work can be preserved with durable rejection reasons
+- [x] replacement assignments can be linked to rejected or superseded work
 - [x] retirement lifecycle for stopped and running sessions
 - [x] retired transient worktrees are preserved for audit
 - [x] branch-local constitution articles required for squad authority
@@ -784,16 +816,16 @@ They are tracked here as resolved, partially resolved, or still open.
       implemented helpers only
 - [ ] policy for crashed, stale, or wedged invisible agents exists as daemon
       detection, but not as a full squad-leader recovery workflow
-- [ ] transient result intake records handoffs and merge readiness, but does not
-      yet automate review, rejection, replacement, or accepted merge commits
+- [ ] transient result intake records handoffs, merge readiness, review,
+      rejection, and replacement links, but does not yet automate accepted merge
+      commits
 
 ### Open
 
 - [ ] merge policy for fetching missing transient branches and committing
       accepted merges
-- [ ] policy for rejected transient work
 - [ ] policy for merge conflicts created by transient work
-- [ ] policy for interrupting, restarting, or replacing a transient agent
+- [ ] policy for interrupting or restarting a running transient agent
 - [ ] default policy for which assignment templates require which approval
       gates
 - [ ] acceptance artifact schema and type policy beyond markdown files

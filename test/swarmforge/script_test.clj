@@ -504,6 +504,12 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write unit tests first, then production code.\n")
+      (write-file (fs/path root "review.md")
+                  "Review: request a smaller implementation boundary.\n")
+      (write-file (fs/path root "rejection.md")
+                  "Reject because the branch exceeded the story boundary.\n")
+      (write-file (fs/path root "replacement-instructions.md")
+                  "Reimplement only cave topology.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "story.md")
       (let [create (run {:dir root}
@@ -559,7 +565,29 @@
               merge-status (run {:dir root}
                                 (script "squad_assign.sh")
                                 "status"
-                                "wumpus-cave-impl")]
+                                "wumpus-cave-impl")
+              review (run {:dir root}
+                          (script "squad_assign.sh")
+                          "review"
+                          "wumpus-cave-impl"
+                          "changes-requested"
+                          "review.md")
+              reject (run {:dir root}
+                          (script "squad_assign.sh")
+                          "reject"
+                          "wumpus-cave-impl"
+                          "rejection.md")
+              replace (run {:dir root}
+                           (script "squad_assign.sh")
+                           "replace"
+                           "wumpus-cave-impl"
+                           "wumpus-cave-impl-2"
+                           "implementer"
+                           "replacement-instructions.md")
+              replacement-status (run {:dir root}
+                                      (script "squad_assign.sh")
+                                      "status"
+                                      "wumpus-cave-impl-2")]
           (is (str/includes? (:out result) "STATE: result_received"))
           (is (str/includes? (:out result) (str "COMMIT: " commit)))
           (is (str/includes? (:out result-status) "STATE: result_received"))
@@ -568,16 +596,41 @@
           (is (str/includes? (:out merge-ready) "commit already reachable from HEAD"))
           (is (str/includes? (:out merge-status) "STATE: merge_ready"))
           (is (str/includes? (:out merge-status) "MERGE:"))
+          (is (str/includes? (:out review) "STATE: review_changes_requested"))
+          (is (str/includes? (:out reject) "STATE: rejected"))
+          (is (str/includes? (:out replace) "SQUAD_ASSIGNMENT: wumpus-cave-impl-2"))
+          (is (str/includes? (:out replace) "REPLACES: wumpus-cave-impl"))
+          (is (str/includes? (:out replacement-status) "STATE: assignment_created"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result.handoff")))
                              "from: implementer-001"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result")))
                              (str "commit: " commit)))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/merge")))
                              "state: merge_ready"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/review")))
+                             "state: review_changes_requested"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/review.md")))
+                             "smaller implementation boundary"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/rejection")))
+                             "state: rejected"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/rejection.md")))
+                             "exceeded the story boundary"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/replacement")))
+                             "replacement: wumpus-cave-impl-2"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl-2/replaces")))
+                             "replaces: wumpus-cave-impl"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl-2/assignment.md")))
+                             "Reimplement only cave topology"))
           (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
                              (str "\tassignment_result_received\twumpus-cave-impl\timplementer-001\t" commit "\tcave-topology")))
           (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
-                             (str "\tassignment_merge_ready\twumpus-cave-impl\t" commit "\tcave-topology"))))
+                             (str "\tassignment_merge_ready\twumpus-cave-impl\t" commit "\tcave-topology")))
+          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
+                             "\tassignment_review_changes_requested\twumpus-cave-impl\tchanges-requested\tcave-topology"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
+                             "\tassignment_rejected\twumpus-cave-impl\tcave-topology"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
+                             "\tassignment_replacement_created\twumpus-cave-impl\twumpus-cave-impl-2\tcave-topology")))
         (let [spawn (run {:dir root
                           :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                          (script "squad_spawn.sh")

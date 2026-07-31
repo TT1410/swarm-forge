@@ -10,6 +10,9 @@
        "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file> [--requires approval:<gate>]\n"
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
        "  squad_assign.sh merge-ready <assignment-id>\n"
+       "  squad_assign.sh review <assignment-id> <accepted|changes-requested> <review-file>\n"
+       "  squad_assign.sh reject <assignment-id> <reason-file>\n"
+       "  squad_assign.sh replace <old-assignment-id> <new-assignment-id> <template> <instructions-file>\n"
        "  squad_assign.sh status <assignment-id>"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -115,6 +118,14 @@
      :instructions-file instructions-file
      :requirement (parse-requirement! requirement)}))
 
+(def valid-review-decisions
+  {"accepted" "review_accepted"
+   "changes-requested" "review_changes_requested"})
+
+(defn review-state! [decision]
+  (or (valid-review-decisions decision)
+      (exit! 2 "Review decision must be accepted or changes-requested.")))
+
 (defn theme-dir [root theme-id]
   (fs/path root ".squad" "themes" theme-id))
 
@@ -128,6 +139,21 @@
 (defn ensure-file! [message file]
   (when-not (fs/regular-file? file)
     (exit! 1 (str message ": " file))))
+
+(defn append-file! [file content]
+  (spit (str file) content :append true))
+
+(defn assignment-theme-event! [root dir state assignment-id & fields]
+  (let [metadata (fs/path dir "metadata")
+        theme-id (read-value metadata "theme_id")
+        story-id (read-value metadata "story_id")]
+    (when theme-id
+      (append-line! (fs/path root ".squad" "themes" theme-id "events.log")
+                    (str/join "\t" (concat [(timestamp)
+                                             (str "assignment_" state)
+                                             assignment-id]
+                                            fields
+                                            [(or story-id "unknown")]))))))
 
 (defn handoff-body [file]
   (let [[_ body] (str/split (slurp (str file)) #"\n\n" 2)]
@@ -236,7 +262,10 @@
         metadata (fs/path dir "metadata")
         status (fs/path dir "status")
         result-file (fs/path dir "result.handoff")
-        merge-file (fs/path dir "merge")]
+        merge-file (fs/path dir "merge")
+        review-file (fs/path dir "review")
+        rejection-file (fs/path dir "rejection")
+        replacement-file (fs/path dir "replacement")]
     (ensure-assignment-dir! dir assignment-id)
     (println "ASSIGNMENT:" assignment-id)
     (println "THEME:" (or (read-value metadata "theme_id") "unknown"))
@@ -246,7 +275,10 @@
     (println "DETAIL:" (or (read-value status "detail") ""))
     (println "ASSIGNMENT_FILE:" (or (read-value metadata "assignment_file") "unknown"))
     (println "RESULT:" (if (fs/exists? result-file) (str result-file) "none"))
-    (println "MERGE:" (if (fs/exists? merge-file) (str merge-file) "none"))))
+    (println "MERGE:" (if (fs/exists? merge-file) (str merge-file) "none"))
+    (println "REVIEW:" (if (fs/exists? review-file) (str review-file) "none"))
+    (println "REJECTION:" (if (fs/exists? rejection-file) (str rejection-file) "none"))
+    (println "REPLACEMENT:" (if (fs/exists? replacement-file) (str replacement-file) "none"))))
 
 (defn validate-result-handoff! [assignment-id handoff-file]
   (let [type (read-value handoff-file "type")
@@ -293,8 +325,7 @@
     (append-line! (fs/path dir "events.log")
                   (str now "\tresult_received\t" from "\t" commit))
     (when-not (= "unknown" theme-id)
-      (append-line! (fs/path root ".squad" "themes" theme-id "events.log")
-                    (str now "\tassignment_result_received\t" assignment-id "\t" from "\t" commit "\t" story-id)))
+      (assignment-theme-event! root dir "result_received" assignment-id from commit))
     (println "SQUAD_ASSIGNMENT:" assignment-id)
     (println "STATE: result_received")
     (println "FROM:" from)
@@ -374,6 +405,107 @@
         (finally
           (abort-merge! root))))))
 
+(defn record-review! [assignment-id decision review-path]
+  (validate-id! "Assignment id" assignment-id)
+  (let [state (review-state! decision)
+        root (fs/absolutize (project-root))
+        dir (assignment-dir root assignment-id)
+        review-source (source-file! review-path)
+        result-file (fs/path dir "result")
+        now (timestamp)]
+    (ensure-assignment-dir! dir assignment-id)
+    (ensure-file! "Assignment result not found" result-file)
+    (write-atomic! (fs/path dir "review.md")
+                   (slurp (str review-source)))
+    (write-atomic! (fs/path dir "review")
+                   (str "assignment_id: " assignment-id "\n"
+                        "state: " state "\n"
+                        "decision: " decision "\n"
+                        "review_file: " (fs/path dir "review.md") "\n"
+                        "updated_at: " now "\n"))
+    (write-atomic! (fs/path dir "status")
+                   (str "assignment_id: " assignment-id "\n"
+                        "state: " state "\n"
+                        "detail: " decision "\n"
+                        "updated_at: " now "\n"))
+    (append-line! (fs/path dir "events.log")
+                  (str now "\t" state "\t" decision))
+    (assignment-theme-event! root dir state assignment-id decision)
+    (println "SQUAD_ASSIGNMENT:" assignment-id)
+    (println "STATE:" state)
+    (println "DECISION:" decision)
+    (println "REVIEW:" (str (fs/path dir "review.md")))))
+
+(defn reject-assignment! [assignment-id reason-path]
+  (validate-id! "Assignment id" assignment-id)
+  (let [root (fs/absolutize (project-root))
+        dir (assignment-dir root assignment-id)
+        reason-source (source-file! reason-path)
+        now (timestamp)]
+    (ensure-assignment-dir! dir assignment-id)
+    (write-atomic! (fs/path dir "rejection.md")
+                   (slurp (str reason-source)))
+    (write-atomic! (fs/path dir "rejection")
+                   (str "assignment_id: " assignment-id "\n"
+                        "state: rejected\n"
+                        "reason_file: " (fs/path dir "rejection.md") "\n"
+                        "updated_at: " now "\n"))
+    (write-atomic! (fs/path dir "status")
+                   (str "assignment_id: " assignment-id "\n"
+                        "state: rejected\n"
+                        "detail: rejected by squad leader\n"
+                        "updated_at: " now "\n"))
+    (append-line! (fs/path dir "events.log")
+                  (str now "\trejected\t" (fs/path dir "rejection.md")))
+    (assignment-theme-event! root dir "rejected" assignment-id)
+    (println "SQUAD_ASSIGNMENT:" assignment-id)
+    (println "STATE: rejected")
+    (println "REJECTION:" (str (fs/path dir "rejection.md")))))
+
+(defn replace-assignment! [old-assignment-id new-assignment-id template instructions-file]
+  (doseq [[kind value] [["Old assignment id" old-assignment-id]
+                        ["New assignment id" new-assignment-id]]]
+    (validate-id! kind value))
+  (validate-template! template)
+  (let [root (fs/absolutize (project-root))
+        old-dir (assignment-dir root old-assignment-id)
+        old-metadata (fs/path old-dir "metadata")
+        theme-id (read-value old-metadata "theme_id")
+        story-id (read-value old-metadata "story_id")
+        requirement-text (read-value old-metadata "requires")
+        now (timestamp)]
+    (ensure-assignment-dir! old-dir old-assignment-id)
+    (when-not (and theme-id story-id)
+      (exit! 2 "Original assignment metadata must include theme_id and story_id."))
+    (create-assignment! {:theme-id theme-id
+                         :story-id story-id
+                         :template template
+                         :assignment-id new-assignment-id
+                         :instructions-file instructions-file
+                         :requirement (parse-requirement! requirement-text)})
+    (let [new-dir (assignment-dir root new-assignment-id)]
+      (append-file! (fs/path new-dir "metadata")
+                    (str "replaces: " old-assignment-id "\n"))
+      (write-atomic! (fs/path new-dir "replaces")
+                     (str "assignment_id: " new-assignment-id "\n"
+                          "replaces: " old-assignment-id "\n"
+                          "created_at: " now "\n"))
+      (write-atomic! (fs/path old-dir "replacement")
+                     (str "assignment_id: " old-assignment-id "\n"
+                          "state: replacement_created\n"
+                          "replacement: " new-assignment-id "\n"
+                          "updated_at: " now "\n"))
+      (write-atomic! (fs/path old-dir "status")
+                     (str "assignment_id: " old-assignment-id "\n"
+                          "state: replacement_created\n"
+                          "detail: " new-assignment-id "\n"
+                          "updated_at: " now "\n"))
+      (append-line! (fs/path old-dir "events.log")
+                    (str now "\treplacement_created\t" new-assignment-id))
+      (assignment-theme-event! root old-dir "replacement_created" old-assignment-id new-assignment-id)
+      (println "REPLACES:" old-assignment-id)
+      (println "STATE: replacement_created"))))
+
 (defn -main [& args]
   (case (first args)
     "create" (create-assignment! (parse-create-args! args))
@@ -383,6 +515,15 @@
     "merge-ready" (if (= 2 (count args))
                     (mark-merge-ready! (second args))
                     (exit! 1 usage-text))
+    "review" (if (= 4 (count args))
+               (record-review! (second args) (nth args 2) (nth args 3))
+               (exit! 1 usage-text))
+    "reject" (if (= 3 (count args))
+               (reject-assignment! (second args) (nth args 2))
+               (exit! 1 usage-text))
+    "replace" (if (= 5 (count args))
+                (replace-assignment! (second args) (nth args 2) (nth args 3) (nth args 4))
+                (exit! 1 usage-text))
     "status" (if (= 2 (count args))
                (print-status! (second args))
                (exit! 1 usage-text))
