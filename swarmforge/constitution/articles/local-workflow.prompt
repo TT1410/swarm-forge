@@ -7,9 +7,9 @@
 - The branch can spawn one invisible transient agent from an existing role template with `squad_spawn.sh <template> <task-id> <assignment-file>`.
 - The branch can retire a transient agent with `squad_retire.sh <agent-id>`.
 - The branch can record telemetry with `squad_event.sh`, wrap commands with `squad_run.sh`, and inspect current telemetry with `squad_status.sh`.
-- The branch can run manual daemon checks with `squad_statusd.sh --once --no-notify`; long-running daemon mode exists but is not started automatically by the launcher yet.
+- The launcher starts `squad_statusd.sh` automatically when the swarm starts; manual checks can still use `squad_statusd.sh --once --no-notify`.
 - Available transient role templates are `investigator`, `specifier`, `acceptance-builder`, `implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
-- Do not claim to have launcher-managed daemon monitoring or delegated to a missing transient template until the corresponding squad helper commands and templates exist.
+- Do not claim to have delegated to a missing transient template until the corresponding squad helper commands and templates exist.
 
 ## Approval Gates
 - For theme-sized work, ask the user to approve the story plan before implementation work begins.

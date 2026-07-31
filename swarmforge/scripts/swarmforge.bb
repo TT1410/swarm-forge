@@ -223,6 +223,8 @@
    "ready_for_next_batch.sh" "ready_for_next_batch.bb"
    "done_with_current_batch.sh" "done_with_current_batch.bb"
    "handoffd.bb" "stop_handoff_daemon.bb" "stop_handoff_daemon.sh"
+   "squad_statusd.bb" "squad_statusd.sh"
+   "stop_squad_status_daemon.bb" "stop_squad_status_daemon.sh"
    "swarm-cleanup.sh" "swarm-window-watchdog.sh" "swarm-window-watchdog.bb"
    "swarm-terminal-adapter.sh" "swarmforge.sh" "swarmforge.bb"])
 
@@ -363,6 +365,15 @@
               "bb" (str (fs/path (:script-dir ctx) "stop_handoff_daemon.bb"))
               (str (:working-dir ctx))))
 
+(defn squad-status-daemon-available? [ctx]
+  (fs/exists? (fs/path (:script-dir ctx) "squad_statusd.bb")))
+
+(defn stop-squad-status-daemon! [ctx]
+  (when (fs/exists? (fs/path (:script-dir ctx) "stop_squad_status_daemon.bb"))
+    (process/sh {:continue true}
+                "bb" (str (fs/path (:script-dir ctx) "stop_squad_status_daemon.bb"))
+                (str (:working-dir ctx)))))
+
 (defn uname []
   (str/trim (:out (process/sh {:continue true} "uname" "-s"))))
 
@@ -397,6 +408,15 @@
                   (when (> (count command) 2) " with OS sleep prevention")
                   "."
                   reset))))
+
+(defn start-squad-status-daemon! [ctx]
+  (when (squad-status-daemon-available? ctx)
+    (fs/delete-if-exists (fs/path (:daemon-dir ctx) "squad-statusd.stop"))
+    (process/process [(str (fs/path (:script-dir ctx) "squad_statusd.bb"))
+                      (str (:working-dir ctx))]
+                     {:out (str (:squad-status-daemon-log ctx))
+                      :err :out})
+    (println (str green "Started squad status daemon." reset))))
 
 (defn adapter-script [ctx command & args]
   (let [script (str "SCRIPT_DIR=" (sq (str (:script-dir ctx))) "\n"
@@ -480,6 +500,7 @@
      :prompts-dir (fs/path state-dir "prompts")
      :daemon-dir daemon-dir
      :handoff-daemon-log (fs/path daemon-dir "handoffd.log")
+     :squad-status-daemon-log (fs/path daemon-dir "squad-statusd.log")
      :tmux-socket-dir tmux-socket-dir
      :tmux-socket tmux-socket
      :tmux-socket-file (fs/path state-dir "tmux-socket")
@@ -516,6 +537,7 @@
       (prepare-worktrees! ctx)
       (prepare-handoff-dirs! ctx)
       (let [ctx (assoc ctx :terminal-backend (detect-terminal-backend))]
+        (stop-squad-status-daemon! ctx)
         (stop-handoff-daemon! ctx)
         (doseq [row (:roles ctx)]
           (when (sh-ok? "tmux" "-S" (:tmux-socket ctx) "has-session" "-t" (:session row))
@@ -531,6 +553,7 @@
         (write-tmux-env-file! ctx)
         (sync-worktree-scripts! ctx)
         (start-handoff-daemon! ctx)
+        (start-squad-status-daemon! ctx)
         (println (str green "Starting agents..." reset))
         (let [delay-ms (env-long "SWARMFORGE_AGENT_START_DELAY_MS" 1500)]
           (doseq [[index row] (map-indexed vector (:roles ctx))]

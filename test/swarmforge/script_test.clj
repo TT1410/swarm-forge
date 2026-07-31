@@ -383,6 +383,28 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-status-daemon-starts-and-stops
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (fs/create-dirs (fs/path root ".swarmforge/daemon"))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (run {:dir root :ok? false}
+           "sh" "-c"
+           (str "bb " (script "squad_statusd.bb") " " root " >/dev/null 2>&1 &"))
+      (Thread/sleep 1000)
+      (let [pid-file (fs/path root ".swarmforge/daemon/squad-statusd.pid")]
+        (is (fs/exists? pid-file))
+        (let [pid (str/trim (slurp (str pid-file)))
+              stop (run {:dir root} (script "stop_squad_status_daemon.bb") (str root))]
+          (is (= 0 (:exit stop)))
+          (Thread/sleep 300)
+          (is (not (fs/exists? pid-file)))
+          (is (not= 0 (:exit (run {:dir root :ok? false} "kill" "-0" pid))))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest grok-launch-command-passes-initial-prompt
   (let [root (tmp-dir)]
     (try
