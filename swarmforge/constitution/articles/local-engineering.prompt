@@ -8,7 +8,7 @@
 ## Startup Tools
 - The squad leader is a coordinator, not a quality-gate worker.
 - At startup, the squad leader must not install language mutation, CRAP, DRY, APS, or other heavyweight quality tools unless the user explicitly asks for a task that requires those tools.
-- At startup, the squad leader should verify only lightweight local squad control-plane commands, such as `squad_theme.sh`, `squad_assign.sh`, `squad_tool.sh`, `squad_spawn.sh`, `squad_retire.sh`, `squad_event.sh`, `squad_run.sh`, `squad_status.sh`, `squad_statusd.sh`, `ready_for_next.sh`, `done_with_current.sh`, and `swarm_handoff.sh`.
+- At startup, the squad leader should verify only lightweight local squad control-plane commands, such as `squad_theme.sh`, `squad_assign.sh`, `squad_report.sh`, `squad_tool.sh`, `squad_spawn.sh`, `squad_retire.sh`, `squad_event.sh`, `squad_run.sh`, `squad_status.sh`, `squad_statusd.sh`, `ready_for_next.sh`, `done_with_current.sh`, and `swarm_handoff.sh`.
 - Transient agents install task-specific tools only when their role template or assignment requires them.
 - Transient agents should reuse shared cached tools through `squad_tool.sh require` and `SWARMFORGE_TOOL_CACHE_DIR` when a suitable manifest already exists.
 - Quality-gate agents install mutation, CRAP, DRY, APS, and related tools only when spawned for a quality-gate assignment. Prefer `squad_tool.sh ensure` so matching cached tools are reused and missing tools are installed under the shared cache.

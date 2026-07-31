@@ -753,6 +753,41 @@ original result or worktree context.
 Status: implemented for durable assignment records. Automatic transient spawn
 for replacements remains a future slice.
 
+### Slice 18: HTW Trial Readiness Bundle
+
+Prepare the branch for a real Hunt the Wumpus squad trial by closing the
+minimum end-to-end control-plane gaps:
+
+- `squad_assign.sh accept-merge <assignment-id>`
+- requires a recorded result handoff
+- requires recorded `merge_ready` state
+- requires a recorded `review_accepted` decision
+- records accepted merge state under
+  `.squad/assignments/<assignment-id>/accepted-merge`
+- records `merged` status when the commit is already reachable from `HEAD`
+- performs a real `git merge --no-ff` only when the result commit is not already
+  reachable
+- records `merge_blocked` and exits with code `4` if an accepted merge fails
+- `squad_report.sh <theme-id>`
+- summarizes theme state, stories, acceptance artifacts, approvals,
+  assignments, results, merge readiness, accepted merges, reviews, rejections,
+  and replacements
+- launcher cleanup starts long-running daemons and the window watchdog outside
+  the project directory
+- watchdog-owned teardown stops both the handoff daemon and squad status daemon
+- cleanup script moves to `/` before stopping processes, killing sessions, and
+  closing terminal windows
+
+Success condition: a Hunt the Wumpus trial can drive the squad from theme
+recording through approval-gated assignments, result intake, review,
+merge-readiness, accepted merge, rejection/replacement paths, and a final
+auditable report, while teardown does not leave a process holding the trial
+directory open.
+
+Status: implemented. The trial still relies on the squad leader to orchestrate
+real transient agents and on the user to approve gates; this slice supplies the
+control-plane commands and report needed to run that trial.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -791,6 +826,12 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] review decisions can be recorded as durable assignment state
 - [x] rejected transient work can be preserved with durable rejection reasons
 - [x] replacement assignments can be linked to rejected or superseded work
+- [x] accepted merge decisions can be recorded and applied after merge-ready
+      and review-accepted state
+- [x] final theme verification summaries can be generated from durable squad
+      state
+- [x] launcher and watchdog teardown stop squad daemons without keeping the
+      project directory as their current working directory
 - [x] retirement lifecycle for stopped and running sessions
 - [x] retired transient worktrees are preserved for audit
 - [x] branch-local constitution articles required for squad authority
@@ -817,19 +858,17 @@ They are tracked here as resolved, partially resolved, or still open.
 - [ ] policy for crashed, stale, or wedged invisible agents exists as daemon
       detection, but not as a full squad-leader recovery workflow
 - [ ] transient result intake records handoffs, merge readiness, review,
-      rejection, and replacement links, but does not yet automate accepted merge
-      commits
+      rejection, replacement links, and accepted merges, but does not yet fetch
+      missing transient branches
 
 ### Open
 
-- [ ] merge policy for fetching missing transient branches and committing
-      accepted merges
+- [ ] merge policy for fetching missing transient branches
 - [ ] policy for merge conflicts created by transient work
 - [ ] policy for interrupting or restarting a running transient agent
 - [ ] default policy for which assignment templates require which approval
       gates
 - [ ] acceptance artifact schema and type policy beyond markdown files
-- [ ] how final verification summaries are produced and audited
 
 ## Heartbeats
 
@@ -885,7 +924,7 @@ or report a blocker to the user.
   task-specific branch names, or both?
 - What is the minimal set of squad helper scripts needed for the first
   experiment?
-- How should the squad leader merge and retire completed transient work when
-  multiple agents produce related commits?
+- When a result commit is not locally visible, should the squad leader fetch
+  from the transient worktree, from a remote branch, or from both?
 - What status format should be stable enough for scripts but easy for agents to
   write through helpers?

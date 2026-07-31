@@ -9,6 +9,7 @@
 - The branch can record telemetry with `squad_event.sh`, wrap commands with `squad_run.sh`, and inspect current telemetry with `squad_status.sh`.
 - The branch can record durable theme workflow state with `squad_theme.sh`.
 - The branch can generate durable transient assignment files from theme/story state with `squad_assign.sh`.
+- The branch can generate a durable theme report with `squad_report.sh <theme-id>`.
 - The launcher starts `squad_statusd.sh` automatically when the swarm starts; manual checks can still use `squad_statusd.sh --once --no-notify`.
 - Available transient role templates are `investigator`, `specifier`, `acceptance-builder`, `implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
 - Do not claim to have delegated to a missing transient template until the corresponding squad helper commands and templates exist.
@@ -24,6 +25,8 @@
 - Use the generated `.squad/assignments/<assignment-id>/assignment.md` as the assignment file passed to `squad_spawn.sh`.
 - Transient result handoffs should return to `squad-leader` as `git_handoff` drafts whose `task` is the assignment id.
 - Record result handoffs with `squad_assign.sh result <assignment-id> <handoff-file>` before making merge, review, rejection, or replacement decisions.
+- Use `squad_assign.sh accept-merge <assignment-id>` only after merge readiness and accepted review are recorded.
+- Generate `squad_report.sh <theme-id>` before final reporting to the user.
 
 ## Telemetry
 - Handoffs are for durable work transfer only.

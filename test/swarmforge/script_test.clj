@@ -512,6 +512,7 @@
                   "Reimplement only cave topology.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "story.md")
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance" "user approved acceptance spec")
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
                         "create"
@@ -587,7 +588,10 @@
               replacement-status (run {:dir root}
                                       (script "squad_assign.sh")
                                       "status"
-                                      "wumpus-cave-impl-2")]
+                                      "wumpus-cave-impl-2")
+              report (run {:dir root}
+                          (script "squad_report.sh")
+                          "wumpus")]
           (is (str/includes? (:out result) "STATE: result_received"))
           (is (str/includes? (:out result) (str "COMMIT: " commit)))
           (is (str/includes? (:out result-status) "STATE: result_received"))
@@ -601,6 +605,13 @@
           (is (str/includes? (:out replace) "SQUAD_ASSIGNMENT: wumpus-cave-impl-2"))
           (is (str/includes? (:out replace) "REPLACES: wumpus-cave-impl"))
           (is (str/includes? (:out replacement-status) "STATE: assignment_created"))
+          (is (str/includes? (:out report) "# Squad Report: wumpus"))
+          (is (str/includes? (:out report) "- Stories: cave-topology"))
+          (is (str/includes? (:out report) "acceptance: user approved acceptance spec"))
+          (is (str/includes? (:out report) "wumpus-cave-impl [implementer] story=cave-topology state=replacement_created"))
+          (is (str/includes? (:out report) "replacement=wumpus-cave-impl-2"))
+          (is (str/includes? (:out report) "wumpus-cave-impl-2 [implementer] story=cave-topology state=assignment_created"))
+          (is (str/includes? (:out report) "replaces=wumpus-cave-impl"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result.handoff")))
                              "from: implementer-001"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result")))
@@ -695,6 +706,61 @@
         (is (str/includes? (:out created) "REQUIRES: approval:acceptance"))
         (is (str/includes? (slurp (str assignment)) "requires: approval:acceptance"))
         (is (str/includes? (slurp (str metadata)) "requires: approval:acceptance")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-accepts-reviewed-merge
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
+      (write-file (fs/path root "swarmforge/role-templates/implementer.prompt")
+                  "implement\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "story.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Write unit tests first, then production code.\n")
+      (write-file (fs/path root "review.md")
+                  "Review: accepted.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "story.md")
+      (run {:dir root}
+           (script "squad_assign.sh")
+           "create"
+           "wumpus"
+           "cave-topology"
+           "implementer"
+           "wumpus-cave-accepted"
+           "instructions.md")
+      (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root "result.handoff")
+                    (str "id: 1\n"
+                         "from: implementer-001\n"
+                         "to: squad-leader\n"
+                         "priority: 50\n"
+                         "type: git_handoff\n"
+                         "task: wumpus-cave-accepted\n"
+                         "commit: " commit "\n"
+                         "\n"
+                         "merge_and_process implementer-001 " commit "\n"))
+        (run {:dir root} (script "squad_assign.sh") "result" "wumpus-cave-accepted" "result.handoff")
+        (run {:dir root} (script "squad_assign.sh") "merge-ready" "wumpus-cave-accepted")
+        (run {:dir root} (script "squad_assign.sh") "review" "wumpus-cave-accepted" "accepted" "review.md")
+        (let [accepted (run {:dir root} (script "squad_assign.sh") "accept-merge" "wumpus-cave-accepted")
+              status (run {:dir root} (script "squad_assign.sh") "status" "wumpus-cave-accepted")
+              report (run {:dir root} (script "squad_report.sh") "wumpus")]
+          (is (str/includes? (:out accepted) "STATE: merged"))
+          (is (str/includes? (:out accepted) "commit already reachable from HEAD"))
+          (is (str/includes? (:out status) "STATE: merged"))
+          (is (str/includes? (:out status) "ACCEPTED_MERGE:"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-accepted/accepted-merge")))
+                             "state: merged"))
+          (is (str/includes? (:out report) "wumpus-cave-accepted [implementer] story=cave-topology state=merged"))
+          (is (str/includes? (:out report) "accepted_merge=merged"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -963,8 +1029,11 @@
   (let [root (tmp-dir)
         sock (str (fs/path root "swarm.sock"))
         pid-file (fs/path root ".swarmforge/daemon/handoffd.pid")
+        squad-pid-file (fs/path root ".swarmforge/daemon/squad-statusd.pid")
         daemon (.start (java.lang.ProcessBuilder. ["sleep" "120"]))
-        pid (str (.pid daemon))]
+        squad-daemon (.start (java.lang.ProcessBuilder. ["sleep" "120"]))
+        pid (str (.pid daemon))
+        squad-pid (str (.pid squad-daemon))]
     (try
       (write-file (fs/path root ".swarmforge/tmux-socket") (str sock "\n"))
       (write-file (fs/path root ".swarmforge/sessions.tsv")
@@ -972,6 +1041,7 @@
                        "2\tcleaner\tswarmforge-cleaner\tCleaner\tcodex\n"))
       (write-file (fs/path root ".swarmforge/window-ids") "win-a\nwin-b\n")
       (write-file pid-file (str pid "\n"))
+      (write-file squad-pid-file (str squad-pid "\n"))
       (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-coder" "sleep" "120")
       (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-cleaner" "sleep" "120")
       (let [result (run {:dir root
@@ -984,9 +1054,13 @@
         (is (not= 0 (:exit (run {:dir root :ok? false}
                                 "tmux" "-S" sock "has-session" "-t" "swarmforge-cleaner"))))
         (is (not (fs/exists? pid-file)))
-        (is (false? (.isAlive daemon))))
+        (is (not (fs/exists? squad-pid-file)))
+        (is (false? (.isAlive daemon)))
+        (is (false? (.isAlive squad-daemon))))
       (finally
         (when (.isAlive daemon)
           (.destroyForcibly daemon))
+        (when (.isAlive squad-daemon)
+          (.destroyForcibly squad-daemon))
         (run {:dir root :ok? false} "tmux" "-S" sock "kill-server")
         (fs/delete-tree root)))))

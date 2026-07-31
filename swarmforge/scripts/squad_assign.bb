@@ -11,6 +11,7 @@
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
        "  squad_assign.sh merge-ready <assignment-id>\n"
        "  squad_assign.sh review <assignment-id> <accepted|changes-requested> <review-file>\n"
+       "  squad_assign.sh accept-merge <assignment-id>\n"
        "  squad_assign.sh reject <assignment-id> <reason-file>\n"
        "  squad_assign.sh replace <old-assignment-id> <new-assignment-id> <template> <instructions-file>\n"
        "  squad_assign.sh status <assignment-id>"))
@@ -263,6 +264,7 @@
         status (fs/path dir "status")
         result-file (fs/path dir "result.handoff")
         merge-file (fs/path dir "merge")
+        accepted-merge-file (fs/path dir "accepted-merge")
         review-file (fs/path dir "review")
         rejection-file (fs/path dir "rejection")
         replacement-file (fs/path dir "replacement")]
@@ -276,6 +278,7 @@
     (println "ASSIGNMENT_FILE:" (or (read-value metadata "assignment_file") "unknown"))
     (println "RESULT:" (if (fs/exists? result-file) (str result-file) "none"))
     (println "MERGE:" (if (fs/exists? merge-file) (str merge-file) "none"))
+    (println "ACCEPTED_MERGE:" (if (fs/exists? accepted-merge-file) (str accepted-merge-file) "none"))
     (println "REVIEW:" (if (fs/exists? review-file) (str review-file) "none"))
     (println "REJECTION:" (if (fs/exists? rejection-file) (str rejection-file) "none"))
     (println "REPLACEMENT:" (if (fs/exists? replacement-file) (str replacement-file) "none"))))
@@ -436,6 +439,68 @@
     (println "DECISION:" decision)
     (println "REVIEW:" (str (fs/path dir "review.md")))))
 
+(defn record-accepted-merge! [root dir assignment-id commit detail now]
+  (let [head (str/trim (:out (sh-at root "git" "rev-parse" "--short=10" "HEAD")))]
+    (write-atomic! (fs/path dir "accepted-merge")
+                   (str "assignment_id: " assignment-id "\n"
+                        "state: merged\n"
+                        "commit: " commit "\n"
+                        "merge_commit: " head "\n"
+                        "detail: " detail "\n"
+                        "updated_at: " now "\n"))
+    (write-atomic! (fs/path dir "status")
+                   (str "assignment_id: " assignment-id "\n"
+                        "state: merged\n"
+                        "detail: " detail "\n"
+                        "updated_at: " now "\n"))
+    (append-line! (fs/path dir "events.log")
+                  (str now "\tmerged\t" commit "\t" head "\t" detail))
+    (assignment-theme-event! root dir "merged" assignment-id commit head)
+    head))
+
+(defn accept-merge! [assignment-id]
+  (validate-id! "Assignment id" assignment-id)
+  (let [root (fs/absolutize (project-root))
+        dir (assignment-dir root assignment-id)
+        result-file (fs/path dir "result")
+        merge-file (fs/path dir "merge")
+        review-file (fs/path dir "review")
+        now (timestamp)]
+    (ensure-assignment-dir! dir assignment-id)
+    (ensure-file! "Assignment result not found" result-file)
+    (ensure-file! "Assignment merge readiness not found" merge-file)
+    (ensure-file! "Assignment accepted review not found" review-file)
+    (when-not (= "merge_ready" (read-value merge-file "state"))
+      (exit! 3 "Assignment is not merge_ready."))
+    (when-not (= "review_accepted" (read-value review-file "state"))
+      (exit! 3 "Assignment review is not accepted."))
+    (let [commit (read-value result-file "commit")]
+      (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
+        (exit! 2 "Assignment result must contain a 10-character commit."))
+      (try
+        (let [ancestor (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD")
+              detail (if (zero? (:exit ancestor))
+                       "commit already reachable from HEAD"
+                       (let [merge (sh-at root "git" "merge" "--no-ff" "-m" (str "Merge squad assignment " assignment-id) commit)]
+                         (when-not (zero? (:exit merge))
+                           (abort-merge! root)
+                           (write-merge-state! root dir assignment-id "merge_blocked" "accepted merge failed" commit now)
+                           (binding [*out* *err*]
+                             (println "SQUAD_ASSIGNMENT:" assignment-id)
+                             (println "STATE: merge_blocked")
+                             (println "COMMIT:" commit)
+                             (println "DETAIL: accepted merge failed"))
+                           (System/exit 4))
+                         "merged result commit"))]
+          (let [merge-commit (record-accepted-merge! root dir assignment-id commit detail now)]
+            (println "SQUAD_ASSIGNMENT:" assignment-id)
+            (println "STATE: merged")
+            (println "COMMIT:" commit)
+            (println "MERGE_COMMIT:" merge-commit)
+            (println "DETAIL:" detail)))
+        (finally
+          (abort-merge! root))))))
+
 (defn reject-assignment! [assignment-id reason-path]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
@@ -518,6 +583,9 @@
     "review" (if (= 4 (count args))
                (record-review! (second args) (nth args 2) (nth args 3))
                (exit! 1 usage-text))
+    "accept-merge" (if (= 2 (count args))
+                     (accept-merge! (second args))
+                     (exit! 1 usage-text))
     "reject" (if (= 3 (count args))
                (reject-assignment! (second args) (nth args 2))
                (exit! 1 usage-text))

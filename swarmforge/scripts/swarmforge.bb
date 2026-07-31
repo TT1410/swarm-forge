@@ -224,6 +224,7 @@
    "done_with_current_batch.sh" "done_with_current_batch.bb"
    "handoffd.bb" "stop_handoff_daemon.bb" "stop_handoff_daemon.sh"
    "squad_assign.bb" "squad_assign.sh"
+   "squad_report.bb" "squad_report.sh"
    "squad_tool.bb" "squad_tool.sh"
    "squad_theme.bb" "squad_theme.sh"
    "squad_statusd.bb" "squad_statusd.sh"
@@ -405,7 +406,8 @@
                       [(str (fs/path (:script-dir ctx) "handoffd.bb"))
                        (str (:working-dir ctx))])]
     (process/process command
-                     {:out (str (:handoff-daemon-log ctx))
+                     {:dir "/"
+                      :out (str (:handoff-daemon-log ctx))
                       :err :out})
     (println (str green "Started handoff daemon"
                   (when (> (count command) 2) " with OS sleep prevention")
@@ -417,7 +419,8 @@
     (fs/delete-if-exists (fs/path (:daemon-dir ctx) "squad-statusd.stop"))
     (process/process [(str (fs/path (:script-dir ctx) "squad_statusd.bb"))
                       (str (:working-dir ctx))]
-                     {:out (str (:squad-status-daemon-log ctx))
+                     {:dir "/"
+                      :out (str (:squad-status-daemon-log ctx))
                       :err :out})
     (println (str green "Started squad status daemon." reset))))
 
@@ -468,7 +471,8 @@
                           (:tmux-socket ctx)
                           (str (:working-dir ctx))
                           (:terminal-backend ctx)]
-                         {:out (str (:window-watchdog-log ctx))
+                         {:dir "/"
+                          :out (str (:window-watchdog-log ctx))
                           :err :out})
         (println (str yellow (terminal-call-out ctx "terminal_backend_label") " surfaces are not trackable; window watchdog is disabled for this backend." reset))))
     (do
