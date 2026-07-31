@@ -472,6 +472,28 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-status-daemon-stop-finds-orphan-with-missing-pid-file
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (fs/create-dirs (fs/path root ".swarmforge/daemon"))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (run {:dir root :ok? false}
+           "sh" "-c"
+           (str "bb " (script "squad_statusd.bb") " " root " >/dev/null 2>&1 &"))
+      (Thread/sleep 1000)
+      (let [pid-file (fs/path root ".swarmforge/daemon/squad-statusd.pid")]
+        (is (fs/exists? pid-file))
+        (let [pid (str/trim (slurp (str pid-file)))]
+          (fs/delete-if-exists pid-file)
+          (let [stop (run {:dir root} (script "stop_squad_status_daemon.bb") (str root))]
+            (is (= 0 (:exit stop)))
+            (Thread/sleep 300)
+            (is (not= 0 (:exit (run {:dir root :ok? false} "kill" "-0" pid)))))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest grok-launch-command-passes-initial-prompt
   (let [root (tmp-dir)]
     (try
@@ -567,6 +589,27 @@
                         (str root))]
         (is (not= 0 (:exit result)))
         (is (str/includes? (str (:err result) (:out result)) "No SwarmForge swarm")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest close-swarm-prefers-target-project-cleanup-script
+  (let [root (tmp-dir)
+        cleanup (fs/path root "swarmforge/scripts/swarm-cleanup.sh")
+        marker (fs/path root "target-cleanup-used")]
+    (try
+      (write-file (fs/path root ".swarmforge/tmux-socket") "/tmp/nonexistent.sock\n")
+      (write-file (fs/path root ".swarmforge/window-ids") "")
+      (write-file cleanup
+                  (str "#!/usr/bin/env zsh\n"
+                       "set -euo pipefail\n"
+                       "touch " marker "\n"))
+      (run {:dir root} "chmod" "+x" (str cleanup))
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_TERMINAL_BACKEND" "none"}}
+                        (close-swarm)
+                        (str root))]
+        (is (= 0 (:exit result)))
+        (is (fs/exists? marker)))
       (finally
         (fs/delete-tree root)))))
 
