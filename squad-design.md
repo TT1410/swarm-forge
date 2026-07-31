@@ -575,6 +575,28 @@ before making merge, review, rejection, or replacement decisions.
 
 Status: implemented through `squad_assign.sh result`.
 
+### Slice 10: Generated Transient Launch Scripts
+
+Move transient startup mechanics out of the tmux command string and into a
+durable per-agent launcher:
+
+- `.squad/agents/<agent-id>/launch.sh`
+- `SWARMFORGE_PROJECT_ROOT`
+- `SWARMFORGE_WORKTREE`
+- `SWARMFORGE_TOOL_CACHE_DIR`
+- shared tool cache `bin` directory prepended to `PATH`
+- worktree script directory prepended to `PATH`
+- tool cache directories created before agent startup
+- `cd "$SWARMFORGE_WORKTREE"` before invoking the agent CLI
+
+Success condition: `squad_spawn.sh` creates an auditable launch script for each
+transient agent, records the launch script and tool cache paths in metadata,
+and tmux starts that script rather than an inline command.
+
+Status: implemented. Generated prompts also name the project root, assigned
+worktree, and tool cache directory, and require the transient agent to verify it
+is working from the assigned worktree before task work.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -589,6 +611,11 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] atomic update and bounded locking protocol for `.swarmforge/roles.tsv`
 - [x] generated transient prompt format for current role-template spawning
 - [x] prompt storage location under `.squad/agents/<agent-id>/prompt.md`
+- [x] generated transient launch script format
+- [x] shared tool cache environment variables and startup directory creation
+      for transient agents
+- [x] portable transient launch model: project-root agent invocation plus
+      required worktree `cd`
 - [x] tmux session and window naming conventions for transient agents
 - [x] capture and persist transient tmux targets through generated metadata and
       `roles.tsv`

@@ -128,41 +128,52 @@
   (for [dir ["outbox/tmp" "sent" "failed" "inbox/new" "inbox/in_process" "inbox/completed"]]
     (fs/path worktree ".swarmforge" "handoffs" dir)))
 
-(defn render-prompt [{:keys [agent-id template task-id assignment template-text assignment-text]}]
+(defn render-prompt [{:keys [agent-id template task-id assignment template-text assignment-text root worktree tool-cache-dir]}]
   (str "Read swarmforge/constitution.prompt, then read every file it refers to recursively, and obey all of those instructions.\n"
        "Read the transient role template and assignment below, and follow them exactly.\n\n"
        "# Transient Agent\n\n"
        "agent_id: " agent-id "\n"
        "template: " template "\n"
-       "task_id: " task-id "\n\n"
+       "task_id: " task-id "\n"
+       "project_root: " root "\n"
+       "assigned_worktree: " worktree "\n"
+       "tool_cache_dir: " tool-cache-dir "\n\n"
        "You are a transient squad agent. Communicate through handoffs only. Do not talk directly to the user. Do not spawn other agents. Do not broaden this assignment without a squad-leader handoff.\n\n"
+       "Before task work, verify that your current directory is the assigned worktree. Do not edit the project root except through approved squad helper commands and shared tool-cache helpers.\n\n"
        "# Role Template\n\n"
        template-text "\n\n"
        "# Assignment\n\n"
        "Source file: " assignment "\n\n"
        assignment-text))
 
-(defn agent-command [agent worktree prompt-file role script-dir display]
-  (let [override (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND")
-        base (str "export SWARMFORGE_ROLE=" (sq role)
-                  " && export PATH=" (sq (str script-dir)) ":$PATH"
-                  " && cd " (sq (str worktree))
-                  " && ")]
+(defn agent-exec-command [agent prompt-file worktree root display]
+  (let [override (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND")]
     (if (not (str/blank? override))
-      (str base override)
-      (str base
-           (case agent
-             "claude" (str "claude --append-system-prompt-file " (sq (str prompt-file)) " --permission-mode acceptEdits -n " (sq (str "SwarmForge " display)) " \"$(cat " (sq (str prompt-file)) ")\"")
-             "codex" (str "codex -C " (sq (str worktree)) " \"$(cat " (sq (str prompt-file)) ")\"")
-             "copilot" (str "copilot -C " (sq (str worktree)) " --name " (sq (str "SwarmForge " display)) " -i \"$(cat " (sq (str prompt-file)) ")\"")
-             "grok" (str "grok --cwd " (sq (str worktree)) " --permission-mode acceptEdits --rules \"$(cat " (sq (str prompt-file)) ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\""))))))
+      override
+      (case agent
+        "claude" (str "claude --append-system-prompt-file " (sq (str prompt-file)) " --permission-mode acceptEdits -n " (sq (str "SwarmForge " display)) " \"$(cat " (sq (str prompt-file)) ")\"")
+        "codex" (str "codex -C " (sq (str root)) " \"$(cat " (sq (str prompt-file)) ")\"")
+        "copilot" (str "copilot -C " (sq (str root)) " --name " (sq (str "SwarmForge " display)) " -i \"$(cat " (sq (str prompt-file)) ")\"")
+        "grok" (str "grok --cwd " (sq (str root)) " --permission-mode acceptEdits --rules \"$(cat " (sq (str prompt-file)) ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\"")))))
 
-(defn launch-session! [{:keys [socket session display command]}]
+(defn render-launch-script [{:keys [agent-id root worktree prompt-file script-dir tool-cache-dir agent display]}]
+  (str "#!/usr/bin/env zsh\n"
+       "set -euo pipefail\n\n"
+       "export SWARMFORGE_ROLE=" (sq agent-id) "\n"
+       "export SWARMFORGE_PROJECT_ROOT=" (sq (str root)) "\n"
+       "export SWARMFORGE_WORKTREE=" (sq (str worktree)) "\n"
+       "export SWARMFORGE_TOOL_CACHE_DIR=" (sq (str tool-cache-dir)) "\n"
+       "export PATH=\"$SWARMFORGE_TOOL_CACHE_DIR/bin:" (str script-dir) ":$PATH\"\n\n"
+       "mkdir -p \"$SWARMFORGE_TOOL_CACHE_DIR/bin\" \"$SWARMFORGE_TOOL_CACHE_DIR/src\" \"$SWARMFORGE_TOOL_CACHE_DIR/cache\" \"$SWARMFORGE_TOOL_CACHE_DIR/manifests\" \"$SWARMFORGE_TOOL_CACHE_DIR/locks\"\n"
+       "cd \"$SWARMFORGE_WORKTREE\"\n"
+       "exec zsh -lc " (sq (agent-exec-command agent prompt-file worktree root display)) "\n"))
+
+(defn launch-session! [{:keys [socket session display launch-script]}]
   (when (str/blank? socket)
     (exit! 1 "Cannot launch transient agent: .swarmforge/tmux-socket is empty."))
   (when (sh-ok? "tmux" "-S" socket "has-session" "-t" session)
     (exit! 2 (str "Transient tmux session already exists: " session)))
-  (run! "tmux" "-S" socket "new-session" "-d" "-s" session "-n" display "zsh" "-lc" command)
+  (run! "tmux" "-S" socket "new-session" "-d" "-s" session "-n" display (str launch-script))
   (run! "tmux" "-S" socket "set-window-option" "-t" session "allow-rename" "off"))
 
 (defn acquire-lock! [lock-dir]
@@ -207,15 +218,18 @@
                         "detail: " detail "\n"
                         "updated_at: " now "\n"))))
 
-(defn write-metadata! [agent-dir {:keys [agent-id template task-id worktree session display agent]}]
+(defn write-metadata! [agent-dir {:keys [agent-id template task-id root worktree session display agent tool-cache-dir launch-script]}]
   (write-atomic! (fs/path agent-dir "metadata")
                  (str "agent_id: " agent-id "\n"
                       "template: " template "\n"
                       "task_id: " task-id "\n"
+                      "project_root: " root "\n"
                       "worktree: " worktree "\n"
                       "session: " session "\n"
                       "display: " display "\n"
-                      "backend: " agent "\n")))
+                      "backend: " agent "\n"
+                      "tool_cache_dir: " tool-cache-dir "\n"
+                      "launch_script: " launch-script "\n")))
 
 (defn spawn! [template task-id assignment-file]
   (validate-template! template)
@@ -247,7 +261,9 @@
                 agent-dir (fs/path squad-dir "agents" agent-id)
                 task-dir (fs/path squad-dir "tasks" task-id)
                 prompt-file (fs/path agent-dir "prompt.md")
+                launch-script (fs/path agent-dir "launch.sh")
                 script-dir (fs/path worktree "swarmforge" "scripts")
+                tool-cache-dir (fs/path root ".swarmforge" "tools")
                 row [agent-id agent-id (str worktree) session display agent "task"]]
             (when-not (#{"claude" "codex" "copilot" "grok"} agent)
               (exit! 2 (str "Unsupported transient agent backend: " agent)))
@@ -264,29 +280,45 @@
             (copy-scripts! worktree)
             (write-atomic! prompt-file
                            (render-prompt {:agent-id agent-id
-                                           :template template
-                                           :task-id task-id
-                                           :assignment (str assignment)
-                                           :template-text (slurp (str template-file))
-                                           :assignment-text (slurp (str assignment))}))
+                                          :template template
+                                          :task-id task-id
+                                          :assignment (str assignment)
+                                          :root (str root)
+                                          :worktree (str worktree)
+                                          :tool-cache-dir (str tool-cache-dir)
+                                          :template-text (slurp (str template-file))
+                                          :assignment-text (slurp (str assignment))}))
+            (write-atomic! launch-script
+                           (render-launch-script {:agent-id agent-id
+                                                  :root root
+                                                  :worktree worktree
+                                                  :prompt-file prompt-file
+                                                  :script-dir script-dir
+                                                  :tool-cache-dir tool-cache-dir
+                                                  :agent agent
+                                                  :display display}))
+            (fs/set-posix-file-permissions launch-script "rwxr-xr-x")
             (fs/copy assignment (fs/path task-dir "assignments" (str agent-id ".md")) {:replace-existing true})
             (append-role-atomic! roles-file row)
             (sync-runtime-files! root worktree)
             (write-metadata! agent-dir {:agent-id agent-id
                                         :template template
                                         :task-id task-id
+                                        :root (str root)
                                         :worktree (str worktree)
                                         :session session
                                         :display display
-                                        :agent agent})
+                                        :agent agent
+                                        :tool-cache-dir (str tool-cache-dir)
+                                        :launch-script (str launch-script)})
             (write-status-and-heartbeat! agent-dir agent-id task-id "spawned" "registered transient agent")
             (when-not (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
               (let [socket (str/trim (slurp (str (fs/path state-dir "tmux-socket"))))
-                    command (agent-command agent worktree prompt-file agent-id script-dir display)]
+                    launch-script launch-script]
                 (launch-session! {:socket socket
                                   :session session
                                   :display display
-                                  :command command})
+                                  :launch-script launch-script})
                 (write-status-and-heartbeat! agent-dir agent-id task-id "running" "detached tmux session started")))
             (println "SQUAD_AGENT:" agent-id)
             (println "TEMPLATE:" template)
