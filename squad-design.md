@@ -139,6 +139,52 @@ Not every script needs both files. Internal libraries and daemons may be `.bb`
 only when agents do not call them directly. Terminal and OS integration glue may
 remain shell-only when shell is the natural boundary.
 
+## Shared Tool Cache And Transient Launch Root
+
+Transient squad agents may need heavyweight task tools such as mutation, CRAP,
+DRY, and APS commands. Installing those tools separately in every transient
+worktree would waste time and make quality-gate assignments unnecessarily slow.
+
+Use a shared project-local tool cache:
+
+```text
+.swarmforge/tools/
+  bin/
+  src/
+  cache/
+  manifests/
+  locks/
+```
+
+The launcher should set:
+
+```text
+SWARMFORGE_PROJECT_ROOT=<project-root>
+SWARMFORGE_WORKTREE=<assigned-worktree>
+SWARMFORGE_TOOL_CACHE_DIR=<project-root>/.swarmforge/tools
+PATH=$SWARMFORGE_TOOL_CACHE_DIR/bin:<worktree>/swarmforge/scripts:$PATH
+```
+
+To make the shared cache writable without per-agent escalation, transient
+agents should be launched with the project root as their sandbox/project root,
+then instructed to immediately `cd` into their assigned worktree before doing
+task work.
+
+Generated transient prompts must state:
+
+- the project root
+- the assigned worktree
+- the shared tool cache directory
+- the requirement to `cd` to the assigned worktree before task work
+- the prohibition on editing the project root except through approved squad
+  helper commands and shared tool-cache helpers
+
+This is intentionally prompt-enforced at first because agent CLIs do not expose
+the same command-line contract for "project/sandbox root" versus "working
+directory". Codex has `-C`, Grok currently uses `--cwd`, and the existing Claude
+launcher relies on the shell working directory. A project-root launch plus
+explicit worktree `cd` is the portable baseline across agents.
+
 ## Dynamic Role Registry
 
 SwarmForge writes `.swarmforge/roles.tsv` at startup from
