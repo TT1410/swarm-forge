@@ -576,6 +576,24 @@
                           "fake-tool")
             status (run {:dir root} (script "squad_tool.sh") "status" "fake-tool")
             all-status (run {:dir root} (script "squad_tool.sh") "status")
+            require (run {:dir root}
+                         (script "squad_tool.sh")
+                         "require"
+                         "fake-tool"
+                         "github.com/example/fake-tool"
+                         "abcdef1234")
+            mismatch (run {:dir root :ok? false}
+                          (script "squad_tool.sh")
+                          "require"
+                          "fake-tool"
+                          "github.com/example/fake-tool"
+                          "ffffffffff")
+            missing (run {:dir root :ok? false}
+                         (script "squad_tool.sh")
+                         "require"
+                         "missing-tool"
+                         "github.com/example/missing-tool"
+                         "abcdef1234")
             cached-tool (fs/path root ".swarmforge/tools/bin/fake-tool")
             manifest (fs/path root ".swarmforge/tools/manifests/fake-tool.manifest")
             run-cached (run {:dir root} (str cached-tool))]
@@ -586,6 +604,13 @@
         (is (str/includes? (:out status) "SOURCE: github.com/example/fake-tool"))
         (is (str/includes? (:out status) "VERSION: abcdef1234"))
         (is (str/includes? (:out all-status) "TOOLS: fake-tool"))
+        (is (str/includes? (:out require) "STATE: available"))
+        (is (str/includes? (:out require) "EXECUTABLE:"))
+        (is (= 4 (:exit mismatch)))
+        (is (str/includes? (:err mismatch) "SQUAD_TOOL_MISMATCH: fake-tool"))
+        (is (str/includes? (:err mismatch) "FIELD: version"))
+        (is (= 3 (:exit missing)))
+        (is (str/includes? (:err missing) "SQUAD_TOOL_MISSING: missing-tool"))
         (is (= "fake-tool" (str/trim (:out run-cached))))
         (is (str/includes? (slurp (str manifest)) "tool: fake-tool"))
         (is (fs/exists? (fs/path root ".swarmforge/tools/src")))

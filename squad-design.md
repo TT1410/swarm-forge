@@ -604,6 +604,7 @@ Add a small control-plane helper for shared transient tools:
 
 - `squad_tool.sh init`
 - `squad_tool.sh register <tool-name> <source> <version> <executable-file>`
+- `squad_tool.sh require <tool-name> <source> <version>`
 - `squad_tool.sh status [tool-name]`
 - `.swarmforge/tools/bin/`
 - `.swarmforge/tools/src/`
@@ -618,6 +619,21 @@ query that manifest without reinstalling the tool.
 Status: implemented. This slice does not fetch or build CRAP, mutation, DRY, or
 APS tools. It only establishes the shared cache contract that later installers
 can use.
+
+### Slice 12: Shared Tool Cache Validation
+
+Add a fast validation path before tool installation:
+
+- `squad_tool.sh require <tool-name> <source> <version>`
+- success only when manifest and executable are present
+- success only when manifest source and version match the requested values
+- exit code `3` for missing cached tool
+- exit code `4` for source or version mismatch
+
+Success condition: a transient agent can check whether a required cached tool is
+usable before deciding to build or install it.
+
+Status: implemented.
 
 ## Implementation Deficits
 
@@ -637,6 +653,7 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] shared tool cache environment variables and startup directory creation
       for transient agents
 - [x] shared tool cache registry for already-built executables
+- [x] shared tool cache validation by source and version
 - [x] portable transient launch model: project-root agent invocation plus
       required worktree `cd`
 - [x] tmux session and window naming conventions for transient agents

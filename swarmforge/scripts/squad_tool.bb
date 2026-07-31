@@ -9,6 +9,7 @@
   (str "Usage:\n"
        "  squad_tool.sh init\n"
        "  squad_tool.sh register <tool-name> <source> <version> <executable-file>\n"
+       "  squad_tool.sh require <tool-name> <source> <version>\n"
        "  squad_tool.sh status [tool-name]"))
 
 (def valid-tool #"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -93,8 +94,7 @@
           (recur))))))
 
 (defn manifest-file [paths tool]
-  (fs/path (:manifests paths) (str tool ".manifest"))
-)
+  (fs/path (:manifests paths) (str tool ".manifest")))
 
 (defn executable-target [paths tool]
   (fs/path (:bin paths) tool))
@@ -130,6 +130,42 @@
         (println "MANIFEST:" (str manifest)))
       (finally
         (fs/delete-tree lock-dir)))))
+
+(defn require-tool! [tool source version]
+  (validate-tool! tool)
+  (let [paths (ensure-cache!)
+        manifest (manifest-file paths tool)
+        executable (executable-target paths tool)]
+    (cond
+      (not (fs/exists? manifest))
+      (exit! 3
+             (str "SQUAD_TOOL_MISSING: " tool)
+             (str "REASON: missing manifest"))
+
+      (not (fs/exists? executable))
+      (exit! 3
+             (str "SQUAD_TOOL_MISSING: " tool)
+             (str "REASON: missing executable"))
+
+      (not= source (read-value manifest "source"))
+      (exit! 4
+             (str "SQUAD_TOOL_MISMATCH: " tool)
+             (str "FIELD: source")
+             (str "EXPECTED: " source)
+             (str "ACTUAL: " (or (read-value manifest "source") "unknown")))
+
+      (not= version (read-value manifest "version"))
+      (exit! 4
+             (str "SQUAD_TOOL_MISMATCH: " tool)
+             (str "FIELD: version")
+             (str "EXPECTED: " version)
+             (str "ACTUAL: " (or (read-value manifest "version") "unknown")))
+
+      :else
+      (do
+        (println "SQUAD_TOOL:" tool)
+        (println "STATE: available")
+        (println "EXECUTABLE:" (str executable))))))
 
 (defn print-one! [paths tool]
   (validate-tool! tool)
@@ -178,6 +214,9 @@
     "register" (if (= 5 (count args))
                  (register-tool! (second args) (nth args 2) (nth args 3) (nth args 4))
                  (exit! 1 usage-text))
+    "require" (if (= 4 (count args))
+                (require-tool! (second args) (nth args 2) (nth args 3))
+                (exit! 1 usage-text))
     "status" (if (<= 1 (count args) 2)
                (apply status! (rest args))
                (exit! 1 usage-text))
