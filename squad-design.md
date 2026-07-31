@@ -701,6 +701,29 @@ durable artifact rather than an informal conversation decision.
 Status: implemented for markdown acceptance artifacts. Separate artifact types,
 schema validation, and generated test-script linkage remain future slices.
 
+### Slice 16: Merge Readiness Intake
+
+Add a conservative merge-intake check after a result handoff has been recorded:
+
+- `squad_assign.sh merge-ready <assignment-id>`
+- requires an existing assignment result
+- validates that the recorded 10-character result commit exists
+- marks the assignment `merge_ready` when the commit is already reachable from
+  `HEAD`
+- otherwise performs a dry-run `git merge --no-commit --no-ff <commit>`
+- aborts the dry-run merge before returning
+- records `merge_ready` when the dry-run merge succeeds
+- records `merge_blocked` and exits with code `4` when the dry-run merge fails
+- writes durable merge state under `.squad/assignments/<assignment-id>/merge`
+- surfaces the merge record from `squad_assign.sh status`
+
+Success condition: the squad leader can distinguish a recorded result that is
+safe to consider for review/QA/merge from one that is blocked by merge
+conflicts, without automatically resolving or committing anything.
+
+Status: implemented for local commits visible to the project checkout. Fetching
+missing transient branches and committing accepted merges remain future slices.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -734,6 +757,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] acceptance-spec artifacts can be recorded as durable theme state
 - [x] transient-to-leader result handoff validation and durable intake for
       assignment results
+- [x] transient result intake can record merge-ready or merge-blocked state
+      without committing a merge
 - [x] retirement lifecycle for stopped and running sessions
 - [x] retired transient worktrees are preserved for audit
 - [x] branch-local constitution articles required for squad authority
@@ -759,12 +784,13 @@ They are tracked here as resolved, partially resolved, or still open.
       implemented helpers only
 - [ ] policy for crashed, stale, or wedged invisible agents exists as daemon
       detection, but not as a full squad-leader recovery workflow
-- [ ] transient result intake records handoffs, but does not yet automate merge,
-      review, rejection, or replacement decisions
+- [ ] transient result intake records handoffs and merge readiness, but does not
+      yet automate review, rejection, replacement, or accepted merge commits
 
 ### Open
 
-- [ ] merge policy for transient branches and worktrees
+- [ ] merge policy for fetching missing transient branches and committing
+      accepted merges
 - [ ] policy for rejected transient work
 - [ ] policy for merge conflicts created by transient work
 - [ ] policy for interrupting, restarting, or replacing a transient agent

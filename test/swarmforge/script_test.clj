@@ -551,17 +551,33 @@
               result-status (run {:dir root}
                                  (script "squad_assign.sh")
                                  "status"
-                                 "wumpus-cave-impl")]
+                                 "wumpus-cave-impl")
+              merge-ready (run {:dir root}
+                               (script "squad_assign.sh")
+                               "merge-ready"
+                               "wumpus-cave-impl")
+              merge-status (run {:dir root}
+                                (script "squad_assign.sh")
+                                "status"
+                                "wumpus-cave-impl")]
           (is (str/includes? (:out result) "STATE: result_received"))
           (is (str/includes? (:out result) (str "COMMIT: " commit)))
           (is (str/includes? (:out result-status) "STATE: result_received"))
           (is (str/includes? (:out result-status) "RESULT:"))
+          (is (str/includes? (:out merge-ready) "STATE: merge_ready"))
+          (is (str/includes? (:out merge-ready) "commit already reachable from HEAD"))
+          (is (str/includes? (:out merge-status) "STATE: merge_ready"))
+          (is (str/includes? (:out merge-status) "MERGE:"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result.handoff")))
                              "from: implementer-001"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result")))
                              (str "commit: " commit)))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/merge")))
+                             "state: merge_ready"))
           (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
-                             (str "\tassignment_result_received\twumpus-cave-impl\timplementer-001\t" commit "\tcave-topology"))))
+                             (str "\tassignment_result_received\twumpus-cave-impl\timplementer-001\t" commit "\tcave-topology")))
+          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
+                             (str "\tassignment_merge_ready\twumpus-cave-impl\t" commit "\tcave-topology"))))
         (let [spawn (run {:dir root
                           :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                          (script "squad_spawn.sh")

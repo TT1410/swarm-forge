@@ -9,6 +9,7 @@
   (str "Usage:\n"
        "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file> [--requires approval:<gate>]\n"
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
+       "  squad_assign.sh merge-ready <assignment-id>\n"
        "  squad_assign.sh status <assignment-id>"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -21,6 +22,9 @@
 
 (defn sh-continue [& args]
   (apply process/sh (concat [{:continue true}] args)))
+
+(defn sh-at [dir & args]
+  (apply process/sh (concat [{:dir (str dir) :continue true}] args)))
 
 (defn project-root []
   (let [cwd (fs/cwd)
@@ -116,6 +120,10 @@
 
 (defn assignment-dir [root assignment-id]
   (fs/path root ".squad" "assignments" assignment-id))
+
+(defn ensure-assignment-dir! [dir assignment-id]
+  (when-not (fs/directory? dir)
+    (exit! 1 (str "Unknown assignment: " assignment-id))))
 
 (defn ensure-file! [message file]
   (when-not (fs/regular-file? file)
@@ -227,9 +235,9 @@
         dir (assignment-dir root assignment-id)
         metadata (fs/path dir "metadata")
         status (fs/path dir "status")
-        result-file (fs/path dir "result.handoff")]
-    (when-not (fs/directory? dir)
-      (exit! 1 (str "Unknown assignment: " assignment-id)))
+        result-file (fs/path dir "result.handoff")
+        merge-file (fs/path dir "merge")]
+    (ensure-assignment-dir! dir assignment-id)
     (println "ASSIGNMENT:" assignment-id)
     (println "THEME:" (or (read-value metadata "theme_id") "unknown"))
     (println "STORY:" (or (read-value metadata "story_id") "unknown"))
@@ -237,7 +245,8 @@
     (println "STATE:" (or (read-value status "state") "unknown"))
     (println "DETAIL:" (or (read-value status "detail") ""))
     (println "ASSIGNMENT_FILE:" (or (read-value metadata "assignment_file") "unknown"))
-    (println "RESULT:" (if (fs/exists? result-file) (str result-file) "none"))))
+    (println "RESULT:" (if (fs/exists? result-file) (str result-file) "none"))
+    (println "MERGE:" (if (fs/exists? merge-file) (str merge-file) "none"))))
 
 (defn validate-result-handoff! [assignment-id handoff-file]
   (let [type (read-value handoff-file "type")
@@ -268,8 +277,7 @@
         theme-id (or (read-value metadata "theme_id") "unknown")
         story-id (or (read-value metadata "story_id") "unknown")
         now (timestamp)]
-    (when-not (fs/directory? dir)
-      (exit! 1 (str "Unknown assignment: " assignment-id)))
+    (ensure-assignment-dir! dir assignment-id)
     (write-atomic! (fs/path dir "result.handoff")
                    (slurp (str handoff-file)))
     (write-atomic! (fs/path dir "result")
@@ -294,12 +302,87 @@
     (when-not (str/blank? body)
       (println "BODY_RECORDED: true"))))
 
+(defn merge-head-exists? [root]
+  (fs/exists? (fs/path root ".git" "MERGE_HEAD")))
+
+(defn abort-merge! [root]
+  (when (merge-head-exists? root)
+    (sh-at root "git" "merge" "--abort")))
+
+(defn write-merge-state! [root dir assignment-id state detail commit now]
+  (write-atomic! (fs/path dir "merge")
+                 (str "assignment_id: " assignment-id "\n"
+                      "state: " state "\n"
+                      "commit: " commit "\n"
+                      "detail: " detail "\n"
+                      "updated_at: " now "\n"))
+  (write-atomic! (fs/path dir "status")
+                 (str "assignment_id: " assignment-id "\n"
+                      "state: " state "\n"
+                      "detail: " detail "\n"
+                      "updated_at: " now "\n"))
+  (append-line! (fs/path dir "events.log")
+                (str now "\t" state "\t" commit "\t" detail))
+  (let [metadata (fs/path dir "metadata")
+        theme-id (read-value metadata "theme_id")
+        story-id (read-value metadata "story_id")]
+    (when theme-id
+      (append-line! (fs/path root ".squad" "themes" theme-id "events.log")
+                    (str now "\tassignment_" state "\t" assignment-id "\t" commit "\t" (or story-id "unknown"))))))
+
+(defn mark-merge-ready! [assignment-id]
+  (validate-id! "Assignment id" assignment-id)
+  (let [root (fs/absolutize (project-root))
+        dir (assignment-dir root assignment-id)
+        result-file (fs/path dir "result")
+        now (timestamp)]
+    (ensure-assignment-dir! dir assignment-id)
+    (ensure-file! "Assignment result not found" result-file)
+    (let [commit (read-value result-file "commit")]
+      (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
+        (exit! 2 "Assignment result must contain a 10-character commit."))
+      (try
+        (let [known (sh-at root "git" "rev-parse" "--verify" (str commit "^{commit}"))]
+          (when-not (zero? (:exit known))
+            (exit! 2 (str "Unknown result commit: " commit))))
+        (let [ancestor (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD")]
+          (if (zero? (:exit ancestor))
+            (do
+              (write-merge-state! root dir assignment-id "merge_ready" "commit already reachable from HEAD" commit now)
+              (println "SQUAD_ASSIGNMENT:" assignment-id)
+              (println "STATE: merge_ready")
+              (println "COMMIT:" commit)
+              (println "DETAIL: commit already reachable from HEAD"))
+            (let [merge (sh-at root "git" "merge" "--no-commit" "--no-ff" commit)]
+              (if (zero? (:exit merge))
+                (do
+                  (abort-merge! root)
+                  (write-merge-state! root dir assignment-id "merge_ready" "dry-run merge passed" commit now)
+                  (println "SQUAD_ASSIGNMENT:" assignment-id)
+                  (println "STATE: merge_ready")
+                  (println "COMMIT:" commit)
+                  (println "DETAIL: dry-run merge passed"))
+                (do
+                  (abort-merge! root)
+                  (write-merge-state! root dir assignment-id "merge_blocked" "dry-run merge failed" commit now)
+                  (binding [*out* *err*]
+                    (println "SQUAD_ASSIGNMENT:" assignment-id)
+                    (println "STATE: merge_blocked")
+                    (println "COMMIT:" commit)
+                    (println "DETAIL: dry-run merge failed"))
+                  (System/exit 4))))))
+        (finally
+          (abort-merge! root))))))
+
 (defn -main [& args]
   (case (first args)
     "create" (create-assignment! (parse-create-args! args))
     "result" (if (= 3 (count args))
                (record-result! (second args) (nth args 2))
                (exit! 1 usage-text))
+    "merge-ready" (if (= 2 (count args))
+                    (mark-merge-ready! (second args))
+                    (exit! 1 usage-text))
     "status" (if (= 2 (count args))
                (print-status! (second args))
                (exit! 1 usage-text))
