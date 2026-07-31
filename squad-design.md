@@ -270,6 +270,15 @@ the squad leader should ask for acceptance-spec approval before production code
 is implemented. For small tasks, the squad leader may collapse those gates only
 when the story and acceptance criteria are trivial.
 
+The squad leader owns theme-to-stories decomposition, but does not own the
+artifact-producing transitions after that point. For theme-sized work,
+story-to-Gherkin, story-to-QA-procedure, acceptance infrastructure,
+implementation, review, hardening, QA, and cleanup transitions should be
+assigned to transient agents. The squad leader records returned artifacts,
+frames approval gates, monitors status, decides merge/rejection/replacement,
+and reports to the user. The leader may do specialist artifact work directly
+only when the user explicitly asks the leader to bypass delegation.
+
 ## Example: Faithful Hunt The Wumpus
 
 User request:
@@ -788,6 +797,30 @@ Status: implemented. The trial still relies on the squad leader to orchestrate
 real transient agents and on the user to approve gates; this slice supplies the
 control-plane commands and report needed to run that trial.
 
+### Slice 19: Squad Leader Delegation Boundary
+
+The first Hunt the Wumpus trial exposed a policy gap: the squad leader correctly
+created the theme, split stories, and asked for approval, but then began
+authoring Gherkin, QA procedures, and implementation work directly. That is not
+the intended squad workflow for theme-sized work.
+
+Clarify the leader boundary:
+
+- the leader owns theme-to-stories decomposition
+- the leader must delegate story-to-Gherkin and story-to-QA-procedure work
+- the leader must delegate implementation, review, hardening, QA, and cleanup
+- the leader records returned artifacts and decisions
+- the leader may bypass delegation only when the user explicitly asks for that
+  direct execution
+
+Success condition: a fresh squad leader should create durable assignments and
+spawn matching transient agents for artifact-producing transitions instead of
+doing those transitions personally.
+
+Status: implemented as constitution and role-prompt policy. A future slice may
+add helper-level enforcement that requires an assignment to name the intended
+template before artifacts can be recorded.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -832,6 +865,8 @@ They are tracked here as resolved, partially resolved, or still open.
       state
 - [x] launcher and watchdog teardown stop squad daemons without keeping the
       project directory as their current working directory
+- [x] squad leader delegation boundary is explicit for post-story
+      artifact-producing transitions
 - [x] retirement lifecycle for stopped and running sessions
 - [x] retired transient worktrees are preserved for audit
 - [x] branch-local constitution articles required for squad authority
@@ -869,6 +904,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [ ] default policy for which assignment templates require which approval
       gates
 - [ ] acceptance artifact schema and type policy beyond markdown files
+- [ ] helper-level enforcement that acceptance artifacts cite a producing
+      assignment or transient agent
 
 ## Heartbeats
 

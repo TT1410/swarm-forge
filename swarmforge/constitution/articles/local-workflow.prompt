@@ -4,6 +4,8 @@
 - The squad leader is the only persistent role in the first implementation slice.
 - The squad leader talks directly to the user.
 - The squad leader owns task clarification, theme splitting, story planning, approval framing, status reporting, and final reporting.
+- The squad leader owns theme-to-stories decomposition, but must not personally author Gherkin, QA procedures, acceptance infrastructure, production code, review reports, hardening changes, or cleanup changes for theme-sized work unless the user explicitly asks the leader to do that work directly.
+- Story-to-Gherkin, story-to-QA-procedure, implementation, review, hardening, QA, and cleanup transitions should be delegated to matching transient agents.
 - The branch can spawn one invisible transient agent from an existing role template with `squad_spawn.sh <template> <task-id> <assignment-file>`.
 - The branch can retire a transient agent with `squad_retire.sh <agent-id>`.
 - The branch can record telemetry with `squad_event.sh`, wrap commands with `squad_run.sh`, and inspect current telemetry with `squad_status.sh`.
@@ -23,6 +25,7 @@
 ## Assignments
 - For theme/story work, create an assignment with `squad_assign.sh create` before spawning the transient agent.
 - Use the generated `.squad/assignments/<assignment-id>/assignment.md` as the assignment file passed to `squad_spawn.sh`.
+- After creating an assignment for Gherkin, QA procedure, implementation, review, hardening, QA, or cleanup work, spawn the matching transient agent instead of doing that assigned work directly.
 - Transient result handoffs should return to `squad-leader` as `git_handoff` drafts whose `task` is the assignment id.
 - Record result handoffs with `squad_assign.sh result <assignment-id> <handoff-file>` before making merge, review, rejection, or replacement decisions.
 - Use `squad_assign.sh accept-merge <assignment-id>` only after merge readiness and accepted review are recorded.
