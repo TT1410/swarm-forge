@@ -557,6 +557,61 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-assign-enforces-required-approval-gates
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
+      (write-file (fs/path root "swarmforge/role-templates/implementer.prompt")
+                  "implement\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "story.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Write unit tests first, then production code.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "story.md")
+      (let [blocked (run {:dir root :ok? false}
+                         (script "squad_assign.sh")
+                         "create"
+                         "wumpus"
+                         "cave-topology"
+                         "implementer"
+                         "wumpus-cave-impl"
+                         "instructions.md"
+                         "--requires"
+                         "approval:acceptance")]
+        (is (= 3 (:exit blocked)))
+        (is (str/includes? (:err blocked) "SQUAD_ASSIGNMENT_BLOCKED: wumpus-cave-impl"))
+        (is (str/includes? (:err blocked) "missing required approval gate acceptance"))
+        (is (not (fs/exists? (fs/path root ".squad/assignments/wumpus-cave-impl")))))
+      (run {:dir root}
+           (script "squad_theme.sh")
+           "approve"
+           "wumpus"
+           "acceptance"
+           "user approved acceptance spec")
+      (let [created (run {:dir root}
+                         (script "squad_assign.sh")
+                         "create"
+                         "wumpus"
+                         "cave-topology"
+                         "implementer"
+                         "wumpus-cave-impl"
+                         "instructions.md"
+                         "--requires"
+                         "approval:acceptance")
+            assignment (fs/path root ".squad/assignments/wumpus-cave-impl/assignment.md")
+            metadata (fs/path root ".squad/assignments/wumpus-cave-impl/metadata")]
+        (is (str/includes? (:out created) "REQUIRES: approval:acceptance"))
+        (is (str/includes? (slurp (str assignment)) "requires: approval:acceptance"))
+        (is (str/includes? (slurp (str metadata)) "requires: approval:acceptance")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-tool-registers-executables-in-shared-cache
   (let [root (tmp-dir)]
     (try

@@ -7,7 +7,7 @@
 
 (def usage-text
   (str "Usage:\n"
-       "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file>\n"
+       "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file> [--requires approval:<gate>]\n"
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
        "  squad_assign.sh status <assignment-id>"))
 
@@ -75,6 +75,42 @@
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
 
+(defn approval-gates [theme]
+  (let [file (fs/path theme "approvals.tsv")]
+    (if (fs/exists? file)
+      (->> (str/split-lines (slurp (str file)))
+           (keep (fn [line]
+                   (let [[_ gate] (str/split line #"\t" 3)]
+                     (when-not (str/blank? gate)
+                       gate))))
+           set)
+      #{})))
+
+(defn parse-requirement! [requirement]
+  (when requirement
+    (let [[kind value] (str/split requirement #":" 2)]
+      (when-not (= "approval" kind)
+        (exit! 2 "Requirement must use approval:<gate>."))
+      (when (str/blank? value)
+        (exit! 2 "Requirement approval gate may not be blank."))
+      (validate-id! "Approval gate" value)
+      {:kind kind
+       :value value
+       :text requirement})))
+
+(defn parse-create-args! [args]
+  (when-not (#{6 8} (count args))
+    (exit! 1 usage-text))
+  (let [[_ theme-id story-id template assignment-id instructions-file flag requirement] args]
+    (when (and flag (not= "--requires" flag))
+      (exit! 1 usage-text))
+    {:theme-id theme-id
+     :story-id story-id
+     :template template
+     :assignment-id assignment-id
+     :instructions-file instructions-file
+     :requirement (parse-requirement! requirement)}))
+
 (defn theme-dir [root theme-id]
   (fs/path root ".squad" "themes" theme-id))
 
@@ -96,12 +132,15 @@
        "task: " assignment-id "\n"
        "commit: <10-char-commit>\n"))
 
-(defn render-assignment [{:keys [theme-id story-id template assignment-id theme-text story-text instructions-text]}]
+(defn render-assignment [{:keys [theme-id story-id template assignment-id theme-text story-text instructions-text requirement]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
        "story_id: " story-id "\n"
-       "template: " template "\n\n"
+       "template: " template "\n"
+       (when requirement
+         (str "requires: " (:text requirement) "\n"))
+       "\n"
        "## Theme\n\n"
        theme-text "\n\n"
        "## Story\n\n"
@@ -117,7 +156,7 @@
        (result-handoff-template assignment-id)
        "```\n"))
 
-(defn create-assignment! [theme-id story-id template assignment-id instructions-file]
+(defn create-assignment! [{:keys [theme-id story-id template assignment-id instructions-file requirement]}]
   (doseq [[kind value] [["Theme id" theme-id]
                         ["Story id" story-id]
                         ["Assignment id" assignment-id]]]
@@ -134,6 +173,12 @@
     (ensure-file! "Theme file not found" theme-file)
     (ensure-file! "Story file not found" story-file)
     (ensure-file! "Role template not found" template-file)
+    (when (and requirement
+               (= "approval" (:kind requirement))
+               (not (contains? (approval-gates theme) (:value requirement))))
+      (exit! 3
+             (str "SQUAD_ASSIGNMENT_BLOCKED: " assignment-id)
+             (str "REASON: missing required approval gate " (:value requirement))))
     (when (fs/exists? dir)
       (exit! 2 (str "Assignment already exists: " assignment-id)))
     (fs/create-dirs dir)
@@ -143,7 +188,8 @@
                                               :assignment-id assignment-id
                                               :theme-text (slurp (str theme-file))
                                               :story-text (slurp (str story-file))
-                                              :instructions-text (slurp (str instructions))})
+                                              :instructions-text (slurp (str instructions))
+                                              :requirement requirement})
           assignment-file (fs/path dir "assignment.md")]
       (write-atomic! assignment-file assignment-text)
       (write-atomic! (fs/path dir "result-handoff.draft")
@@ -153,6 +199,8 @@
                           "theme_id: " theme-id "\n"
                           "story_id: " story-id "\n"
                           "template: " template "\n"
+                          (when requirement
+                            (str "requires: " (:text requirement) "\n"))
                           "assignment_file: " assignment-file "\n"
                           "created_at: " now "\n"))
       (write-atomic! (fs/path dir "status")
@@ -169,6 +217,8 @@
       (println "THEME:" theme-id)
       (println "STORY:" story-id)
       (println "TEMPLATE:" template)
+      (when requirement
+        (println "REQUIRES:" (:text requirement)))
       (println "ASSIGNMENT:" (str assignment-file)))))
 
 (defn print-status! [assignment-id]
@@ -246,9 +296,7 @@
 
 (defn -main [& args]
   (case (first args)
-    "create" (if (= 6 (count args))
-               (create-assignment! (second args) (nth args 2) (nth args 3) (nth args 4) (nth args 5))
-               (exit! 1 usage-text))
+    "create" (create-assignment! (parse-create-args! args))
     "result" (if (= 3 (count args))
                (record-result! (second args) (nth args 2))
                (exit! 1 usage-text))

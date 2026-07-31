@@ -658,6 +658,29 @@ under the shared cache.
 Status: implemented for caller-provided install commands. Repository-specific
 CRAP, mutation, DRY, and APS installers remain future slices.
 
+### Slice 14: Approval-Gated Assignment Creation
+
+Connect recorded approval gates to downstream assignment creation:
+
+- `squad_assign.sh create <theme-id> <story-id> <template> <assignment-id>
+  <instructions-file> --requires approval:<gate>`
+- validates that the theme and story exist
+- loads `.squad/themes/<theme-id>/approvals.tsv`
+- refuses assignment creation when the required approval gate has not been
+  recorded
+- exits with code `3` for a blocked assignment
+- records the requirement in the generated assignment and metadata when the
+  assignment is allowed
+- preserves the original ungated `create` form for early specification and
+  backward-compatible workflows
+
+Success condition: the squad leader can prevent implementation, review, QA,
+hardening, or cleanup assignments from running ahead of user-approved upstream
+artifacts.
+
+Status: implemented for explicit `approval:<gate>` requirements. Default
+template-to-gate policy remains a future slice.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -686,6 +709,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] squad leader wake-up target and notification text for the current daemon
 - [x] command-wrapper behavior for current long-running command telemetry
 - [x] leader-to-transient assignment file convention for theme/story work
+- [x] user approval gates can be enforced by explicit downstream assignment
+      requirements
 - [x] transient-to-leader result handoff validation and durable intake for
       assignment results
 - [x] retirement lifecycle for stopped and running sessions
@@ -713,9 +738,6 @@ They are tracked here as resolved, partially resolved, or still open.
       implemented helpers only
 - [ ] policy for crashed, stale, or wedged invisible agents exists as daemon
       detection, but not as a full squad-leader recovery workflow
-- [ ] user approval gates are recorded in
-      `.squad/themes/<theme-id>/approvals.tsv`, but are not yet connected to
-      downstream assignments
 - [ ] acceptance-spec decisions can be recorded as approval gates, but do not
       yet have dedicated acceptance artifact state
 - [ ] transient result intake records handoffs, but does not yet automate merge,
@@ -727,9 +749,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [ ] policy for rejected transient work
 - [ ] policy for merge conflicts created by transient work
 - [ ] policy for interrupting, restarting, or replacing a transient agent
-- [ ] how user approval gates flow from
-      `.squad/themes/<theme-id>/approvals.tsv` into later implementation and QA
-      assignments
+- [ ] default policy for which assignment templates require which approval
+      gates
 - [ ] how acceptance-spec decisions are represented beyond the first approval
       gate records
 - [ ] how final verification summaries are produced and audited
