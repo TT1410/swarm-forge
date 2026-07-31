@@ -6,6 +6,7 @@
 - The squad leader owns task clarification, theme splitting, story planning, approval framing, status reporting, and final reporting.
 - The squad leader owns theme-to-stories decomposition, but must not personally author Gherkin, QA procedures, acceptance infrastructure, production code, review reports, hardening changes, or cleanup changes for theme-sized work unless the user explicitly asks the leader to do that work directly.
 - Story-to-Gherkin, story-to-QA-procedure, implementation, review, hardening, QA, and cleanup transitions should be delegated to matching transient agents.
+- Gherkin and QA procedure artifacts are project artifacts. Store Gherkin under `features/` and QA procedures or scripts under `qa/`; `.squad` should store orchestration metadata and references, not hidden product test artifacts.
 - The branch can spawn one invisible transient agent from an existing role template with `squad_spawn.sh <template> <task-id> <assignment-file>`.
 - The branch can retire a transient agent with `squad_retire.sh <agent-id>`.
 - The branch can record telemetry with `squad_event.sh`, wrap commands with `squad_run.sh`, and inspect current telemetry with `squad_status.sh`.

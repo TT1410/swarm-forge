@@ -775,8 +775,10 @@ Record acceptance artifacts as durable theme state:
 
 - `squad_theme.sh acceptance <theme-id> <artifact-id> <acceptance-file>`
 - validates that the theme exists
-- stores the artifact under
-  `.squad/themes/<theme-id>/acceptance/<artifact-id>.md`
+- requires the artifact file to live under project `features/` or `qa/`
+- stores a reference under
+  `.squad/themes/<theme-id>/acceptance/<artifact-id>.ref`
+- does not copy generated Gherkin or QA procedure content into `.squad`
 - refuses duplicate artifact ids
 - updates the theme status to `acceptance_added`
 - appends an `acceptance_added` event
@@ -786,8 +788,9 @@ Success condition: Gherkin and acceptance-spec outputs can be recorded before
 the user approves the `acceptance` gate, and later assignments can point to a
 durable artifact rather than an informal conversation decision.
 
-Status: implemented for markdown acceptance artifacts. Separate artifact types,
-schema validation, and generated test-script linkage remain future slices.
+Status: implemented for project-local `features/` and `qa/` artifact
+references. Separate artifact types, schema validation, and generated
+test-script linkage remain future slices.
 
 ### Slice 16: Merge Readiness Intake
 
@@ -952,6 +955,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] user approval gates can be enforced by explicit downstream assignment
       requirements
 - [x] acceptance-spec artifacts can be recorded as durable theme state
+- [x] Gherkin and QA acceptance artifacts are enforced as project artifacts
+      under `features/` or `qa/`, with `.squad` storing references only
 - [x] transient-to-leader result handoff validation and durable intake for
       assignment results
 - [x] transient result intake can record merge-ready or merge-blocked state
@@ -1008,7 +1013,7 @@ They are tracked here as resolved, partially resolved, or still open.
 - [ ] policy for interrupting or restarting a running transient agent
 - [ ] default policy for which assignment templates require which approval
       gates
-- [ ] acceptance artifact schema and type policy beyond markdown files
+- [ ] acceptance artifact schema and type policy beyond path references
 - [ ] helper-level enforcement that acceptance artifacts cite a producing
       assignment or transient agent
 - [ ] compatibility lifetime for old `handoffd.bb` and `squad_statusd.bb`

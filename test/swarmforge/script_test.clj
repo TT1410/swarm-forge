@@ -425,10 +425,12 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "story.md")
                   "Story: cave topology and setup.\n")
-      (write-file (fs/path root "acceptance.md")
+      (write-file (fs/path root "features/cave-topology.feature")
                   (str "Feature: Cave topology\n\n"
                        "  Scenario: The cave has twenty rooms\n"
                        "    Then the cave contains 20 rooms\n"))
+      (write-file (fs/path root "qa/cave-topology.md")
+                  "QA procedure: verify cave topology through the user interface.\n")
       (let [create (run {:dir root}
                         (script "squad_theme.sh")
                         "create"
@@ -445,7 +447,13 @@
                             "acceptance"
                             "wumpus"
                             "cave-topology"
-                            "acceptance.md")
+                            "features/cave-topology.feature")
+            qa-procedure (run {:dir root}
+                              (script "squad_theme.sh")
+                              "acceptance"
+                              "wumpus"
+                              "cave-topology-qa"
+                              "qa/cave-topology.md")
             approve-stories (run {:dir root}
                                   (script "squad_theme.sh")
                                   "approve"
@@ -466,26 +474,37 @@
         (is (str/includes? (:out create) "STATE: theme_created"))
         (is (str/includes? (:out story) "STORY: cave-topology"))
         (is (str/includes? (:out acceptance) "ACCEPTANCE: cave-topology"))
+        (is (str/includes? (:out acceptance) "PATH: features/cave-topology.feature"))
         (is (str/includes? (:out acceptance) "STATE: acceptance_added"))
+        (is (str/includes? (:out qa-procedure) "ACCEPTANCE: cave-topology-qa"))
+        (is (str/includes? (:out qa-procedure) "PATH: qa/cave-topology.md"))
         (is (str/includes? (:out approve-stories) "STATE: approved_stories"))
         (is (str/includes? (:out approve-acceptance) "STATE: approved_acceptance"))
         (is (str/includes? (:out status) "THEME: wumpus"))
         (is (str/includes? (:out status) "STATE: approved_acceptance"))
         (is (str/includes? (:out status) "STORIES: cave-topology"))
-        (is (str/includes? (:out status) "ACCEPTANCE: cave-topology"))
+        (is (str/includes? (:out status) "ACCEPTANCE: cave-topology,cave-topology-qa"))
         (is (str/includes? (:out status) "APPROVALS: 2"))
         (is (str/includes? (slurp (str (fs/path theme-dir "theme.md")))
                            "faithful Hunt the Wumpus"))
         (is (str/includes? (slurp (str (fs/path theme-dir "stories/cave-topology.md")))
                            "cave topology"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "acceptance/cave-topology.md")))
+        (is (str/includes? (slurp (str (fs/path theme-dir "acceptance/cave-topology.ref")))
+                           "path: features/cave-topology.feature"))
+        (is (str/includes? (slurp (str (fs/path theme-dir "acceptance/cave-topology-qa.ref")))
+                           "path: qa/cave-topology.md"))
+        (is (str/includes? (slurp (str (fs/path root "features/cave-topology.feature")))
                            "Feature: Cave topology"))
+        (is (str/includes? (slurp (str (fs/path root "qa/cave-topology.md")))
+                           "QA procedure"))
         (is (str/includes? (slurp (str (fs/path theme-dir "approvals.tsv")))
                            "\tstories\tuser approved story split"))
         (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
                            "\tapproved_acceptance\tuser approved acceptance spec"))
         (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
-                           "\tacceptance_added\tcave-topology")))
+                           "\tacceptance_added\tcave-topology\tfeatures/cave-topology.feature"))
+        (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
+                           "\tacceptance_added\tcave-topology-qa\tqa/cave-topology.md")))
       (finally
         (fs/delete-tree root)))))
 

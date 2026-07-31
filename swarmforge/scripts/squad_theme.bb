@@ -52,6 +52,17 @@
       (exit! 1 (str "Source file not found: " file)))
     file))
 
+(defn relative-project-artifact! [root file]
+  (let [root-path (.normalize (.toAbsolutePath (fs/path root)))
+        file-path (.normalize (.toAbsolutePath (fs/path file)))]
+    (when-not (.startsWith file-path root-path)
+      (exit! 2 "Acceptance artifacts must be project-local files."))
+    (let [relative (str/replace (str (.relativize root-path file-path)) "\\" "/")]
+      (when-not (or (str/starts-with? relative "features/")
+                    (str/starts-with? relative "qa/"))
+        (exit! 2 "Acceptance artifacts must live under features/ or qa/."))
+      relative)))
+
 (defn write-atomic! [file content]
   (fs/create-dirs (fs/parent file))
   (let [tmp (fs/create-temp-file {:dir (fs/parent file)
@@ -128,23 +139,28 @@
   (validate-id! "Acceptance artifact id" artifact-id)
   (let [root (fs/absolutize (project-root))
         source (source-file! acceptance-file)
+        relative-source (relative-project-artifact! root source)
         dir (theme-dir root theme-id)
-        artifact-path (fs/path dir "acceptance" (str artifact-id ".md"))
+        artifact-path (fs/path dir "acceptance" (str artifact-id ".ref"))
         now (timestamp)]
     (ensure-theme! dir theme-id)
     (when (fs/exists? artifact-path)
       (exit! 2 (str "Acceptance artifact already exists: " artifact-id)))
     (fs/create-dirs (fs/parent artifact-path))
-    (fs/copy source artifact-path)
+    (write-atomic! artifact-path
+                   (str "artifact_id: " artifact-id "\n"
+                        "path: " relative-source "\n"
+                        "recorded_at: " now "\n"))
     (write-atomic! (fs/path dir "status")
                    (str "theme_id: " theme-id "\n"
                         "state: acceptance_added\n"
-                        "detail: " artifact-id "\n"
+                        "detail: " artifact-id " " relative-source "\n"
                         "updated_at: " now "\n"))
     (append-line! (fs/path dir "events.log")
-                  (str now "\tacceptance_added\t" artifact-id))
+                  (str now "\tacceptance_added\t" artifact-id "\t" relative-source))
     (println "SQUAD_THEME:" theme-id)
     (println "ACCEPTANCE:" artifact-id)
+    (println "PATH:" relative-source)
     (println "STATE: acceptance_added")))
 
 (defn approve! [theme-id gate detail-parts]
@@ -186,7 +202,7 @@
       (->> (fs/list-dir acceptance-dir)
            (filter fs/regular-file?)
            (map fs/file-name)
-           (map #(str/replace % #"\.md$" ""))
+           (map #(str/replace % #"\.ref$" ""))
            sort
            vec)
       [])))
