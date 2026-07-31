@@ -9,6 +9,7 @@
   (str "Usage:\n"
        "  squad_theme.sh create <theme-id> <theme-file>\n"
        "  squad_theme.sh story <theme-id> <story-id> <story-file>\n"
+       "  squad_theme.sh acceptance <theme-id> <artifact-id> <acceptance-file>\n"
        "  squad_theme.sh approve <theme-id> <gate> <detail...>\n"
        "  squad_theme.sh status <theme-id>"))
 
@@ -122,6 +123,30 @@
     (println "STORY:" story-id)
     (println "STATE: story_added")))
 
+(defn add-acceptance! [theme-id artifact-id acceptance-file]
+  (validate-id! "Theme id" theme-id)
+  (validate-id! "Acceptance artifact id" artifact-id)
+  (let [root (fs/absolutize (project-root))
+        source (source-file! acceptance-file)
+        dir (theme-dir root theme-id)
+        artifact-path (fs/path dir "acceptance" (str artifact-id ".md"))
+        now (timestamp)]
+    (ensure-theme! dir theme-id)
+    (when (fs/exists? artifact-path)
+      (exit! 2 (str "Acceptance artifact already exists: " artifact-id)))
+    (fs/create-dirs (fs/parent artifact-path))
+    (fs/copy source artifact-path)
+    (write-atomic! (fs/path dir "status")
+                   (str "theme_id: " theme-id "\n"
+                        "state: acceptance_added\n"
+                        "detail: " artifact-id "\n"
+                        "updated_at: " now "\n"))
+    (append-line! (fs/path dir "events.log")
+                  (str now "\tacceptance_added\t" artifact-id))
+    (println "SQUAD_THEME:" theme-id)
+    (println "ACCEPTANCE:" artifact-id)
+    (println "STATE: acceptance_added")))
+
 (defn approve! [theme-id gate detail-parts]
   (validate-id! "Theme id" theme-id)
   (validate-id! "Gate" gate)
@@ -155,6 +180,17 @@
            vec)
       [])))
 
+(defn acceptance-ids [dir]
+  (let [acceptance-dir (fs/path dir "acceptance")]
+    (if (fs/exists? acceptance-dir)
+      (->> (fs/list-dir acceptance-dir)
+           (filter fs/regular-file?)
+           (map fs/file-name)
+           (map #(str/replace % #"\.md$" ""))
+           sort
+           vec)
+      [])))
+
 (defn approval-lines [dir]
   (if (fs/exists? (fs/path dir "approvals.tsv"))
     (str/split-lines (slurp (str (fs/path dir "approvals.tsv"))))
@@ -171,6 +207,7 @@
     (println "DETAIL:" (or (read-value status "detail") ""))
     (println "UPDATED_AT:" (or (read-value status "updated_at") "unknown"))
     (println "STORIES:" (str/join "," (story-ids dir)))
+    (println "ACCEPTANCE:" (str/join "," (acceptance-ids dir)))
     (println "APPROVALS:" (count (approval-lines dir)))))
 
 (defn -main [& args]
@@ -181,6 +218,9 @@
     "story" (if (= 4 (count args))
               (add-story! (second args) (nth args 2) (nth args 3))
               (exit! 1 usage-text))
+    "acceptance" (if (= 4 (count args))
+                   (add-acceptance! (second args) (nth args 2) (nth args 3))
+                   (exit! 1 usage-text))
     "approve" (if (>= (count args) 3)
                 (approve! (second args) (nth args 2) (drop 3 args))
                 (exit! 1 usage-text))

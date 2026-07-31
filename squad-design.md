@@ -681,6 +681,26 @@ artifacts.
 Status: implemented for explicit `approval:<gate>` requirements. Default
 template-to-gate policy remains a future slice.
 
+### Slice 15: Acceptance Artifact State
+
+Record acceptance artifacts as durable theme state:
+
+- `squad_theme.sh acceptance <theme-id> <artifact-id> <acceptance-file>`
+- validates that the theme exists
+- stores the artifact under
+  `.squad/themes/<theme-id>/acceptance/<artifact-id>.md`
+- refuses duplicate artifact ids
+- updates the theme status to `acceptance_added`
+- appends an `acceptance_added` event
+- includes recorded acceptance artifact ids in `squad_theme.sh status`
+
+Success condition: Gherkin and acceptance-spec outputs can be recorded before
+the user approves the `acceptance` gate, and later assignments can point to a
+durable artifact rather than an informal conversation decision.
+
+Status: implemented for markdown acceptance artifacts. Separate artifact types,
+schema validation, and generated test-script linkage remain future slices.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -711,6 +731,7 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] leader-to-transient assignment file convention for theme/story work
 - [x] user approval gates can be enforced by explicit downstream assignment
       requirements
+- [x] acceptance-spec artifacts can be recorded as durable theme state
 - [x] transient-to-leader result handoff validation and durable intake for
       assignment results
 - [x] retirement lifecycle for stopped and running sessions
@@ -738,8 +759,6 @@ They are tracked here as resolved, partially resolved, or still open.
       implemented helpers only
 - [ ] policy for crashed, stale, or wedged invisible agents exists as daemon
       detection, but not as a full squad-leader recovery workflow
-- [ ] acceptance-spec decisions can be recorded as approval gates, but do not
-      yet have dedicated acceptance artifact state
 - [ ] transient result intake records handoffs, but does not yet automate merge,
       review, rejection, or replacement decisions
 
@@ -751,8 +770,7 @@ They are tracked here as resolved, partially resolved, or still open.
 - [ ] policy for interrupting, restarting, or replacing a transient agent
 - [ ] default policy for which assignment templates require which approval
       gates
-- [ ] how acceptance-spec decisions are represented beyond the first approval
-      gate records
+- [ ] acceptance artifact schema and type policy beyond markdown files
 - [ ] how final verification summaries are produced and audited
 
 ## Heartbeats

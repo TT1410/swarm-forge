@@ -425,6 +425,10 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "story.md")
                   "Story: cave topology and setup.\n")
+      (write-file (fs/path root "acceptance.md")
+                  (str "Feature: Cave topology\n\n"
+                       "  Scenario: The cave has twenty rooms\n"
+                       "    Then the cave contains 20 rooms\n"))
       (let [create (run {:dir root}
                         (script "squad_theme.sh")
                         "create"
@@ -436,6 +440,12 @@
                        "wumpus"
                        "cave-topology"
                        "story.md")
+            acceptance (run {:dir root}
+                            (script "squad_theme.sh")
+                            "acceptance"
+                            "wumpus"
+                            "cave-topology"
+                            "acceptance.md")
             approve-stories (run {:dir root}
                                   (script "squad_theme.sh")
                                   "approve"
@@ -455,20 +465,27 @@
             theme-dir (fs/path root ".squad/themes/wumpus")]
         (is (str/includes? (:out create) "STATE: theme_created"))
         (is (str/includes? (:out story) "STORY: cave-topology"))
+        (is (str/includes? (:out acceptance) "ACCEPTANCE: cave-topology"))
+        (is (str/includes? (:out acceptance) "STATE: acceptance_added"))
         (is (str/includes? (:out approve-stories) "STATE: approved_stories"))
         (is (str/includes? (:out approve-acceptance) "STATE: approved_acceptance"))
         (is (str/includes? (:out status) "THEME: wumpus"))
         (is (str/includes? (:out status) "STATE: approved_acceptance"))
         (is (str/includes? (:out status) "STORIES: cave-topology"))
+        (is (str/includes? (:out status) "ACCEPTANCE: cave-topology"))
         (is (str/includes? (:out status) "APPROVALS: 2"))
         (is (str/includes? (slurp (str (fs/path theme-dir "theme.md")))
                            "faithful Hunt the Wumpus"))
         (is (str/includes? (slurp (str (fs/path theme-dir "stories/cave-topology.md")))
                            "cave topology"))
+        (is (str/includes? (slurp (str (fs/path theme-dir "acceptance/cave-topology.md")))
+                           "Feature: Cave topology"))
         (is (str/includes? (slurp (str (fs/path theme-dir "approvals.tsv")))
                            "\tstories\tuser approved story split"))
         (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
-                           "\tapproved_acceptance\tuser approved acceptance spec")))
+                           "\tapproved_acceptance\tuser approved acceptance spec"))
+        (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
+                           "\tacceptance_added\tcave-topology")))
       (finally
         (fs/delete-tree root)))))
 
