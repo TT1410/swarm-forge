@@ -190,14 +190,22 @@
                      "\n")]
     (write-atomic! roles-file content)))
 
-(defn write-status! [agent-dir state detail]
-  (write-atomic! (fs/path agent-dir "status")
-                 (str "state: " state "\n"
-                      "detail: " detail "\n"
-                      "updated_at: "
-                      (.format java.time.format.DateTimeFormatter/ISO_INSTANT
-                               (java.time.Instant/now))
-                      "\n")))
+(defn timestamp []
+  (.format java.time.format.DateTimeFormatter/ISO_INSTANT
+           (java.time.Instant/now)))
+
+(defn write-status-and-heartbeat! [agent-dir agent-id task-id state detail]
+  (let [now (timestamp)]
+    (write-atomic! (fs/path agent-dir "status")
+                   (str "state: " state "\n"
+                        "detail: " detail "\n"
+                        "updated_at: " now "\n"))
+    (write-atomic! (fs/path agent-dir "heartbeat")
+                   (str "agent: " agent-id "\n"
+                        "task_id: " task-id "\n"
+                        "state: " state "\n"
+                        "detail: " detail "\n"
+                        "updated_at: " now "\n"))))
 
 (defn write-metadata! [agent-dir {:keys [agent-id template task-id worktree session display agent]}]
   (write-atomic! (fs/path agent-dir "metadata")
@@ -271,7 +279,7 @@
                                         :session session
                                         :display display
                                         :agent agent})
-            (write-status! agent-dir "spawned" "registered transient agent")
+            (write-status-and-heartbeat! agent-dir agent-id task-id "spawned" "registered transient agent")
             (when-not (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
               (let [socket (str/trim (slurp (str (fs/path state-dir "tmux-socket"))))
                     command (agent-command agent worktree prompt-file agent-id script-dir display)]
@@ -279,7 +287,7 @@
                                   :session session
                                   :display display
                                   :command command})
-                (write-status! agent-dir "running" "detached tmux session started")))
+                (write-status-and-heartbeat! agent-dir agent-id task-id "running" "detached tmux session started")))
             (println "SQUAD_AGENT:" agent-id)
             (println "TEMPLATE:" template)
             (println "TASK_ID:" task-id)

@@ -269,6 +269,7 @@
         (is (= "task" (nth fields 6)))
         (is (fs/exists? (fs/path worktree ".git")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_spawn.sh")))
+        (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_theme.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_event.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_statusd.sh")))
         (is (fs/exists? (fs/path worktree ".swarmforge/handoffs/inbox/new")))
@@ -279,6 +280,15 @@
                            "Find the original rules."))
         (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/status")))
                            "state: spawned"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/heartbeat")))
+                           "state: spawned"))
+        (let [statusd (run {:dir root
+                            :env {"SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX" "1"}}
+                           (script "squad_statusd.sh")
+                           "--once"
+                           "--no-notify"
+                           (str root))]
+          (is (str/includes? (:out statusd) "SQUAD_STATUS_OK")))
         (let [event (run {:dir root
                           :env {"SWARMFORGE_ROLE" "investigator-001"}}
                          (script "squad_event.sh")
@@ -380,6 +390,63 @@
           (is (= "implementer-002" (first second-fields)))
           (is (fs/exists? (fs/path root ".worktrees/implementer-001")))
           (is (fs/exists? (fs/path root ".worktrees/implementer-002")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-theme-records-theme-stories-and-approval-gates
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "story.md")
+                  "Story: cave topology and setup.\n")
+      (let [create (run {:dir root}
+                        (script "squad_theme.sh")
+                        "create"
+                        "wumpus"
+                        "theme.md")
+            story (run {:dir root}
+                       (script "squad_theme.sh")
+                       "story"
+                       "wumpus"
+                       "cave-topology"
+                       "story.md")
+            approve-stories (run {:dir root}
+                                  (script "squad_theme.sh")
+                                  "approve"
+                                  "wumpus"
+                                  "stories"
+                                  "user approved story split")
+            approve-acceptance (run {:dir root}
+                                     (script "squad_theme.sh")
+                                     "approve"
+                                     "wumpus"
+                                     "acceptance"
+                                     "user approved acceptance spec")
+            status (run {:dir root}
+                        (script "squad_theme.sh")
+                        "status"
+                        "wumpus")
+            theme-dir (fs/path root ".squad/themes/wumpus")]
+        (is (str/includes? (:out create) "STATE: theme_created"))
+        (is (str/includes? (:out story) "STORY: cave-topology"))
+        (is (str/includes? (:out approve-stories) "STATE: approved_stories"))
+        (is (str/includes? (:out approve-acceptance) "STATE: approved_acceptance"))
+        (is (str/includes? (:out status) "THEME: wumpus"))
+        (is (str/includes? (:out status) "STATE: approved_acceptance"))
+        (is (str/includes? (:out status) "STORIES: cave-topology"))
+        (is (str/includes? (:out status) "APPROVALS: 2"))
+        (is (str/includes? (slurp (str (fs/path theme-dir "theme.md")))
+                           "faithful Hunt the Wumpus"))
+        (is (str/includes? (slurp (str (fs/path theme-dir "stories/cave-topology.md")))
+                           "cave topology"))
+        (is (str/includes? (slurp (str (fs/path theme-dir "approvals.tsv")))
+                           "\tstories\tuser approved story split"))
+        (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
+                           "\tapproved_acceptance\tuser approved acceptance spec")))
       (finally
         (fs/delete-tree root)))))
 

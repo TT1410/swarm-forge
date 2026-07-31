@@ -223,6 +223,7 @@
    "ready_for_next_batch.sh" "ready_for_next_batch.bb"
    "done_with_current_batch.sh" "done_with_current_batch.bb"
    "handoffd.bb" "stop_handoff_daemon.bb" "stop_handoff_daemon.sh"
+   "squad_theme.bb" "squad_theme.sh"
    "squad_statusd.bb" "squad_statusd.sh"
    "stop_squad_status_daemon.bb" "stop_squad_status_daemon.sh"
    "swarm-cleanup.sh" "swarm-window-watchdog.sh" "swarm-window-watchdog.bb"

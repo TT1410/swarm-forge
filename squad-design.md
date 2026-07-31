@@ -128,6 +128,7 @@ squad_run.sh       -> squad_run.bb
 squad_retire.sh    -> squad_retire.bb
 squad_status.sh    -> squad_status.bb
 squad_statusd.sh   -> squad_statusd.bb
+squad_theme.sh     -> squad_theme.bb
 ```
 
 The `.sh` wrapper is the command surface placed on `PATH` for agents. The
@@ -436,13 +437,13 @@ Add a narrow watchdog/reminder daemon:
 Success condition: the daemon wakes the squad leader when an invisible agent is
 stale, exits, or a user status report is due.
 
-Status: implemented as a command. `squad_statusd.sh` supports
+Status: implemented. `squad_statusd.sh` supports
 `--once --no-notify` for manual/test audits and long-running mode for polling.
 It detects missing, invalid, and stale heartbeats; checks tmux session
 existence and dead panes when tmux checks are enabled; logs alerts under
 `.swarmforge/daemon/squad-statusd.log`; and sends a generic wake-up to
-`squad-leader` in notifying mode. Launcher-managed startup of this daemon is
-not implemented yet.
+`squad-leader` in notifying mode. The launcher starts it automatically when the
+swarm starts and cleanup stops it.
 
 ### Slice 6: Full Squad Workflow
 
@@ -467,12 +468,33 @@ exist and can be spawned dynamically: `specifier`, `acceptance-builder`,
 Launcher-managed status daemon startup is implemented. A fully exercised
 theme-sized end-to-end workflow remains future work.
 
+### Slice 7: Theme Workflow Manifest
+
+Add a lightweight durable manifest for theme-sized work:
+
+- `squad_theme.sh` as the command surface
+- `squad_theme.bb` as the Babashka implementation
+- `.squad/themes/<theme-id>/theme.md`
+- `.squad/themes/<theme-id>/stories/<story-id>.md`
+- `.squad/themes/<theme-id>/approvals.tsv`
+- `.squad/themes/<theme-id>/status`
+- `.squad/themes/<theme-id>/events.log`
+
+Success condition: the squad leader can create a theme record, add story
+records, record user approval gates, and inspect theme status without starting
+transient agents.
+
+Status: implemented. `squad_theme.sh` supports `create`, `story`, `approve`,
+and `status`. The command validates ids, preserves source text, records
+approval gates append-only, and writes a current status file.
+
 ## Implementation Deficits
 
 Future implementation plans must resolve these open details before coding the
 full squad system:
 
-- exact `.squad/` directory schema
+- exact `.squad/` directory schema beyond the implemented agent telemetry and
+  theme workflow manifest paths
 - exact task id and agent id allocation rules
 - exact status, heartbeat, and event file formats
 - atomic write protocol for telemetry files
@@ -505,8 +527,10 @@ full squad system:
 - test strategy for spawn, retire, status, and daemon behavior
 - how to avoid repeated expensive startup tool installation by many transient
   agents
-- how user approval gates are represented in task state
-- how the squad leader records theme, story, and acceptance-spec decisions
+- how user approval gates flow from `.squad/themes/<theme-id>/approvals.tsv`
+  into later implementation and QA assignments
+- how acceptance-spec decisions are represented beyond the first approval gate
+  records
 - how final verification summaries are produced and audited
 
 ## Heartbeats
