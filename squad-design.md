@@ -490,48 +490,69 @@ approval gates append-only, and writes a current status file.
 
 ## Implementation Deficits
 
-Future implementation plans must resolve these open details before coding the
-full squad system:
+The following implementation deficits were identified before the first slices.
+They are tracked here as resolved, partially resolved, or still open.
 
-- exact `.squad/` directory schema beyond the implemented agent telemetry and
-  theme workflow manifest paths
-- exact task id and agent id allocation rules
-- exact status, heartbeat, and event file formats
-- atomic write protocol for telemetry files
-- atomic update and locking protocol for `.swarmforge/roles.tsv`
-- whether dynamic role registration should append to `roles.tsv` only or also
-  maintain a separate squad registry
-- generated transient prompt format
-- whether generated prompts live only under `.squad/` or are copied elsewhere
-  for backend compatibility
-- role template composition rules
-- tmux session, window, and pane naming conventions for transient agents
-- how to capture and persist transient tmux targets for later inspection
-- squad leader wake-up target and notification text
-- status daemon polling interval and stale thresholds
-- status report cadence and suppression rules
-- command-wrapper behavior for long-running commands
-- exact helper command arguments, outputs, and exit codes
-- handoff conventions for leader-to-transient assignments
-- handoff conventions for transient-to-leader results
-- merge policy for transient branches and worktrees
-- policy for rejected transient work
-- policy for merge conflicts created by transient work
-- policy for crashed, stale, or wedged invisible agents
-- policy for interrupting, restarting, or replacing a transient agent
-- retirement lifecycle, including stopped sessions and worktree cleanup
-- whether retired transient worktrees are preserved for audit or removed
-- branch-local constitution articles required for squad authority
-- `squad-leader.prompt` responsibilities and prohibitions
-- transient template responsibilities and prohibitions
-- test strategy for spawn, retire, status, and daemon behavior
-- how to avoid repeated expensive startup tool installation by many transient
-  agents
-- how user approval gates flow from `.squad/themes/<theme-id>/approvals.tsv`
-  into later implementation and QA assignments
-- how acceptance-spec decisions are represented beyond the first approval gate
-  records
-- how final verification summaries are produced and audited
+### Resolved
+
+- [x] exact task id and agent id allocation rules for current transient spawn
+      behavior
+- [x] exact status, heartbeat, and event file formats for current telemetry
+- [x] atomic write protocol for telemetry files
+- [x] atomic update and bounded locking protocol for `.swarmforge/roles.tsv`
+- [x] generated transient prompt format for current role-template spawning
+- [x] prompt storage location under `.squad/agents/<agent-id>/prompt.md`
+- [x] tmux session and window naming conventions for transient agents
+- [x] capture and persist transient tmux targets through generated metadata and
+      `roles.tsv`
+- [x] squad leader wake-up target and notification text for the current daemon
+- [x] command-wrapper behavior for current long-running command telemetry
+- [x] retirement lifecycle for stopped and running sessions
+- [x] retired transient worktrees are preserved for audit
+- [x] branch-local constitution articles required for squad authority
+- [x] `squad-leader.prompt` responsibilities and prohibitions
+- [x] transient template responsibilities and prohibitions
+- [x] test strategy for spawn, retire, status, daemon, cleanup, and theme
+      manifest behavior
+- [x] avoid repeated expensive startup tool installation for the squad leader
+
+### Partially Resolved
+
+- [ ] exact `.squad/` directory schema beyond implemented agent telemetry and
+      theme workflow manifest paths
+- [ ] dynamic role registration currently appends to `roles.tsv`; a separate
+      squad registry has not been justified or rejected for future workflows
+- [ ] role template composition rules are concrete for current templates but do
+      not yet support shared template fragments
+- [ ] status daemon polling interval and stale thresholds have defaults and
+      environment overrides, but not final policy
+- [ ] status report cadence and suppression rules are described but not fully
+      automated
+- [ ] exact helper command arguments, outputs, and exit codes are stable for
+      implemented helpers only
+- [ ] policy for crashed, stale, or wedged invisible agents exists as daemon
+      detection, but not as a full squad-leader recovery workflow
+- [ ] user approval gates are recorded in
+      `.squad/themes/<theme-id>/approvals.tsv`, but are not yet connected to
+      downstream assignments
+- [ ] acceptance-spec decisions can be recorded as approval gates, but do not
+      yet have dedicated acceptance artifact state
+
+### Open
+
+- [ ] handoff conventions for leader-to-transient assignments
+- [ ] handoff conventions for transient-to-leader results beyond the observed
+      first dynamic loop
+- [ ] merge policy for transient branches and worktrees
+- [ ] policy for rejected transient work
+- [ ] policy for merge conflicts created by transient work
+- [ ] policy for interrupting, restarting, or replacing a transient agent
+- [ ] how user approval gates flow from
+      `.squad/themes/<theme-id>/approvals.tsv` into later implementation and QA
+      assignments
+- [ ] how acceptance-spec decisions are represented beyond the first approval
+      gate records
+- [ ] how final verification summaries are produced and audited
 
 ## Heartbeats
 
