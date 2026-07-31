@@ -8,6 +8,7 @@
 (def usage-text
   (str "Usage:\n"
        "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file>\n"
+       "  squad_assign.sh result <assignment-id> <handoff-file>\n"
        "  squad_assign.sh status <assignment-id>"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -83,6 +84,10 @@
 (defn ensure-file! [message file]
   (when-not (fs/regular-file? file)
     (exit! 1 (str message ": " file))))
+
+(defn handoff-body [file]
+  (let [[_ body] (str/split (slurp (str file)) #"\n\n" 2)]
+    (or body "")))
 
 (defn result-handoff-template [assignment-id]
   (str "type: git_handoff\n"
@@ -171,7 +176,8 @@
   (let [root (fs/absolutize (project-root))
         dir (assignment-dir root assignment-id)
         metadata (fs/path dir "metadata")
-        status (fs/path dir "status")]
+        status (fs/path dir "status")
+        result-file (fs/path dir "result.handoff")]
     (when-not (fs/directory? dir)
       (exit! 1 (str "Unknown assignment: " assignment-id)))
     (println "ASSIGNMENT:" assignment-id)
@@ -180,12 +186,71 @@
     (println "TEMPLATE:" (or (read-value metadata "template") "unknown"))
     (println "STATE:" (or (read-value status "state") "unknown"))
     (println "DETAIL:" (or (read-value status "detail") ""))
-    (println "ASSIGNMENT_FILE:" (or (read-value metadata "assignment_file") "unknown"))))
+    (println "ASSIGNMENT_FILE:" (or (read-value metadata "assignment_file") "unknown"))
+    (println "RESULT:" (if (fs/exists? result-file) (str result-file) "none"))))
+
+(defn validate-result-handoff! [assignment-id handoff-file]
+  (let [type (read-value handoff-file "type")
+        to (read-value handoff-file "to")
+        task (read-value handoff-file "task")
+        commit (read-value handoff-file "commit")
+        from (read-value handoff-file "from")]
+    (when-not (= "git_handoff" type)
+      (exit! 2 "Result handoff must have type: git_handoff."))
+    (when-not (= "squad-leader" to)
+      (exit! 2 "Result handoff must have to: squad-leader."))
+    (when-not (= assignment-id task)
+      (exit! 2 (str "Result handoff task must match assignment id: " assignment-id)))
+    (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
+      (exit! 2 "Result handoff must have a 10-character commit header."))
+    {:from (or from "unknown")
+     :commit commit
+     :body (handoff-body handoff-file)}))
+
+(defn record-result! [assignment-id handoff-path]
+  (validate-id! "Assignment id" assignment-id)
+  (let [root (fs/absolutize (project-root))
+        dir (assignment-dir root assignment-id)
+        metadata (fs/path dir "metadata")
+        status (fs/path dir "status")
+        handoff-file (source-file! handoff-path)
+        {:keys [from commit body]} (validate-result-handoff! assignment-id handoff-file)
+        theme-id (or (read-value metadata "theme_id") "unknown")
+        story-id (or (read-value metadata "story_id") "unknown")
+        now (timestamp)]
+    (when-not (fs/directory? dir)
+      (exit! 1 (str "Unknown assignment: " assignment-id)))
+    (write-atomic! (fs/path dir "result.handoff")
+                   (slurp (str handoff-file)))
+    (write-atomic! (fs/path dir "result")
+                   (str "assignment_id: " assignment-id "\n"
+                        "from: " from "\n"
+                        "commit: " commit "\n"
+                        "received_at: " now "\n"))
+    (write-atomic! status
+                   (str "assignment_id: " assignment-id "\n"
+                        "state: result_received\n"
+                        "detail: " from " " commit "\n"
+                        "updated_at: " now "\n"))
+    (append-line! (fs/path dir "events.log")
+                  (str now "\tresult_received\t" from "\t" commit))
+    (when-not (= "unknown" theme-id)
+      (append-line! (fs/path root ".squad" "themes" theme-id "events.log")
+                    (str now "\tassignment_result_received\t" assignment-id "\t" from "\t" commit "\t" story-id)))
+    (println "SQUAD_ASSIGNMENT:" assignment-id)
+    (println "STATE: result_received")
+    (println "FROM:" from)
+    (println "COMMIT:" commit)
+    (when-not (str/blank? body)
+      (println "BODY_RECORDED: true"))))
 
 (defn -main [& args]
   (case (first args)
     "create" (if (= 6 (count args))
                (create-assignment! (second args) (nth args 2) (nth args 3) (nth args 4) (nth args 5))
+               (exit! 1 usage-text))
+    "result" (if (= 3 (count args))
+               (record-result! (second args) (nth args 2))
                (exit! 1 usage-text))
     "status" (if (= 2 (count args))
                (print-status! (second args))

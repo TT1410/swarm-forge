@@ -481,7 +481,8 @@
                         "status"
                         "wumpus-cave-impl")
             assignment (fs/path root ".squad/assignments/wumpus-cave-impl/assignment.md")
-            draft (fs/path root ".squad/assignments/wumpus-cave-impl/result-handoff.draft")]
+            draft (fs/path root ".squad/assignments/wumpus-cave-impl/result-handoff.draft")
+            commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (is (str/includes? (:out create) "SQUAD_ASSIGNMENT: wumpus-cave-impl"))
         (is (str/includes? (:out create) "TEMPLATE: implementer"))
         (is (str/includes? (:out status) "STATE: assignment_created"))
@@ -494,6 +495,35 @@
         (is (str/includes? (slurp (str draft)) "task: wumpus-cave-impl"))
         (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
                            "\tassignment_created\twumpus-cave-impl\timplementer\tcave-topology"))
+        (write-file (fs/path root "result.handoff")
+                    (str "id: 1\n"
+                         "from: implementer-001\n"
+                         "to: squad-leader\n"
+                         "priority: 50\n"
+                         "type: git_handoff\n"
+                         "task: wumpus-cave-impl\n"
+                         "commit: " commit "\n"
+                         "\n"
+                         "merge_and_process implementer-001 " commit "\n"))
+        (let [result (run {:dir root}
+                          (script "squad_assign.sh")
+                          "result"
+                          "wumpus-cave-impl"
+                          "result.handoff")
+              result-status (run {:dir root}
+                                 (script "squad_assign.sh")
+                                 "status"
+                                 "wumpus-cave-impl")]
+          (is (str/includes? (:out result) "STATE: result_received"))
+          (is (str/includes? (:out result) (str "COMMIT: " commit)))
+          (is (str/includes? (:out result-status) "STATE: result_received"))
+          (is (str/includes? (:out result-status) "RESULT:"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result.handoff")))
+                             "from: implementer-001"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result")))
+                             (str "commit: " commit)))
+          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
+                             (str "\tassignment_result_received\twumpus-cave-impl\timplementer-001\t" commit "\tcave-topology"))))
         (let [spawn (run {:dir root
                           :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                          (script "squad_spawn.sh")

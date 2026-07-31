@@ -504,10 +504,30 @@ Success condition: the squad leader can generate a durable assignment from a
 theme story and leader instructions, pass that generated assignment to
 `squad_spawn.sh`, and give the transient agent a standard result handoff shape.
 
-Status: implemented. `squad_assign.sh` supports `create` and `status`. It
-validates ids, verifies the referenced theme story and role template, creates a
-durable assignment file, writes a standard result `git_handoff` draft, records
-assignment metadata/status, and appends a theme event.
+Status: implemented. `squad_assign.sh` supports `create`, `result`, and
+`status`. It validates ids, verifies the referenced theme story and role
+template, creates a durable assignment file, writes a standard result
+`git_handoff` draft, records assignment metadata/status, records validated
+result handoffs, and appends theme events.
+
+### Slice 9: Assignment Result Intake
+
+Record transient result handoffs against durable assignment state:
+
+- validate that the handoff is `type: git_handoff`
+- validate that `to` is `squad-leader`
+- validate that `task` matches the assignment id
+- validate that `commit` is a 10-character commit header
+- copy the result handoff to `.squad/assignments/<assignment-id>/result.handoff`
+- write `.squad/assignments/<assignment-id>/result`
+- update assignment status to `result_received`
+- append assignment and theme events
+
+Success condition: the squad leader can take a completed transient handoff,
+record it against the assignment, and inspect current assignment result state
+before making merge, review, rejection, or replacement decisions.
+
+Status: implemented through `squad_assign.sh result`.
 
 ## Implementation Deficits
 
@@ -529,6 +549,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] squad leader wake-up target and notification text for the current daemon
 - [x] command-wrapper behavior for current long-running command telemetry
 - [x] leader-to-transient assignment file convention for theme/story work
+- [x] transient-to-leader result handoff validation and durable intake for
+      assignment results
 - [x] retirement lifecycle for stopped and running sessions
 - [x] retired transient worktrees are preserved for audit
 - [x] branch-local constitution articles required for squad authority
@@ -559,8 +581,8 @@ They are tracked here as resolved, partially resolved, or still open.
       downstream assignments
 - [ ] acceptance-spec decisions can be recorded as approval gates, but do not
       yet have dedicated acceptance artifact state
-- [ ] transient-to-leader result handoff drafts are generated for assignments,
-      but result intake and validation are not yet automated
+- [ ] transient result intake records handoffs, but does not yet automate merge,
+      review, rejection, or replacement decisions
 
 ### Open
 
