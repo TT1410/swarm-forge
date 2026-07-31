@@ -186,6 +186,40 @@ directory". Codex has `-C`, Grok currently uses `--cwd`, and the existing Claude
 launcher relies on the shell working directory. A project-root launch plus
 explicit worktree `cd` is the portable baseline across agents.
 
+## Daemon-Owned Transient Spawning
+
+The Hunt the Wumpus trial exposed another sandbox boundary: when the squad
+leader directly runs `squad_spawn.sh`, the leader's agent sandbox is asked to
+approve privileged orchestration operations such as:
+
+- `git worktree add`
+- `tmux -S <socket> new-session`
+- access to the tmux socket under `/tmp`
+
+Those operations are legitimate swarm orchestration, but they should not be
+performed by the squad leader process. The leader should request a spawn through
+durable project-local state, and a launcher-owned daemon should perform the
+privileged work.
+
+Adopt the same architectural pattern used for handoffs:
+
+- `squad_spawn_request.sh <template> <task-id> <assignment-file>` writes a
+  request under `.squad/spawn-requests/new/`
+- the request helper performs only normal project-local file writes
+- `squad_spawnd.bb`, started by `./swarm`, watches the request directory
+- the daemon validates the request and runs the existing spawn mechanics:
+  worktree creation, prompt and launch script generation, `roles.tsv` update,
+  handoff directory creation, helper synchronization, and tmux session launch
+- completed requests move to `.squad/spawn-requests/completed/`
+- failed requests move to `.squad/spawn-requests/failed/`
+- daemon results are also reflected under `.squad/agents/<agent-id>/`
+- the squad leader monitors the resulting agent status instead of owning tmux
+  or git worktree operations directly
+
+Direct `squad_spawn.sh` can remain as an operator/debug command, but the squad
+leader should use the request path during normal squad operation. This avoids
+per-spawn escalations for transient agents.
+
 ## Dynamic Role Registry
 
 SwarmForge writes `.swarmforge/roles.tsv` at startup from
@@ -206,6 +240,11 @@ The current handoff daemon reloads `roles.tsv` on each poll, so dynamic
 registration should be possible without restarting the daemon. The spawn helper
 must still update the file atomically so the daemon never reads a partially
 written registry.
+
+When daemon-owned spawning is implemented, the daemon becomes the only normal
+writer for transient role rows. `squad_spawn.sh` should remain available for
+manual/operator tests, but role updates from squad-leader orchestration should
+flow through spawn requests.
 
 Transient role names should use hyphens, not underscores. Existing handoff
 filename conventions rely on underscores as structural separators and reject
@@ -880,8 +919,11 @@ They are tracked here as resolved, partially resolved, or still open.
 
 - [ ] exact `.squad/` directory schema beyond implemented agent telemetry and
       theme workflow manifest and assignment paths
-- [ ] dynamic role registration currently appends to `roles.tsv`; a separate
-      squad registry has not been justified or rejected for future workflows
+- [ ] direct transient spawn works, but squad-leader initiated spawning still
+      needs a daemon-owned request path to avoid per-spawn sandbox escalations
+- [ ] dynamic role registration currently appends to `roles.tsv`; daemon-owned
+      spawning should become the normal writer for squad-leader initiated
+      transients
 - [ ] role template composition rules are concrete for current templates but do
       not yet support shared template fragments
 - [ ] status daemon polling interval and stale thresholds have defaults and
@@ -955,8 +997,9 @@ or report a blocker to the user.
 
 ## Open Design Questions
 
-- How should transient agents be registered with `.swarmforge/roles.tsv` while
-  the handoff daemon is running?
+- Should direct `squad_spawn.sh` remain an unrestricted operator command, or
+  should normal use move entirely to `squad_spawn_request.sh` plus
+  `squad_spawnd.bb`?
 - Should transient worktrees be created from role-specific branch names,
   task-specific branch names, or both?
 - What is the minimal set of squad helper scripts needed for the first
