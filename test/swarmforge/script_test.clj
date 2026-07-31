@@ -366,7 +366,20 @@
         (is (= "implementer-001" (first fields)))
         (is (= "Implementer 001" (nth fields 4)))
         (is (str/includes? prompt "template: implementer"))
-        (is (str/includes? prompt "Implement a tiny behavior slice.")))
+        (is (str/includes? prompt "Implement a tiny behavior slice."))
+        (run {:dir root} (script "squad_retire.sh") "implementer-001")
+        (let [second-result (run {:dir root
+                                  :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+                                 (script "squad_spawn.sh")
+                                 "implementer"
+                                 "second-story"
+                                 "assignment.md")
+              roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))
+              second-fields (str/split (second roles) #"\t" -1)]
+          (is (str/includes? (:out second-result) "SQUAD_AGENT: implementer-002"))
+          (is (= "implementer-002" (first second-fields)))
+          (is (fs/exists? (fs/path root ".worktrees/implementer-001")))
+          (is (fs/exists? (fs/path root ".worktrees/implementer-002")))))
       (finally
         (fs/delete-tree root)))))
 

@@ -74,13 +74,25 @@
          vec)
     []))
 
-(defn next-agent-id [rows template]
+(defn numeric-suffix [prefix name]
+  (when (str/starts-with? name prefix)
+    (some-> (re-find #"\d{3}$" name) Long/parseLong)))
+
+(defn existing-agent-numbers [root rows template]
   (let [prefix (str template "-")
-        numbers (keep (fn [row]
-                        (let [role (first row)]
-                          (when (str/starts-with? role prefix)
-                            (some-> (re-find #"\d{3}$" role) Long/parseLong))))
-                      rows)]
+        row-numbers (keep #(numeric-suffix prefix (first %)) rows)
+        worktree-dir (fs/path root ".worktrees")
+        worktree-numbers (when (fs/exists? worktree-dir)
+                           (keep #(numeric-suffix prefix (fs/file-name %))
+                                 (fs/list-dir worktree-dir)))
+        agent-dir (fs/path root ".squad" "agents")
+        agent-numbers (when (fs/exists? agent-dir)
+                        (keep #(numeric-suffix prefix (fs/file-name %))
+                              (fs/list-dir agent-dir)))]
+    (concat row-numbers worktree-numbers agent-numbers)))
+
+(defn next-agent-id [root rows template]
+  (let [numbers (existing-agent-numbers root rows template)]
     (format "%s-%03d" template (inc (reduce max 0 numbers)))))
 
 (defn create-dirs! [dirs]
@@ -217,7 +229,7 @@
         (acquire-lock! lock-dir)
         (try
           (let [rows (role-rows roles-file)
-                agent-id (next-agent-id rows template)
+                agent-id (next-agent-id root rows template)
                 worktree (fs/path root ".worktrees" agent-id)
                 branch (str "swarmforge-" agent-id)
                 session (str "swarmforge-" agent-id)
