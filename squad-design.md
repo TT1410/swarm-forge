@@ -129,6 +129,7 @@ squad_retire.sh    -> squad_retire.bb
 squad_status.sh    -> squad_status.bb
 squad_statusd.sh   -> squad_statusd.bb
 squad_theme.sh     -> squad_theme.bb
+squad_tool.sh      -> squad_tool.bb
 ```
 
 The `.sh` wrapper is the command surface placed on `PATH` for agents. The
@@ -597,6 +598,27 @@ Status: implemented. Generated prompts also name the project root, assigned
 worktree, and tool cache directory, and require the transient agent to verify it
 is working from the assigned worktree before task work.
 
+### Slice 11: Shared Tool Cache Registry
+
+Add a small control-plane helper for shared transient tools:
+
+- `squad_tool.sh init`
+- `squad_tool.sh register <tool-name> <source> <version> <executable-file>`
+- `squad_tool.sh status [tool-name]`
+- `.swarmforge/tools/bin/`
+- `.swarmforge/tools/src/`
+- `.swarmforge/tools/cache/`
+- `.swarmforge/tools/manifests/`
+- `.swarmforge/tools/locks/`
+
+Success condition: an agent can initialize the shared cache, register an
+already-built executable into the shared `bin` directory, write a manifest, and
+query that manifest without reinstalling the tool.
+
+Status: implemented. This slice does not fetch or build CRAP, mutation, DRY, or
+APS tools. It only establishes the shared cache contract that later installers
+can use.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -614,6 +636,7 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] generated transient launch script format
 - [x] shared tool cache environment variables and startup directory creation
       for transient agents
+- [x] shared tool cache registry for already-built executables
 - [x] portable transient launch model: project-root agent invocation plus
       required worktree `cd`
 - [x] tmux session and window naming conventions for transient agents

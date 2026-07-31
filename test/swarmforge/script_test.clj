@@ -276,6 +276,7 @@
         (is (fs/exists? (fs/path worktree ".git")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_spawn.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_assign.sh")))
+        (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_tool.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_theme.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_event.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_statusd.sh")))
@@ -553,6 +554,43 @@
           (is (str/includes? (:out spawn) "SQUAD_AGENT: implementer-001"))
           (is (str/includes? (slurp (str (fs/path root ".squad/agents/implementer-001/prompt.md")))
                              "assignment_id: wumpus-cave-impl"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-tool-registers-executables-in-shared-cache
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "fake-tool")
+                  "#!/usr/bin/env sh\nprintf 'fake-tool\\n'\n")
+      (run {:dir root} "chmod" "+x" "fake-tool")
+      (let [init (run {:dir root} (script "squad_tool.sh") "init")
+            register (run {:dir root}
+                          (script "squad_tool.sh")
+                          "register"
+                          "fake-tool"
+                          "github.com/example/fake-tool"
+                          "abcdef1234"
+                          "fake-tool")
+            status (run {:dir root} (script "squad_tool.sh") "status" "fake-tool")
+            all-status (run {:dir root} (script "squad_tool.sh") "status")
+            cached-tool (fs/path root ".swarmforge/tools/bin/fake-tool")
+            manifest (fs/path root ".swarmforge/tools/manifests/fake-tool.manifest")
+            run-cached (run {:dir root} (str cached-tool))]
+        (is (str/includes? (:out init) "TOOL_CACHE:"))
+        (is (str/includes? (:out register) "STATE: registered"))
+        (is (str/includes? (:out register) "SQUAD_TOOL: fake-tool"))
+        (is (str/includes? (:out status) "STATE: registered"))
+        (is (str/includes? (:out status) "SOURCE: github.com/example/fake-tool"))
+        (is (str/includes? (:out status) "VERSION: abcdef1234"))
+        (is (str/includes? (:out all-status) "TOOLS: fake-tool"))
+        (is (= "fake-tool" (str/trim (:out run-cached))))
+        (is (str/includes? (slurp (str manifest)) "tool: fake-tool"))
+        (is (fs/exists? (fs/path root ".swarmforge/tools/src")))
+        (is (fs/exists? (fs/path root ".swarmforge/tools/cache")))
+        (is (fs/exists? (fs/path root ".swarmforge/tools/locks"))))
       (finally
         (fs/delete-tree root)))))
 
