@@ -604,6 +604,7 @@ Add a small control-plane helper for shared transient tools:
 
 - `squad_tool.sh init`
 - `squad_tool.sh register <tool-name> <source> <version> <executable-file>`
+- `squad_tool.sh ensure <tool-name> <source> <version> -- <install-command...>`
 - `squad_tool.sh require <tool-name> <source> <version>`
 - `squad_tool.sh status [tool-name]`
 - `.swarmforge/tools/bin/`
@@ -635,6 +636,28 @@ usable before deciding to build or install it.
 
 Status: implemented.
 
+### Slice 13: Shared Tool Cache Ensure
+
+Add a locked install-or-reuse path:
+
+- `squad_tool.sh ensure <tool-name> <source> <version> -- <install-command...>`
+- acquires the per-tool cache lock
+- reuses a matching cached executable without running the install command
+- runs the install command only when the matching executable is missing
+- exposes `SWARMFORGE_TOOL_TARGET`, `SWARMFORGE_TOOL_BIN_DIR`,
+  `SWARMFORGE_TOOL_SRC_DIR`, and related environment variables to the install
+  command
+- expects the install command to write the executable to
+  `SWARMFORGE_TOOL_TARGET`
+- writes the manifest after successful installation
+
+Success condition: a transient agent can express a tool requirement as a single
+command that reuses a matching cache entry or installs and records the tool
+under the shared cache.
+
+Status: implemented for caller-provided install commands. Repository-specific
+CRAP, mutation, DRY, and APS installers remain future slices.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -654,6 +677,7 @@ They are tracked here as resolved, partially resolved, or still open.
       for transient agents
 - [x] shared tool cache registry for already-built executables
 - [x] shared tool cache validation by source and version
+- [x] locked shared tool install-or-reuse command for caller-provided installers
 - [x] portable transient launch model: project-root agent invocation plus
       required worktree `cd`
 - [x] tmux session and window naming conventions for transient agents

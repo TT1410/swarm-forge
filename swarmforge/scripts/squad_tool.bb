@@ -9,6 +9,7 @@
   (str "Usage:\n"
        "  squad_tool.sh init\n"
        "  squad_tool.sh register <tool-name> <source> <version> <executable-file>\n"
+       "  squad_tool.sh ensure <tool-name> <source> <version> -- <install-command...>\n"
        "  squad_tool.sh require <tool-name> <source> <version>\n"
        "  squad_tool.sh status [tool-name]"))
 
@@ -107,6 +108,39 @@
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
 
+(defn tool-state [paths tool source version]
+  (let [manifest (manifest-file paths tool)
+        executable (executable-target paths tool)]
+    (cond
+      (not (fs/exists? manifest))
+      {:state :missing :reason "missing manifest"}
+
+      (not (fs/exists? executable))
+      {:state :missing :reason "missing executable"}
+
+      (not= source (read-value manifest "source"))
+      {:state :mismatch
+       :field "source"
+       :expected source
+       :actual (or (read-value manifest "source") "unknown")}
+
+      (not= version (read-value manifest "version"))
+      {:state :mismatch
+       :field "version"
+       :expected version
+       :actual (or (read-value manifest "version") "unknown")}
+
+      :else
+      {:state :available :executable executable})))
+
+(defn write-manifest! [manifest tool source version executable now]
+  (write-atomic! manifest
+                 (str "tool: " tool "\n"
+                      "source: " source "\n"
+                      "version: " version "\n"
+                      "executable: " executable "\n"
+                      "registered_at: " now "\n")))
+
 (defn register-tool! [tool source version executable]
   (validate-tool! tool)
   (let [paths (ensure-cache!)
@@ -118,12 +152,7 @@
             now (timestamp)]
         (fs/copy executable target {:replace-existing true})
         (fs/set-posix-file-permissions target "rwxr-xr-x")
-        (write-atomic! manifest
-                       (str "tool: " tool "\n"
-                            "source: " source "\n"
-                            "version: " version "\n"
-                            "executable: " target "\n"
-                            "registered_at: " now "\n"))
+        (write-manifest! manifest tool source version target now)
         (println "SQUAD_TOOL:" tool)
         (println "STATE: registered")
         (println "EXECUTABLE:" (str target))
@@ -134,38 +163,73 @@
 (defn require-tool! [tool source version]
   (validate-tool! tool)
   (let [paths (ensure-cache!)
-        manifest (manifest-file paths tool)
-        executable (executable-target paths tool)]
-    (cond
-      (not (fs/exists? manifest))
+        state (tool-state paths tool source version)]
+    (case (:state state)
+      :missing
       (exit! 3
              (str "SQUAD_TOOL_MISSING: " tool)
-             (str "REASON: missing manifest"))
+             (str "REASON: " (:reason state)))
 
-      (not (fs/exists? executable))
-      (exit! 3
-             (str "SQUAD_TOOL_MISSING: " tool)
-             (str "REASON: missing executable"))
-
-      (not= source (read-value manifest "source"))
+      :mismatch
       (exit! 4
              (str "SQUAD_TOOL_MISMATCH: " tool)
-             (str "FIELD: source")
-             (str "EXPECTED: " source)
-             (str "ACTUAL: " (or (read-value manifest "source") "unknown")))
+             (str "FIELD: " (:field state))
+             (str "EXPECTED: " (:expected state))
+             (str "ACTUAL: " (:actual state)))
 
-      (not= version (read-value manifest "version"))
-      (exit! 4
-             (str "SQUAD_TOOL_MISMATCH: " tool)
-             (str "FIELD: version")
-             (str "EXPECTED: " version)
-             (str "ACTUAL: " (or (read-value manifest "version") "unknown")))
-
-      :else
+      :available
       (do
         (println "SQUAD_TOOL:" tool)
         (println "STATE: available")
-        (println "EXECUTABLE:" (str executable))))))
+        (println "EXECUTABLE:" (str (:executable state)))))))
+
+(defn split-command [args]
+  (let [[before after] (split-with #(not= "--" %) args)]
+    (when (or (empty? before) (empty? after) (empty? (rest after)))
+      (exit! 1 usage-text))
+    [before (rest after)]))
+
+(defn ensure-tool! [tool source version install-command]
+  (validate-tool! tool)
+  (let [paths (ensure-cache!)
+        lock-dir (acquire-lock! (:locks paths) tool)]
+    (try
+      (let [state (tool-state paths tool source version)]
+        (if (= :available (:state state))
+          (do
+            (println "SQUAD_TOOL:" tool)
+            (println "STATE: available")
+            (println "EXECUTABLE:" (str (:executable state))))
+          (let [target (executable-target paths tool)
+                tool-src (fs/path (:src paths) tool)]
+            (fs/create-dirs tool-src)
+            (fs/delete-if-exists target)
+            (let [result (apply process/sh
+                                {:continue true
+                                 :dir (str tool-src)
+                                 :env {"SWARMFORGE_TOOL_NAME" tool
+                                       "SWARMFORGE_TOOL_SOURCE" source
+                                       "SWARMFORGE_TOOL_VERSION" version
+                                       "SWARMFORGE_TOOL_CACHE_DIR" (str (:root paths))
+                                       "SWARMFORGE_TOOL_BIN_DIR" (str (:bin paths))
+                                       "SWARMFORGE_TOOL_SRC_DIR" (str tool-src)
+                                       "SWARMFORGE_TOOL_TARGET" (str target)}}
+                                install-command)]
+              (when-not (zero? (:exit result))
+                (exit! (:exit result)
+                       (str "SQUAD_TOOL_INSTALL_FAILED: " tool)
+                       (str/trim (str (:err result)))))
+              (when-not (fs/regular-file? target)
+                (exit! 5
+                       (str "SQUAD_TOOL_INSTALL_INCOMPLETE: " tool)
+                       (str "REASON: missing target executable " target)))
+              (fs/set-posix-file-permissions target "rwxr-xr-x")
+              (write-manifest! (manifest-file paths tool) tool source version target (timestamp))
+              (println "SQUAD_TOOL:" tool)
+              (println "STATE: installed")
+              (println "EXECUTABLE:" (str target))))))
+      (finally
+        (fs/delete-tree lock-dir)))))
 
 (defn print-one! [paths tool]
   (validate-tool! tool)
@@ -214,6 +278,10 @@
     "register" (if (= 5 (count args))
                  (register-tool! (second args) (nth args 2) (nth args 3) (nth args 4))
                  (exit! 1 usage-text))
+    "ensure" (let [[tool-args install-command] (split-command (rest args))]
+               (if (= 3 (count tool-args))
+                 (ensure-tool! (first tool-args) (second tool-args) (nth tool-args 2) install-command)
+                 (exit! 1 usage-text)))
     "require" (if (= 4 (count args))
                 (require-tool! (second args) (nth args 2) (nth args 3))
                 (exit! 1 usage-text))

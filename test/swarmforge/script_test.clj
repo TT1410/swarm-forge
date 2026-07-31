@@ -619,6 +619,42 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-tool-ensure-installs-once-and-reuses-matching-cache
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (let [install (run {:dir root}
+                         (script "squad_tool.sh")
+                         "ensure"
+                         "built-tool"
+                         "github.com/example/built-tool"
+                         "1111111111"
+                         "--"
+                         "sh"
+                         "-c"
+                         "printf '#!/usr/bin/env sh\nprintf \"built-tool\\\\n\"\n' > \"$SWARMFORGE_TOOL_TARGET\"")
+            reuse (run {:dir root}
+                       (script "squad_tool.sh")
+                       "ensure"
+                       "built-tool"
+                       "github.com/example/built-tool"
+                       "1111111111"
+                       "--"
+                       "sh"
+                       "-c"
+                       "exit 99")
+            cached-tool (fs/path root ".swarmforge/tools/bin/built-tool")
+            run-cached (run {:dir root} (str cached-tool))]
+        (is (str/includes? (:out install) "STATE: installed"))
+        (is (str/includes? (:out reuse) "STATE: available"))
+        (is (= "built-tool" (str/trim (:out run-cached))))
+        (is (str/includes? (slurp (str (fs/path root ".swarmforge/tools/manifests/built-tool.manifest")))
+                           "source: github.com/example/built-tool")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-status-daemon-starts-and-stops
   (let [root (tmp-dir)]
     (try
