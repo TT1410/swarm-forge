@@ -24,18 +24,20 @@ spawning, review coordination, merge decisions, QA coordination, and final
 reporting.
 
 The squad leader owns theme splitting. A theme is a larger specification that
-must be decomposed into independently deliverable stories. The squad leader may
-spawn an investigator to gather source material or technical context, but it
-does not delegate final theme-to-story decomposition or approval framing.
+must be decomposed into independently deliverable stories. The squad leader
+also owns source-material and technical-context investigation, and does not
+delegate final theme-to-story decomposition or approval framing.
 
-Transient agents should be created from templates such as:
+Transient agents should be created from the current template slate:
 
+- `specifier`
+- `acceptance-builder`
 - `implementer`
 - `reviewer`
+- `cleaner`
+- `architect`
+- `hardener`
 - `qa`
-- `refactorer`
-- `investigator`
-- `fixer`
 
 Transient agents receive narrow assignments, work in dedicated worktrees or
 branches, and communicate through handoffs. They should not talk directly to
@@ -431,8 +433,7 @@ Example squad execution:
 
 ```text
 1. squad-leader creates the theme record and fidelity checklist.
-2. squad-leader spawns investigator-001 to inspect the original rules and
-   produce a concise source-grounded behavior summary.
+2. squad-leader inspects the original rules and project conventions directly.
 3. squad-leader converts the theme into the six stories above.
 4. squad-leader asks the user to approve the fidelity target, story list,
    story order, batching choices, and any interpretation choices.
@@ -501,17 +502,17 @@ Implement the first transient spawn path:
 
 - `squad_spawn.sh` as the agent-facing command surface
 - `squad_spawn.bb` as the Babashka implementation
-- one transient role template, preferably `investigator`
+- one transient role template, preferably `specifier`
 - generated runtime prompt for a concrete transient agent
 - transient worktree creation
 - handoff directory creation
 - detached tmux session creation
 - atomic append/update of `.swarmforge/roles.tsv`
 
-Success condition: the squad leader can spawn `investigator-001` in an
+Success condition: the squad leader can spawn `specifier-001` in an
 invisible tmux session without restarting the handoff daemon.
 
-Status: implemented for the `investigator` template. `squad_spawn.sh` delegates
+Status: implemented for the `specifier` template. `squad_spawn.sh` delegates
 to `squad_spawn.bb`, creates a transient worktree, generates a runtime prompt,
 creates handoff directories, atomically updates `.swarmforge/roles.tsv`, copies
 helper scripts into the transient worktree, and starts a detached tmux session.
@@ -526,11 +527,11 @@ Close the first dynamic loop:
 - `squad_retire.sh`/`.bb` stops the transient session and marks the agent
   retired
 
-Success condition: a spawned investigator can commit a small report, hand it
+Success condition: a spawned transient can commit a small report, hand it
 back to the squad leader, and be retired cleanly.
 
 Status: implemented. The first dynamic loop has been observed with a spawned
-investigator committing work, sending a normal `git_handoff` back to
+transient committing work, sending a normal `git_handoff` back to
 `squad-leader`, and the squad leader completing the handoff. `squad_retire.sh`
 delegates to `squad_retire.bb`, removes the transient role from
 `.swarmforge/roles.tsv`, stops the detached tmux session when present, writes

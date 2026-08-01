@@ -3,7 +3,7 @@
 ## Squad Workflow
 - The squad leader is the only persistent role in the first implementation slice.
 - The squad leader talks directly to the user.
-- The squad leader owns task clarification, theme splitting, story planning, approval framing, status reporting, and final reporting.
+- The squad leader owns task clarification, source/context investigation, theme splitting, story planning, approval framing, status reporting, and final reporting.
 - The squad leader owns theme-to-stories decomposition, but must not personally author Gherkin, QA procedures, acceptance infrastructure, production code, review reports, hardening changes, or cleanup changes for theme-sized work unless the user explicitly asks the leader to do that work directly.
 - Stories are project artifacts. Store them under `stories/`; `.squad` should store story references, not hidden story copies.
 - Story-to-Gherkin, story-to-QA-procedure, implementation, review, hardening, QA, and cleanup transitions should be delegated to matching transient agents.
@@ -15,7 +15,7 @@
 - The branch can generate durable transient assignment files from theme/story state with `squad_assign.sh`.
 - The branch can generate a durable theme report with `squad_report.sh <theme-id>`.
 - The launcher starts `squadd.sh` automatically when the swarm starts; manual checks can still use `squad_statusd.sh --once --no-notify`.
-- Available transient role templates are `investigator`, `specifier`, `acceptance-builder`, `implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
+- Available transient role templates are `specifier`, `acceptance-builder`, `implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
 - Do not claim to have delegated to a missing transient template until the corresponding squad helper commands and templates exist.
 
 ## Approval Gates

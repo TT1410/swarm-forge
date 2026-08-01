@@ -37,8 +37,7 @@
   (str (fs/path scripts-dir name)))
 
 (deftest squad-role-templates-exist
-  (doseq [template ["investigator"
-                    "specifier"
+  (doseq [template ["specifier"
                     "acceptance-builder"
                     "implementer"
                     "reviewer"
@@ -241,15 +240,15 @@
                   "window squad-leader codex master task\n")
       (write-file (fs/path root "swarmforge/roles/squad-leader.prompt")
                   "leader\n")
-      (write-file (fs/path root "swarmforge/role-templates/investigator.prompt")
-                  "investigate\n")
+      (write-file (fs/path root "swarmforge/role-templates/specifier.prompt")
+                  "specify\n")
       (write-file (fs/path root "assignment.md")
                   "Find the original rules.\n")
       (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
       (let [result (run {:dir root
                          :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                         (script "squad_spawn.sh")
-                        "investigator"
+                        "specifier"
                         "wumpus-theme"
                         "assignment.md")
             out (:out result)
@@ -257,20 +256,20 @@
             transient-row (second roles)
             fields (str/split transient-row #"\t" -1)
             worktree (fs/path (nth fields 2))
-            agent-dir (fs/path root ".squad/agents/investigator-001")
+            agent-dir (fs/path root ".squad/agents/specifier-001")
             prompt-file (fs/path agent-dir "prompt.md")
             launch-script (fs/path agent-dir "launch.sh")
             metadata-file (fs/path agent-dir "metadata")
             expected-root (.getCanonicalPath (fs/file root))
             expected-launch-script (.getCanonicalPath (fs/file launch-script))]
-        (is (str/includes? out "SQUAD_AGENT: investigator-001"))
+        (is (str/includes? out "SQUAD_AGENT: specifier-001"))
         (is (= 2 (count roles)))
         (is (= 7 (count fields)))
-        (is (= "investigator-001" (nth fields 0)))
-        (is (= "investigator-001" (nth fields 1)))
-        (is (str/ends-with? (nth fields 2) "/.worktrees/investigator-001"))
-        (is (= "swarmforge-investigator-001" (nth fields 3)))
-        (is (= "Investigator 001" (nth fields 4)))
+        (is (= "specifier-001" (nth fields 0)))
+        (is (= "specifier-001" (nth fields 1)))
+        (is (str/ends-with? (nth fields 2) "/.worktrees/specifier-001"))
+        (is (= "swarmforge-specifier-001" (nth fields 3)))
+        (is (= "Specifier 001" (nth fields 4)))
         (is (= "codex" (nth fields 5)))
         (is (= "task" (nth fields 6)))
         (is (fs/exists? (fs/path worktree ".git")))
@@ -300,9 +299,9 @@
           (is (str/includes? launcher expected-root)))
         (is (str/includes? (slurp (str prompt-file))
                            "Find the original rules."))
-        (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/status")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/status")))
                            "state: spawned"))
-        (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/heartbeat")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/heartbeat")))
                            "state: spawned"))
         (let [statusd (run {:dir root
                             :env {"SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX" "1"}}
@@ -312,20 +311,20 @@
                            (str root))]
           (is (str/includes? (:out statusd) "SQUAD_STATUS_OK")))
         (let [event (run {:dir root
-                          :env {"SWARMFORGE_ROLE" "investigator-001"}}
+                          :env {"SWARMFORGE_ROLE" "specifier-001"}}
                          (script "squad_event.sh")
                          "working"
                          "reading original rules")
-              status (run {:dir root} (script "squad_status.sh") "investigator-001")]
+              status (run {:dir root} (script "squad_status.sh") "specifier-001")]
           (is (str/includes? (:out event) "SQUAD_EVENT: working"))
           (is (str/includes? (:out status) "STATE: working"))
           (is (str/includes? (:out status) "TASK_ID: wumpus-theme"))
-          (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/heartbeat")))
+          (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/heartbeat")))
                              "state: working"))
           (is (str/includes? (slurp (str (fs/path root ".squad/tasks/wumpus-theme/events.log")))
-                             "investigator-001\tworking\treading original rules")))
+                             "specifier-001\tworking\treading original rules")))
         (let [run-result (run {:dir root
-                               :env {"SWARMFORGE_ROLE" "investigator-001"}}
+                               :env {"SWARMFORGE_ROLE" "specifier-001"}}
                               (script "squad_run.sh")
                               "verifying"
                               "quick command"
@@ -333,13 +332,13 @@
                               "sh"
                               "-c"
                               "exit 0")
-              status (run {:dir root} (script "squad_status.sh") "investigator-001")]
+              status (run {:dir root} (script "squad_status.sh") "specifier-001")]
           (is (= 0 (:exit run-result)))
           (is (str/includes? (:out status) "STATE: verifying_passed"))
           (is (str/includes? (slurp (str (fs/path root ".squad/tasks/wumpus-theme/events.log")))
-                             "investigator-001\tverifying_passed\tquick command")))
-        (write-file (fs/path root ".squad/agents/investigator-001/heartbeat")
-                    (str "agent: investigator-001\n"
+                             "specifier-001\tverifying_passed\tquick command")))
+        (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
+                    (str "agent: specifier-001\n"
                          "task_id: wumpus-theme\n"
                          "state: working\n"
                          "detail: stale for test\n"
@@ -351,26 +350,26 @@
                            "--once"
                            "--no-notify"
                            (str root))]
-          (is (str/includes? (:out statusd) "SQUAD_STATUS_ALERT: agent investigator-001 heartbeat stale"))
+          (is (str/includes? (:out statusd) "SQUAD_STATUS_ALERT: agent specifier-001 heartbeat stale"))
           (is (str/includes? (slurp (str (fs/path root ".swarmforge/daemon/squad-statusd.log")))
-                             "alert agent investigator-001 heartbeat stale")))
+                             "alert agent specifier-001 heartbeat stale")))
         (let [retire (run {:dir root}
                           (script "squad_retire.sh")
-                          "investigator-001")
+                          "specifier-001")
               retired-roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))]
-          (is (str/includes? (:out retire) "SQUAD_AGENT_RETIRED: investigator-001"))
+          (is (str/includes? (:out retire) "SQUAD_AGENT_RETIRED: specifier-001"))
           (is (str/includes? (:out retire) "SESSION_STOPPED: false"))
           (is (= 1 (count retired-roles)))
           (is (str/starts-with? (first retired-roles) "squad-leader\t"))
           (is (fs/exists? worktree))
-          (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/status")))
+          (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/status")))
                              "state: retired"))
-        (is (str/includes? (slurp (str (fs/path root ".squad/agents/investigator-001/heartbeat")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/heartbeat")))
                              "state: retired"))))
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-spawn-supports-non-investigator-templates
+(deftest squad-spawn-supports-additional-templates
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -940,14 +939,14 @@
                   "window squad-leader codex master task\n")
       (write-file (fs/path root "swarmforge/roles/squad-leader.prompt")
                   "leader\n")
-      (write-file (fs/path root "swarmforge/role-templates/investigator.prompt")
-                  "investigate\n")
+      (write-file (fs/path root "swarmforge/role-templates/specifier.prompt")
+                  "specify\n")
       (write-file (fs/path root "assignment.md")
                   "Find the original rules.\n")
       (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
       (let [request (run {:dir root}
                          (script "squad_spawn_request.sh")
-                         "investigator"
+                         "specifier"
                          "wumpus-theme"
                          "assignment.md")]
         (is (str/includes? (:out request) "STATE: requested"))
@@ -963,10 +962,10 @@
             completed (fs/list-dir (fs/path root ".squad/spawn-requests/completed"))]
         (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
         (is (= 2 (count roles)))
-        (is (some #(str/starts-with? % "investigator-001\t") roles))
+        (is (some #(str/starts-with? % "specifier-001\t") roles))
         (is (some #(str/ends-with? (fs/file-name %) ".request") completed))
         (is (some #(str/ends-with? (fs/file-name %) ".request.out") completed))
-        (is (fs/exists? (fs/path root ".squad/agents/investigator-001/status")))
+        (is (fs/exists? (fs/path root ".squad/agents/specifier-001/status")))
         (is (str/includes? (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))
                            "spawn-request-completed")))
       (finally
