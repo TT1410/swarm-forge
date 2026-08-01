@@ -36,6 +36,9 @@ else
 fi
 
 if command -v bb &>/dev/null; then
+  if [[ -f "$SCRIPT_DIR/stop_squadd.bb" ]]; then
+    bb "$SCRIPT_DIR/stop_squadd.bb" "$PROJECT_ROOT" 2>/dev/null || true
+  fi
   if [[ -f "$SCRIPT_DIR/stop_squad_status_daemon.bb" ]]; then
     bb "$SCRIPT_DIR/stop_squad_status_daemon.bb" "$PROJECT_ROOT" 2>/dev/null || true
   fi

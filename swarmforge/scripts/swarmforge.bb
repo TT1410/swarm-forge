@@ -223,10 +223,12 @@
    "ready_for_next_batch.sh" "ready_for_next_batch.bb"
    "done_with_current_batch.sh" "done_with_current_batch.bb"
    "handoffd.bb" "stop_handoff_daemon.bb" "stop_handoff_daemon.sh"
+   "squadd.bb" "squadd.sh" "stop_squadd.bb" "stop_squadd.sh"
    "squad_assign.bb" "squad_assign.sh"
    "squad_report.bb" "squad_report.sh"
    "squad_tool.bb" "squad_tool.sh"
    "squad_theme.bb" "squad_theme.sh"
+   "squad_spawn_request.bb" "squad_spawn_request.sh"
    "squad_statusd.bb" "squad_statusd.sh"
    "stop_squad_status_daemon.bb" "stop_squad_status_daemon.sh"
    "swarm-cleanup.sh" "swarm-window-watchdog.sh" "swarm-window-watchdog.bb"
@@ -369,6 +371,15 @@
               "bb" (str (fs/path (:script-dir ctx) "stop_handoff_daemon.bb"))
               (str (:working-dir ctx))))
 
+(defn squadd-available? [ctx]
+  (fs/exists? (fs/path (:script-dir ctx) "squadd.bb")))
+
+(defn stop-squadd! [ctx]
+  (when (fs/exists? (fs/path (:script-dir ctx) "stop_squadd.bb"))
+    (process/sh {:continue true}
+                "bb" (str (fs/path (:script-dir ctx) "stop_squadd.bb"))
+                (str (:working-dir ctx)))))
+
 (defn squad-status-daemon-available? [ctx]
   (fs/exists? (fs/path (:script-dir ctx) "squad_statusd.bb")))
 
@@ -410,6 +421,20 @@
                       :out (str (:handoff-daemon-log ctx))
                       :err :out})
     (println (str green "Started handoff daemon"
+                  (when (> (count command) 2) " with OS sleep prevention")
+                  "."
+                  reset))))
+
+(defn start-squadd! [ctx]
+  (fs/delete-if-exists (fs/path (:daemon-dir ctx) "squadd.stop"))
+  (let [command (into (vec (sleep-inhibitor-prefix))
+                      [(str (fs/path (:script-dir ctx) "squadd.bb"))
+                       (str (:working-dir ctx))])]
+    (process/process command
+                     {:dir "/"
+                      :out (str (:squadd-log ctx))
+                      :err :out})
+    (println (str green "Started squad daemon"
                   (when (> (count command) 2) " with OS sleep prevention")
                   "."
                   reset))))
@@ -508,6 +533,7 @@
      :daemon-dir daemon-dir
      :handoff-daemon-log (fs/path daemon-dir "handoffd.log")
      :squad-status-daemon-log (fs/path daemon-dir "squad-statusd.log")
+     :squadd-log (fs/path daemon-dir "squadd.log")
      :tmux-socket-dir tmux-socket-dir
      :tmux-socket tmux-socket
      :tmux-socket-file (fs/path state-dir "tmux-socket")
@@ -544,6 +570,7 @@
       (prepare-worktrees! ctx)
       (prepare-handoff-dirs! ctx)
       (let [ctx (assoc ctx :terminal-backend (detect-terminal-backend))]
+        (stop-squadd! ctx)
         (stop-squad-status-daemon! ctx)
         (stop-handoff-daemon! ctx)
         (doseq [row (:roles ctx)]
@@ -559,8 +586,11 @@
           (create-role-session! ctx (:session row) (:display-name row)))
         (write-tmux-env-file! ctx)
         (sync-worktree-scripts! ctx)
-        (start-handoff-daemon! ctx)
-        (start-squad-status-daemon! ctx)
+        (if (squadd-available? ctx)
+          (start-squadd! ctx)
+          (do
+            (start-handoff-daemon! ctx)
+            (start-squad-status-daemon! ctx)))
         (println (str green "Starting agents..." reset))
         (let [delay-ms (env-long "SWARMFORGE_AGENT_START_DELAY_MS" 1500)]
           (doseq [[index row] (map-indexed vector (:roles ctx))]

@@ -925,6 +925,70 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squadd-processes-status-and-daemon-owned-spawn-requests
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/constitution.prompt")
+                  "Read articles.\n")
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window squad-leader codex master task\n")
+      (write-file (fs/path root "swarmforge/roles/squad-leader.prompt")
+                  "leader\n")
+      (write-file (fs/path root "swarmforge/role-templates/investigator.prompt")
+                  "investigate\n")
+      (write-file (fs/path root "assignment.md")
+                  "Find the original rules.\n")
+      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (let [request (run {:dir root}
+                         (script "squad_spawn_request.sh")
+                         "investigator"
+                         "wumpus-theme"
+                         "assignment.md")]
+        (is (str/includes? (:out request) "STATE: requested"))
+        (is (= 1 (count (fs/list-dir (fs/path root ".squad/spawn-requests/new"))))))
+      (let [once (run {:dir root
+                       :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"
+                             "SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX" "1"}}
+                      (script "squadd.sh")
+                      "--once"
+                      "--no-notify"
+                      (str root))
+            roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))
+            completed (fs/list-dir (fs/path root ".squad/spawn-requests/completed"))]
+        (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
+        (is (= 2 (count roles)))
+        (is (some #(str/starts-with? % "investigator-001\t") roles))
+        (is (some #(str/ends-with? (fs/file-name %) ".request") completed))
+        (is (some #(str/ends-with? (fs/file-name %) ".request.out") completed))
+        (is (fs/exists? (fs/path root ".squad/agents/investigator-001/status")))
+        (is (str/includes? (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))
+                           "spawn-request-completed")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squadd-starts-and-stops
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (fs/create-dirs (fs/path root ".swarmforge/daemon"))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (run {:dir root :ok? false}
+           "sh" "-c"
+           (str "SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX=1 bb " (script "squadd.bb") " " root " >/dev/null 2>&1 &"))
+      (Thread/sleep 1000)
+      (let [pid-file (fs/path root ".swarmforge/daemon/squadd.pid")]
+        (is (fs/exists? pid-file))
+        (let [pid (str/trim (slurp (str pid-file)))
+              stop (run {:dir root} (script "stop_squadd.bb") (str root))]
+          (is (= 0 (:exit stop)))
+          (Thread/sleep 300)
+          (is (not (fs/exists? pid-file)))
+          (is (not= 0 (:exit (run {:dir root :ok? false} "kill" "-0" pid))))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest grok-launch-command-passes-initial-prompt
   (let [root (tmp-dir)]
     (try
@@ -1047,10 +1111,13 @@
 (deftest close-swarm-kills-tmux-sessions-and-stops-daemon
   (let [root (tmp-dir)
         sock (str (fs/path root "swarm.sock"))
+        squadd-pid-file (fs/path root ".swarmforge/daemon/squadd.pid")
         pid-file (fs/path root ".swarmforge/daemon/handoffd.pid")
         squad-pid-file (fs/path root ".swarmforge/daemon/squad-statusd.pid")
+        squadd (.start (java.lang.ProcessBuilder. ["sleep" "120"]))
         daemon (.start (java.lang.ProcessBuilder. ["sleep" "120"]))
         squad-daemon (.start (java.lang.ProcessBuilder. ["sleep" "120"]))
+        squadd-pid (str (.pid squadd))
         pid (str (.pid daemon))
         squad-pid (str (.pid squad-daemon))]
     (try
@@ -1059,6 +1126,7 @@
                   (str "1\tcoder\tswarmforge-coder\tCoder\tcodex\n"
                        "2\tcleaner\tswarmforge-cleaner\tCleaner\tcodex\n"))
       (write-file (fs/path root ".swarmforge/window-ids") "win-a\nwin-b\n")
+      (write-file squadd-pid-file (str squadd-pid "\n"))
       (write-file pid-file (str pid "\n"))
       (write-file squad-pid-file (str squad-pid "\n"))
       (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-coder" "sleep" "120")
@@ -1074,9 +1142,13 @@
                                 "tmux" "-S" sock "has-session" "-t" "swarmforge-cleaner"))))
         (is (not (fs/exists? pid-file)))
         (is (not (fs/exists? squad-pid-file)))
+        (is (not (fs/exists? squadd-pid-file)))
+        (is (false? (.isAlive squadd)))
         (is (false? (.isAlive daemon)))
         (is (false? (.isAlive squad-daemon))))
       (finally
+        (when (.isAlive squadd)
+          (.destroyForcibly squadd))
         (when (.isAlive daemon)
           (.destroyForcibly daemon))
         (when (.isAlive squad-daemon)

@@ -24,11 +24,22 @@ source "$SCRIPT_DIR/swarm-terminal-adapter.sh"
 load_terminal_backend "$TERMINAL_BACKEND"
 
 if has_command bb; then
+  if [[ -f "$SCRIPT_DIR/stop_squadd.bb" ]]; then
+    bb "$SCRIPT_DIR/stop_squadd.bb" "$WORKING_DIR" 2>/dev/null || true
+  fi
   if [[ -f "$SCRIPT_DIR/stop_squad_status_daemon.bb" ]]; then
     bb "$SCRIPT_DIR/stop_squad_status_daemon.bb" "$WORKING_DIR" 2>/dev/null || true
   fi
   bb "$SCRIPT_DIR/stop_handoff_daemon.bb" "$WORKING_DIR" 2>/dev/null || true
 else
+  squadd_pid_file="$WORKING_DIR/.swarmforge/daemon/squadd.pid"
+  if [[ -f "$squadd_pid_file" ]]; then
+    squadd_pid="$(< "$squadd_pid_file")"
+    if [[ "$squadd_pid" == <-> ]]; then
+      kill -TERM "$squadd_pid" 2>/dev/null || true
+    fi
+    rm -f "$squadd_pid_file"
+  fi
   squad_status_pid_file="$WORKING_DIR/.swarmforge/daemon/squad-statusd.pid"
   if [[ -f "$squad_status_pid_file" ]]; then
     squad_status_pid="$(< "$squad_status_pid_file")"

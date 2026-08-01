@@ -921,8 +921,10 @@ Success condition: a squad leader can request transient spawns without direct
 tmux or git worktree escalation, handoffs still deliver, status alerts still
 wake the leader, and teardown has a single daemon lifecycle.
 
-Status: planned. This should happen before continuing the Hunt the Wumpus trial
-with real transient agents.
+Status: implemented as an additive migration. `squadd.sh` now owns normal
+handoff delivery, status polling, and spawn-request processing. The old
+`handoffd.sh` and `squad_statusd.sh` command surfaces remain available as
+compatibility and one-shot test helpers.
 
 ## Implementation Deficits
 
@@ -970,6 +972,8 @@ They are tracked here as resolved, partially resolved, or still open.
       state
 - [x] launcher and watchdog teardown stop squad daemons without keeping the
       project directory as their current working directory
+- [x] unified launcher-owned squad daemon handles handoff delivery, status
+      polling, and daemon-owned spawn requests
 - [x] squad leader delegation boundary is explicit for post-story
       artifact-producing transitions
 - [x] retirement lifecycle for stopped and running sessions
@@ -985,13 +989,12 @@ They are tracked here as resolved, partially resolved, or still open.
 
 - [ ] exact `.squad/` directory schema beyond implemented agent telemetry and
       theme workflow manifest and assignment paths
-- [ ] direct transient spawn works, but squad-leader initiated spawning still
-      needs a daemon-owned request path to avoid per-spawn sandbox escalations
-- [ ] handoff, status, and spawn-request daemons should be consolidated into a
-      single launcher-owned squad daemon
-- [ ] dynamic role registration currently appends to `roles.tsv`; daemon-owned
-      spawning should become the normal writer for squad-leader initiated
-      transients
+- [ ] direct transient spawn works and daemon-owned spawn requests exist, but
+      broader recovery and retry policy around failed spawn requests is still
+      minimal
+- [ ] dynamic role registration is daemon-owned for squad-leader requested
+      transients, but direct manual `squad_spawn.sh` still appends to
+      `roles.tsv` for tests and operator use
 - [ ] role template composition rules are concrete for current templates but do
       not yet support shared template fragments
 - [ ] status daemon polling interval and stale thresholds have defaults and
@@ -1017,7 +1020,6 @@ They are tracked here as resolved, partially resolved, or still open.
 - [ ] helper-level enforcement that acceptance artifacts cite a producing
       assignment or transient agent
 - [ ] compatibility lifetime for old `handoffd.bb` and `squad_statusd.bb`
-      after `squadd.bb` exists
 
 ## Heartbeats
 
