@@ -46,6 +46,20 @@
                     "qa"]]
     (is (fs/exists? (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))))
 
+(deftest squad-role-templates-handoff-only-to-leader
+  (doseq [template ["specifier"
+                    "implementer"
+                    "reviewer"
+                    "cleaner"
+                    "architect"
+                    "hardener"
+                    "qa"]]
+    (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
+      (is (str/includes? prompt "Do not hand off to another transient worker.")
+          template)
+      (is (str/includes? prompt "Send a `git_handoff` back to `squad-leader`")
+          template))))
+
 (deftest handoff-lib-parses-and-prints-handoff-files
   (let [root (tmp-dir)
         handoff-file (fs/path root "task.handoff")]

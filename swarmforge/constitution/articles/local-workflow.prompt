@@ -16,6 +16,7 @@
 - The branch can generate a durable theme report with `squad_report.sh <theme-id>`.
 - The launcher starts `squadd.sh` automatically when the swarm starts; manual checks can still use `squad_statusd.sh --once --no-notify`.
 - Available transient role templates are `specifier`, `implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
+- Transient squad agents are not intermediate pack-pipeline roles. They must not hand off to each other; every transient result handoff goes only back to `squad-leader`.
 - Do not claim to have delegated to a missing transient template until the corresponding squad helper commands and templates exist.
 
 ## Approval Gates
@@ -29,7 +30,7 @@
 - Use the generated `.squad/assignments/<assignment-id>/assignment.md` as the assignment file passed to `squad_spawn_request.sh`.
 - Handoffs and assignments should move one story at a time unless the user explicitly approves batching.
 - After creating an assignment for Gherkin, QA procedure, implementation including acceptance pipeline work, review, hardening, QA, or cleanup work, request the matching transient agent through `squad_spawn_request.sh` instead of doing that assigned work directly.
-- Transient result handoffs should return to `squad-leader` as `git_handoff` drafts whose `task` is the assignment id.
+- Transient result handoffs should return only to `squad-leader` as `git_handoff` drafts whose `task` is the assignment id.
 - Record result handoffs with `squad_assign.sh result <assignment-id> <handoff-file>` before making merge, review, rejection, or replacement decisions.
 - Use `squad_assign.sh accept-merge <assignment-id>` only after merge readiness and accepted review are recorded.
 - Generate `squad_report.sh <theme-id>` before final reporting to the user.

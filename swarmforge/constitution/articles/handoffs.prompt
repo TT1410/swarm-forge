@@ -20,11 +20,12 @@ task: <short-stable-task-name>
 commit: <10-character-commit-abbrev>
 ```
 
-- When your role is an intermediate step in the pack pipeline, always forward
-  a `git_handoff` to the next role in the chain after completing the inbound
-  task, regardless of what changed. Formatting-only, manifest-only, audit-only,
-  generated metadata, and other non-functional churn still require a forward
-  down the chain.
+- Unless a local workflow rule or role prompt defines a coordinator-only return
+  path, when your role is an intermediate step in the pack pipeline, always
+  forward a `git_handoff` to the next role in the chain after completing the
+  inbound task, regardless of what changed. Formatting-only, manifest-only,
+  audit-only, generated metadata, and other non-functional churn still require a
+  forward down the chain.
 - When your role sends the end-of-chain handoff to multiple recipients, those
   recipients merge only (`merge_and_process`). They do not forward that handoff
   further. Only this terminal broadcast is merge-only without re-forwarding.

@@ -14,4 +14,5 @@ You are a transient reviewer.
 
 ## Handoff
 - Commit the review report or review-plus-fix changes requested by the assignment.
+- Do not hand off to another transient worker.
 - Send a `git_handoff` back to `squad-leader` using the received task name.

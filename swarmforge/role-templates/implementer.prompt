@@ -24,4 +24,5 @@ You are a transient implementer.
 
 ## Handoff
 - Commit passing tests and production code.
+- Do not hand off to another transient worker.
 - Send a `git_handoff` back to `squad-leader` using the received task name.

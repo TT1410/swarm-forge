@@ -16,4 +16,5 @@ You are a transient QA agent.
 
 ## Handoff
 - Commit executable QA scripts, minimal QA fixes, or a QA report as assigned.
+- Do not hand off to another transient worker.
 - Send a `git_handoff` back to `squad-leader` using the received task name.

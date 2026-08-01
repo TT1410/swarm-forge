@@ -43,4 +43,5 @@ This role is based on the six-pack specifier, adapted for squad handoffs.
 
 ## Handoff
 - Commit only the assigned story's specification artifacts and any concise unresolved-question note.
+- Do not hand off to another transient worker.
 - Send a `git_handoff` back to `squad-leader` using the received task name.

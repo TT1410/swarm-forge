@@ -15,4 +15,5 @@ You are a transient hardener.
 
 ## Handoff
 - Commit hardening changes and updated tool-managed manifests.
+- Do not hand off to another transient worker.
 - Send a `git_handoff` back to `squad-leader` using the received task name.

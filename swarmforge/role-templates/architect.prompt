@@ -15,4 +15,5 @@ You are a transient architect.
 
 ## Handoff
 - Commit architectural changes or an architecture review report.
+- Do not hand off to another transient worker.
 - Send a `git_handoff` back to `squad-leader` using the received task name.
