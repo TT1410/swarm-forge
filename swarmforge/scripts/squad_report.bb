@@ -49,7 +49,7 @@
     (->> (fs/list-dir dir)
          (filter fs/regular-file?)
          (map fs/file-name)
-         (map #(str/replace % #"\.md$" ""))
+         (map #(str/replace % #"\.(md|ref)$" ""))
          sort
          vec)
     []))

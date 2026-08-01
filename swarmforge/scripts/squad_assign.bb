@@ -83,6 +83,11 @@
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
 
+(defn referenced-project-file [root ref-file]
+  (when (fs/exists? ref-file)
+    (when-let [relative (read-value ref-file "path")]
+      (fs/path root relative))))
+
 (defn approval-gates [theme]
   (let [file (fs/path theme "approvals.tsv")]
     (if (fs/exists? file)
@@ -200,7 +205,10 @@
   (let [root (fs/absolutize (project-root))
         theme (theme-dir root theme-id)
         theme-file (fs/path theme "theme.md")
-        story-file (fs/path theme "stories" (str story-id ".md"))
+        story-ref (fs/path theme "stories" (str story-id ".ref"))
+        legacy-story-file (fs/path theme "stories" (str story-id ".md"))
+        story-file (or (referenced-project-file root story-ref)
+                       legacy-story-file)
         template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
         instructions (source-file! instructions-file)
         dir (assignment-dir root assignment-id)

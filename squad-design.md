@@ -610,7 +610,8 @@ Add a lightweight durable manifest for theme-sized work:
 - `squad_theme.sh` as the command surface
 - `squad_theme.bb` as the Babashka implementation
 - `.squad/themes/<theme-id>/theme.md`
-- `.squad/themes/<theme-id>/stories/<story-id>.md`
+- project story files under `stories/<story-id>.md`
+- `.squad/themes/<theme-id>/stories/<story-id>.ref`
 - `.squad/themes/<theme-id>/approvals.tsv`
 - `.squad/themes/<theme-id>/status`
 - `.squad/themes/<theme-id>/events.log`
@@ -620,8 +621,9 @@ records, record user approval gates, and inspect theme status without starting
 transient agents.
 
 Status: implemented. `squad_theme.sh` supports `create`, `story`, `approve`,
-and `status`. The command validates ids, preserves source text, records
-approval gates append-only, and writes a current status file.
+and `status`. The command validates ids, records stories as project-local
+`stories/` artifacts with `.squad` references, records approval gates
+append-only, and writes a current status file.
 
 ### Slice 8: Durable Assignment Files
 
@@ -954,6 +956,9 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] squad leader wake-up target and notification text for the current daemon
 - [x] command-wrapper behavior for current long-running command telemetry
 - [x] leader-to-transient assignment file convention for theme/story work
+- [x] stories are enforced as project artifacts under `stories/`, with
+      `.squad` storing references only
+- [x] specifier handoffs are scoped to one story at a time
 - [x] user approval gates can be enforced by explicit downstream assignment
       requirements
 - [x] acceptance-spec artifacts can be recorded as durable theme state
@@ -981,6 +986,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] branch-local constitution articles required for squad authority
 - [x] `squad-leader.prompt` responsibilities and prohibitions
 - [x] transient template responsibilities and prohibitions
+- [x] squad specifier role is based on the six-pack specifier workflow for
+      Gherkin and end-to-end QA procedure generation
 - [x] test strategy for spawn, retire, status, daemon, cleanup, and theme
       manifest behavior
 - [x] avoid repeated expensive startup tool installation for the squad leader

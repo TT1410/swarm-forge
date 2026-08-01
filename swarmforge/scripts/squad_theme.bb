@@ -63,6 +63,16 @@
         (exit! 2 "Acceptance artifacts must live under features/ or qa/."))
       relative)))
 
+(defn relative-story-artifact! [root file]
+  (let [root-path (.normalize (.toAbsolutePath (fs/path root)))
+        file-path (.normalize (.toAbsolutePath (fs/path file)))]
+    (when-not (.startsWith file-path root-path)
+      (exit! 2 "Story artifacts must be project-local files."))
+    (let [relative (str/replace (str (.relativize root-path file-path)) "\\" "/")]
+      (when-not (str/starts-with? relative "stories/")
+        (exit! 2 "Story artifacts must live under stories/."))
+      relative)))
+
 (defn write-atomic! [file content]
   (fs/create-dirs (fs/parent file))
   (let [tmp (fs/create-temp-file {:dir (fs/parent file)
@@ -115,23 +125,27 @@
   (validate-id! "Story id" story-id)
   (let [root (fs/absolutize (project-root))
         source (source-file! story-file)
+        relative-source (relative-story-artifact! root source)
         dir (theme-dir root theme-id)
-        story-path (fs/path dir "stories" (str story-id ".md"))
+        story-path (fs/path dir "stories" (str story-id ".ref"))
         now (timestamp)]
     (ensure-theme! dir theme-id)
     (when (fs/exists? story-path)
       (exit! 2 (str "Story already exists: " story-id)))
-    (fs/create-dirs (fs/parent story-path))
-    (fs/copy source story-path)
+    (write-atomic! story-path
+                   (str "story_id: " story-id "\n"
+                        "path: " relative-source "\n"
+                        "recorded_at: " now "\n"))
     (write-atomic! (fs/path dir "status")
                    (str "theme_id: " theme-id "\n"
                         "state: story_added\n"
-                        "detail: " story-id "\n"
+                        "detail: " story-id " " relative-source "\n"
                         "updated_at: " now "\n"))
     (append-line! (fs/path dir "events.log")
-                  (str now "\tstory_added\t" story-id))
+                  (str now "\tstory_added\t" story-id "\t" relative-source))
     (println "SQUAD_THEME:" theme-id)
     (println "STORY:" story-id)
+    (println "PATH:" relative-source)
     (println "STATE: story_added")))
 
 (defn add-acceptance! [theme-id artifact-id acceptance-file]
@@ -191,7 +205,7 @@
       (->> (fs/list-dir stories-dir)
            (filter fs/regular-file?)
            (map fs/file-name)
-           (map #(str/replace % #"\.md$" ""))
+           (map #(str/replace % #"\.ref$" ""))
            sort
            vec)
       [])))

@@ -423,7 +423,7 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
-      (write-file (fs/path root "story.md")
+      (write-file (fs/path root "stories/cave-topology.md")
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "features/cave-topology.feature")
                   (str "Feature: Cave topology\n\n"
@@ -441,7 +441,7 @@
                        "story"
                        "wumpus"
                        "cave-topology"
-                       "story.md")
+                       "stories/cave-topology.md")
             acceptance (run {:dir root}
                             (script "squad_theme.sh")
                             "acceptance"
@@ -473,6 +473,7 @@
             theme-dir (fs/path root ".squad/themes/wumpus")]
         (is (str/includes? (:out create) "STATE: theme_created"))
         (is (str/includes? (:out story) "STORY: cave-topology"))
+        (is (str/includes? (:out story) "PATH: stories/cave-topology.md"))
         (is (str/includes? (:out acceptance) "ACCEPTANCE: cave-topology"))
         (is (str/includes? (:out acceptance) "PATH: features/cave-topology.feature"))
         (is (str/includes? (:out acceptance) "STATE: acceptance_added"))
@@ -487,7 +488,9 @@
         (is (str/includes? (:out status) "APPROVALS: 2"))
         (is (str/includes? (slurp (str (fs/path theme-dir "theme.md")))
                            "faithful Hunt the Wumpus"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "stories/cave-topology.md")))
+        (is (str/includes? (slurp (str (fs/path theme-dir "stories/cave-topology.ref")))
+                           "path: stories/cave-topology.md"))
+        (is (str/includes? (slurp (str (fs/path root "stories/cave-topology.md")))
                            "cave topology"))
         (is (str/includes? (slurp (str (fs/path theme-dir "acceptance/cave-topology.ref")))
                            "path: features/cave-topology.feature"))
@@ -501,6 +504,8 @@
                            "\tstories\tuser approved story split"))
         (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
                            "\tapproved_acceptance\tuser approved acceptance spec"))
+        (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
+                           "\tstory_added\tcave-topology\tstories/cave-topology.md"))
         (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
                            "\tacceptance_added\tcave-topology\tfeatures/cave-topology.feature"))
         (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
@@ -519,7 +524,7 @@
                   "implement\n")
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
-      (write-file (fs/path root "story.md")
+      (write-file (fs/path root "stories/cave-topology.md")
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write unit tests first, then production code.\n")
@@ -530,7 +535,7 @@
       (write-file (fs/path root "replacement-instructions.md")
                   "Reimplement only cave topology.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "story.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance" "user approved acceptance spec")
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
@@ -684,12 +689,12 @@
                   "implement\n")
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
-      (write-file (fs/path root "story.md")
+      (write-file (fs/path root "stories/cave-topology.md")
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write unit tests first, then production code.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "story.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [blocked (run {:dir root :ok? false}
                          (script "squad_assign.sh")
                          "create"
@@ -739,14 +744,14 @@
                   "implement\n")
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
-      (write-file (fs/path root "story.md")
+      (write-file (fs/path root "stories/cave-topology.md")
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write unit tests first, then production code.\n")
       (write-file (fs/path root "review.md")
                   "Review: accepted.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "story.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
