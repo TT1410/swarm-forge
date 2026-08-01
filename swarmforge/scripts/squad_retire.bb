@@ -115,11 +115,29 @@
                             (str (str/join "\t" row) "\n"))))
     (first matching)))
 
+(defn session-exists? [socket session]
+  (and (not (str/blank? socket))
+       (zero? (:exit (run-continue "tmux" "-S" socket "has-session" "-t" session)))))
+
 (defn stop-session! [socket session]
-  (if (str/blank? socket)
-    false
-    (let [result (run-continue "tmux" "-S" socket "kill-session" "-t" session)]
-      (zero? (:exit result)))))
+  (if (or (str/blank? socket) (str/blank? session))
+    {:stopped? false :detail "tmux socket or session metadata missing"}
+    (if-not (session-exists? socket session)
+      {:stopped? false :detail "tmux session was not running"}
+      (do
+        (run-continue "tmux" "-S" socket "kill-session" "-t" session)
+        (loop [remaining 20]
+          (cond
+            (not (session-exists? socket session))
+            {:stopped? true :detail "tmux session stopped"}
+
+            (zero? remaining)
+            {:stopped? false :detail "tmux session still exists after kill-session"}
+
+            :else
+            (do
+              (Thread/sleep 100)
+              (recur (dec remaining)))))))))
 
 (defn retire! [agent-id]
   (validate-agent-id! agent-id)
@@ -138,13 +156,11 @@
             socket-file (fs/path state-dir "tmux-socket")
             socket (when (fs/exists? socket-file)
                      (str/trim (slurp (str socket-file))))
-            stopped? (stop-session! socket session)]
+            {:keys [stopped? detail]} (stop-session! socket session)]
         (fs/create-dirs agent-dir)
-        (let [detail (if stopped?
-                       "tmux session stopped; worktree preserved"
-                       "tmux session was not running; worktree preserved")]
-          (write-status! agent-dir "retired" detail)
-          (write-heartbeat! agent-dir agent-id "retired" detail))
+        (let [retire-detail (str detail "; worktree preserved")]
+          (write-status! agent-dir "retired" retire-detail)
+          (write-heartbeat! agent-dir agent-id "retired" retire-detail))
         (println "SQUAD_AGENT_RETIRED:" agent-id)
         (println "SESSION:" session)
         (println "SESSION_STOPPED:" stopped?)

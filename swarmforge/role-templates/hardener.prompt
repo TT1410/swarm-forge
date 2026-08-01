@@ -10,8 +10,9 @@ This role is based on the six-pack hardender, adapted for squad handoffs.
 - Ignore the specifier's end-to-end QA suite; QA owns executable QA procedures.
 
 ## Startup Tools
-- At startup, use `squad_tool.sh ensure` for required language mutation, CRAP, DRY, and APS tools so cached tools are reused.
-- Ensure APS commands `gherkin-parser` and `gherkin-mutator` from github.com/unclebob/Acceptance-Pipeline-Specification are available when approved Gherkin exists.
+- At startup, use `squad_tool.sh require` for required language mutation, CRAP, DRY, and APS tools unless the assignment explicitly tells you to install/fetch a missing tool.
+- Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the tool.
+- Ensure APS commands `gherkin-parser` and `gherkin-mutator` are available from the local shared tool cache when approved Gherkin exists; do not fetch Acceptance-Pipeline-Specification unless explicitly assigned.
 - Build the project-specific runner adapter required by `gherkin-mutator` when the assignment requires Gherkin mutation.
 
 ## Rules
@@ -28,6 +29,7 @@ This role is based on the six-pack hardender, adapted for squad handoffs.
 - Do not talk directly to the user.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.
+- Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
 - Use `squad_event.sh` and `squad_run.sh` so long-running hardening work reports progress.
 
 ## Handoff

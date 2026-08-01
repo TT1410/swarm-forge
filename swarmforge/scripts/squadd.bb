@@ -294,6 +294,19 @@
     (and (zero? (:exit result))
          (some #{"1"} (str/split-lines (:out result))))))
 
+(defn kill-tmux-session! [socket session]
+  (when (and (not (str/blank? socket))
+             (not (str/blank? session))
+             (tmux-session-exists? socket session))
+    (sh-continue "tmux" "-S" socket "kill-session" "-t" session)
+    (loop [remaining 20]
+      (cond
+        (not (tmux-session-exists? socket session)) true
+        (zero? remaining) false
+        :else (do
+                (Thread/sleep 100)
+                (recur (dec remaining)))))))
+
 (defn maybe-tmux-alert [socket skip-tmux? agent session]
   (cond
     skip-tmux? nil
@@ -301,6 +314,22 @@
     (not (tmux-session-exists? socket session)) (str "agent " agent " tmux session missing: " session)
     (pane-dead? socket session) (str "agent " agent " tmux pane is dead: " session)
     :else nil))
+
+(defn retire-role-row! [root agent]
+  (let [roles (load-roles root)]
+    (when (contains? roles agent)
+      (write-roles! root (dissoc roles agent))
+      (log! root "role-retired-reconciled" agent)
+      (append-compat-log! root "squad-statusd.log" "role-retired-reconciled" agent))))
+
+(defn reconcile-retired-agent! [root socket roles agent dir]
+  (let [metadata (fs/path dir "metadata")
+        session (or (read-value metadata "session")
+                    (get-in roles [agent :session]))]
+    (when (kill-tmux-session! socket session)
+      (log! root "retired-session-killed" agent session)
+      (append-compat-log! root "squad-statusd.log" "retired-session-killed" agent session))
+    (retire-role-row! root agent)))
 
 (defn alerts-for-agent [root roles socket skip-tmux? stale-seconds now-instant dir]
   (let [agent (fs/file-name dir)
@@ -312,7 +341,10 @@
                     (get-in roles [agent :session]))
         age (heartbeat-age-seconds heartbeat now-instant)]
     (cond
-      (= "retired" state) []
+      (= "retired" state) (do
+                            (when-not skip-tmux?
+                              (reconcile-retired-agent! root socket roles agent dir))
+                            [])
       (nil? (get roles agent)) [(str "agent " agent " is not registered in roles.tsv")]
       (not (fs/exists? heartbeat)) [(str "agent " agent " has no heartbeat")]
       (nil? age) [(str "agent " agent " heartbeat timestamp is invalid")]

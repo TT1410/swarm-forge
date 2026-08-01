@@ -115,6 +115,31 @@
        :value value
        :text requirement})))
 
+(def approval-required-templates
+  #{"implementer"})
+
+(defn story-acceptance-gate [story-id]
+  (str "acceptance-" story-id))
+
+(defn validate-template-requirement! [template story-id requirement]
+  (when (contains? approval-required-templates template)
+    (let [required (story-acceptance-gate story-id)]
+      (cond
+        (nil? requirement)
+        (exit! 2
+               (str "Template " template " requires story-level approval gate approval:" required))
+
+        (= "acceptance" (:value requirement))
+        (exit! 2
+               "Theme-wide acceptance approval is not allowed for implementer assignments."
+               (str "Use story-level approval gate approval:" required))
+
+        (not= required (:value requirement))
+        (exit! 2
+               (str "Template " template " for story " story-id
+                    " requires approval:" required
+                    ", not " (:text requirement)))))))
+
 (defn parse-create-args! [args]
   (when-not (#{6 8} (count args))
     (exit! 1 usage-text))
@@ -206,6 +231,7 @@
                         ["Assignment id" assignment-id]]]
     (validate-id! kind value))
   (validate-template! template)
+  (validate-template-requirement! template story-id requirement)
   (let [root (fs/absolutize (project-root))
         theme (theme-dir root theme-id)
         theme-file (fs/path theme "theme.md")

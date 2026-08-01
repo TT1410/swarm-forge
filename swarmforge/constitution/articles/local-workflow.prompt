@@ -21,8 +21,8 @@
 - Do not claim to have delegated to a missing transient template until the corresponding squad helper commands and templates exist.
 
 ## Approval Gates
-- For theme-sized work, ask the user to approve the story plan before implementation work begins.
-- After Gherkin and QA procedure specs exist, ask the user to approve the acceptance specification before production implementation begins.
+- For theme-sized work, ask the user to approve the story plan before story specification work proceeds. Story-plan approval confirms the theme split, story order, batching choices, and interpretation choices; it is not theme-wide implementation approval.
+- After Gherkin and QA procedure specs exist for a story, ask the user to approve that story's acceptance specification before production implementation for that story begins.
 - For small tasks, these approval gates may be collapsed only when the story and acceptance criteria are trivial.
 - Record approval gates with `squad_theme.sh approve`.
 
@@ -37,7 +37,9 @@
 - Transient result handoffs should return only to `squad-leader` as `git_handoff` drafts whose `task` is the assignment id.
 - Record result handoffs with `squad_assign.sh result <assignment-id> <handoff-file>` before making merge, review, rejection, or replacement decisions.
 - Use `squad_assign.sh accept-merge <assignment-id>` only after merge readiness and accepted review are recorded.
+- Merge reviewer and architecture-reviewer report commits when they are merge-ready and relevant; review reports are durable squad artifacts under `.squad/reviews/`.
 - During recovery, the squad leader must not forge transient result handoffs, commit from transient worktrees on a worker's behalf, or directly edit worker-owned artifacts without explicit user approval. Prefer durable rejection and replacement assignments.
+- During recovery, a delivered handoff from a now-missing session is processable. A missing session without a handoff is failed unless there is a committed result. A committed result without a handoff, or a dirty worktree from a missing session, requires user approval before recovery. A stale heartbeat with a live pane is a status problem, not proof of failure.
 - Generate `squad_report.sh <theme-id>` before final reporting to the user.
 
 ## Telemetry

@@ -62,6 +62,8 @@
       (is (str/includes? prompt "Send a `git_handoff` back to `squad-leader`")
           template)
       (is (str/includes? prompt "Do not search the web unless the assignment explicitly asks you to.")
+          template)
+      (is (str/includes? prompt "Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.")
           template))))
 
 (deftest squad-review-cleaning-responsibilities-are-split
@@ -334,6 +336,7 @@
         (is (str/includes? (slurp (str prompt-file)) "tool_cache_dir:"))
         (is (str/includes? (slurp (str prompt-file)) "Before task work, verify that your current directory is the assigned worktree."))
         (is (str/includes? (slurp (str prompt-file)) "Do not search the web unless the assignment explicitly asks you to."))
+        (is (str/includes? (slurp (str prompt-file)) "Do not fetch, clone, install, update, or check remote versions of external tools"))
         (let [launcher (slurp (str launch-script))]
           (is (str/includes? launcher "export SWARMFORGE_PROJECT_ROOT="))
           (is (str/includes? launcher "export SWARMFORGE_WORKTREE="))
@@ -361,7 +364,7 @@
                          "working"
                          "reading original rules")
               status (run {:dir root} (script "squad_status.sh") "specifier-001")]
-          (is (str/includes? (:out event) "SQUAD_EVENT: working"))
+        (is (str/includes? (:out event) "SQUAD_EVENT: working"))
           (is (str/includes? (:out status) "STATE: working"))
           (is (str/includes? (:out status) "TASK_ID: wumpus-theme"))
           (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/heartbeat")))
@@ -379,6 +382,16 @@
           (is (str/includes? (:out status) "DETAIL: worktree helper lookup"))
           (is (str/includes? (slurp (str (fs/path root ".squad/tasks/wumpus-theme/events.log")))
                              "specifier-001\tworking\tworktree helper lookup")))
+        (let [bad-event (run {:dir root
+                              :env {"SWARMFORGE_ROLE" "specifier-001"}
+                              :ok? false}
+                             (script "squad_event.sh")
+                             "specifier-001"
+                             "working"
+                             "wrong argument order")]
+          (is (= 2 (:exit bad-event)))
+          (is (str/includes? (:err bad-event)
+                             "first argument is the state, not the agent id.")))
         (let [run-result (run {:dir root
                                :env {"SWARMFORGE_ROLE" "specifier-001"}}
                               (script "squad_run.sh")
@@ -592,7 +605,7 @@
                   "Reimplement only cave topology.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance" "user approved acceptance spec")
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
                         "create"
@@ -600,7 +613,9 @@
                         "cave-topology"
                         "implementer"
                         "wumpus-cave-impl"
-                        "instructions.md")
+                        "instructions.md"
+                        "--requires"
+                        "approval:acceptance-cave-topology")
             status (run {:dir root}
                         (script "squad_assign.sh")
                         "status"
@@ -720,7 +735,7 @@
           (is (str/includes? (:out replacement-status) "STATE: assignment_created"))
           (is (str/includes? (:out report) "# Squad Report: wumpus"))
           (is (str/includes? (:out report) "- Stories: cave-topology"))
-          (is (str/includes? (:out report) "acceptance: user approved acceptance spec"))
+          (is (str/includes? (:out report) "acceptance-cave-topology: user approved cave topology acceptance spec"))
           (is (str/includes? (:out report) "wumpus-cave-impl [implementer] story=cave-topology state=replacement_created"))
           (is (str/includes? (:out report) "replacement=wumpus-cave-impl-2"))
           (is (str/includes? (:out report) "wumpus-cave-impl-2 [implementer] story=cave-topology state=assignment_created"))
@@ -784,7 +799,25 @@
                   "Write unit tests first, then production code.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
-      (let [blocked (run {:dir root :ok? false}
+      (let [missing-requirement (run {:dir root :ok? false}
+                                     (script "squad_assign.sh")
+                                     "create"
+                                     "wumpus"
+                                     "cave-topology"
+                                     "implementer"
+                                     "wumpus-cave-impl"
+                                     "instructions.md")
+            theme-wide (run {:dir root :ok? false}
+                            (script "squad_assign.sh")
+                            "create"
+                            "wumpus"
+                            "cave-topology"
+                            "implementer"
+                            "wumpus-cave-impl"
+                            "instructions.md"
+                            "--requires"
+                            "approval:acceptance")
+            blocked (run {:dir root :ok? false}
                          (script "squad_assign.sh")
                          "create"
                          "wumpus"
@@ -793,17 +826,23 @@
                          "wumpus-cave-impl"
                          "instructions.md"
                          "--requires"
-                         "approval:acceptance")]
+                         "approval:acceptance-cave-topology")]
+        (is (= 2 (:exit missing-requirement)))
+        (is (str/includes? (:err missing-requirement)
+                           "requires story-level approval gate approval:acceptance-cave-topology"))
+        (is (= 2 (:exit theme-wide)))
+        (is (str/includes? (:err theme-wide)
+                           "Theme-wide acceptance approval is not allowed"))
         (is (= 3 (:exit blocked)))
         (is (str/includes? (:err blocked) "SQUAD_ASSIGNMENT_BLOCKED: wumpus-cave-impl"))
-        (is (str/includes? (:err blocked) "missing required approval gate acceptance"))
+        (is (str/includes? (:err blocked) "missing required approval gate acceptance-cave-topology"))
         (is (not (fs/exists? (fs/path root ".squad/assignments/wumpus-cave-impl")))))
       (run {:dir root}
            (script "squad_theme.sh")
            "approve"
            "wumpus"
-           "acceptance"
-           "user approved acceptance spec")
+           "acceptance-cave-topology"
+           "user approved cave topology acceptance spec")
       (let [created (run {:dir root}
                          (script "squad_assign.sh")
                          "create"
@@ -813,12 +852,12 @@
                          "wumpus-cave-impl"
                          "instructions.md"
                          "--requires"
-                         "approval:acceptance")
+                         "approval:acceptance-cave-topology")
             assignment (fs/path root ".squad/assignments/wumpus-cave-impl/assignment.md")
             metadata (fs/path root ".squad/assignments/wumpus-cave-impl/metadata")]
-        (is (str/includes? (:out created) "REQUIRES: approval:acceptance"))
-        (is (str/includes? (slurp (str assignment)) "requires: approval:acceptance"))
-        (is (str/includes? (slurp (str metadata)) "requires: approval:acceptance")))
+        (is (str/includes? (:out created) "REQUIRES: approval:acceptance-cave-topology"))
+        (is (str/includes? (slurp (str assignment)) "requires: approval:acceptance-cave-topology"))
+        (is (str/includes? (slurp (str metadata)) "requires: approval:acceptance-cave-topology")))
       (finally
         (fs/delete-tree root)))))
 
@@ -841,6 +880,7 @@
                   "Review: accepted.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -848,7 +888,9 @@
            "cave-topology"
            "implementer"
            "wumpus-cave-accepted"
-           "instructions.md")
+           "instructions.md"
+           "--requires"
+           "approval:acceptance-cave-topology")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "result.handoff")
                     (str "id: 1\n"
@@ -1099,6 +1141,61 @@
           (is (str/includes? roles "swarmforge-specifier-001\tSpecifier 001\tcodex\ttask"))
           (is (str/includes? daemon-log "role-recovered specifier-001"))
           (is (not (str/includes? (:out once) "is not registered in roles.tsv")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squadd-reconciles-retired-transients-and-kills-leftover-tmux-session
+  (let [root (tmp-dir)
+        bin (fs/path root "bin")
+        fake-state (fs/path root "fake-tmux-state")
+        fake-tmux (fs/path bin "tmux")]
+    (try
+      (init-repo! root)
+      (fs/create-dirs bin)
+      (write-file fake-tmux
+                  (str "#!/usr/bin/env sh\n"
+                       "mkdir -p \"$FAKE_TMUX_STATE\"\n"
+                       "cmd=\"$3\"\n"
+                       "case \"$cmd\" in\n"
+                       "  has-session) test ! -f \"$FAKE_TMUX_STATE/killed\" ;;\n"
+                       "  kill-session) touch \"$FAKE_TMUX_STATE/killed\" ; exit 0 ;;\n"
+                       "  list-panes) printf '0\\n' ; exit 0 ;;\n"
+                       "  send-keys) exit 0 ;;\n"
+                       "  *) exit 0 ;;\n"
+                       "esac\n"))
+      (run {:dir root} "chmod" "+x" (str fake-tmux))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".swarmforge/tmux-socket")
+                  "/tmp/swarmforge-test.sock\n")
+      (write-file (fs/path root ".squad/agents/specifier-001/metadata")
+                  (str "agent_id: specifier-001\n"
+                       "template: specifier\n"
+                       "task_id: wumpus-spec\n"
+                       "project_root: " root "\n"
+                       "worktree: " root "/.worktrees/specifier-001\n"
+                       "session: swarmforge-specifier-001\n"
+                       "display: Specifier 001\n"
+                       "backend: codex\n"))
+      (write-file (fs/path root ".squad/agents/specifier-001/status")
+                  "state: retired\ndetail: done\nupdated_at: 2026-07-31T16:00:00Z\n")
+      (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
+                  "agent: specifier-001\ntask_id: wumpus-spec\nstate: retired\ndetail: done\nupdated_at: 2026-07-31T16:00:00Z\n")
+      (let [once (run {:dir root
+                       :env {"PATH" (str bin ":" (System/getenv "PATH"))
+                             "FAKE_TMUX_STATE" (str fake-state)}}
+                      (script "squadd.sh")
+                      "--once"
+                      "--no-notify"
+                      (str root))
+            roles (slurp (str (fs/path root ".swarmforge/roles.tsv")))
+            daemon-log (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))]
+        (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
+        (is (fs/exists? (fs/path fake-state "killed")))
+        (is (not (str/includes? roles "specifier-001\t")))
+        (is (str/includes? daemon-log "retired-session-killed specifier-001 swarmforge-specifier-001"))
+        (is (str/includes? daemon-log "role-retired-reconciled specifier-001")))
       (finally
         (fs/delete-tree root)))))
 

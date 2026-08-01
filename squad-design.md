@@ -354,11 +354,14 @@ recommendations; `architecture-cleaner` changes only the leader-approved
 architectural cleanup items.
 
 User approval gates are explicit. For theme-sized work, the squad leader should
-ask for approval after decomposing the theme into stories and before detailed
-implementation work begins. After Gherkin and QA procedure specs are written,
-the squad leader should ask for acceptance-spec approval before production code
-is implemented. For small tasks, the squad leader may collapse those gates only
-when the story and acceptance criteria are trivial.
+ask for approval after decomposing the theme into smaller independently
+specifiable stories. That approval accepts the story plan, story order, and
+batching strategy; it is not approval of the whole theme for implementation.
+After Gherkin and QA procedure specs are written for a story, the squad leader
+should ask for user approval of that story's acceptance specification before
+production code for that story is implemented. For small tasks, the squad
+leader may collapse those gates only when the story and acceptance criteria are
+trivial.
 
 The squad leader owns theme-to-stories decomposition, but does not own the
 artifact-producing transitions after that point. For theme-sized work,
@@ -369,6 +372,12 @@ assigned to transient agents. The squad leader records returned artifacts,
 frames approval gates, monitors status, decides merge/rejection/replacement,
 and reports to the user. The leader may do specialist artifact work directly
 only when the user explicitly asks the leader to bypass delegation.
+
+Reviewer and architecture-reviewer reports are durable squad artifacts. They
+should be committed by the reviewer under `.squad/reviews/` and merged by the
+squad leader when merge-ready and relevant. Assignment-level `review.md` files
+remain decision records and copies of the review text used to accept, reject,
+or replace a specific assignment.
 
 Story-level flow should move through the cleaner one story at a time. Hardener
 and QA should normally be batched across a coherent set of completed stories
@@ -454,15 +463,16 @@ Example squad execution:
 2. squad-leader inspects the original rules and project conventions directly.
 3. squad-leader converts the theme into the six stories above.
 4. squad-leader asks the user to approve the fidelity target, story list,
-   story order, batching choices, and any interpretation choices.
+   story order, batching choices, and any interpretation choices. This is
+   story-plan approval only, not theme-wide implementation approval.
 5. after user approval, squad-leader spawns specifier-001 for Story 1 and
    Story 2.
 6. specifier-001 writes Gherkin for topology, setup, warnings, and visible turn
    text, plus QA procedure specs for playing through those behaviors.
 7. squad-leader reviews the Gherkin and QA procedure specs against the
    fidelity checklist.
-8. squad-leader asks the user to approve the acceptance specification before
-   production implementation begins.
+8. squad-leader asks the user to approve each story's acceptance specification
+   before production implementation for that story begins.
 9. squad-leader spawns implementer-001 for Story 1 and Story 2 as one coherent
    TDD assignment: acceptance pipeline wiring, unit tests, and production code.
 10. implementer-001 commits passing unit and acceptance tests and hands off to
@@ -988,6 +998,48 @@ Corrections:
 - `squad_assign.sh result` rejects missing `from` headers and rejects
   `from: squad-leader` for transient result handoffs
 
+### Second HTW Trial Defect Corrections
+
+The second Hunt the Wumpus trial validated more of the story-level flow and
+exposed additional operational gaps:
+
+- transient tmux sessions could remain after the role was removed from
+  `.swarmforge/roles.tsv`
+- retired agents could continue to confuse status reconciliation
+- malformed `squad_event.sh` invocations could overwrite status state with an
+  agent id
+- workers could still fetch or inspect remote tools even though they were told
+  not to web search
+- implementation could start from a broad or theme-wide acceptance approval
+  instead of a story-specific acceptance gate
+- recovery states for missing sessions, dirty worktrees, committed-no-handoff,
+  handoff-no-session, and stale heartbeats are still not fully encoded as a
+  leader workflow
+- reviewer report merge policy needed to be explicit
+
+Corrections:
+
+- `squad_retire.sh` now verifies that a killed tmux session disappears before
+  reporting it stopped
+- `squadd.sh` reconciles retired agents by killing leftover tmux sessions and
+  removing lingering role rows
+- `squad_event.sh` rejects likely wrong-argument invocations, including states
+  that look like the agent id or task id
+- generated transient prompts and role templates now prohibit fetching,
+  cloning, installing, updating, or checking remote versions of external tools
+  unless the assignment explicitly asks for that operation
+- implementer assignments now require story-level acceptance gates named
+  `approval:acceptance-<story-id>` and reject theme-wide `approval:acceptance`
+- the approval rule is now explicit: theme approval accepts the story plan;
+  implementation approval is per story after that story's Gherkin and QA
+  procedure artifacts exist
+- reviewer and architecture-reviewer report commits are explicitly durable
+  `.squad/reviews/` artifacts that should be merged when relevant
+- the squad leader workflow now distinguishes missing-session recovery cases:
+  process delivered handoffs, ask before recovering committed-no-handoff or
+  dirty-worktree state, replace missing-session/no-handoff work, and treat a
+  stale heartbeat with a live pane as a status problem
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -1008,6 +1060,17 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] shared tool cache registry for already-built executables
 - [x] shared tool cache validation by source and version
 - [x] locked shared tool install-or-reuse command for caller-provided installers
+- [x] default implementer approval gate policy requires
+      `approval:acceptance-<story-id>`
+- [x] malformed telemetry events that pass agent id or task id as the state are
+      rejected
+- [x] retired transient rows and leftover tmux sessions are reconciled by the
+      unified daemon
+- [x] transient prompts and templates prohibit external fetch/install/version
+      checks unless explicitly assigned
+- [x] squad leader recovery policy distinguishes delivered handoff,
+      committed-no-handoff, dirty worktree, missing session, and stale heartbeat
+      cases
 - [x] portable transient launch model: project-root agent invocation plus
       required worktree `cd`
 - [x] tmux session and window naming conventions for transient agents
@@ -1029,6 +1092,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] transient result intake can record merge-ready or merge-blocked state
       without committing a merge
 - [x] review decisions can be recorded as durable assignment state
+- [x] reviewer and architecture-reviewer reports are durable merged artifacts
+      under `.squad/reviews/`
 - [x] rejected transient work can be preserved with durable rejection reasons
 - [x] replacement assignments can be linked to rejected or superseded work
 - [x] accepted merge decisions can be recorded and applied after merge-ready
@@ -1081,8 +1146,8 @@ They are tracked here as resolved, partially resolved, or still open.
       suppressed, but user-facing periodic summaries are not fully automated
 - [ ] exact helper command arguments, outputs, and exit codes are stable for
       implemented helpers only
-- [ ] policy for crashed, stale, or wedged invisible agents exists as daemon
-      detection, but not as a full squad-leader recovery workflow
+- [ ] helper-level automation for crashed, stale, or wedged invisible-agent
+      recovery beyond daemon detection and squad-leader policy
 - [ ] transient result intake records handoffs, merge readiness, review,
       rejection, replacement links, and accepted merges, but does not yet fetch
       missing transient branches
@@ -1092,8 +1157,7 @@ They are tracked here as resolved, partially resolved, or still open.
 - [ ] merge policy for fetching missing transient branches
 - [ ] policy for merge conflicts created by transient work
 - [ ] policy for interrupting or restarting a running transient agent
-- [ ] default policy for which assignment templates require which approval
-      gates
+- [ ] default approval-gate policy for non-implementer templates
 - [ ] acceptance artifact schema and type policy beyond path references
 - [ ] helper-level enforcement that acceptance artifacts cite a producing
       assignment or transient agent

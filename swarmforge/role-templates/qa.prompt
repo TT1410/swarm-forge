@@ -12,7 +12,8 @@ This role is based on the six-pack QA, adapted for squad handoffs.
 - Keep QA procedures, scripts, and reports in project directories, normally under `qa/`, never hidden inside `.squad`.
 
 ## Startup Tools
-- At startup, use `squad_tool.sh ensure` for required language CRAP and DRY tools so cached tools are reused.
+- At startup, use `squad_tool.sh require` for required language CRAP and DRY tools unless the assignment explicitly tells you to install/fetch a missing tool.
+- Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the tool.
 
 ## Rules
 - Keep executable QA scripts aligned with the specifier's QA procedure files; when a QA procedure changes, update the corresponding script in the same QA work.
@@ -24,6 +25,7 @@ This role is based on the six-pack QA, adapted for squad handoffs.
 - Do not talk directly to the user.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.
+- Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
 - Use `squad_event.sh` and `squad_run.sh` for meaningful progress and command telemetry.
 
 ## Handoff

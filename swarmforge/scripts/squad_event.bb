@@ -59,6 +59,46 @@
   (or (read-value (fs/path root ".squad" "agents" agent "metadata") "task_id")
       (exit! 1 (str "Cannot find task id for " agent))))
 
+(def known-states
+  #{"starting"
+    "working"
+    "progress"
+    "blocked"
+    "failed"
+    "verifying"
+    "reviewing"
+    "complete"
+    "completed"
+    "handoff"
+    "handoff_sent"
+    "retired"})
+
+(defn valid-state? [state]
+  (or (contains? known-states state)
+      (re-matches #"[a-z][a-z0-9_]*(?:_[a-z0-9]+)*" state)))
+
+(defn validate-state! [agent task state]
+  (cond
+    (= state agent)
+    (exit! 2
+           "SQUAD_EVENT_USAGE_ERROR: first argument is the state, not the agent id."
+           usage-text)
+
+    (= state task)
+    (exit! 2
+           "SQUAD_EVENT_USAGE_ERROR: first argument is the state, not the task id."
+           usage-text)
+
+    (re-matches #"[a-z][a-z0-9-]*-[0-9][0-9][0-9]" state)
+    (exit! 2
+           "SQUAD_EVENT_USAGE_ERROR: state looks like an agent id."
+           usage-text)
+
+    (not (valid-state? state))
+    (exit! 2
+           "SQUAD_EVENT_USAGE_ERROR: state must use lowercase words separated by underscores."
+           usage-text)))
+
 (defn append-event! [file line]
   (fs/create-dirs (fs/parent file))
   (spit (str file) (str line "\n") :append true))
@@ -71,6 +111,7 @@
         agent-dir (fs/path root ".squad" "agents" agent)
         event-file (fs/path root ".squad" "tasks" task "events.log")
         detail (str/replace detail #"\R+" " ")]
+    (validate-state! agent task state)
     (write-atomic! (fs/path agent-dir "status")
                    (str "state: " state "\n"
                         "detail: " detail "\n"
