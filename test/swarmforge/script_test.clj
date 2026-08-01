@@ -41,7 +41,8 @@
                     "implementer"
                     "reviewer"
                     "cleaner"
-                    "architect"
+                    "architecture-reviewer"
+                    "architecture-cleaner"
                     "hardener"
                     "qa"]]
     (is (fs/exists? (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))))
@@ -51,7 +52,8 @@
                     "implementer"
                     "reviewer"
                     "cleaner"
-                    "architect"
+                    "architecture-reviewer"
+                    "architecture-cleaner"
                     "hardener"
                     "qa"]]
     (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
@@ -59,6 +61,21 @@
           template)
       (is (str/includes? prompt "Send a `git_handoff` back to `squad-leader`")
           template))))
+
+(deftest squad-review-cleaning-responsibilities-are-split
+  (let [reviewer (slurp (str (fs/path repo-root "swarmforge/role-templates/reviewer.prompt")))
+        cleaner (slurp (str (fs/path repo-root "swarmforge/role-templates/cleaner.prompt")))
+        architecture-reviewer (slurp (str (fs/path repo-root "swarmforge/role-templates/architecture-reviewer.prompt")))
+        architecture-cleaner (slurp (str (fs/path repo-root "swarmforge/role-templates/architecture-cleaner.prompt")))
+        leader (slurp (str (fs/path repo-root "swarmforge/roles/squad-leader.prompt")))]
+    (is (str/includes? reviewer "Produce a review report only"))
+    (is (str/includes? reviewer "Do not make production changes."))
+    (is (str/includes? cleaner "Work one story at a time."))
+    (is (str/includes? cleaner "Do not implement reviewer recommendations unless they are listed in the assignment from the squad leader."))
+    (is (str/includes? architecture-reviewer "Produce an architecture review report only"))
+    (is (str/includes? architecture-cleaner "Do not implement architecture-reviewer recommendations unless they are listed in the assignment from the squad leader."))
+    (is (str/includes? leader "Reviewers and architecture-reviewers report recommendations only."))
+    (is (str/includes? leader "Batch architecture-reviewer, hardener, and QA work"))))
 
 (deftest handoff-lib-parses-and-prints-handoff-files
   (let [root (tmp-dir)
