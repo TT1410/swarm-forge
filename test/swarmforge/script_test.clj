@@ -41,10 +41,10 @@
                     "implementer"
                     "reviewer"
                     "cleaner"
-                    "architecture-reviewer"
-                    "architecture-cleaner"
                     "hardener"
-                    "qa"]]
+                    "qa"
+                    "architecture-reviewer"
+                    "architecture-cleaner"]]
     (is (fs/exists? (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))))
 
 (deftest squad-role-templates-handoff-only-to-leader
@@ -52,10 +52,10 @@
                     "implementer"
                     "reviewer"
                     "cleaner"
-                    "architecture-reviewer"
-                    "architecture-cleaner"
                     "hardener"
-                    "qa"]]
+                    "qa"
+                    "architecture-reviewer"
+                    "architecture-cleaner"]]
     (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
       (is (str/includes? prompt "Do not hand off to another transient worker.")
           template)
@@ -67,6 +67,9 @@
         cleaner (slurp (str (fs/path repo-root "swarmforge/role-templates/cleaner.prompt")))
         architecture-reviewer (slurp (str (fs/path repo-root "swarmforge/role-templates/architecture-reviewer.prompt")))
         architecture-cleaner (slurp (str (fs/path repo-root "swarmforge/role-templates/architecture-cleaner.prompt")))
+        hardener (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))
+        qa (slurp (str (fs/path repo-root "swarmforge/role-templates/qa.prompt")))
+        local-workflow (slurp (str (fs/path repo-root "swarmforge/constitution/articles/local-workflow.prompt")))
         leader (slurp (str (fs/path repo-root "swarmforge/roles/squad-leader.prompt")))]
     (is (str/includes? reviewer "Produce a review report only"))
     (is (str/includes? reviewer "Do not make production changes."))
@@ -74,8 +77,13 @@
     (is (str/includes? cleaner "Do not implement reviewer recommendations unless they are listed in the assignment from the squad leader."))
     (is (str/includes? architecture-reviewer "Produce an architecture review report only"))
     (is (str/includes? architecture-cleaner "Do not implement architecture-reviewer recommendations unless they are listed in the assignment from the squad leader."))
+    (is (str/includes? hardener "based on the six-pack hardender"))
+    (is (str/includes? hardener "soft Gherkin acceptance mutation"))
+    (is (str/includes? qa "based on the six-pack QA"))
+    (is (str/includes? qa "Fix bugs found by the QA suite or final verification"))
     (is (str/includes? leader "Reviewers and architecture-reviewers report recommendations only."))
-    (is (str/includes? leader "Batch architecture-reviewer, hardener, and QA work"))))
+    (is (str/includes? leader "After QA completes, batch architecture-reviewer work"))
+    (is (str/includes? local-workflow "Architecture-reviewer should normally follow QA"))))
 
 (deftest handoff-lib-parses-and-prints-handoff-files
   (let [root (tmp-dir)

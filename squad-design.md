@@ -34,10 +34,10 @@ Transient agents should be created from the current template slate:
 - `implementer`
 - `reviewer`
 - `cleaner`
-- `architecture-reviewer`
-- `architecture-cleaner`
 - `hardener`
 - `qa`
+- `architecture-reviewer`
+- `architecture-cleaner`
 
 Transient agents receive narrow assignments, work in dedicated worktrees or
 branches, and communicate through handoffs. They should not talk directly to
@@ -370,11 +370,13 @@ frames approval gates, monitors status, decides merge/rejection/replacement,
 and reports to the user. The leader may do specialist artifact work directly
 only when the user explicitly asks the leader to bypass delegation.
 
-Story-level flow should move through the cleaner one story at a time.
-Architecture-reviewer, hardener, and QA should normally be batched across a
-coherent set of completed stories because those gates are more valuable when
-they can see cross-story structure, mutation surface, and final user-visible
-behavior.
+Story-level flow should move through the cleaner one story at a time. Hardener
+and QA should normally be batched across a coherent set of completed stories
+because those gates are more valuable when they can see cross-story mutation
+surface and final user-visible behavior. Architecture-reviewer should normally
+follow QA and review the QA-verified story set because QA may make minimal
+production code changes to pass end-to-end verification. Architecture-cleaner
+then performs only the architectural cleanup selected by the squad leader.
 
 ## Example: Faithful Hunt The Wumpus
 
@@ -473,18 +475,18 @@ Example squad execution:
 14. If review and cleanup pass, squad-leader repeats the cycle for Stories 3
     through 6, batching compatible implementation stories only when their
     behaviors form one tight loop.
-15. squad-leader spawns architecture-reviewer-001 when code structure begins
-    to show stable boundaries: game rules, random source, console UI,
-    parser/input, and game loop.
-16. architecture-reviewer-001 reports architectural recommendations back to
+15. squad-leader spawns hardener-001 after the full story set passes, focusing
+    on mutation survivors in game rules and random-dependent edge cases.
+16. squad-leader spawns qa-001 to convert QA procedure specs into executable
+    UI-level QA scripts and run final independent verification.
+17. squad-leader spawns architecture-reviewer-001 after QA because QA may have
+    made minimal code fixes that affect boundaries: game rules, random source,
+    console UI, parser/input, and game loop.
+18. architecture-reviewer-001 reports architectural recommendations back to
     squad-leader; squad-leader decides which recommendations become
     architecture-cleaner work.
-17. squad-leader spawns architecture-cleaner-001 only for selected
+19. squad-leader spawns architecture-cleaner-001 only for selected
     architectural cleanup.
-18. squad-leader spawns hardener-001 after the full story set passes, focusing
-    on mutation survivors in game rules and random-dependent edge cases.
-19. squad-leader spawns qa-001 to convert QA procedure specs into executable
-    UI-level QA scripts and run final independent verification.
 20. squad-leader merges accepted commits, retires transient agents, and reports
     the completed game with the fidelity checklist and verification summary.
 ```
@@ -492,9 +494,10 @@ Example squad execution:
 This example does not create one transient agent per transition. The
 story-to-acceptance-pipeline-to-unit-tests-to-production-code loop stays with an
 implementer. Separate agents are used where independent judgment matters:
-specification, review, architectural review, hardening, and final QA. Cleaner
-work is one story at a time; architecture-reviewer, hardener, and QA work is
-batched when several completed stories should be evaluated together.
+specification, review, hardening, final QA, and architectural review. Cleaner
+work is one story at a time; hardener and QA work is batched when several
+completed stories should be evaluated together; architecture-reviewer follows
+QA and is batched across the QA-verified story set.
 
 ## Implementation Plan
 
@@ -612,10 +615,10 @@ Add the remaining templates and quality gates:
 - `implementer`
 - `reviewer`
 - `cleaner`
-- `architecture-reviewer`
-- `architecture-cleaner`
 - `hardener`
 - `qa`
+- `architecture-reviewer`
+- `architecture-cleaner`
 
 Success condition: the squad leader can execute a theme-sized workflow with
 theme splitting, user approval, acceptance-spec approval, implementation,
@@ -624,8 +627,8 @@ hardening, QA, completion reporting, and transient retirement.
 
 Status: partially implemented. The remaining full-workflow role templates now
 exist and can be spawned dynamically: `specifier`, `implementer`, `reviewer`,
-`cleaner`, `architecture-reviewer`, `architecture-cleaner`, `hardener`, and
-`qa`.
+`cleaner`, `hardener`, `qa`, `architecture-reviewer`, and
+`architecture-cleaner`.
 Launcher-managed status daemon startup is implemented. A fully exercised
 theme-sized end-to-end workflow remains future work.
 

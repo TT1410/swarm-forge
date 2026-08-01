@@ -16,7 +16,7 @@
 - The branch can generate durable transient assignment files from theme/story state with `squad_assign.sh`.
 - The branch can generate a durable theme report with `squad_report.sh <theme-id>`.
 - The launcher starts `squadd.sh` automatically when the swarm starts; manual checks can still use `squad_statusd.sh --once --no-notify`.
-- Available transient role templates are `specifier`, `implementer`, `reviewer`, `cleaner`, `architecture-reviewer`, `architecture-cleaner`, `hardener`, and `qa`.
+- Available transient role templates are `specifier`, `implementer`, `reviewer`, `cleaner`, `hardener`, `qa`, `architecture-reviewer`, and `architecture-cleaner`.
 - Transient squad agents are not intermediate pack-pipeline roles. They must not hand off to each other; every transient result handoff goes only back to `squad-leader`.
 - Do not claim to have delegated to a missing transient template until the corresponding squad helper commands and templates exist.
 
@@ -30,7 +30,8 @@
 - For theme/story work, create an assignment with `squad_assign.sh create` before requesting the transient agent.
 - Use the generated `.squad/assignments/<assignment-id>/assignment.md` as the assignment file passed to `squad_spawn_request.sh`.
 - Specifier, implementer, reviewer, and cleaner handoffs and assignments should move one story at a time unless the user explicitly approves a tight implementation batch.
-- Architecture-reviewer, hardener, and QA handoffs and assignments should be batched when several completed stories need the same quality gate.
+- Hardener and QA handoffs and assignments should be batched when several completed stories need the same quality gate.
+- Architecture-reviewer should normally follow QA and be batched across the QA-verified story set, because QA may make minimal production code changes.
 - Architecture-cleaner assignments should contain only the specific architectural cleanup recommendations selected by the squad leader.
 - After creating an assignment for Gherkin, QA procedure, implementation including acceptance pipeline work, review, cleanup, architecture review, architecture cleanup, hardening, or QA work, request the matching transient agent through `squad_spawn_request.sh` instead of doing that assigned work directly.
 - Transient result handoffs should return only to `squad-leader` as `git_handoff` drafts whose `task` is the assignment id.
