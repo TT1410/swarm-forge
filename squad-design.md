@@ -31,7 +31,6 @@ delegate final theme-to-story decomposition or approval framing.
 Transient agents should be created from the current template slate:
 
 - `specifier`
-- `acceptance-builder`
 - `implementer`
 - `reviewer`
 - `cleaner`
@@ -341,8 +340,9 @@ Transient agents should be assigned coherent ownership spans, not one agent per
 graph edge by default. Some transitions belong together because they form a
 tight feedback loop, especially story-to-unit-tests-to-production-code. Other
 transitions deserve separate transient agents when independent judgment or
-quality gates matter, such as specification, acceptance pipeline construction,
-architectural review, mutation hardening, and final QA.
+quality gates matter, such as specification, architectural review, mutation
+hardening, and final QA. Acceptance pipeline construction belongs with the
+implementer, following the six-pack coder role.
 
 User approval gates are explicit. For theme-sized work, the squad leader should
 ask for approval after decomposing the theme into stories and before detailed
@@ -353,8 +353,8 @@ when the story and acceptance criteria are trivial.
 
 The squad leader owns theme-to-stories decomposition, but does not own the
 artifact-producing transitions after that point. For theme-sized work,
-story-to-Gherkin, story-to-QA-procedure, acceptance infrastructure,
-implementation, review, hardening, QA, and cleanup transitions should be
+story-to-Gherkin, story-to-QA-procedure, implementation including acceptance
+infrastructure, review, hardening, QA, and cleanup transitions should be
 assigned to transient agents. The squad leader records returned artifacts,
 frames approval gates, monitors status, decides merge/rejection/replacement,
 and reports to the user. The leader may do specialist artifact work directly
@@ -445,33 +445,30 @@ Example squad execution:
    fidelity checklist.
 8. squad-leader asks the user to approve the acceptance specification before
    production implementation begins.
-9. squad-leader spawns acceptance-builder-001 to wire Gherkin parsing,
-   generated acceptance entrypoints, step handlers, and acceptance scripts.
-10. squad-leader spawns implementer-001 for Story 1 and Story 2 as one coherent
-   TDD assignment: unit tests plus production code.
-11. implementer-001 commits passing unit and acceptance tests and hands off to
+9. squad-leader spawns implementer-001 for Story 1 and Story 2 as one coherent
+   TDD assignment: acceptance pipeline wiring, unit tests, and production code.
+10. implementer-001 commits passing unit and acceptance tests and hands off to
    squad-leader.
-12. squad-leader spawns reviewer-001 to review fidelity and local design.
-13. If review passes, squad-leader repeats the cycle for Stories 3 through 6,
+11. squad-leader spawns reviewer-001 to review fidelity and local design.
+12. If review passes, squad-leader repeats the cycle for Stories 3 through 6,
     batching compatible stories only when their behaviors form one tight loop.
-14. squad-leader spawns cleaner-001 after the first complete gameplay path is
+13. squad-leader spawns cleaner-001 after the first complete gameplay path is
     working, not after every tiny story.
-15. squad-leader spawns architect-001 when code structure begins to show stable
+14. squad-leader spawns architect-001 when code structure begins to show stable
     boundaries: game rules, random source, console UI, parser/input, and game
     loop.
-16. squad-leader spawns hardener-001 after the full story set passes, focusing
+15. squad-leader spawns hardener-001 after the full story set passes, focusing
     on mutation survivors in game rules and random-dependent edge cases.
-17. squad-leader spawns qa-001 to convert QA procedure specs into executable
+16. squad-leader spawns qa-001 to convert QA procedure specs into executable
     UI-level QA scripts and run final independent verification.
-18. squad-leader merges accepted commits, retires transient agents, and reports
+17. squad-leader merges accepted commits, retires transient agents, and reports
     the completed game with the fidelity checklist and verification summary.
 ```
 
 This example does not create one transient agent per transition. The
-story-to-unit-tests-to-production-code loop stays with an implementer. Separate
-agents are used where independent judgment matters: source investigation,
-specification, acceptance pipeline construction, review, architecture,
-hardening, and final QA.
+story-to-acceptance-pipeline-to-unit-tests-to-production-code loop stays with an
+implementer. Separate agents are used where independent judgment matters:
+specification, review, architecture, hardening, and final QA.
 
 ## Implementation Plan
 
@@ -586,7 +583,6 @@ swarm starts and cleanup stops it.
 Add the remaining templates and quality gates:
 
 - `specifier`
-- `acceptance-builder`
 - `implementer`
 - `reviewer`
 - `cleaner`
@@ -599,8 +595,8 @@ theme splitting, user approval, acceptance-spec approval, implementation,
 review, hardening, QA, completion reporting, and transient retirement.
 
 Status: partially implemented. The remaining full-workflow role templates now
-exist and can be spawned dynamically: `specifier`, `acceptance-builder`,
-`implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
+exist and can be spawned dynamically: `specifier`, `implementer`, `reviewer`,
+`cleaner`, `architect`, `hardener`, and `qa`.
 Launcher-managed status daemon startup is implemented. A fully exercised
 theme-sized end-to-end workflow remains future work.
 

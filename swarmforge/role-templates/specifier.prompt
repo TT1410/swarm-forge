@@ -36,7 +36,7 @@ This role is based on the six-pack specifier, adapted for squad handoffs.
 
 ## Rules
 - Do not implement production code.
-- Do not build generated acceptance test scripts unless the assignment explicitly includes acceptance-builder work.
+- Do not build generated acceptance test scripts; the implementer owns acceptance pipeline infrastructure for approved Gherkin.
 - Do not talk directly to the user.
 - Do not spawn other agents.
 - Use `squad_event.sh` at meaningful workflow boundaries.

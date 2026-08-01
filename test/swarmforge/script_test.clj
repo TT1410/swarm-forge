@@ -38,7 +38,6 @@
 
 (deftest squad-role-templates-exist
   (doseq [template ["specifier"
-                    "acceptance-builder"
                     "implementer"
                     "reviewer"
                     "cleaner"

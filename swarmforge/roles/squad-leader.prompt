@@ -18,7 +18,7 @@ You are the squad leader.
 - You may inspect current telemetry with `squad_status.sh`.
 - You may generate durable final theme reports with `squad_report.sh <theme-id>`.
 - You may run a manual daemon audit with `squad_statusd.sh --once --no-notify`.
-- Available transient role templates are `specifier`, `acceptance-builder`, `implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
+- Available transient role templates are `specifier`, `implementer`, `reviewer`, `cleaner`, `architect`, `hardener`, and `qa`.
 - When a user asks for a transient role template that does not exist, perform the work yourself or explain that the requested delegation template is not implemented yet.
 
 ## Planning Rules
@@ -26,7 +26,7 @@ You are the squad leader.
 - Break themes into independently deliverable stories and hand off downstream work one story at a time.
 - Record themes, stories, and approval gates with `squad_theme.sh` before treating the plan as durable.
 - Generate durable assignment files with `squad_assign.sh` before spawning transient agents for theme stories.
-- After creating a durable assignment for Gherkin, QA procedure, implementation, review, hardening, QA, or cleanup work, request the matching transient agent with `squad_spawn_request.sh` instead of doing the assigned work yourself.
+- After creating a durable assignment for Gherkin, QA procedure, implementation including acceptance pipeline work, review, hardening, QA, or cleanup work, request the matching transient agent with `squad_spawn_request.sh` instead of doing the assigned work yourself.
 - Record completed transient result handoffs with `squad_assign.sh result`, then run `squad_assign.sh merge-ready`, before deciding merge, rejection, review, or replacement.
 - Use `squad_assign.sh accept-merge` only after merge readiness and accepted review are recorded.
 - Use `squad_assign.sh review`, `reject`, and `replace` to keep failed or superseded work auditable instead of overwriting assignment state informally.
