@@ -38,15 +38,19 @@
   (str "'" (str/replace (str value) #"'" "'\"'\"'") "'"))
 
 (defn project-root []
-  (let [cwd (fs/cwd)
+  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
+        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
+        cwd (fs/cwd)
         direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (fs/exists? direct)
+    (if (and configured (fs/exists? configured-roles))
+      (fs/path configured)
+      (if (fs/exists? direct)
       cwd
       (let [git-root (str/trim (:out (sh {:continue true} "git" "rev-parse" "--show-toplevel")))]
         (if (and (not (str/blank? git-root))
                  (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
           (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root"))))))
+          (exit! 1 "Cannot find SwarmForge project root")))))))
 
 (defn validate-template! [template]
   (when-not (re-matches #"[a-z][a-z0-9-]*" template)
@@ -119,7 +123,7 @@
   (let [root-state (fs/path root ".swarmforge")
         role-state (fs/path worktree ".swarmforge")]
     (fs/create-dirs role-state)
-    (doseq [file ["roles.tsv" "sessions.tsv" "tmux-socket" "tmux-env"]]
+    (doseq [file ["sessions.tsv" "tmux-socket" "tmux-env"]]
       (let [source (fs/path root-state file)]
         (when (fs/exists? source)
           (fs/copy source (fs/path role-state file) {:replace-existing true}))))))
@@ -140,6 +144,7 @@
        "tool_cache_dir: " tool-cache-dir "\n\n"
        "You are a transient squad agent. Communicate through handoffs only. Do not talk directly to the user. Do not spawn other agents. Do not broaden this assignment without a squad-leader handoff.\n\n"
        "Before task work, verify that your current directory is the assigned worktree. Do not edit the project root except through approved squad helper commands and shared tool-cache helpers.\n\n"
+       "Do not search the web unless the assignment explicitly asks you to. The squad leader is responsible for source/context investigation and should provide the reference facts you need.\n\n"
        "# Role Template\n\n"
        template-text "\n\n"
        "# Assignment\n\n"
@@ -185,8 +190,14 @@
                "If no squad_spawn.sh or squad_retire.sh process is running, remove the stale lock directory and retry."))
     (if (try
           (fs/create-dir lock-dir)
+          (spit (str (fs/path lock-dir "owner"))
+                (str "pid: " (.pid (java.lang.ProcessHandle/current)) "\n"))
           true
           (catch java.nio.file.FileAlreadyExistsException _
+            (when (and (fs/directory? lock-dir)
+                       (not (fs/exists? (fs/path lock-dir "owner")))
+                       (empty? (fs/list-dir lock-dir)))
+              (fs/delete-tree lock-dir))
             false))
       nil
       (do

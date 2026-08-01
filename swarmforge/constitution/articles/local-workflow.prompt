@@ -37,6 +37,7 @@
 - Transient result handoffs should return only to `squad-leader` as `git_handoff` drafts whose `task` is the assignment id.
 - Record result handoffs with `squad_assign.sh result <assignment-id> <handoff-file>` before making merge, review, rejection, or replacement decisions.
 - Use `squad_assign.sh accept-merge <assignment-id>` only after merge readiness and accepted review are recorded.
+- During recovery, the squad leader must not forge transient result handoffs, commit from transient worktrees on a worker's behalf, or directly edit worker-owned artifacts without explicit user approval. Prefer durable rejection and replacement assignments.
 - Generate `squad_report.sh <theme-id>` before final reporting to the user.
 
 ## Telemetry

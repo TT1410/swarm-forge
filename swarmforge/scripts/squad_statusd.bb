@@ -12,6 +12,7 @@
 (def wake-message
   "Squad status needs attention. If idle, run squad_status.sh.")
 (def stopping? (atom false))
+(def last-status-notification (atom {:alerts #{} :notified-at nil}))
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -42,16 +43,23 @@
       default-value)
     default-value))
 
+(defn notify-cooldown-seconds []
+  (env-long "SWARMFORGE_SQUAD_STATUS_NOTIFY_COOLDOWN_SECONDS" 300))
+
 (defn project-root []
-  (let [cwd (fs/cwd)
+  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
+        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
+        cwd (fs/cwd)
         direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (fs/exists? direct)
+    (if (and configured (fs/exists? configured-roles))
+      (fs/path configured)
+      (if (fs/exists? direct)
       cwd
       (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
         (if (and (not (str/blank? git-root))
                  (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
           (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root"))))))
+          (exit! 1 "Cannot find SwarmForge project root")))))))
 
 (defn read-value [file field]
   (when (fs/exists? file)
@@ -149,17 +157,30 @@
         socket (when (fs/exists? socket-file) (str/trim (slurp (str socket-file))))
         stale-seconds (env-long "SWARMFORGE_SQUAD_STALE_SECONDS" 300)
         alerts (mapcat #(alerts-for-agent root roles socket skip-tmux? stale-seconds (instant-now) %)
-                       (agent-dirs root))]
+                       (agent-dirs root))
+        alert-set (set alerts)
+        now-instant (instant-now)]
     (doseq [alert alerts]
       (println "SQUAD_STATUS_ALERT:" alert)
       (log! root "alert" alert))
     (when (seq alerts)
       (if no-notify?
         (log! root "notify-skipped" (count alerts))
-        (if (notify! socket "swarmforge-squad-leader")
-          (log! root "notified" "squad-leader" (count alerts))
-          (log! root "notify-failed" "squad-leader" (count alerts)))))
+        (let [{previous-alerts :alerts notified-at :notified-at} @last-status-notification
+              cooldown (notify-cooldown-seconds)
+              due? (or (nil? notified-at)
+                       (not= alert-set previous-alerts)
+                       (>= (.getSeconds (java.time.Duration/between notified-at now-instant))
+                           cooldown))]
+          (if-not due?
+            (log! root "notify-throttled" (count alerts))
+            (if (notify! socket "swarmforge-squad-leader")
+              (do
+                (reset! last-status-notification {:alerts alert-set :notified-at now-instant})
+                (log! root "notified" "squad-leader" (count alerts)))
+              (log! root "notify-failed" "squad-leader" (count alerts)))))))
     (when (empty? alerts)
+      (reset! last-status-notification {:alerts #{} :notified-at nil})
       (println "SQUAD_STATUS_OK")
       (log! root "ok"))
     alerts))

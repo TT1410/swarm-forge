@@ -31,15 +31,19 @@
   (apply process/sh (concat [{:dir (str dir) :continue true}] args)))
 
 (defn project-root []
-  (let [cwd (fs/cwd)
+  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
+        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
+        cwd (fs/cwd)
         direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (fs/exists? direct)
+    (if (and configured (fs/exists? configured-roles))
+      (fs/path configured)
+      (if (fs/exists? direct)
       cwd
       (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
         (if (and (not (str/blank? git-root))
                  (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
           (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root"))))))
+          (exit! 1 "Cannot find SwarmForge project root")))))))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
@@ -305,7 +309,11 @@
       (exit! 2 (str "Result handoff task must match assignment id: " assignment-id)))
     (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
       (exit! 2 "Result handoff must have a 10-character commit header."))
-    {:from (or from "unknown")
+    (when (str/blank? from)
+      (exit! 2 "Result handoff must have a from header."))
+    (when (= "squad-leader" from)
+      (exit! 2 "Transient result handoff may not be from: squad-leader."))
+    {:from from
      :commit commit
      :body (handoff-body handoff-file)}))
 

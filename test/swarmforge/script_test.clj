@@ -60,6 +60,8 @@
       (is (str/includes? prompt "Do not hand off to another transient worker.")
           template)
       (is (str/includes? prompt "Send a `git_handoff` back to `squad-leader`")
+          template)
+      (is (str/includes? prompt "Do not search the web unless the assignment explicitly asks you to.")
           template))))
 
 (deftest squad-review-cleaning-responsibilities-are-split
@@ -83,7 +85,9 @@
     (is (str/includes? qa "Fix bugs found by the QA suite or final verification"))
     (is (str/includes? leader "Reviewers and architecture-reviewers report recommendations only."))
     (is (str/includes? leader "After QA completes, batch architecture-reviewer work"))
-    (is (str/includes? local-workflow "Architecture-reviewer should normally follow QA"))))
+    (is (str/includes? leader "Do not forge transient result handoffs"))
+    (is (str/includes? local-workflow "Architecture-reviewer should normally follow QA"))
+    (is (str/includes? local-workflow "must not forge transient result handoffs"))))
 
 (deftest handoff-lib-parses-and-prints-handoff-files
   (let [root (tmp-dir)
@@ -283,6 +287,7 @@
       (write-file (fs/path root "assignment.md")
                   "Find the original rules.\n")
       (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (fs/create-dirs (fs/path root ".swarmforge/squad/spawn.lock"))
       (let [result (run {:dir root
                          :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                         (script "squad_spawn.sh")
@@ -318,6 +323,7 @@
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_event.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_statusd.sh")))
         (is (fs/exists? (fs/path worktree ".swarmforge/handoffs/inbox/new")))
+        (is (not (fs/exists? (fs/path worktree ".swarmforge/roles.tsv"))))
         (is (fs/exists? prompt-file))
         (is (fs/exists? launch-script))
         (is (str/includes? (slurp (str metadata-file)) "task_id: wumpus-theme"))
@@ -327,6 +333,7 @@
         (is (str/includes? (slurp (str prompt-file)) "assigned_worktree:"))
         (is (str/includes? (slurp (str prompt-file)) "tool_cache_dir:"))
         (is (str/includes? (slurp (str prompt-file)) "Before task work, verify that your current directory is the assigned worktree."))
+        (is (str/includes? (slurp (str prompt-file)) "Do not search the web unless the assignment explicitly asks you to."))
         (let [launcher (slurp (str launch-script))]
           (is (str/includes? launcher "export SWARMFORGE_PROJECT_ROOT="))
           (is (str/includes? launcher "export SWARMFORGE_WORKTREE="))
@@ -361,6 +368,17 @@
                              "state: working"))
           (is (str/includes? (slurp (str (fs/path root ".squad/tasks/wumpus-theme/events.log")))
                              "specifier-001\tworking\treading original rules")))
+        (let [event (run {:dir worktree
+                          :env {"SWARMFORGE_ROLE" "specifier-001"
+                                "SWARMFORGE_PROJECT_ROOT" (str root)}}
+                         (str (fs/path worktree "swarmforge/scripts/squad_event.sh"))
+                         "working"
+                         "worktree helper lookup")
+              status (run {:dir root} (script "squad_status.sh") "specifier-001")]
+          (is (str/includes? (:out event) "SQUAD_EVENT: working"))
+          (is (str/includes? (:out status) "DETAIL: worktree helper lookup"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/tasks/wumpus-theme/events.log")))
+                             "specifier-001\tworking\tworktree helper lookup")))
         (let [run-result (run {:dir root
                                :env {"SWARMFORGE_ROLE" "specifier-001"}}
                               (script "squad_run.sh")
@@ -391,6 +409,7 @@
           (is (str/includes? (:out statusd) "SQUAD_STATUS_ALERT: agent specifier-001 heartbeat stale"))
           (is (str/includes? (slurp (str (fs/path root ".swarmforge/daemon/squad-statusd.log")))
                              "alert agent specifier-001 heartbeat stale")))
+        (fs/create-dirs (fs/path root ".swarmforge/squad/spawn.lock"))
         (let [retire (run {:dir root}
                           (script "squad_retire.sh")
                           "specifier-001")
@@ -601,6 +620,39 @@
         (is (str/includes? (slurp (str draft)) "task: wumpus-cave-impl"))
         (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
                            "\tassignment_created\twumpus-cave-impl\timplementer\tcave-topology"))
+        (write-file (fs/path root "anonymous-result.handoff")
+                    (str "id: 1\n"
+                         "to: squad-leader\n"
+                         "priority: 50\n"
+                         "type: git_handoff\n"
+                         "task: wumpus-cave-impl\n"
+                         "commit: " commit "\n"
+                         "\n"
+                         "merge_and_process implementer-001 " commit "\n"))
+        (write-file (fs/path root "leader-result.handoff")
+                    (str "id: 2\n"
+                         "from: squad-leader\n"
+                         "to: squad-leader\n"
+                         "priority: 50\n"
+                         "type: git_handoff\n"
+                         "task: wumpus-cave-impl\n"
+                         "commit: " commit "\n"
+                         "\n"
+                         "merge_and_process squad-leader " commit "\n"))
+        (let [anonymous (run {:dir root :ok? false}
+                             (script "squad_assign.sh")
+                             "result"
+                             "wumpus-cave-impl"
+                             "anonymous-result.handoff")
+              leader-authored (run {:dir root :ok? false}
+                                   (script "squad_assign.sh")
+                                   "result"
+                                   "wumpus-cave-impl"
+                                   "leader-result.handoff")]
+          (is (= 2 (:exit anonymous)))
+          (is (str/includes? (:err anonymous) "Result handoff must have a from header."))
+          (is (= 2 (:exit leader-authored)))
+          (is (str/includes? (:err leader-authored) "Transient result handoff may not be from: squad-leader.")))
         (write-file (fs/path root "result.handoff")
                     (str "id: 1\n"
                          "from: implementer-001\n"
@@ -1006,6 +1058,47 @@
         (is (fs/exists? (fs/path root ".squad/agents/specifier-001/status")))
         (is (str/includes? (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))
                            "spawn-request-completed")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squadd-recovers-active-transients-missing-from-roles
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".swarmforge/tmux-socket")
+                  "/tmp/swarmforge-test.sock\n")
+      (let [worktree (fs/path root ".worktrees/specifier-001")
+            agent-dir (fs/path root ".squad/agents/specifier-001")]
+        (fs/create-dirs worktree)
+        (write-file (fs/path agent-dir "metadata")
+                    (str "agent_id: specifier-001\n"
+                         "template: specifier\n"
+                         "task_id: wumpus-spec\n"
+                         "project_root: " root "\n"
+                         "worktree: " worktree "\n"
+                         "session: swarmforge-specifier-001\n"
+                         "display: Specifier 001\n"
+                         "backend: codex\n"))
+        (write-file (fs/path agent-dir "status")
+                    "state: working\ndetail: writing specs\nupdated_at: 2026-07-31T16:00:00Z\n")
+        (write-file (fs/path agent-dir "heartbeat")
+                    "agent: specifier-001\ntask_id: wumpus-spec\nstate: working\ndetail: writing specs\nupdated_at: 2026-07-31T16:00:00Z\n")
+        (let [once (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX" "1"
+                               "SWARMFORGE_SQUAD_STALE_SECONDS" "999999999"}}
+                        (script "squadd.sh")
+                        "--once"
+                        "--no-notify"
+                        (str root))
+              roles (slurp (str (fs/path root ".swarmforge/roles.tsv")))
+              daemon-log (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))]
+          (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
+          (is (str/includes? roles "specifier-001\tspecifier-001\t"))
+          (is (str/includes? roles "swarmforge-specifier-001\tSpecifier 001\tcodex\ttask"))
+          (is (str/includes? daemon-log "role-recovered specifier-001"))
+          (is (not (str/includes? (:out once) "is not registered in roles.tsv")))))
       (finally
         (fs/delete-tree root)))))
 

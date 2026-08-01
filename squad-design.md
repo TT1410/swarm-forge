@@ -958,6 +958,36 @@ handoff delivery, status polling, and spawn-request processing. The old
 `handoffd.sh` and `squad_statusd.sh` command surfaces remain available as
 compatibility and one-shot test helpers.
 
+### HTW Trial Defect Corrections
+
+The Hunt the Wumpus trial exposed several practical defects in the first squad
+workflow run:
+
+- workers performed unnecessary web searches even when the squad leader had
+  already gathered the reference facts
+- transient worktrees could contain stale runtime registry state
+- helper commands run from a transient worktree could miss the central project
+  state
+- status alerts could repeatedly interrupt the squad leader
+- missing transient rows in `.swarmforge/roles.tsv` could create repeated
+  false registration alerts even though `.squad/agents/<agent-id>/metadata`
+  still existed
+- stale empty spawn locks could block spawn or retire operations
+- forged or anonymous result handoffs could be recorded as transient results
+
+Corrections:
+
+- generated transient prompts and role templates now tell workers not to search
+  the web unless the assignment explicitly asks for it
+- transient worktrees no longer receive a copied `.swarmforge/roles.tsv`
+- squad helpers honor `SWARMFORGE_PROJECT_ROOT` as the authoritative central
+  state location when workers run from their assigned worktree
+- `squadd.sh` rate-limits repeated status wake-ups and self-heals missing
+  active transient role rows from `.squad/agents/<agent-id>/metadata`
+- spawn and retire locks tolerate stale empty lock directories
+- `squad_assign.sh result` rejects missing `from` headers and rejects
+  `from: squad-leader` for transient result handoffs
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -1009,8 +1039,19 @@ They are tracked here as resolved, partially resolved, or still open.
       project directory as their current working directory
 - [x] unified launcher-owned squad daemon handles handoff delivery, status
       polling, and daemon-owned spawn requests
+- [x] unified daemon self-heals active transient rows missing from
+      `.swarmforge/roles.tsv` when metadata is present
+- [x] repeated status wake-ups are throttled while preserving alert logs
 - [x] squad leader delegation boundary is explicit for post-story
       artifact-producing transitions
+- [x] transient prompts and templates prohibit web searches unless explicitly
+      assigned
+- [x] transient worktrees avoid copied central `roles.tsv` registry state
+- [x] worker helper commands can use `SWARMFORGE_PROJECT_ROOT` while running
+      from the assigned worktree
+- [x] stale empty spawn locks are recovered automatically
+- [x] result handoff intake rejects anonymous and squad-leader-authored
+      transient results
 - [x] retirement lifecycle for stopped and running sessions
 - [x] retired transient worktrees are preserved for audit
 - [x] branch-local constitution articles required for squad authority
@@ -1034,10 +1075,10 @@ They are tracked here as resolved, partially resolved, or still open.
       `roles.tsv` for tests and operator use
 - [ ] role template composition rules are concrete for current templates but do
       not yet support shared template fragments
-- [ ] status daemon polling interval and stale thresholds have defaults and
-      environment overrides, but not final policy
-- [ ] status report cadence and suppression rules are described but not fully
-      automated
+- [ ] status daemon polling interval, stale thresholds, and repeated-notify
+      cooldown have defaults and environment overrides, but not final policy
+- [ ] status report cadence is described and repeated daemon wake-ups are
+      suppressed, but user-facing periodic summaries are not fully automated
 - [ ] exact helper command arguments, outputs, and exit codes are stable for
       implemented helpers only
 - [ ] policy for crashed, stale, or wedged invisible agents exists as daemon

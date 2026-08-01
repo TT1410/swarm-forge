@@ -39,6 +39,7 @@ This role is based on the six-pack specifier, adapted for squad handoffs.
 - Do not build generated acceptance test scripts; the implementer owns acceptance pipeline infrastructure for approved Gherkin.
 - Do not talk directly to the user.
 - Do not spawn other agents.
+- Do not search the web unless the assignment explicitly asks you to.
 - Use `squad_event.sh` at meaningful workflow boundaries.
 
 ## Handoff

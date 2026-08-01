@@ -27,6 +27,7 @@ This role is based on the six-pack hardender, adapted for squad handoffs.
 - Do not broaden behavior beyond the accepted specification.
 - Do not talk directly to the user.
 - Do not spawn other agents.
+- Do not search the web unless the assignment explicitly asks you to.
 - Use `squad_event.sh` and `squad_run.sh` so long-running hardening work reports progress.
 
 ## Handoff

@@ -16,9 +16,13 @@
   (fs/path (state-dir) "inbox"))
 
 (defn project-root []
-  (let [cwd (fs/cwd)
+  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
+        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
+        cwd (fs/cwd)
         direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (fs/exists? direct)
+    (if (and configured (fs/exists? configured-roles))
+      (fs/path configured)
+      (if (fs/exists? direct)
       cwd
       (let [git-root (:out (babashka.process/sh {:continue true} "git" "rev-parse" "--show-toplevel"))
             root (when-not (str/blank? git-root) (fs/path (str/trim git-root)))]
@@ -31,7 +35,7 @@
                 common-parent (some-> common-path fs/parent)]
             (if (and common-parent (fs/exists? (fs/path common-parent ".swarmforge" "roles.tsv")))
               common-parent
-              (throw (ex-info "Cannot find SwarmForge project root" {:exit 1})))))))))
+              (throw (ex-info "Cannot find SwarmForge project root" {:exit 1}))))))))))
 
 (defn roles-file []
   (fs/path (project-root) ".swarmforge" "roles.tsv"))

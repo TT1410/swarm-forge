@@ -18,6 +18,7 @@
 (def script-dir (fs/parent *file*))
 (def stopping? (atom false))
 (def last-status-poll (atom 0))
+(def last-status-notification (atom {:alerts #{} :notified-at nil}))
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -42,6 +43,9 @@
       default-value)
     default-value))
 
+(defn notify-cooldown-seconds []
+  (env-long "SWARMFORGE_SQUAD_STATUS_NOTIFY_COOLDOWN_SECONDS" 300))
+
 (defn parse-instant [value]
   (try
     (when-not (str/blank? value)
@@ -49,15 +53,19 @@
     (catch Exception _ nil)))
 
 (defn project-root []
-  (let [cwd (fs/cwd)
+  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
+        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
+        cwd (fs/cwd)
         direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (fs/exists? direct)
+    (if (and configured (fs/exists? configured-roles))
+      (fs/path configured)
+      (if (fs/exists? direct)
       cwd
       (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
         (if (and (not (str/blank? git-root))
                  (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
           (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root"))))))
+          (exit! 1 "Cannot find SwarmForge project root")))))))
 
 (defn read-lines [path]
   (when (fs/exists? path)
@@ -70,6 +78,8 @@
               (when (str/starts-with? line prefix)
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
+
+(declare agent-dirs log! append-compat-log!)
 
 (defn load-roles [root]
   (into {}
@@ -84,6 +94,64 @@
                  :display display
                  :agent agent
                  :receive-mode (or receive-mode "task")}])))
+
+(defn write-atomic! [file content]
+  (fs/create-dirs (fs/parent file))
+  (let [tmp (fs/create-temp-file {:dir (fs/parent file)
+                                  :prefix (str "." (fs/file-name file) ".")})]
+    (spit (str tmp) content)
+    (fs/move tmp file {:replace-existing true})))
+
+(defn write-roles! [root roles]
+  (let [roles-file (fs/path root ".swarmforge" "roles.tsv")]
+    (write-atomic! roles-file
+                   (apply str
+                          (for [[_ role] (sort-by key roles)]
+                            (str (str/join "\t" [(:role role)
+                                                 (:worktree-name role)
+                                                 (:worktree-path role)
+                                                 (:session role)
+                                                 (:display role)
+                                                 (:agent role)
+                                                 (:receive-mode role)])
+                                 "\n"))))))
+
+(defn metadata-role [dir]
+  (let [metadata (fs/path dir "metadata")
+        agent-id (read-value metadata "agent_id")
+        template (read-value metadata "template")
+        worktree (read-value metadata "worktree")
+        session (read-value metadata "session")
+        display (read-value metadata "display")
+        backend (read-value metadata "backend")
+        status (read-value (fs/path dir "status") "state")]
+    (when (and agent-id worktree session display backend (not= "retired" status))
+      [agent-id {:role agent-id
+                 :worktree-name agent-id
+                 :worktree-path worktree
+                 :session session
+                 :display display
+                 :agent backend
+                 :template template
+                 :receive-mode "task"}])))
+
+(defn reconcile-roles! [root]
+  (let [roles (load-roles root)
+        recovered (into {}
+                        (for [dir (agent-dirs root)
+                              :let [entry (metadata-role dir)]
+                              :when (and entry (nil? (get roles (first entry))))]
+                          entry))]
+    (when (seq recovered)
+      (let [updated (merge roles recovered)]
+        (write-roles! root updated)
+        (doseq [agent (sort (keys recovered))]
+          (log! root "role-recovered" agent)
+          (append-compat-log! root "squad-statusd.log" "role-recovered" agent))
+        updated))
+    (if (seq recovered)
+      (load-roles root)
+      roles)))
 
 (defn daemon-dir [root]
   (fs/path root ".swarmforge" "daemon"))
@@ -188,7 +256,7 @@
            (sort-by #(fs/file-name %))))))
 
 (defn poll-handoffs! [root]
-  (let [roles (load-roles root)
+  (let [roles (reconcile-roles! root)
         socket-file (fs/path root ".swarmforge" "tmux-socket")
         socket (when (fs/exists? socket-file) (str/trim (slurp (str socket-file))))]
     (when-not (str/blank? socket)
@@ -254,12 +322,14 @@
               []))))
 
 (defn poll-status! [{:keys [root no-notify? skip-tmux?]}]
-  (let [roles (load-roles root)
+  (let [roles (reconcile-roles! root)
         socket-file (fs/path root ".swarmforge" "tmux-socket")
         socket (when (fs/exists? socket-file) (str/trim (slurp (str socket-file))))
         stale-seconds (env-long "SWARMFORGE_SQUAD_STALE_SECONDS" 300)
         alerts (mapcat #(alerts-for-agent root roles socket skip-tmux? stale-seconds (instant-now) %)
-                       (agent-dirs root))]
+                       (agent-dirs root))
+        alert-set (set alerts)
+        now-instant (instant-now)]
     (doseq [alert alerts]
       (println "SQUAD_STATUS_ALERT:" alert)
       (log! root "status-alert" alert)
@@ -267,10 +337,21 @@
     (when (seq alerts)
       (if no-notify?
         (append-compat-log! root "squad-statusd.log" "notify-skipped" (count alerts))
-        (if (tmux-notify! socket "swarmforge-squad-leader" status-wake-message)
-          (append-compat-log! root "squad-statusd.log" "notified" "squad-leader" (count alerts))
-          (append-compat-log! root "squad-statusd.log" "notify-failed" "squad-leader" (count alerts)))))
+        (let [{previous-alerts :alerts notified-at :notified-at} @last-status-notification
+              cooldown (notify-cooldown-seconds)
+              due? (or (nil? notified-at)
+                       (not= alert-set previous-alerts)
+                       (>= (.getSeconds (java.time.Duration/between notified-at now-instant))
+                           cooldown))]
+          (if-not due?
+            (append-compat-log! root "squad-statusd.log" "notify-throttled" (count alerts))
+            (if (tmux-notify! socket "swarmforge-squad-leader" status-wake-message)
+              (do
+                (reset! last-status-notification {:alerts alert-set :notified-at now-instant})
+                (append-compat-log! root "squad-statusd.log" "notified" "squad-leader" (count alerts)))
+              (append-compat-log! root "squad-statusd.log" "notify-failed" "squad-leader" (count alerts)))))))
     (when (empty? alerts)
+      (reset! last-status-notification {:alerts #{} :notified-at nil})
       (println "SQUAD_STATUS_OK")
       (log! root "status-ok")
       (append-compat-log! root "squad-statusd.log" "ok"))

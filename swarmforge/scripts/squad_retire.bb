@@ -18,15 +18,19 @@
   (apply process/sh (concat [{:continue true}] args)))
 
 (defn project-root []
-  (let [cwd (fs/cwd)
+  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
+        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
+        cwd (fs/cwd)
         direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (fs/exists? direct)
+    (if (and configured (fs/exists? configured-roles))
+      (fs/path configured)
+      (if (fs/exists? direct)
       cwd
       (let [git-root (str/trim (:out (run-continue "git" "rev-parse" "--show-toplevel")))]
         (if (and (not (str/blank? git-root))
                  (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
           (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root"))))))
+          (exit! 1 "Cannot find SwarmForge project root")))))))
 
 (defn validate-agent-id! [agent-id]
   (when-not (re-matches #"[a-z][a-z0-9-]*-[0-9][0-9][0-9]" agent-id)
@@ -58,8 +62,14 @@
                "If no squad_spawn.sh or squad_retire.sh process is running, remove the stale lock directory and retry."))
     (if (try
           (fs/create-dir lock-dir)
+          (spit (str (fs/path lock-dir "owner"))
+                (str "pid: " (.pid (java.lang.ProcessHandle/current)) "\n"))
           true
           (catch java.nio.file.FileAlreadyExistsException _
+            (when (and (fs/directory? lock-dir)
+                       (not (fs/exists? (fs/path lock-dir "owner")))
+                       (empty? (fs/list-dir lock-dir)))
+              (fs/delete-tree lock-dir))
             false))
       nil
       (do
