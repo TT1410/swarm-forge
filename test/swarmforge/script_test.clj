@@ -386,6 +386,8 @@
                   "Read articles.\n")
       (write-file (fs/path root "swarmforge/swarmforge.conf")
                   "window squad-leader codex master task\n")
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "transient_agent squad-leader\n")
       (write-file (fs/path root "swarmforge/roles/squad-leader.prompt")
                   "leader\n")
       (write-file (fs/path root "swarmforge/role-templates/specifier.prompt")
@@ -588,6 +590,74 @@
           (is (= "implementer-002" (first second-fields)))
           (is (fs/exists? (fs/path root ".worktrees/implementer-001")))
           (is (fs/exists? (fs/path root ".worktrees/implementer-002")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-spawn-inherits-squad-leader-agent-backend
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/constitution.prompt")
+                  "Read articles.\n")
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window squad-leader grok master task\n")
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "transient_agent squad-leader\n")
+      (write-file (fs/path root "swarmforge/roles/squad-leader.prompt")
+                  "leader\n")
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt")
+                  "analyze\n")
+      (write-file (fs/path root "assignment.md")
+                  "Write stories.\n")
+      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+                        (script "squad_spawn.sh")
+                        "analyst"
+                        "theme-analysis"
+                        "assignment.md")
+            roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))
+            fields (str/split (second roles) #"\t" -1)
+            metadata (slurp (str (fs/path root ".squad/agents/analyst-001/metadata")))
+            launcher (slurp (str (fs/path root ".squad/agents/analyst-001/launch.sh")))]
+        (is (str/includes? (:out result) "SQUAD_AGENT: analyst-001"))
+        (is (= "grok" (nth fields 5)))
+        (is (str/includes? metadata "backend: grok"))
+        (is (str/includes? launcher "grok --cwd")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-spawn-config-can-override-transient-agent-backend
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/constitution.prompt")
+                  "Read articles.\n")
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window squad-leader codex master task\n")
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "transient_agent claude\n")
+      (write-file (fs/path root "swarmforge/roles/squad-leader.prompt")
+                  "leader\n")
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt")
+                  "analyze\n")
+      (write-file (fs/path root "assignment.md")
+                  "Write stories.\n")
+      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+                        (script "squad_spawn.sh")
+                        "analyst"
+                        "theme-analysis"
+                        "assignment.md")
+            roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))
+            fields (str/split (second roles) #"\t" -1)
+            metadata (slurp (str (fs/path root ".squad/agents/analyst-001/metadata")))
+            launcher (slurp (str (fs/path root ".squad/agents/analyst-001/launch.sh")))]
+        (is (str/includes? (:out result) "SQUAD_AGENT: analyst-001"))
+        (is (= "claude" (nth fields 5)))
+        (is (str/includes? metadata "backend: claude"))
+        (is (str/includes? launcher "claude --append-system-prompt-file")))
       (finally
         (fs/delete-tree root)))))
 

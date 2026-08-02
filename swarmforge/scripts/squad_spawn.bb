@@ -123,6 +123,22 @@
   (or (read-value (fs/path root ".squad" "agents" role "metadata") "template")
       (template-from-role role)))
 
+(defn leader-agent [rows]
+  (some (fn [row]
+          (when (= "squad-leader" (first row))
+            (nth row 5 nil)))
+        rows))
+
+(defn transient-agent [root rows]
+  (or (not-empty (System/getenv "SWARMFORGE_SQUAD_AGENT"))
+      (let [configured (squad-transient-agent-config root)]
+        (cond
+          (str/blank? configured) nil
+          (#{"leader" "squad-leader"} configured) (leader-agent rows)
+          :else configured))
+      (leader-agent rows)
+      "codex"))
+
 (defn active-template-count [root rows template]
   (count
    (for [row rows
@@ -350,7 +366,7 @@
                       branch (str "swarmforge-" agent-id)
                       session (str "swarmforge-" agent-id)
                       display (display-name-for-role agent-id)
-                      agent (or (not-empty (System/getenv "SWARMFORGE_SQUAD_AGENT")) "codex")
+                      agent (transient-agent root rows)
                       squad-dir (fs/path root ".squad")
                       agent-dir (fs/path squad-dir "agents" agent-id)
                       task-dir (fs/path squad-dir "tasks" task-id)

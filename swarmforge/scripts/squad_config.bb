@@ -38,6 +38,9 @@
       (Long/parseLong value)
       default-value)))
 
+(defn squad-transient-agent-config [root]
+  (squad-config-value root "transient_agent"))
+
 (defn squad-max-transient-agents [root]
   (if (System/getenv "SWARMFORGE_SQUAD_MAX_AGENTS")
     (squad-env-long "SWARMFORGE_SQUAD_MAX_AGENTS"

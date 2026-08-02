@@ -1187,6 +1187,10 @@ Corrections:
   replacing, or retiring a transient for suspected disappearance; the helper
   treats untracked files as dirty work and uses both `tmux has-session` and an
   exact `list-sessions` match before declaring a tmux session missing
+- transient worker backend selection defaults to the squad leader's backend,
+  can be overridden by `SWARMFORGE_SQUAD_AGENT`, and can be described in
+  `swarmforge/squad.conf` with `transient_agent`; this setting only selects the
+  tool used for future spawns and does not auto-start any agents
 - squad leader prompts now prohibit raw `tmux`, `ps`, and process-inspection
   commands during normal squad management; direct operator debugging requires
   explicit user approval
