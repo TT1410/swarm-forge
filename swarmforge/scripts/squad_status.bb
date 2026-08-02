@@ -40,6 +40,13 @@
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
 
+(defn read-liveness-tail [file]
+  (when (fs/exists? file)
+    (let [lines (str/split-lines (slurp (str file)))
+          tail-lines (rest (drop-while #(not= "last_10_lines:" %) lines))]
+      (when (seq tail-lines)
+        (str/join "\n" tail-lines)))))
+
 (defn agent-dirs [root maybe-agent]
   (let [agents-dir (fs/path root ".squad" "agents")]
     (cond
@@ -54,7 +61,8 @@
   (let [agent (fs/file-name dir)
         metadata (fs/path dir "metadata")
         status (fs/path dir "status")
-        heartbeat (fs/path dir "heartbeat")]
+        heartbeat (fs/path dir "heartbeat")
+        liveness (fs/path dir "liveness")]
     (when-not (fs/exists? dir)
       (exit! 1 (str "Unknown squad agent: " agent)))
     (println "AGENT:" agent)
@@ -65,6 +73,12 @@
     (println "DETAIL:" (or (read-value status "detail") ""))
     (println "UPDATED_AT:" (or (read-value status "updated_at") "unknown"))
     (println "HEARTBEAT_AT:" (or (read-value heartbeat "updated_at") "none"))
+    (when (fs/exists? liveness)
+      (println "LIVENESS_STATE:" (or (read-value liveness "state") "unknown"))
+      (println "LIVENESS_AT:" (or (read-value liveness "observed_at") "unknown"))
+      (println "PANE_CHANGED:" (or (read-value liveness "pane_changed") "unknown"))
+      (println "LAST_10_LINES:")
+      (println (or (read-liveness-tail liveness) "")))
     (println)))
 
 (defn -main [& args]

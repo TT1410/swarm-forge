@@ -1937,6 +1937,12 @@
       (write-file (fs/path root ".swarmforge/tmux-socket")
                   "/tmp/swarmforge-test.sock\n")
       (write-agent-status! root "specifier-001" "running" "2000-01-01T00:00:00Z")
+      (write-file (fs/path root ".squad/agents/specifier-001/liveness")
+                  (str "state: running_pane_idle\n"
+                       "observed_at: 2000-01-01T00:00:00Z\n"
+                       "pane_changed: false\n"
+                       "pane_hash: e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855\n"
+                       "last_10_lines:\n"))
       (run {:dir root :ok? false
             :env {"PATH" (str bin ":" (System/getenv "PATH"))
                   "FAKE_TMUX_STATE" (str fake-state)
@@ -2197,6 +2203,116 @@
           (is (str/includes? daemon-log "role-retired-reconciled specifier-001"))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest squadd-preserves-failed-transients-for-recovery
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".swarmforge/tmux-socket")
+                  "/tmp/swarmforge-test.sock\n")
+      (let [worktree (fs/path root ".worktrees/specifier-001")]
+        (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-specifier-001" (str worktree) "HEAD")
+        (write-file (fs/path root ".squad/agents/specifier-001/metadata")
+                    (str "agent_id: specifier-001\n"
+                         "template: specifier\n"
+                         "task_id: wumpus-spec\n"
+                         "project_root: " root "\n"
+                         "worktree: " worktree "\n"
+                         "session: swarmforge-specifier-001\n"
+                         "display: Specifier 001\n"
+                         "backend: codex\n"))
+        (write-file (fs/path root ".squad/agents/specifier-001/status")
+                    "state: failed\ndetail: verification failed\nupdated_at: 2026-07-31T16:00:00Z\n")
+        (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
+                    "agent: specifier-001\ntask_id: wumpus-spec\nstate: failed\ndetail: verification failed\nupdated_at: 2026-07-31T16:00:00Z\n")
+        (write-file (fs/path worktree "stories/preserved.md") "dirty story\n")
+        (let [once (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX" "1"}}
+                        (script "squadd.sh")
+                        "--once"
+                        "--no-notify"
+                        (str root))
+              roles (slurp (str (fs/path root ".swarmforge/roles.tsv")))
+              daemon-log-file (fs/path root ".swarmforge/daemon/squadd.log")
+              daemon-log (if (fs/exists? daemon-log-file)
+                           (slurp (str daemon-log-file))
+                           "")]
+          (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
+          (is (str/includes? roles "specifier-001\t"))
+          (is (fs/exists? worktree))
+          (is (git-worktree-registered? root worktree))
+          (is (git-branch-exists? root "swarmforge-specifier-001"))
+          (is (fs/exists? (fs/path worktree "stories/preserved.md")))
+          (is (not (str/includes? daemon-log "git-worktree-removed specifier-001")))
+          (is (not (str/includes? daemon-log "role-retired-reconciled specifier-001")))))
+    (finally
+      (fs/delete-tree root)))))
+
+(deftest squad-statusd-records-live-pane-liveness-for-stale-heartbeat
+  (let [root (tmp-dir)
+        bin (fs/path root "bin")
+        fake-tmux (fs/path bin "tmux")]
+    (try
+      (init-repo! root)
+      (fs/create-dirs bin)
+      (write-file fake-tmux
+                  (str "#!/usr/bin/env sh\n"
+                       "cmd=\"$3\"\n"
+                       "case \"$cmd\" in\n"
+                       "  has-session) exit 0 ;;\n"
+                       "  list-sessions) printf 'swarmforge-specifier-001\\n' ; exit 0 ;;\n"
+                       "  list-panes) printf '0\\n' ; exit 0 ;;\n"
+                       "  capture-pane) printf 'line 1\\nline 2\\nline 3\\n' ; exit 0 ;;\n"
+                       "  send-keys) exit 0 ;;\n"
+                       "  *) exit 0 ;;\n"
+                       "esac\n"))
+      (run {:dir root} "chmod" "+x" (str fake-tmux))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".swarmforge/tmux-socket")
+                  "/tmp/swarmforge-test.sock\n")
+      (write-file (fs/path root ".squad/agents/specifier-001/metadata")
+                  (str "agent_id: specifier-001\n"
+                       "template: specifier\n"
+                       "task_id: wumpus-spec\n"
+                       "project_root: " root "\n"
+                       "worktree: " root "/.worktrees/specifier-001\n"
+                       "session: swarmforge-specifier-001\n"
+                       "display: Specifier 001\n"
+                       "backend: codex\n"))
+      (write-file (fs/path root ".squad/agents/specifier-001/status")
+                  "state: running\ndetail: drafting\nupdated_at: 2000-01-01T00:00:00Z\n")
+      (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
+                  "agent: specifier-001\ntask_id: wumpus-spec\nstate: running\ndetail: drafting\nupdated_at: 2000-01-01T00:00:00Z\n")
+      (let [first-pass (run {:dir root
+                             :env {"PATH" (str bin ":" (System/getenv "PATH"))
+                                   "SWARMFORGE_SQUAD_STALE_SECONDS" "1"}}
+                            (script "squad_statusd.sh")
+                            "--once"
+                            "--no-notify"
+                            (str root))
+            liveness-file (fs/path root ".squad/agents/specifier-001/liveness")
+            first-liveness (slurp (str liveness-file))
+            status (run {:dir root} (script "squad_status.sh") "specifier-001")
+            second-pass (run {:dir root
+                              :env {"PATH" (str bin ":" (System/getenv "PATH"))
+                                    "SWARMFORGE_SQUAD_STALE_SECONDS" "1"}}
+                             (script "squad_statusd.sh")
+                             "--once"
+                             "--no-notify"
+                             (str root))]
+        (is (str/includes? (:out first-pass) "SQUAD_STATUS_OK"))
+        (is (str/includes? first-liveness "state: running_pane_active"))
+        (is (str/includes? first-liveness "last_10_lines:\nline 1\nline 2\nline 3\n"))
+        (is (str/includes? (:out status) "LIVENESS_STATE: running_pane_active"))
+        (is (str/includes? (:out status) "LAST_10_LINES:\nline 1\nline 2\nline 3"))
+        (is (str/includes? (:out second-pass) "tmux pane alive but unchanged")))
+    (finally
+      (fs/delete-tree root)))))
 
 (deftest squadd-starts-and-stops
   (let [root (tmp-dir)]

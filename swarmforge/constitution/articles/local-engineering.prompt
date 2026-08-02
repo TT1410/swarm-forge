@@ -15,5 +15,5 @@
 - Quality-gate agents install mutation, CRAP, DRY, APS, and related tools only when spawned for a quality-gate assignment. Prefer `squad_tool.sh ensure` so matching cached tools are reused and missing tools are installed under the shared cache.
 
 ## Verification
-- Run the relevant local verification command before handoff whenever the project has one.
+- Run the relevant local verification command before handoff whenever the project has one and the role owns executable code, tests, QA execution, cleanup, hardening, or review of executable changes. Artifact-only story, Gherkin, QA procedure, and review roles must follow their role prompt's focused artifact checks instead of broad project verification unless the assignment explicitly names the exact command.
 - For this repository, `bb test` is the normal helper test command.

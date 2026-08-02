@@ -49,8 +49,11 @@
   (env-long "SWARMFORGE_SQUAD_STATUS_NOTIFY_COOLDOWN_SECONDS" 300))
 
 (defn alert-key [alert]
-  (str/replace alert #" heartbeat stale for [0-9]+ seconds$"
-               " heartbeat stale"))
+  (-> alert
+      (str/replace #" heartbeat stale for [0-9]+ seconds; tmux pane alive but unchanged$"
+                   " heartbeat stale; tmux pane alive but unchanged")
+      (str/replace #" heartbeat stale for [0-9]+ seconds$"
+                   " heartbeat stale")))
 
 (defn project-root []
   (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
@@ -118,6 +121,42 @@
     (and (zero? (:exit result))
          (some #{"1"} (str/split-lines (:out result))))))
 
+(defn sha256 [value]
+  (let [digest (java.security.MessageDigest/getInstance "SHA-256")
+        bytes (.digest digest (.getBytes (or value "") "UTF-8"))]
+    (apply str (map #(format "%02x" (bit-and % 0xff)) bytes))))
+
+(defn capture-pane-tail [socket session]
+  (let [result (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-10")]
+    (when (zero? (:exit result))
+      (:out result))))
+
+(defn write-liveness! [root agent state changed? tail]
+  (let [file (fs/path root ".squad" "agents" agent "liveness")]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file)
+          (str "state: " state "\n"
+               "observed_at: " (now) "\n"
+               "pane_changed: " (if changed? "true" "false") "\n"
+               "pane_hash: " (sha256 tail) "\n"
+               "last_10_lines:\n"
+               (or tail "")))))
+
+(defn pane-liveness-alert [root socket agent session age]
+  (cond
+    (str/blank? session) (str "agent " agent " has no tmux session metadata")
+    (not (tmux-session-exists? socket session)) (str "agent " agent " tmux session missing: " session)
+    (pane-dead? socket session) (str "agent " agent " tmux pane is dead: " session)
+    :else (let [liveness (fs/path root ".squad" "agents" agent "liveness")
+                previous-hash (read-value liveness "pane_hash")
+                tail (or (capture-pane-tail socket session) "")
+                current-hash (sha256 tail)
+                changed? (not= previous-hash current-hash)
+                state (if changed? "running_pane_active" "running_pane_idle")]
+            (write-liveness! root agent state changed? tail)
+            (when-not changed?
+              (str "agent " agent " heartbeat stale for " age " seconds; tmux pane alive but unchanged")))))
+
 (defn maybe-tmux-alert [socket skip-tmux? agent session]
   (cond
     skip-tmux? nil
@@ -144,7 +183,11 @@
       (nil? (get roles agent)) [(str "agent " agent " is not registered in roles.tsv")]
       (not (fs/exists? heartbeat)) [(str "agent " agent " has no heartbeat")]
       (nil? age) [(str "agent " agent " heartbeat timestamp is invalid")]
-      (> age stale-seconds) [(str "agent " agent " heartbeat stale for " age " seconds")]
+      (> age stale-seconds) (if skip-tmux?
+                              [(str "agent " agent " heartbeat stale for " age " seconds")]
+                              (if-let [alert (pane-liveness-alert root socket agent session age)]
+                                [alert]
+                                []))
       :else (if-let [alert (maybe-tmux-alert socket skip-tmux? agent session)]
               [alert]
               []))))
