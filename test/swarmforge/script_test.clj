@@ -197,6 +197,10 @@
     (is (some #{"stories"} (:forbidden-writes c)))
     (is (some #{"production-code"} (:forbidden-writes c)))))
 
+(deftest runtime-constitution-does-not-require-development-design-doc
+  (let [project-article (slurp (str (fs/path repo-root "swarmforge/constitution/articles/project.prompt")))]
+    (is (not (str/includes? project-article "squad-design.md")))))
+
 (deftest handoff-lib-parses-and-prints-handoff-files
   (let [root (tmp-dir)
         handoff-file (fs/path root "task.handoff")]

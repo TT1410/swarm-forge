@@ -8,7 +8,6 @@
 ## Local Configuration
 - Preserve project-local SwarmForge configuration under `swarmforge/`.
 - Keep swarm state local under `.swarmforge/`, worktrees under `.worktrees/`, and shared scripts under `swarmforge/scripts/`.
-- Keep squad design notes in `squad-design.md`.
 
 ## Handoffs
 - Prefer terse, explicit handoffs that report state and request role-appropriate review.
