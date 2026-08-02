@@ -21,8 +21,8 @@
 (def last-status-poll (atom 0))
 (def last-status-notification (atom {:alerts #{} :notified-at nil}))
 (def last-status-log-state (atom nil))
-(def terminal-agent-states
-  #{"complete" "review_complete" "handoff_ready" "handed_off" "handing_off"})
+(def active-agent-states
+  #{"starting" "running"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -32,6 +32,9 @@
 
 (defn sh-continue [& args]
   (apply process/sh (concat [{:continue true}] args)))
+
+(defn git-continue [root & args]
+  (apply sh-continue (concat ["git" "-C" (str root)] args)))
 
 (defn now []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
@@ -49,6 +52,10 @@
 
 (defn notify-cooldown-seconds []
   (env-long "SWARMFORGE_SQUAD_STATUS_NOTIFY_COOLDOWN_SECONDS" 300))
+
+(defn alert-key [alert]
+  (str/replace alert #" heartbeat stale for [0-9]+ seconds$"
+               " heartbeat stale"))
 
 (defn parse-instant [value]
   (try
@@ -139,19 +146,19 @@
                  :template template
                  :receive-mode "task"}])))
 
-(defn terminal-state? [state]
-  (contains? terminal-agent-states state))
+(defn active-state? [state]
+  (contains? active-agent-states state))
 
 (defn active-transient-role-count [root]
   (count
    (for [[role _] (load-roles root)
          :when (and (not= "squad-leader" role)
-                    (not (terminal-state? (read-value (fs/path root ".squad" "agents" role "status") "state"))))]
+                    (active-state? (read-value (fs/path root ".squad" "agents" role "status") "state")))]
      role)))
 
 (defn active-role? [root role]
   (and (not= "squad-leader" role)
-       (not (terminal-state? (read-value (fs/path root ".squad" "agents" role "status") "state")))))
+       (active-state? (read-value (fs/path root ".squad" "agents" role "status") "state"))))
 
 (defn template-from-role [role]
   (str/replace role #"-\d{3}$" ""))
@@ -379,22 +386,55 @@
       (log! root "role-retired-reconciled" agent)
       (append-compat-log! root "squad-statusd.log" "role-retired-reconciled" agent))))
 
+(defn transient-branch [agent]
+  (str "swarmforge-" agent))
+
+(defn managed-worktree? [root agent worktree]
+  (let [managed-root (fs/absolutize (fs/path root ".worktrees"))
+        expected (fs/absolutize (fs/path managed-root agent))
+        actual (fs/absolutize worktree)]
+    (= (str expected) (str actual))))
+
+(defn cleanup-transient-git! [root agent worktree]
+  (if (or (str/blank? (str worktree))
+          (not (managed-worktree? root agent worktree)))
+    (log! root "git-cleanup-skipped" agent "unmanaged-worktree" (str worktree))
+    (let [remove-result (git-continue root "worktree" "remove" "--force" (str worktree))]
+      (when-not (zero? (:exit remove-result))
+        (when (fs/exists? worktree)
+          (fs/delete-tree worktree))
+        (git-continue root "worktree" "prune"))
+      (if (fs/exists? worktree)
+        (log! root "git-worktree-remove-failed" agent (str worktree))
+        (log! root "git-worktree-removed" agent (str worktree)))))
+  (let [branch (transient-branch agent)
+        branch-result (git-continue root "branch" "-D" branch)]
+    (if (zero? (:exit branch-result))
+      (log! root "git-branch-deleted" agent branch)
+      (log! root "git-branch-absent" agent branch))))
+
 (defn reconcile-retired-agent! [root socket roles agent dir]
   (let [metadata (fs/path dir "metadata")
         session (or (read-value metadata "session")
-                    (get-in roles [agent :session]))]
+                    (get-in roles [agent :session]))
+        worktree (or (read-value metadata "worktree")
+                     (get-in roles [agent :worktree-path]))]
     (when (kill-tmux-session! socket session)
       (log! root "retired-session-killed" agent session)
       (append-compat-log! root "squad-statusd.log" "retired-session-killed" agent session))
+    (cleanup-transient-git! root agent worktree)
     (retire-role-row! root agent)))
 
 (defn reconcile-terminal-agent! [root socket roles agent dir state]
   (let [metadata (fs/path dir "metadata")
         session (or (read-value metadata "session")
-                    (get-in roles [agent :session]))]
+                    (get-in roles [agent :session]))
+        worktree (or (read-value metadata "worktree")
+                     (get-in roles [agent :worktree-path]))]
     (when (kill-tmux-session! socket session)
       (log! root "terminal-session-killed" agent state session)
       (append-compat-log! root "squad-statusd.log" "terminal-session-killed" agent state session))
+    (cleanup-transient-git! root agent worktree)
     (retire-role-row! root agent)))
 
 (defn alerts-for-agent [root roles socket skip-tmux? stale-seconds now-instant dir]
@@ -408,13 +448,20 @@
         age (heartbeat-age-seconds heartbeat now-instant)]
     (cond
       (= "retired" state) (do
-                            (when-not skip-tmux?
-                              (reconcile-retired-agent! root socket roles agent dir))
+                            (reconcile-retired-agent! root
+                                                      (when-not skip-tmux? socket)
+                                                      roles
+                                                      agent
+                                                      dir)
                             [])
-      (terminal-state? state) (do
-                                (when-not skip-tmux?
-                                  (reconcile-terminal-agent! root socket roles agent dir state))
-                                [])
+      (and state (not (active-state? state))) (do
+                                                (reconcile-terminal-agent! root
+                                                                           (when-not skip-tmux? socket)
+                                                                           roles
+                                                                           agent
+                                                                           dir
+                                                                           state)
+                                                [])
       (nil? (get roles agent)) [(str "agent " agent " is not registered in roles.tsv")]
       (not (fs/exists? heartbeat)) [(str "agent " agent " has no heartbeat")]
       (nil? age) [(str "agent " agent " heartbeat timestamp is invalid")]
@@ -430,12 +477,12 @@
         stale-seconds (env-long "SWARMFORGE_SQUAD_STALE_SECONDS" 300)
         alerts (mapcat #(alerts-for-agent root roles socket skip-tmux? stale-seconds (instant-now) %)
                        (agent-dirs root))
-        alert-set (set alerts)
+        alert-key-set (set (map alert-key alerts))
         now-instant (instant-now)]
     (doseq [alert alerts]
       (println "SQUAD_STATUS_ALERT:" alert))
     (when (seq alerts)
-      (let [state-key [:alerts alert-set]]
+      (let [state-key [:alerts alert-key-set]]
         (when (not= state-key @last-status-log-state)
           (reset! last-status-log-state state-key)
           (doseq [alert alerts]
@@ -447,14 +494,14 @@
         (let [{previous-alerts :alerts notified-at :notified-at} @last-status-notification
               cooldown (notify-cooldown-seconds)
               due? (or (nil? notified-at)
-                       (not= alert-set previous-alerts)
+                       (not= alert-key-set previous-alerts)
                        (>= (.getSeconds (java.time.Duration/between notified-at now-instant))
                            cooldown))]
           (if-not due?
             (append-compat-log! root "squad-statusd.log" "notify-throttled" (count alerts))
             (if (tmux-notify! socket "swarmforge-squad-leader" status-wake-message)
               (do
-                (reset! last-status-notification {:alerts alert-set :notified-at now-instant})
+                (reset! last-status-notification {:alerts alert-key-set :notified-at now-instant})
                 (append-compat-log! root "squad-statusd.log" "notified" "squad-leader" (count alerts)))
               (append-compat-log! root "squad-statusd.log" "notify-failed" "squad-leader" (count alerts)))))))
     (when (empty? alerts)

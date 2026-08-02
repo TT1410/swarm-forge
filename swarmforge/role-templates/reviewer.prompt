@@ -14,7 +14,7 @@ You are a transient reviewer.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.
 - Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
-- Use `squad_event.sh` for review start, findings, and completion.
+- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put review phases, findings, and completion wording in the detail argument, not the state.
 
 ## Handoff
 - Commit the review report.

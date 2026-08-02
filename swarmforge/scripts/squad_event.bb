@@ -5,8 +5,20 @@
             [babashka.process :as process]
             [clojure.string :as str]))
 
+(def lifecycle-states
+  #{"starting"
+    "running"
+    "blocked"
+    "failed"
+    "complete"
+    "handoff_ready"
+    "handoff_sent"
+    "retired"})
+
 (def usage-text
-  "Usage: squad_event.sh <state> <detail...>")
+  (str "Usage: squad_event.sh <state> <detail...>\n"
+       "Allowed states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired\n"
+       "Put command names, phases, and other progress detail in <detail>, not in <state>."))
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -59,24 +71,6 @@
   (or (read-value (fs/path root ".squad" "agents" agent "metadata") "task_id")
       (exit! 1 (str "Cannot find task id for " agent))))
 
-(def known-states
-  #{"starting"
-    "working"
-    "progress"
-    "blocked"
-    "failed"
-    "verifying"
-    "reviewing"
-    "complete"
-    "completed"
-    "handoff"
-    "handoff_sent"
-    "retired"})
-
-(defn valid-state? [state]
-  (or (contains? known-states state)
-      (re-matches #"[a-z][a-z0-9_]*(?:_[a-z0-9]+)*" state)))
-
 (defn validate-state! [agent task state]
   (cond
     (= state agent)
@@ -94,9 +88,9 @@
            "SQUAD_EVENT_USAGE_ERROR: state looks like an agent id."
            usage-text)
 
-    (not (valid-state? state))
+    (not (contains? lifecycle-states state))
     (exit! 2
-           "SQUAD_EVENT_USAGE_ERROR: state must use lowercase words separated by underscores."
+           (str "SQUAD_EVENT_USAGE_ERROR: unsupported lifecycle state: " state)
            usage-text)))
 
 (defn append-event! [file line]

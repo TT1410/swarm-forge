@@ -13,8 +13,8 @@
   "Squad status needs attention. If idle, run squad_status.sh.")
 (def stopping? (atom false))
 (def last-status-notification (atom {:alerts #{} :notified-at nil}))
-(def terminal-agent-states
-  #{"complete" "review_complete" "handoff_ready" "handed_off" "handing_off"})
+(def active-agent-states
+  #{"starting" "running"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -47,6 +47,10 @@
 
 (defn notify-cooldown-seconds []
   (env-long "SWARMFORGE_SQUAD_STATUS_NOTIFY_COOLDOWN_SECONDS" 300))
+
+(defn alert-key [alert]
+  (str/replace alert #" heartbeat stale for [0-9]+ seconds$"
+               " heartbeat stale"))
 
 (defn project-root []
   (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
@@ -122,8 +126,8 @@
     (pane-dead? socket session) (str "agent " agent " tmux pane is dead: " session)
     :else nil))
 
-(defn terminal-state? [state]
-  (contains? terminal-agent-states state))
+(defn active-state? [state]
+  (contains? active-agent-states state))
 
 (defn alerts-for-agent [root roles socket skip-tmux? stale-seconds now-instant dir]
   (let [agent (fs/file-name dir)
@@ -136,7 +140,7 @@
         age (heartbeat-age-seconds heartbeat now-instant)]
     (cond
       (= "retired" state) []
-      (terminal-state? state) []
+      (and state (not (active-state? state))) []
       (nil? (get roles agent)) [(str "agent " agent " is not registered in roles.tsv")]
       (not (fs/exists? heartbeat)) [(str "agent " agent " has no heartbeat")]
       (nil? age) [(str "agent " agent " heartbeat timestamp is invalid")]
@@ -167,7 +171,7 @@
         stale-seconds (env-long "SWARMFORGE_SQUAD_STALE_SECONDS" 300)
         alerts (mapcat #(alerts-for-agent root roles socket skip-tmux? stale-seconds (instant-now) %)
                        (agent-dirs root))
-        alert-set (set alerts)
+        alert-key-set (set (map alert-key alerts))
         now-instant (instant-now)]
     (doseq [alert alerts]
       (println "SQUAD_STATUS_ALERT:" alert)
@@ -178,14 +182,14 @@
         (let [{previous-alerts :alerts notified-at :notified-at} @last-status-notification
               cooldown (notify-cooldown-seconds)
               due? (or (nil? notified-at)
-                       (not= alert-set previous-alerts)
+                       (not= alert-key-set previous-alerts)
                        (>= (.getSeconds (java.time.Duration/between notified-at now-instant))
                            cooldown))]
           (if-not due?
             (log! root "notify-throttled" (count alerts))
             (if (notify! socket "swarmforge-squad-leader")
               (do
-                (reset! last-status-notification {:alerts alert-set :notified-at now-instant})
+                (reset! last-status-notification {:alerts alert-key-set :notified-at now-instant})
                 (log! root "notified" "squad-leader" (count alerts)))
               (log! root "notify-failed" "squad-leader" (count alerts)))))))
     (when (empty? alerts)

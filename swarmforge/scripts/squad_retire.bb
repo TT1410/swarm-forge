@@ -17,6 +17,9 @@
 (defn run-continue [& args]
   (apply process/sh (concat [{:continue true}] args)))
 
+(defn git-continue [root & args]
+  (apply run-continue (concat ["git" "-C" (str root)] args)))
+
 (defn project-root []
   (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
         configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
@@ -115,6 +118,40 @@
                             (str (str/join "\t" row) "\n"))))
     (first matching)))
 
+(defn transient-branch [agent-id]
+  (str "swarmforge-" agent-id))
+
+(defn managed-worktree? [root agent-id worktree]
+  (let [managed-root (fs/absolutize (fs/path root ".worktrees"))
+        expected (fs/absolutize (fs/path managed-root agent-id))
+        actual (fs/absolutize worktree)]
+    (= (str expected) (str actual))))
+
+(defn remove-worktree! [root agent-id worktree]
+  (cond
+    (str/blank? (str worktree))
+    {:removed? false :detail "worktree metadata missing"}
+
+    (not (managed-worktree? root agent-id worktree))
+    {:removed? false :detail "worktree path is outside managed transient worktrees"}
+
+    :else
+    (let [result (git-continue root "worktree" "remove" "--force" (str worktree))]
+      (when-not (zero? (:exit result))
+        (when (fs/exists? worktree)
+          (fs/delete-tree worktree))
+        (git-continue root "worktree" "prune"))
+      {:removed? (not (fs/exists? worktree))
+       :detail (if (fs/exists? worktree)
+                 "worktree removal failed"
+                 "worktree removed")})))
+
+(defn delete-branch! [root agent-id]
+  (let [branch (transient-branch agent-id)
+        result (git-continue root "branch" "-D" branch)]
+    {:deleted? (zero? (:exit result))
+     :branch branch}))
+
 (defn session-exists? [socket session]
   (and (not (str/blank? socket))
        (zero? (:exit (run-continue "tmux" "-S" socket "has-session" "-t" session)))))
@@ -152,19 +189,27 @@
     (acquire-lock! lock-dir)
     (try
       (let [row (remove-role! roles-file agent-id)
+            worktree (nth row 2)
             session (nth row 3)
             socket-file (fs/path state-dir "tmux-socket")
             socket (when (fs/exists? socket-file)
                      (str/trim (slurp (str socket-file))))
-            {:keys [stopped? detail]} (stop-session! socket session)]
+            {:keys [stopped? detail]} (stop-session! socket session)
+            worktree-cleanup (remove-worktree! root agent-id worktree)
+            branch-cleanup (delete-branch! root agent-id)]
         (fs/create-dirs agent-dir)
-        (let [retire-detail (str detail "; worktree preserved")]
+        (let [retire-detail (str detail "; " (:detail worktree-cleanup)
+                                 "; branch " (:branch branch-cleanup)
+                                 (if (:deleted? branch-cleanup) " deleted" " absent"))]
           (write-status! agent-dir "retired" retire-detail)
           (write-heartbeat! agent-dir agent-id "retired" retire-detail))
         (println "SQUAD_AGENT_RETIRED:" agent-id)
         (println "SESSION:" session)
         (println "SESSION_STOPPED:" stopped?)
-        (println "WORKTREE:" (nth row 2))
+        (println "WORKTREE:" worktree)
+        (println "WORKTREE_REMOVED:" (:removed? worktree-cleanup))
+        (println "BRANCH:" (:branch branch-cleanup))
+        (println "BRANCH_DELETED:" (:deleted? branch-cleanup))
         (println "STATUS:" (str (fs/path agent-dir "status"))))
       (finally
         (fs/delete-tree lock-dir)))))

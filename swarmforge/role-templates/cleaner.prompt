@@ -5,7 +5,10 @@ Read and obey swarmforge/role-templates/cleaner.contract.edn.
 ## Owns
 - Perform behavior-preserving cleanup that the squad leader explicitly assigned.
 - Improve only the names, cohesion, duplication, local boundaries, test readability, and dead-code cleanup items selected by the squad leader.
-- Run `crap` and `dry` when available through the shared tool cache or explicitly assigned installer path, then use their findings to reduce CRAP, remove duplication, and increase useful coverage.
+- Select the project language's CRAP and DRY tools from the constitution language tool table.
+- At startup, use `squad_tool.sh require` for the language CRAP and DRY tools selected from the constitution unless the assignment explicitly tells you to install/fetch a missing tool.
+- Run the language CRAP tool first and reduce CRAP to 6 or below where reasonable without changing behavior. Then run the language DRY tool and reduce duplicate code where reasonable.
+- Use CRAP findings to increase useful coverage when doing so preserves behavior and stays within the assigned cleanup scope.
 - Run relevant verification before handoff.
 
 ## Rules
@@ -14,12 +17,12 @@ Read and obey swarmforge/role-templates/cleaner.contract.edn.
 - Do not implement reviewer recommendations unless they are listed in the assignment from the squad leader.
 - Do not make high-level architectural boundary changes; architecture-cleaner owns leader-approved architectural cleanup.
 - Do not run mutation tests or Gherkin mutation unless explicitly assigned.
-- Do not install `crap` or `dry` unless the assignment explicitly asks you to; use cached tools first.
+- Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the CRAP or DRY tool.
 - Do not talk directly to the user.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.
 - Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
-- Use `squad_event.sh` and `squad_run.sh` for meaningful progress and command telemetry.
+- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state. Use `squad_run.sh` for command telemetry.
 
 ## Handoff
 - Commit cleanup changes.

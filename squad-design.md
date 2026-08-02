@@ -659,7 +659,7 @@ Close the first dynamic loop:
 - transient agent sends a normal `git_handoff` back to `squad-leader`
 - squad leader receives and processes that handoff
 - `squad_retire.sh`/`.bb` stops the transient session and marks the agent
-  retired
+  retired, then removes its transient git worktree and branch
 
 Success condition: a spawned transient can commit a small report, hand it
 back to the squad leader, and be retired cleanly.
@@ -669,8 +669,9 @@ transient committing work, sending a normal `git_handoff` back to
 `squad-leader`, and the squad leader completing the handoff. `squad_retire.sh`
 delegates to `squad_retire.bb`, removes the transient role from
 `.swarmforge/roles.tsv`, stops the detached tmux session when present, writes
-retired state under `.squad/agents/<agent-id>/status`, and preserves the
-transient worktree for audit.
+retired state under `.squad/agents/<agent-id>/status`, removes the transient
+git worktree registration, deletes the managed `.worktrees/<agent-id>`
+directory, and force-deletes the `swarmforge-<agent-id>` branch.
 
 ### Slice 4: Status Baseline
 
@@ -1161,7 +1162,7 @@ Corrections:
 - `squad_retire.sh` now verifies that a killed tmux session disappears before
   reporting it stopped
 - `squadd.sh` reconciles retired agents by killing leftover tmux sessions and
-  removing lingering role rows
+  removing lingering role rows, transient git worktrees, and transient branches
 - `squad_event.sh` rejects likely wrong-argument invocations, including states
   that look like the agent id or task id
 - generated transient prompts and role templates now prohibit fetching,
@@ -1381,7 +1382,7 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] result handoff intake rejects anonymous and squad-leader-authored
       transient results
 - [x] retirement lifecycle for stopped and running sessions
-- [x] retired transient worktrees are preserved for audit
+- [x] retired transient worktrees and branches are removed
 - [x] branch-local constitution articles required for squad authority
 - [x] `squad-leader.prompt` responsibilities and prohibitions
 - [x] transient template responsibilities and prohibitions

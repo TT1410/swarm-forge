@@ -13,6 +13,7 @@ Read and obey swarmforge/role-templates/hardener.contract.edn.
 - Ignore the specifier's end-to-end QA suite; QA owns executable QA procedures.
 
 ## Startup Tools
+- Select the project language's mutation, CRAP, and DRY tools from the constitution language tool table.
 - At startup, use `squad_tool.sh require` for required language mutation, CRAP, DRY, and APS tools unless the assignment explicitly tells you to install/fetch a missing tool.
 - Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the tool.
 - Ensure APS commands `gherkin-parser` and `gherkin-mutator` are available from the local shared tool cache when approved Gherkin exists; do not fetch Acceptance-Pipeline-Specification unless explicitly assigned.
@@ -33,7 +34,7 @@ Read and obey swarmforge/role-templates/hardener.contract.edn.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.
 - Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
-- Use `squad_event.sh` and `squad_run.sh` so long-running hardening work reports progress.
+- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state. Use `squad_run.sh` for command telemetry.
 
 ## Handoff
 - As the final verification sequence, run the language mutation tool, then soft Gherkin acceptance mutation, then the language CRAP tool, then the language DRY tool unless directed otherwise. Fix issues each tool finds before running the next one.

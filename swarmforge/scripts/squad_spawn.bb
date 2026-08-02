@@ -96,8 +96,8 @@
                               (fs/list-dir agent-dir)))]
     (concat row-numbers worktree-numbers agent-numbers)))
 
-(def terminal-agent-states
-  #{"complete" "review_complete" "handoff_ready" "handed_off" "handing_off" "retired"})
+(def active-agent-states
+  #{"starting" "running"})
 
 (defn read-value [file field]
   (when (fs/exists? file)
@@ -113,7 +113,7 @@
          :let [role (first row)
                state (read-value (fs/path root ".squad" "agents" role "status") "state")]
          :when (and (not= "squad-leader" role)
-                    (not (contains? terminal-agent-states state)))]
+                    (contains? active-agent-states state))]
      role)))
 
 (defn template-from-role [role]
@@ -145,7 +145,7 @@
          :let [role (first row)
                state (read-value (fs/path root ".squad" "agents" role "status") "state")]
          :when (and (not= "squad-leader" role)
-                    (not (contains? terminal-agent-states state))
+                    (contains? active-agent-states state)
                     (= template (role-template root role)))]
      role)))
 
@@ -155,7 +155,7 @@
          :let [role (first row)
                state (read-value (fs/path root ".squad" "agents" role "status") "state")]
          :when (and (not= "squad-leader" role)
-                    (not (contains? terminal-agent-states state))
+                    (contains? active-agent-states state)
                     (contains? templates (role-template root role)))]
      role)))
 
@@ -233,7 +233,8 @@
          "As an analyst, you may search the web to augment the approved theme when source material is needed. Any stories you produce must be self-contained and must not require downstream agents to do further research.\n"
          "Do not search the web unless the assignment explicitly asks you to. The squad leader or analyst-provided artifacts should provide the reference facts you need.\n")
        "Do not fetch, clone, install, update, or check remote versions of external tools unless the assignment explicitly asks for that exact operation. Use already-present project scripts and the shared tool cache first.\n\n"
-       "If a command triggers an approval or escalation prompt, stop that command path, record a blocked status with `squad_event.sh`, and hand the blocker back to `squad-leader`. Do not wait indefinitely at an invisible approval prompt.\n\n"
+       "Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state.\n\n"
+       "If a command triggers an approval or escalation prompt, stop that command path, record `blocked` with `squad_event.sh`, and hand the blocker back to `squad-leader`. Do not wait indefinitely at an invisible approval prompt.\n\n"
        "# Role Template\n\n"
        template-text "\n\n"
        "# Assignment\n\n"
@@ -246,9 +247,9 @@
       override
       (case agent
         "claude" (str "claude --append-system-prompt-file " (sq (str prompt-file)) " --permission-mode acceptEdits -n " (sq (str "SwarmForge " display)) " \"$(cat " (sq (str prompt-file)) ")\"")
-        "codex" (str "codex -C " (sq (str root)) " \"$(cat " (sq (str prompt-file)) ")\"")
-        "copilot" (str "copilot -C " (sq (str root)) " --name " (sq (str "SwarmForge " display)) " -i \"$(cat " (sq (str prompt-file)) ")\"")
-        "grok" (str "grok --cwd " (sq (str root)) " --permission-mode acceptEdits --rules \"$(cat " (sq (str prompt-file)) ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\"")))))
+        "codex" (str "codex -C " (sq (str worktree)) " \"$(cat " (sq (str prompt-file)) ")\"")
+        "copilot" (str "copilot -C " (sq (str worktree)) " --name " (sq (str "SwarmForge " display)) " -i \"$(cat " (sq (str prompt-file)) ")\"")
+        "grok" (str "grok --cwd " (sq (str worktree)) " --permission-mode acceptEdits --rules \"$(cat " (sq (str prompt-file)) ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\"")))))
 
 (defn render-launch-script [{:keys [agent-id root worktree prompt-file script-dir tool-cache-dir agent display]}]
   (str "#!/usr/bin/env zsh\n"
@@ -385,7 +386,9 @@
                     (exit! 2 (str "Agent state already exists: " agent-dir)))
                   (run! "git" "-C" (str root) "worktree" "add" "--force" "-B" branch (str worktree) "HEAD")
                   (create-dirs! (concat [(fs/path task-dir "assignments")
-                                         agent-dir]
+                                         agent-dir
+                                         (fs/path worktree ".swarmforge" "tools" "bin")
+                                         (fs/path worktree ".swarmforge" "tools" "manifests")]
                                         (handoff-dirs worktree)))
                   (copy-scripts! worktree)
                   (write-atomic! prompt-file
@@ -421,7 +424,7 @@
                                               :agent agent
                                               :tool-cache-dir (str tool-cache-dir)
                                               :launch-script (str launch-script)})
-                  (write-status-and-heartbeat! agent-dir agent-id task-id "spawned" "registered transient agent")
+                  (write-status-and-heartbeat! agent-dir agent-id task-id "starting" "registered transient agent")
                   (when-not (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
                     (let [socket (str/trim (slurp (str (fs/path state-dir "tmux-socket"))))]
                       (launch-session! {:socket socket

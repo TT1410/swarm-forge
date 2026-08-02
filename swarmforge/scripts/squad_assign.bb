@@ -288,7 +288,7 @@
        instructions-text "\n\n"
        "## Required Transient Protocol\n\n"
        "- Stay inside this assignment boundary.\n"
-       "- Use `squad_event.sh` for meaningful progress updates.\n"
+       "- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state.\n"
        "- Commit completed work on your transient branch.\n"
        "- Send the result to `squad-leader` with `swarm_handoff.sh` using this draft shape:\n\n"
        "```text\n"

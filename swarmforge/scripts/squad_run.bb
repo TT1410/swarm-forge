@@ -6,7 +6,7 @@
             [clojure.string :as str]))
 
 (def usage-text
-  "Usage: squad_run.sh <state> <detail> -- <command...>")
+  "Usage: squad_run.sh <phase> <detail> -- <command...>")
 
 (def script-dir (-> *file* fs/path fs/parent))
 
@@ -28,21 +28,22 @@
   (let [[before after] (split-with #(not= "--" %) args)]
     (when (or (empty? before) (< (count before) 2) (empty? after) (empty? (rest after)))
       (exit! 1 usage-text))
-    {:state (first before)
+    {:phase (first before)
      :detail (str/join " " (rest before))
      :command (vec (rest after))}))
 
 (defn -main [& args]
-  (let [{:keys [state detail command]} (split-args args)]
-    (event! state detail)
+  (let [{:keys [phase detail command]} (split-args args)
+        event-detail (str phase ": " detail)]
+    (event! "running" event-detail)
     (let [result (apply process/sh
                         (concat [{:continue true
                                   :out :inherit
                                   :err :inherit}]
                                 command))]
       (if (zero? (:exit result))
-        (event! (str state "_passed") detail)
-        (event! (str state "_failed") (str detail " exit " (:exit result))))
+        (event! "running" (str phase " passed: " detail))
+        (event! "failed" (str phase " failed: " detail " exit " (:exit result))))
       (System/exit (:exit result)))))
 
 (apply -main *command-line-args*)

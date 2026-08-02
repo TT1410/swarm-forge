@@ -43,7 +43,7 @@ This role is based on the six-pack specifier, adapted for squad handoffs.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.
 - Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
-- Use `squad_event.sh` at meaningful workflow boundaries.
+- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put workflow boundary names and progress wording in the detail argument, not the state.
 
 ## Handoff
 - Commit only the assigned story's specification artifacts and any concise unresolved-question note.
