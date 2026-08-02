@@ -228,7 +228,7 @@
        "assigned_worktree: " worktree "\n"
        "tool_cache_dir: " tool-cache-dir "\n\n"
        "You are a transient squad agent. Communicate through handoffs only. Do not talk directly to the user. Do not spawn other agents. Do not broaden this assignment without a squad-leader handoff.\n\n"
-       "Before task work, verify that your current directory is the assigned worktree. Do not edit the project root except through approved squad helper commands and shared tool-cache helpers.\n\n"
+       "Your agent process may be rooted at the project root so squad helper telemetry can write shared state. Before task work, verify that the shell current directory is the assigned worktree. Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree. Do not create or edit project-root files directly except through approved squad helper commands and shared tool-cache helpers.\n\n"
        (if (= "analyst" template)
          "As an analyst, you may search the web to augment the approved theme when source material is needed. Any stories you produce must be self-contained and must not require downstream agents to do further research.\n"
          "Do not search the web unless the assignment explicitly asks you to. The squad leader or analyst-provided artifacts should provide the reference facts you need.\n")
@@ -247,9 +247,9 @@
       override
       (case agent
         "claude" (str "claude --append-system-prompt-file " (sq (str prompt-file)) " --permission-mode acceptEdits -n " (sq (str "SwarmForge " display)) " \"$(cat " (sq (str prompt-file)) ")\"")
-        "codex" (str "codex -C " (sq (str worktree)) " \"$(cat " (sq (str prompt-file)) ")\"")
-        "copilot" (str "copilot -C " (sq (str worktree)) " --name " (sq (str "SwarmForge " display)) " -i \"$(cat " (sq (str prompt-file)) ")\"")
-        "grok" (str "grok --cwd " (sq (str worktree)) " --permission-mode acceptEdits --rules \"$(cat " (sq (str prompt-file)) ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\"")))))
+        "codex" (str "codex -C " (sq (str root)) " \"$(cat " (sq (str prompt-file)) ")\"")
+        "copilot" (str "copilot -C " (sq (str root)) " --name " (sq (str "SwarmForge " display)) " -i \"$(cat " (sq (str prompt-file)) ")\"")
+        "grok" (str "grok --cwd " (sq (str root)) " --permission-mode acceptEdits --rules \"$(cat " (sq (str prompt-file)) ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\"")))))
 
 (defn render-launch-script [{:keys [agent-id root worktree prompt-file script-dir tool-cache-dir agent display]}]
   (str "#!/usr/bin/env zsh\n"

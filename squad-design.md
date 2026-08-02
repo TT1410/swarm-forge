@@ -256,15 +256,18 @@ Generated transient prompts must state:
 - the assigned worktree
 - the shared tool cache directory
 - the worktree-local tool bin directory
-- the requirement to `cd` to the assigned worktree before task work
-- the prohibition on editing the project root except through approved squad
+- the requirement to verify the shell is in the assigned worktree before task work
+- the requirement to create, edit, stage, commit, and inspect assigned artifacts
+  only inside the assigned worktree
+- the prohibition on creating or editing project-root files except through approved squad
   helper commands and shared tool-cache helpers
 
 This is intentionally prompt-enforced at first because agent CLIs do not expose
 the same command-line contract for "project/sandbox root" versus "working
 directory". Codex has `-C`, Grok currently uses `--cwd`, and the existing Claude
 launcher relies on the shell working directory. A project-root launch plus
-explicit worktree `cd` is the portable baseline across agents.
+explicit shell `cd` to the assigned worktree is the portable baseline across
+agents.
 
 ## Daemon-Owned Transient Spawning
 
@@ -831,7 +834,10 @@ and tmux starts that script rather than an inline command.
 
 Status: implemented. Generated prompts also name the project root, assigned
 worktree, and tool cache directory, and require the transient agent to verify it
-is working from the assigned worktree before task work.
+is working from the assigned worktree before task work. The agent CLI project
+root remains the project root for Codex, Copilot, and Grok so shared squad
+helper telemetry can write central state without escalation; artifact work is
+confined by prompt to the assigned worktree.
 
 ### Slice 11: Shared Tool Cache Registry
 

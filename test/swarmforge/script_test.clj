@@ -159,6 +159,12 @@
     (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
       (is (str/includes? prompt (str template ".contract.edn")) template))))
 
+(deftest squad-role-prompts-confine-artifacts-to-worktrees
+  (doseq [template current-squad-templates]
+    (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
+      (is (str/includes? prompt "Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree.")
+          template))))
+
 (deftest squad-role-contracts-encode-worker-boundaries
   (doseq [c (contracts)]
     (is (= ["squad-leader"] (:handoff-targets c)) (:role c))
@@ -461,7 +467,8 @@
         (is (str/includes? (slurp (str metadata-file)) (str "launch_script: " expected-launch-script)))
         (is (str/includes? (slurp (str prompt-file)) "assigned_worktree:"))
         (is (str/includes? (slurp (str prompt-file)) "tool_cache_dir:"))
-        (is (str/includes? (slurp (str prompt-file)) "Before task work, verify that your current directory is the assigned worktree."))
+        (is (str/includes? (slurp (str prompt-file)) "Your agent process may be rooted at the project root"))
+        (is (str/includes? (slurp (str prompt-file)) "Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree."))
         (is (str/includes? (slurp (str prompt-file)) "Do not search the web unless the assignment explicitly asks you to."))
         (is (str/includes? (slurp (str prompt-file)) "Do not fetch, clone, install, update, or check remote versions of external tools"))
         (is (str/includes? (slurp (str prompt-file)) "If a command triggers an approval or escalation prompt"))
@@ -472,8 +479,8 @@
           (is (str/includes? launcher "$SWARMFORGE_WORKTREE/.swarmforge/tools/bin"))
           (is (str/includes? launcher "cd \"$SWARMFORGE_WORKTREE\""))
           (is (str/includes? launcher "codex -C"))
-          (is (str/includes? launcher expected-worktree))
-          (is (not (str/includes? launcher (str "codex -C '" expected-root "'")))))
+          (is (str/includes? launcher (str "codex -C '\"'\"'" expected-root "'\"'\"'")))
+          (is (not (str/includes? launcher (str "codex -C '\"'\"'" expected-worktree "'\"'\"'")))))
         (is (str/includes? (slurp (str prompt-file))
                            "Find the original rules."))
         (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/status")))

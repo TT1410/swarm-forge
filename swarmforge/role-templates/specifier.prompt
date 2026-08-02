@@ -43,6 +43,7 @@ This role is based on the six-pack specifier, adapted for squad handoffs.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.
 - Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
+- Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree. Do not create or edit project-root files directly except through approved squad helper commands and shared tool-cache helpers.
 - Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put workflow boundary names and progress wording in the detail argument, not the state.
 
 ## Handoff
