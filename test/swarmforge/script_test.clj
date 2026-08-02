@@ -2143,6 +2143,31 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest swarm-cleanup-kills-unlisted-tmux-sessions-on-socket
+  (let [root (tmp-dir)
+        sock (str (fs/path root "swarm.sock"))
+        ids-file (fs/path root ".swarmforge/window-ids")]
+    (try
+      (write-file ids-file "")
+      (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-listed" "sleep" "120")
+      (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-orphan-worker" "sleep" "120")
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_TERMINAL_BACKEND" "none"}}
+                        (str (fs/path scripts-dir "swarm-cleanup.sh"))
+                        sock
+                        (str ids-file)
+                        "swarmforge-listed")]
+        (is (= 0 (:exit result)))
+        (is (not= 0 (:exit (run {:dir root :ok? false}
+                                "tmux" "-S" sock "has-session" "-t" "swarmforge-listed"))))
+        (is (not= 0 (:exit (run {:dir root :ok? false}
+                                "tmux" "-S" sock "has-session" "-t" "swarmforge-orphan-worker"))))
+        (is (not= 0 (:exit (run {:dir root :ok? false}
+                                "tmux" "-S" sock "list-sessions")))))
+      (finally
+        (run {:dir root :ok? false} "tmux" "-S" sock "kill-server")
+        (fs/delete-tree root)))))
+
 (defn close-swarm []
   (str (fs/path repo-root "close-swarm")))
 

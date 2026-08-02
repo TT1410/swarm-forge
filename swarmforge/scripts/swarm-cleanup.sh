@@ -62,6 +62,8 @@ for session in "$@"; do
   tmux -S "$TMUX_SOCKET" kill-session -t "$session" 2>/dev/null || true
 done
 
+tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
+
 sleep 1
 
 if [[ -f "$WINDOW_IDS_FILE" ]]; then
