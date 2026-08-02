@@ -1,0 +1,10 @@
+{:role "qa"
+ :handoff-targets ["squad-leader"]
+ :may-web-search false
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :writes ["qa-scripts" "qa-fixes" "qa-report"]
+ :artifact-roots ["qa/" "src/" "test/"]
+ :singleton true
+ :batch-kind "qa"}

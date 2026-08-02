@@ -1,5 +1,6 @@
 (ns swarmforge.script-test
   (:require [babashka.fs :as fs]
+            [clojure.edn :as edn]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
@@ -36,60 +37,163 @@
 (defn script [name]
   (str (fs/path scripts-dir name)))
 
+(defn write-agent-status!
+  ([root agent-id state]
+   (write-agent-status! root agent-id state "2099-01-01T00:00:00Z"))
+  ([root agent-id state updated-at]
+   (write-file (fs/path root ".squad/agents" agent-id "status")
+               (str "state: " state "\n"
+                    "detail: test\n"
+                    "updated_at: " updated-at "\n"))
+   (write-file (fs/path root ".squad/agents" agent-id "heartbeat")
+               (str "agent: " agent-id "\n"
+                    "task_id: " agent-id "-task\n"
+                    "state: " state "\n"
+                    "detail: test\n"
+                    "updated_at: " updated-at "\n"))))
+
+(defn prepare-implementation-packet! [root theme-id story-id]
+  (write-file (fs/path root "features" (str story-id ".feature"))
+              (str "Feature: " story-id "\n"))
+  (write-file (fs/path root "qa" (str story-id ".md"))
+              (str "# QA Procedure: " story-id "\n"))
+  (run {:dir root} "git" "add" "stories" "features" "qa")
+  (run {:dir root} "git" "commit" "-q" "-m" (str "Prepare packet artifacts for " story-id))
+  (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "create"
+         theme-id
+         story-id
+         (str story-id "-analysis")
+         "master"
+         sha)
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "approve"
+         story-id
+         "story"
+         "user approved story")
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "attach"
+         story-id
+         "gherkin"
+         (str story-id "-gherkin")
+         "swarmforge-gherkin-writer-001"
+         sha
+         (str "features/" story-id ".feature"))
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "review"
+         story-id
+         "gherkin"
+         "accepted"
+         (str story-id "-gherkin-review")
+         "swarmforge-gherkin-reviewer-001"
+         sha)
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "attach"
+         story-id
+         "qa-procedure"
+         (str story-id "-qa-procedure")
+         "swarmforge-qa-procedure-writer-001"
+         sha
+         (str "qa/" story-id ".md"))
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "review"
+         story-id
+         "qa-procedure"
+         "accepted"
+         (str story-id "-qa-procedure-review")
+         "swarmforge-qa-procedure-reviewer-001"
+         sha)
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "approve"
+         story-id
+         "implementation"
+         "user approved implementation")
+    sha))
+
+(def current-squad-templates
+  ["analyst"
+   "gherkin-writer"
+   "qa-procedure-writer"
+   "gherkin-reviewer"
+   "qa-procedure-reviewer"
+   "implementer"
+   "cleaner"
+   "code-reviewer"
+   "hardener"
+   "qa"
+   "architect"
+   "senior-implementor"])
+
+(defn contract-path [template]
+  (fs/path repo-root "swarmforge" "role-templates" (str template ".contract.edn")))
+
+(defn contract [template]
+  (edn/read-string (slurp (str (contract-path template)))))
+
+(defn contracts []
+  (map contract current-squad-templates))
+
 (deftest squad-role-templates-exist
-  (doseq [template ["specifier"
-                    "implementer"
-                    "reviewer"
-                    "cleaner"
-                    "hardener"
-                    "qa"
-                    "architecture-reviewer"
-                    "architecture-cleaner"]]
-    (is (fs/exists? (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))))
+  (doseq [template current-squad-templates]
+    (is (fs/exists? (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))
+    (is (fs/exists? (contract-path template)))))
 
-(deftest squad-role-templates-handoff-only-to-leader
-  (doseq [template ["specifier"
-                    "implementer"
-                    "reviewer"
-                    "cleaner"
-                    "hardener"
-                    "qa"
-                    "architecture-reviewer"
-                    "architecture-cleaner"]]
+(deftest squad-role-prompts-reference-contracts
+  (doseq [template current-squad-templates]
     (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
-      (is (str/includes? prompt "Do not hand off to another transient worker.")
-          template)
-      (is (str/includes? prompt "Send a `git_handoff` back to `squad-leader`")
-          template)
-      (is (str/includes? prompt "Do not search the web unless the assignment explicitly asks you to.")
-          template)
-      (is (str/includes? prompt "Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.")
-          template))))
+      (is (str/includes? prompt (str template ".contract.edn")) template))))
 
-(deftest squad-review-cleaning-responsibilities-are-split
-  (let [reviewer (slurp (str (fs/path repo-root "swarmforge/role-templates/reviewer.prompt")))
-        cleaner (slurp (str (fs/path repo-root "swarmforge/role-templates/cleaner.prompt")))
-        architecture-reviewer (slurp (str (fs/path repo-root "swarmforge/role-templates/architecture-reviewer.prompt")))
-        architecture-cleaner (slurp (str (fs/path repo-root "swarmforge/role-templates/architecture-cleaner.prompt")))
-        hardener (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))
-        qa (slurp (str (fs/path repo-root "swarmforge/role-templates/qa.prompt")))
-        local-workflow (slurp (str (fs/path repo-root "swarmforge/constitution/articles/local-workflow.prompt")))
-        leader (slurp (str (fs/path repo-root "swarmforge/roles/squad-leader.prompt")))]
-    (is (str/includes? reviewer "Produce a review report only"))
-    (is (str/includes? reviewer "Do not make production changes."))
-    (is (str/includes? cleaner "Work one story at a time."))
-    (is (str/includes? cleaner "Do not implement reviewer recommendations unless they are listed in the assignment from the squad leader."))
-    (is (str/includes? architecture-reviewer "Produce an architecture review report only"))
-    (is (str/includes? architecture-cleaner "Do not implement architecture-reviewer recommendations unless they are listed in the assignment from the squad leader."))
-    (is (str/includes? hardener "based on the six-pack hardender"))
-    (is (str/includes? hardener "soft Gherkin acceptance mutation"))
-    (is (str/includes? qa "based on the six-pack QA"))
-    (is (str/includes? qa "Fix bugs found by the QA suite or final verification"))
-    (is (str/includes? leader "Reviewers and architecture-reviewers report recommendations only."))
-    (is (str/includes? leader "After QA completes, batch architecture-reviewer work"))
-    (is (str/includes? leader "Do not forge transient result handoffs"))
-    (is (str/includes? local-workflow "Architecture-reviewer should normally follow QA"))
-    (is (str/includes? local-workflow "must not forge transient result handoffs"))))
+(deftest squad-role-contracts-encode-worker-boundaries
+  (doseq [c (contracts)]
+    (is (= ["squad-leader"] (:handoff-targets c)) (:role c))
+    (is (false? (:may-spawn c)) (:role c))
+    (is (false? (:may-talk-to-user c)) (:role c))
+    (is (false? (:may-fetch-tools c)) (:role c)))
+  (doseq [c (contracts)]
+    (if (= "analyst" (:role c))
+      (do
+        (is (true? (:may-web-search c)))
+        (is (true? (:self-contained-output c))))
+      (is (false? (:may-web-search c)) (:role c)))))
+
+(deftest squad-role-contracts-separate-artifact-ownership
+  (let [by-role (into {} (map (juxt :role identity) (contracts)))]
+    (is (= ["stories/"] (:artifact-roots (by-role "analyst"))))
+    (is (= ["features/"] (:artifact-roots (by-role "gherkin-writer"))))
+    (is (= ["qa/"] (:artifact-roots (by-role "qa-procedure-writer"))))
+    (doseq [review-role ["gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"]]
+      (is (= [".squad/reviews/"] (:artifact-roots (by-role review-role))) review-role))
+    (is (= "implementation_approved" (:requires-packet-state (by-role "implementer"))))
+    (doseq [singleton-role ["hardener" "qa" "architect"]]
+      (is (true? (:singleton (by-role singleton-role))) singleton-role))
+    (is (= "hardener" (:batch-kind (by-role "hardener"))))
+    (is (= "qa" (:batch-kind (by-role "qa"))))
+    (is (= "architecture" (:batch-kind (by-role "architect"))))))
+
+(deftest squad-leader-contract-encodes-orchestration-boundary
+  (let [contract-file (fs/path repo-root "swarmforge/roles/squad-leader.contract.edn")
+        prompt (slurp (str (fs/path repo-root "swarmforge/roles/squad-leader.prompt")))
+        c (edn/read-string (slurp (str contract-file)))]
+    (is (fs/exists? contract-file))
+    (is (str/includes? prompt "squad-leader.contract.edn"))
+    (is (true? (:persistent c)))
+    (is (true? (:may-talk-to-user c)))
+    (is (true? (:may-spawn c)))
+    (is (true? (:requires-theme-negotiation-before-analyst c)))
+    (is (true? (:theme-approval-before-analyst c)))
+    (is (true? (:story-packet-source-of-truth c)))
+    (is (= "implementation_approved" (:implementation-packet-state c)))
+    (is (= ["hardener" "qa" "architect"] (:singleton-roles c)))
+    (is (some #{"stories"} (:forbidden-writes c)))
+    (is (some #{"production-code"} (:forbidden-writes c)))))
 
 (deftest handoff-lib-parses-and-prints-handoff-files
   (let [root (tmp-dir)
@@ -320,6 +424,8 @@
         (is (fs/exists? (fs/path worktree ".git")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_spawn.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_assign.sh")))
+        (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_batch.sh")))
+        (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_packet.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_tool.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_theme.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_event.sh")))
@@ -337,11 +443,12 @@
         (is (str/includes? (slurp (str prompt-file)) "Before task work, verify that your current directory is the assigned worktree."))
         (is (str/includes? (slurp (str prompt-file)) "Do not search the web unless the assignment explicitly asks you to."))
         (is (str/includes? (slurp (str prompt-file)) "Do not fetch, clone, install, update, or check remote versions of external tools"))
+        (is (str/includes? (slurp (str prompt-file)) "If a command triggers an approval or escalation prompt"))
         (let [launcher (slurp (str launch-script))]
           (is (str/includes? launcher "export SWARMFORGE_PROJECT_ROOT="))
           (is (str/includes? launcher "export SWARMFORGE_WORKTREE="))
           (is (str/includes? launcher "export SWARMFORGE_TOOL_CACHE_DIR="))
-          (is (str/includes? launcher "$SWARMFORGE_TOOL_CACHE_DIR/bin"))
+          (is (str/includes? launcher "$SWARMFORGE_WORKTREE/.swarmforge/tools/bin"))
           (is (str/includes? launcher "cd \"$SWARMFORGE_WORKTREE\""))
           (is (str/includes? launcher "codex -C"))
           (is (str/includes? launcher expected-root)))
@@ -484,6 +591,108 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-spawn-enforces-transient-slot-limit
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"
+                       "specifier-002\tspecifier-002\t" root "/.worktrees/specifier-002\tswarmforge-specifier-002\tSpecifier 002\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"
+                       "reviewer-001\treviewer-001\t" root "/.worktrees/reviewer-001\tswarmforge-reviewer-001\tReviewer 001\tcodex\ttask\n"
+                       "qa-001\tqa-001\t" root "/.worktrees/qa-001\tswarmforge-qa-001\tQa 001\tcodex\ttask\n"))
+      (doseq [agent-id ["specifier-001" "specifier-002" "implementer-001" "reviewer-001" "qa-001"]]
+        (write-agent-status! root agent-id "working"))
+      (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")
+                  "review\n")
+      (write-file (fs/path root "assignment.md")
+                  "Review the story implementation.\n")
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}
+                         :ok? false}
+                        (script "squad_spawn.sh")
+                        "reviewer"
+                        "another-review"
+                        "assignment.md")]
+        (is (= 3 (:exit result)))
+        (is (str/includes? (:err result) "SQUAD_SPAWN_CAPACITY_FULL"))
+        (is (str/includes? (:err result) "ACTIVE_TRANSIENTS: 5"))
+        (is (str/includes? (:err result) "MAX_TRANSIENTS: 5")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-spawn-reads-transient-slot-limit-from-squad-config
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
+      (write-agent-status! root "specifier-001" "working")
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 1\n")
+      (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")
+                  "review\n")
+      (write-file (fs/path root "assignment.md")
+                  "Review the story implementation.\n")
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}
+                         :ok? false}
+                        (script "squad_spawn.sh")
+                        "reviewer"
+                        "another-review"
+                        "assignment.md")]
+        (is (= 3 (:exit result)))
+        (is (str/includes? (:err result) "ACTIVE_TRANSIENTS: 1"))
+        (is (str/includes? (:err result) "MAX_TRANSIENTS: 1")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-spawn-enforces-singleton-quality-gate-limits
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "hardener-001\thardener-001\t" root "/.worktrees/hardener-001\tswarmforge-hardener-001\tHardener 001\tcodex\ttask\n"
+                       "architecture-reviewer-001\tarchitecture-reviewer-001\t" root "/.worktrees/architecture-reviewer-001\tswarmforge-architecture-reviewer-001\tArchitecture Reviewer 001\tcodex\ttask\n"))
+      (write-agent-status! root "hardener-001" "working")
+      (write-agent-status! root "architecture-reviewer-001" "working")
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "max_transient_agents 5\n"
+                       "max_active_template hardener 1\n"
+                       "max_active_template qa 1\n"
+                       "max_active_group architecture 1 architecture-reviewer architecture-cleaner architect\n"))
+      (write-file (fs/path root "swarmforge/role-templates/hardener.prompt")
+                  "harden\n")
+      (write-file (fs/path root "swarmforge/role-templates/architecture-cleaner.prompt")
+                  "clean architecture\n")
+      (write-file (fs/path root "assignment.md")
+                  "Run a quality gate.\n")
+      (let [second-hardener (run {:dir root
+                                  :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}
+                                  :ok? false}
+                                 (script "squad_spawn.sh")
+                                 "hardener"
+                                 "second-hardening"
+                                 "assignment.md")
+            architecture-cleaner (run {:dir root
+                                       :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}
+                                       :ok? false}
+                                      (script "squad_spawn.sh")
+                                      "architecture-cleaner"
+                                      "architecture-cleanup"
+                                      "assignment.md")]
+        (is (= 3 (:exit second-hardener)))
+        (is (str/includes? (:err second-hardener) "SQUAD_SPAWN_TEMPLATE_CAPACITY_FULL"))
+        (is (str/includes? (:err second-hardener) "TEMPLATE: hardener"))
+        (is (= 3 (:exit architecture-cleaner)))
+        (is (str/includes? (:err architecture-cleaner) "SQUAD_SPAWN_GROUP_CAPACITY_FULL"))
+        (is (str/includes? (:err architecture-cleaner) "GROUP: architecture")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-theme-records-theme-stories-and-approval-gates
   (let [root (tmp-dir)]
     (try
@@ -582,6 +791,170 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-batch-tracks-story-to-batch-accounting
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (let [create (run {:dir root}
+                        (script "squad_batch.sh")
+                        "create"
+                        "hardener"
+                        "hardener-20260802")
+            add (run {:dir root}
+                     (script "squad_batch.sh")
+                     "add"
+                     "hardener-20260802"
+                     "cave-topology"
+                     "code_reviewed"
+                     "cave-clean"
+                     "swarmforge-cleaner-001"
+                     "abcdef1234")
+            status (run {:dir root}
+                        (script "squad_batch.sh")
+                        "status"
+                        "hardener-20260802")
+            ready (run {:dir root}
+                       (script "squad_batch.sh")
+                       "ready"
+                       "hardener")]
+        (is (str/includes? (:out create) "STATE: open"))
+        (is (str/includes? (:out add) "STATE: story_added"))
+        (is (str/includes? (:out status) "STORIES: 1"))
+        (is (str/includes? (:out ready) "BATCH: hardener-20260802"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/batches/hardener-20260802/manifest.tsv")))
+                           "cave-topology\tcode_reviewed\tcave-clean\tswarmforge-cleaner-001\tabcdef1234"))
+        (is (= "hardener-20260802"
+               (str/trim (slurp (str (fs/path root ".squad/stories/cave-topology/active-batches/hardener")))))))
+      (run {:dir root}
+           (script "squad_batch.sh")
+           "create"
+           "hardener"
+           "hardener-20260803")
+      (let [blocked (run {:dir root :ok? false}
+                         (script "squad_batch.sh")
+                         "add"
+                         "hardener-20260803"
+                         "cave-topology"
+                         "code_reviewed"
+                         "cave-clean-2"
+                         "swarmforge-cleaner-002"
+                         "bbbbbbbbbb")]
+        (is (= 3 (:exit blocked)))
+        (is (str/includes? (:err blocked) "already in active hardener batch hardener-20260802")))
+      (let [result (run {:dir root}
+                        (script "squad_batch.sh")
+                        "result"
+                        "hardener-20260802"
+                        "hardener-batch"
+                        "swarmforge-hardener-001"
+                        "cccccccccc")
+            status (run {:dir root}
+                        (script "squad_batch.sh")
+                        "status"
+                        "hardener-20260802")]
+        (is (str/includes? (:out result) "STATE: result_received"))
+        (is (str/includes? (:out status) "STATE: result_received"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/batches/hardener-20260802/result")))
+                           "sha: cccccccccc")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-packet-reunifies-story-gherkin-and-qa-artifacts
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (write-file (fs/path root "features/cave-topology.feature")
+                  "Feature: cave topology\n")
+      (write-file (fs/path root "qa/cave-topology.md")
+                  "# QA Procedure: cave topology\n")
+      (run {:dir root} "git" "add" "stories" "features" "qa")
+      (run {:dir root} "git" "commit" "-q" "-m" "Prepare cave topology packet artifacts")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))
+            create (run {:dir root}
+                        (script "squad_packet.sh")
+                        "create"
+                        "wumpus"
+                        "cave-topology"
+                        "wumpus-analysis"
+                        "swarmforge-analyst-001"
+                        sha)
+            story-approved (run {:dir root}
+                                (script "squad_packet.sh")
+                                "approve"
+                                "cave-topology"
+                                "story"
+                                "user approved story")
+            gherkin (run {:dir root}
+                         (script "squad_packet.sh")
+                         "attach"
+                         "cave-topology"
+                         "gherkin"
+                         "wumpus-cave-gherkin"
+                         "swarmforge-gherkin-writer-001"
+                         sha
+                         "features/cave-topology.feature")
+            gherkin-review (run {:dir root}
+                                (script "squad_packet.sh")
+                                "review"
+                                "cave-topology"
+                                "gherkin"
+                                "accepted"
+                                "wumpus-cave-gherkin-review"
+                                "swarmforge-gherkin-reviewer-001"
+                                sha)
+            qa-procedure (run {:dir root}
+                              (script "squad_packet.sh")
+                              "attach"
+                              "cave-topology"
+                              "qa-procedure"
+                              "wumpus-cave-qa-procedure"
+                              "swarmforge-qa-procedure-writer-001"
+                              sha
+                              "qa/cave-topology.md")
+            qa-review (run {:dir root}
+                           (script "squad_packet.sh")
+                           "review"
+                           "cave-topology"
+                           "qa-procedure"
+                           "accepted"
+                           "wumpus-cave-qa-procedure-review"
+                           "swarmforge-qa-procedure-reviewer-001"
+                           sha)
+            ready (run {:dir root} (script "squad_packet.sh") "status" "cave-topology")
+            implementation-approval (run {:dir root}
+                                         (script "squad_packet.sh")
+                                         "approve"
+                                         "cave-topology"
+                                         "implementation"
+                                         "user approved implementation")
+            approved (run {:dir root} (script "squad_packet.sh") "status" "cave-topology")
+            packet (slurp (str (fs/path root ".squad/stories/cave-topology/packet")))]
+        (is (str/includes? (:out create) "STATE: story_recorded"))
+        (is (str/includes? (:out story-approved) "STATE: story_approved"))
+        (is (str/includes? (:out gherkin) "PATH: features/cave-topology.feature"))
+        (is (str/includes? (:out gherkin-review) "DECISION: accepted"))
+        (is (str/includes? (:out qa-procedure) "PATH: qa/cave-topology.md"))
+        (is (str/includes? (:out qa-review) "DECISION: accepted"))
+        (is (str/includes? (:out ready) "STATE: implementation_approval_ready"))
+        (is (str/includes? (:out implementation-approval) "STATE: implementation_approved"))
+        (is (str/includes? (:out approved) "GHERKIN_REVIEW: accepted"))
+        (is (str/includes? (:out approved) "QA_PROCEDURE_REVIEW: accepted"))
+        (is (str/includes? packet "gherkin_path: features/cave-topology.feature"))
+        (is (str/includes? packet "qa_procedure_path: qa/cave-topology.md"))
+        (is (str/includes? packet "implementation_approval: approved")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-assign-generates-durable-assignment-from-theme-story
   (let [root (tmp-dir)]
     (try
@@ -597,7 +970,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write unit tests first, then production code.\n")
-      (write-file (fs/path root "review.md")
+      (write-file (fs/path root ".squad/reviews/wumpus-cave-impl-review.md")
                   "Review: request a smaller implementation boundary.\n")
       (write-file (fs/path root "rejection.md")
                   "Reject because the branch exceeded the story boundary.\n")
@@ -606,6 +979,7 @@
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
+      (prepare-implementation-packet! root "wumpus" "cave-topology")
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
                         "create"
@@ -695,12 +1069,18 @@
                                 (script "squad_assign.sh")
                                 "status"
                                 "wumpus-cave-impl")
+              ad-hoc-review (run {:dir root :ok? false}
+                                  (script "squad_assign.sh")
+                                  "review"
+                                  "wumpus-cave-impl"
+                                  "changes-requested"
+                                  "instructions.md")
               review (run {:dir root}
                           (script "squad_assign.sh")
                           "review"
                           "wumpus-cave-impl"
                           "changes-requested"
-                          "review.md")
+                          ".squad/reviews/wumpus-cave-impl-review.md")
               reject (run {:dir root}
                           (script "squad_assign.sh")
                           "reject"
@@ -728,6 +1108,8 @@
           (is (str/includes? (:out merge-ready) "commit already reachable from HEAD"))
           (is (str/includes? (:out merge-status) "STATE: merge_ready"))
           (is (str/includes? (:out merge-status) "MERGE:"))
+          (is (= 2 (:exit ad-hoc-review)))
+          (is (str/includes? (:err ad-hoc-review) "durable reviewer report under .squad/reviews"))
           (is (str/includes? (:out review) "STATE: review_changes_requested"))
           (is (str/includes? (:out reject) "STATE: rejected"))
           (is (str/includes? (:out replace) "SQUAD_ASSIGNMENT: wumpus-cave-impl-2"))
@@ -770,6 +1152,22 @@
                              "\tassignment_rejected\twumpus-cave-impl\tcave-topology"))
           (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
                              "\tassignment_replacement_created\twumpus-cave-impl\twumpus-cave-impl-2\tcave-topology")))
+        (write-file (fs/path root "blocked.md")
+                    "Blocked because the worker hit an invisible escalation prompt.\n")
+        (let [block (run {:dir root}
+                         (script "squad_assign.sh")
+                         "block"
+                         "wumpus-cave-impl-2"
+                         "blocked.md")
+              blocked-status (run {:dir root}
+                                  (script "squad_assign.sh")
+                                  "status"
+                                  "wumpus-cave-impl-2")]
+          (is (str/includes? (:out block) "STATE: blocked"))
+          (is (str/includes? (:out blocked-status) "STATE: blocked"))
+          (is (str/includes? (:out blocked-status) "BLOCKER:"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
+                             "\tassignment_blocked\twumpus-cave-impl-2\tcave-topology")))
         (let [spawn (run {:dir root
                           :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                          (script "squad_spawn.sh")
@@ -843,6 +1241,20 @@
            "wumpus"
            "acceptance-cave-topology"
            "user approved cave topology acceptance spec")
+      (let [missing-packet (run {:dir root :ok? false}
+                                (script "squad_assign.sh")
+                                "create"
+                                "wumpus"
+                                "cave-topology"
+                                "implementer"
+                                "wumpus-cave-impl"
+                                "instructions.md"
+                                "--requires"
+                                "approval:acceptance-cave-topology")]
+        (is (= 3 (:exit missing-packet)))
+        (is (str/includes? (:err missing-packet)
+                           "missing story packet for cave-topology")))
+      (prepare-implementation-packet! root "wumpus" "cave-topology")
       (let [created (run {:dir root}
                          (script "squad_assign.sh")
                          "create"
@@ -876,11 +1288,12 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write unit tests first, then production code.\n")
-      (write-file (fs/path root "review.md")
+      (write-file (fs/path root ".squad/reviews/wumpus-cave-accepted-review.md")
                   "Review: accepted.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
+      (prepare-implementation-packet! root "wumpus" "cave-topology")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -904,7 +1317,7 @@
                          "merge_and_process implementer-001 " commit "\n"))
         (run {:dir root} (script "squad_assign.sh") "result" "wumpus-cave-accepted" "result.handoff")
         (run {:dir root} (script "squad_assign.sh") "merge-ready" "wumpus-cave-accepted")
-        (run {:dir root} (script "squad_assign.sh") "review" "wumpus-cave-accepted" "accepted" "review.md")
+        (run {:dir root} (script "squad_assign.sh") "review" "wumpus-cave-accepted" "accepted" ".squad/reviews/wumpus-cave-accepted-review.md")
         (let [accepted (run {:dir root} (script "squad_assign.sh") "accept-merge" "wumpus-cave-accepted")
               status (run {:dir root} (script "squad_assign.sh") "status" "wumpus-cave-accepted")
               report (run {:dir root} (script "squad_report.sh") "wumpus")]
@@ -916,6 +1329,171 @@
                              "state: merged"))
           (is (str/includes? (:out report) "wumpus-cave-accepted [implementer] story=cave-topology state=merged"))
           (is (str/includes? (:out report) "accepted_merge=merged"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-accepts-merge-before-review
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt")
+                  "analyze\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Split the theme into self-contained stories.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (run {:dir root}
+           (script "squad_assign.sh")
+           "create"
+           "wumpus"
+           "cave-topology"
+           "analyst"
+           "wumpus-analysis"
+           "instructions.md")
+      (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root "analysis-result.handoff")
+                    (str "id: 1\n"
+                         "from: analyst-001\n"
+                         "to: squad-leader\n"
+                         "priority: 50\n"
+                         "type: git_handoff\n"
+                         "task: wumpus-analysis\n"
+                         "commit: " commit "\n"
+                         "\n"
+                         "merge_and_process analyst-001 " commit "\n"))
+        (run {:dir root} (script "squad_assign.sh") "result" "wumpus-analysis" "analysis-result.handoff")
+        (run {:dir root} (script "squad_assign.sh") "merge-ready" "wumpus-analysis")
+        (let [accepted (run {:dir root} (script "squad_assign.sh") "accept-merge" "wumpus-analysis")
+              status (run {:dir root} (script "squad_assign.sh") "status" "wumpus-analysis")]
+          (is (str/includes? (:out accepted) "STATE: merged"))
+          (is (str/includes? (:out status) "STATE: merged"))
+          (is (str/includes? (:out status) "REVIEW: none"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-review-can-extract-report-from-reviewer-handoff
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/role-templates/implementer.prompt")
+                  "implement\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Write unit tests first, then production code.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
+      (prepare-implementation-packet! root "wumpus" "cave-topology")
+      (run {:dir root}
+           (script "squad_assign.sh")
+           "create"
+           "wumpus"
+           "cave-topology"
+           "implementer"
+           "wumpus-cave-impl"
+           "instructions.md"
+           "--requires"
+           "approval:acceptance-cave-topology")
+      (let [result-commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root "result.handoff")
+                    (str "id: 1\n"
+                         "from: implementer-001\n"
+                         "to: squad-leader\n"
+                         "priority: 50\n"
+                         "type: git_handoff\n"
+                         "task: wumpus-cave-impl\n"
+                         "commit: " result-commit "\n"
+                         "\n"
+                         "merge_and_process implementer-001 " result-commit "\n"))
+        (run {:dir root} (script "squad_assign.sh") "result" "wumpus-cave-impl" "result.handoff"))
+      (write-file (fs/path root ".squad/reviews/wumpus-cave-impl-review.md")
+                  "Review: changes requested for room topology edge cases.\n")
+      (run {:dir root} "git" "add" ".squad/reviews/wumpus-cave-impl-review.md")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add cave topology review")
+      (let [review-commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root "review-result.handoff")
+                    (str "id: 2\n"
+                         "from: reviewer-001\n"
+                         "to: squad-leader\n"
+                         "priority: 50\n"
+                         "type: git_handoff\n"
+                         "task: wumpus-cave-review\n"
+                         "commit: " review-commit "\n"
+                         "\n"
+                         "merge_and_process reviewer-001 " review-commit "\n"))
+        (let [review (run {:dir root}
+                          (script "squad_assign.sh")
+                          "review"
+                          "wumpus-cave-impl"
+                          "changes-requested"
+                          "review-result.handoff")
+              review-record (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/review")))
+              review-text (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/review.md")))]
+          (is (str/includes? (:out review) "STATE: review_changes_requested"))
+          (is (str/includes? review-record (str "source: " review-commit ":.squad/reviews/wumpus-cave-impl-review.md")))
+          (is (str/includes? review-text "room topology edge cases"))
+          (is (not (str/includes? review-text "merge_and_process")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-accepts-changes-requested-reviewer-report-merge
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")
+                  "review\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "review-instructions.md")
+                  "Review the cave topology implementation.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (run {:dir root}
+           (script "squad_assign.sh")
+           "create"
+           "wumpus"
+           "cave-topology"
+           "reviewer"
+           "wumpus-cave-review"
+           "review-instructions.md")
+      (write-file (fs/path root ".squad/reviews/wumpus-cave-review.md")
+                  "Review: changes requested, but merge this report for leader disposition.\n")
+      (run {:dir root} "git" "add" ".squad/reviews/wumpus-cave-review.md")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add reviewer report")
+      (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root "review-result.handoff")
+                    (str "id: 1\n"
+                         "from: reviewer-001\n"
+                         "to: squad-leader\n"
+                         "priority: 50\n"
+                         "type: git_handoff\n"
+                         "task: wumpus-cave-review\n"
+                         "commit: " commit "\n"
+                         "\n"
+                         "merge_and_process reviewer-001 " commit "\n"))
+        (run {:dir root} (script "squad_assign.sh") "result" "wumpus-cave-review" "review-result.handoff")
+        (run {:dir root} (script "squad_assign.sh") "merge-ready" "wumpus-cave-review")
+        (run {:dir root} (script "squad_assign.sh") "review" "wumpus-cave-review" "changes-requested" "review-result.handoff")
+        (let [accepted (run {:dir root} (script "squad_assign.sh") "accept-merge" "wumpus-cave-review")
+              status (run {:dir root} (script "squad_assign.sh") "status" "wumpus-cave-review")]
+          (is (str/includes? (:out accepted) "STATE: merged"))
+          (is (str/includes? (:out accepted) "commit already reachable from HEAD"))
+          (is (str/includes? (:out status) "STATE: merged"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -1017,6 +1595,58 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-tool-materializes-worktree-local-executables
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "fake-tool")
+                  "#!/usr/bin/env sh\nprintf 'fake-tool:%s\\n' \"$1\"\n")
+      (run {:dir root} "chmod" "+x" "fake-tool")
+      (let [worktree (fs/path root ".worktrees/agent-001")
+            _ (fs/create-dirs worktree)
+            _ (run {:dir root}
+                   (script "squad_tool.sh")
+                   "register"
+                   "fake-tool"
+                   "github.com/example/fake-tool"
+                   "abcdef1234"
+                   "fake-tool")
+            materialize (run {:dir root}
+                             (script "squad_tool.sh")
+                             "materialize"
+                             "fake-tool"
+                             "github.com/example/fake-tool"
+                             "abcdef1234"
+                             (str worktree))
+            local-tool (fs/path worktree ".swarmforge/tools/bin/fake-tool")
+            local-manifest (fs/path worktree ".swarmforge/tools/manifests/fake-tool.manifest")
+            run-local (run {:dir worktree} (str local-tool) "ok")
+            require-with-worktree (run {:dir root
+                                        :env {"SWARMFORGE_WORKTREE" (str worktree)}}
+                                       (script "squad_tool.sh")
+                                       "require"
+                                       "fake-tool"
+                                       "github.com/example/fake-tool"
+                                       "abcdef1234")]
+        (is (str/includes? (:out materialize) "STATE: materialized"))
+        (is (str/includes? (:out materialize) "MODE:"))
+        (is (fs/exists? local-tool))
+        (is (fs/exists? local-manifest))
+        (is (= #{"OWNER_READ" "OWNER_EXECUTE"
+                 "GROUP_READ" "GROUP_EXECUTE"
+                 "OTHERS_READ" "OTHERS_EXECUTE"}
+               (set (map str (fs/posix-file-permissions local-tool)))))
+        (is (= "fake-tool:ok" (str/trim (:out run-local))))
+        (is (str/includes? (:out require-with-worktree) "STATE: available"))
+        (is (str/includes? (:out require-with-worktree) "LOCAL_EXECUTABLE:"))
+        (is (str/includes? (slurp (str local-manifest)) "cached_executable:"))
+        (is (or (str/includes? (slurp (str local-manifest)) "mode: hardlink")
+                (str/includes? (slurp (str local-manifest)) "mode: copy"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-status-daemon-starts-and-stops
   (let [root (tmp-dir)]
     (try
@@ -1100,6 +1730,100 @@
         (is (fs/exists? (fs/path root ".squad/agents/specifier-001/status")))
         (is (str/includes? (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))
                            "spawn-request-completed")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squadd-defers-spawn-requests-when-transient-slots-are-full
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"
+                       "specifier-002\tspecifier-002\t" root "/.worktrees/specifier-002\tswarmforge-specifier-002\tSpecifier 002\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"
+                       "reviewer-001\treviewer-001\t" root "/.worktrees/reviewer-001\tswarmforge-reviewer-001\tReviewer 001\tcodex\ttask\n"
+                       "qa-001\tqa-001\t" root "/.worktrees/qa-001\tswarmforge-qa-001\tQa 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".swarmforge/tmux-socket")
+                  "/tmp/swarmforge-test.sock\n")
+      (doseq [agent-id ["specifier-001" "specifier-002" "implementer-001" "reviewer-001" "qa-001"]]
+        (write-agent-status! root agent-id "working"))
+      (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")
+                  "review\n")
+      (write-file (fs/path root "assignment.md")
+                  "Review the story implementation.\n")
+      (run {:dir root}
+           (script "squad_spawn_request.sh")
+           "reviewer"
+           "next-review"
+           "assignment.md")
+      (let [once (run {:dir root
+                       :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"
+                             "SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX" "1"}}
+                      (script "squadd.sh")
+                      "--once"
+                      "--no-notify"
+                      (str root))
+            roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))
+            requests (fs/list-dir (fs/path root ".squad/spawn-requests/new"))
+            daemon-log (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))]
+        (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
+        (is (= 6 (count roles)))
+        (is (= 1 (count requests)))
+        (is (str/includes? daemon-log "spawn-request-deferred"))
+        (is (str/includes? daemon-log "capacity-full")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squadd-defers-spawn-requests-when-singleton-template-is-active
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "qa-001\tqa-001\t" root "/.worktrees/qa-001\tswarmforge-qa-001\tQa 001\tcodex\ttask\n"
+                       "architecture-reviewer-001\tarchitecture-reviewer-001\t" root "/.worktrees/architecture-reviewer-001\tswarmforge-architecture-reviewer-001\tArchitecture Reviewer 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".swarmforge/tmux-socket")
+                  "/tmp/swarmforge-test.sock\n")
+      (write-agent-status! root "qa-001" "working")
+      (write-agent-status! root "architecture-reviewer-001" "working")
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "max_transient_agents 5\n"
+                       "max_active_template hardener 1\n"
+                       "max_active_template qa 1\n"
+                       "max_active_group architecture 1 architecture-reviewer architecture-cleaner architect\n"))
+      (write-file (fs/path root "swarmforge/role-templates/qa.prompt")
+                  "qa\n")
+      (write-file (fs/path root "swarmforge/role-templates/architecture-cleaner.prompt")
+                  "clean architecture\n")
+      (write-file (fs/path root "qa-assignment.md")
+                  "Run QA.\n")
+      (write-file (fs/path root "architecture-assignment.md")
+                  "Clean architecture.\n")
+      (run {:dir root}
+           (script "squad_spawn_request.sh")
+           "qa"
+           "second-qa"
+           "qa-assignment.md")
+      (run {:dir root}
+           (script "squad_spawn_request.sh")
+           "architecture-cleaner"
+           "architecture-cleanup"
+           "architecture-assignment.md")
+      (let [once (run {:dir root
+                       :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"
+                             "SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX" "1"}}
+                      (script "squadd.sh")
+                      "--once"
+                      "--no-notify"
+                      (str root))
+            requests (fs/list-dir (fs/path root ".squad/spawn-requests/new"))
+            daemon-log (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))]
+        (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
+        (is (= 2 (count requests)))
+        (is (str/includes? daemon-log "spawn-request-deferred"))
+        (is (str/includes? daemon-log "template-capacity-full:qa"))
+        (is (str/includes? daemon-log "group-capacity-full:architecture")))
       (finally
         (fs/delete-tree root)))))
 
@@ -1357,12 +2081,16 @@
       (write-file (fs/path root ".swarmforge/sessions.tsv")
                   (str "1\tcoder\tswarmforge-coder\tCoder\tcodex\n"
                        "2\tcleaner\tswarmforge-cleaner\tCleaner\tcodex\n"))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "reviewer-001\treviewer-001\t" root "/.worktrees/reviewer-001\tswarmforge-reviewer-001\tReviewer 001\tcodex\ttask\n"))
       (write-file (fs/path root ".swarmforge/window-ids") "win-a\nwin-b\n")
       (write-file squadd-pid-file (str squadd-pid "\n"))
       (write-file pid-file (str pid "\n"))
       (write-file squad-pid-file (str squad-pid "\n"))
       (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-coder" "sleep" "120")
       (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-cleaner" "sleep" "120")
+      (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-reviewer-001" "sleep" "120")
       (let [result (run {:dir root
                          :env {"SWARMFORGE_TERMINAL_BACKEND" "none"}}
                         (close-swarm)
@@ -1372,6 +2100,8 @@
                                 "tmux" "-S" sock "has-session" "-t" "swarmforge-coder"))))
         (is (not= 0 (:exit (run {:dir root :ok? false}
                                 "tmux" "-S" sock "has-session" "-t" "swarmforge-cleaner"))))
+        (is (not= 0 (:exit (run {:dir root :ok? false}
+                                "tmux" "-S" sock "has-session" "-t" "swarmforge-reviewer-001"))))
         (is (not (fs/exists? pid-file)))
         (is (not (fs/exists? squad-pid-file)))
         (is (not (fs/exists? squadd-pid-file)))

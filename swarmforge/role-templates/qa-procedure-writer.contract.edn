@@ -1,0 +1,9 @@
+{:role "qa-procedure-writer"
+ :handoff-targets ["squad-leader"]
+ :may-web-search false
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :writes ["qa-procedures"]
+ :artifact-roots ["qa/"]
+ :forbidden-artifact-roots ["stories/" "features/" "src/" "test/" ".squad/reviews/"]}

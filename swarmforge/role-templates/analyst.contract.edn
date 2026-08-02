@@ -1,0 +1,10 @@
+{:role "analyst"
+ :handoff-targets ["squad-leader"]
+ :may-web-search true
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :writes ["stories"]
+ :artifact-roots ["stories/"]
+ :forbidden-artifact-roots ["features/" "qa/" "src/" "test/" ".squad/reviews/"]
+ :self-contained-output true}

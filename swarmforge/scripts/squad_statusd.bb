@@ -13,6 +13,8 @@
   "Squad status needs attention. If idle, run squad_status.sh.")
 (def stopping? (atom false))
 (def last-status-notification (atom {:alerts #{} :notified-at nil}))
+(def terminal-agent-states
+  #{"complete" "review_complete" "handoff_ready" "handed_off" "handing_off"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -117,6 +119,9 @@
     (pane-dead? socket session) (str "agent " agent " tmux pane is dead: " session)
     :else nil))
 
+(defn terminal-state? [state]
+  (contains? terminal-agent-states state))
+
 (defn alerts-for-agent [root roles socket skip-tmux? stale-seconds now-instant dir]
   (let [agent (fs/file-name dir)
         metadata (fs/path dir "metadata")
@@ -128,6 +133,7 @@
         age (heartbeat-age-seconds heartbeat now-instant)]
     (cond
       (= "retired" state) []
+      (terminal-state? state) []
       (nil? (get roles agent)) [(str "agent " agent " is not registered in roles.tsv")]
       (not (fs/exists? heartbeat)) [(str "agent " agent " has no heartbeat")]
       (nil? age) [(str "agent " agent " heartbeat timestamp is invalid")]

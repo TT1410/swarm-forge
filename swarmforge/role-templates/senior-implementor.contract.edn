@@ -1,0 +1,9 @@
+{:role "senior-implementor"
+ :handoff-targets ["squad-leader"]
+ :may-web-search false
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :writes ["architectural-improvement" "verification-updates"]
+ :artifact-roots ["src/" "test/"]
+ :behavior-preserving true}

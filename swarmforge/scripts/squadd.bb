@@ -16,9 +16,12 @@
 (def status-wake-message
   "Squad status needs attention. If idle, run squad_status.sh.")
 (def script-dir (fs/parent *file*))
+(load-file (str (fs/path script-dir "squad_config.bb")))
 (def stopping? (atom false))
 (def last-status-poll (atom 0))
 (def last-status-notification (atom {:alerts #{} :notified-at nil}))
+(def terminal-agent-states
+  #{"complete" "review_complete" "handoff_ready" "handed_off" "handing_off"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -134,6 +137,56 @@
                  :agent backend
                  :template template
                  :receive-mode "task"}])))
+
+(defn terminal-state? [state]
+  (contains? terminal-agent-states state))
+
+(defn active-transient-role-count [root]
+  (count
+   (for [[role _] (load-roles root)
+         :when (and (not= "squad-leader" role)
+                    (not (terminal-state? (read-value (fs/path root ".squad" "agents" role "status") "state"))))]
+     role)))
+
+(defn active-role? [root role]
+  (and (not= "squad-leader" role)
+       (not (terminal-state? (read-value (fs/path root ".squad" "agents" role "status") "state")))))
+
+(defn template-from-role [role]
+  (str/replace role #"-\d{3}$" ""))
+
+(defn role-template [root role]
+  (or (read-value (fs/path root ".squad" "agents" role "metadata") "template")
+      (template-from-role role)))
+
+(defn active-template-count [root template]
+  (count
+   (for [[role _] (load-roles root)
+         :when (and (active-role? root role)
+                    (= template (role-template root role)))]
+     role)))
+
+(defn active-group-count [root templates]
+  (count
+   (for [[role _] (load-roles root)
+         :when (and (active-role? root role)
+                    (contains? templates (role-template root role)))]
+     role)))
+
+(defn spawn-capacity-blocker [root template]
+  (cond
+    (>= (active-transient-role-count root) (squad-max-transient-agents root))
+    "capacity-full"
+
+    (and (squad-template-limit root template)
+         (>= (active-template-count root template) (squad-template-limit root template)))
+    (str "template-capacity-full:" template)
+
+    :else
+    (some (fn [{:keys [group limit templates]}]
+            (when (>= (active-group-count root templates) limit)
+              (str "group-capacity-full:" group)))
+          (squad-template-group-limits root template))))
 
 (defn reconcile-roles! [root]
   (let [roles (load-roles root)
@@ -331,6 +384,15 @@
       (append-compat-log! root "squad-statusd.log" "retired-session-killed" agent session))
     (retire-role-row! root agent)))
 
+(defn reconcile-terminal-agent! [root socket roles agent dir state]
+  (let [metadata (fs/path dir "metadata")
+        session (or (read-value metadata "session")
+                    (get-in roles [agent :session]))]
+    (when (kill-tmux-session! socket session)
+      (log! root "terminal-session-killed" agent state session)
+      (append-compat-log! root "squad-statusd.log" "terminal-session-killed" agent state session))
+    (retire-role-row! root agent)))
+
 (defn alerts-for-agent [root roles socket skip-tmux? stale-seconds now-instant dir]
   (let [agent (fs/file-name dir)
         metadata (fs/path dir "metadata")
@@ -345,6 +407,10 @@
                             (when-not skip-tmux?
                               (reconcile-retired-agent! root socket roles agent dir))
                             [])
+      (terminal-state? state) (do
+                                (when-not skip-tmux?
+                                  (reconcile-terminal-agent! root socket roles agent dir state))
+                                [])
       (nil? (get roles agent)) [(str "agent " agent " is not registered in roles.tsv")]
       (not (fs/exists? heartbeat)) [(str "agent " agent " has no heartbeat")]
       (nil? age) [(str "agent " agent " heartbeat timestamp is invalid")]
@@ -414,43 +480,49 @@
   (let [{:keys [in-process completed failed]} (spawn-request-dirs root)
         base (fs/file-name request)
         active (fs/path in-process base)]
-    (fs/create-dirs in-process)
-    (fs/move request active {:replace-existing false})
-    (let [{:strs [template task_id assignment]} (parse-kv-file active)]
-      (if (or (str/blank? template) (str/blank? task_id) (str/blank? assignment))
+    (let [{:strs [template task_id assignment]} (parse-kv-file request)
+          blocker (when-not (str/blank? template)
+                    (spawn-capacity-blocker root template))]
+      (if blocker
+        (log! root "spawn-request-deferred" (str request) blocker)
         (do
-          (spit (str active ".error") "spawn request missing template, task_id, or assignment\n")
-          (move-with-collision active failed)
-          (log! root "spawn-request-failed" (str active) "invalid request"))
-        (let [env (cond-> {"PATH" (System/getenv "PATH")
-                           "GIT_CONFIG_NOSYSTEM" "1"}
-                    (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
-                    (assoc "SWARMFORGE_SQUAD_NO_LAUNCH" "1")
-                    (not (str/blank? (System/getenv "SWARMFORGE_SQUAD_AGENT")))
-                    (assoc "SWARMFORGE_SQUAD_AGENT" (System/getenv "SWARMFORGE_SQUAD_AGENT"))
-                    (not (str/blank? (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND")))
-                    (assoc "SWARMFORGE_SQUAD_AGENT_COMMAND" (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND")))
-              result (process/sh {:continue true
-                                  :dir (str root)
-                                  :env env}
-                                 (str (fs/path script-dir "squad_spawn.sh"))
-                                 template
-                                 task_id
-                                 assignment)]
-          (if (zero? (:exit result))
-            (do
-              (fs/create-dirs completed)
-              (spit (str (fs/path completed (str base ".out"))) (:out result))
-              (spit (str (fs/path completed (str base ".err"))) (:err result))
-              (move-with-collision active completed)
-              (log! root "spawn-request-completed" (str active)))
+          (fs/create-dirs in-process)
+          (fs/move request active {:replace-existing false})
+          (if (or (str/blank? template) (str/blank? task_id) (str/blank? assignment))
             (do
               (fs/create-dirs failed)
-              (spit (str (fs/path failed (str base ".out"))) (:out result))
-              (spit (str (fs/path failed (str base ".err"))) (:err result))
-              (spit (str (fs/path failed (str base ".error"))) (str "exit " (:exit result) "\n"))
+              (spit (str active ".error") "spawn request missing template, task_id, or assignment\n")
               (move-with-collision active failed)
-              (log! root "spawn-request-failed" (str active) (str "exit " (:exit result))))))))))
+              (log! root "spawn-request-failed" (str active) "invalid request"))
+            (let [env (cond-> {"PATH" (System/getenv "PATH")
+                               "GIT_CONFIG_NOSYSTEM" "1"}
+                        (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
+                        (assoc "SWARMFORGE_SQUAD_NO_LAUNCH" "1")
+                        (not (str/blank? (System/getenv "SWARMFORGE_SQUAD_AGENT")))
+                        (assoc "SWARMFORGE_SQUAD_AGENT" (System/getenv "SWARMFORGE_SQUAD_AGENT"))
+                        (not (str/blank? (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND")))
+                        (assoc "SWARMFORGE_SQUAD_AGENT_COMMAND" (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND")))
+                  result (process/sh {:continue true
+                                      :dir (str root)
+                                      :env env}
+                                     (str (fs/path script-dir "squad_spawn.sh"))
+                                     template
+                                     task_id
+                                     assignment)]
+              (if (zero? (:exit result))
+                (do
+                  (fs/create-dirs completed)
+                  (spit (str (fs/path completed (str base ".out"))) (:out result))
+                  (spit (str (fs/path completed (str base ".err"))) (:err result))
+                  (move-with-collision active completed)
+                  (log! root "spawn-request-completed" (str active)))
+                (do
+                  (fs/create-dirs failed)
+                  (spit (str (fs/path failed (str base ".out"))) (:out result))
+                  (spit (str (fs/path failed (str base ".err"))) (:err result))
+                  (spit (str (fs/path failed (str base ".error"))) (str "exit " (:exit result) "\n"))
+                  (move-with-collision active failed)
+                  (log! root "spawn-request-failed" (str active) (str "exit " (:exit result))))))))))))
 
 (defn poll-spawn-requests! [root]
   (doseq [request (or (spawn-request-files root) [])

@@ -18,6 +18,7 @@ SOCKET_FILE="$STATE_DIR/tmux-socket"
 SESSIONS_FILE="$STATE_DIR/sessions.tsv"
 WINDOW_IDS_FILE="$STATE_DIR/window-ids"
 WINDOWS_STATE_FILE="$STATE_DIR/windows.tsv"
+ROLES_FILE="$STATE_DIR/roles.tsv"
 
 if [[ ! -d "$STATE_DIR" ]]; then
   echo "No SwarmForge swarm found at $PROJECT_ROOT (missing .swarmforge/)." >&2
@@ -58,6 +59,7 @@ if [[ -z "$TMUX_SOCKET" ]]; then
   exit 1
 fi
 
+typeset -U sessions
 sessions=()
 if [[ -f "$SESSIONS_FILE" ]]; then
   while IFS=$'\t' read -r _index _role session _rest; do
@@ -66,14 +68,21 @@ if [[ -f "$SESSIONS_FILE" ]]; then
   done < "$SESSIONS_FILE"
 fi
 
-if (( ${#sessions[@]} == 0 )) && [[ -f "$WINDOWS_STATE_FILE" ]]; then
+if [[ -f "$ROLES_FILE" ]]; then
+  while IFS=$'\t' read -r _role _worktree _path session _rest; do
+    [[ -n "${session:-}" ]] || continue
+    sessions+=("$session")
+  done < "$ROLES_FILE"
+fi
+
+if [[ -f "$WINDOWS_STATE_FILE" ]]; then
   while IFS=$'\t' read -r _index _window_id session _title; do
     [[ -n "${session:-}" ]] || continue
     sessions+=("$session")
   done < "$WINDOWS_STATE_FILE"
 fi
 
-if (( ${#sessions[@]} == 0 )) && [[ -S "$TMUX_SOCKET" ]]; then
+if [[ -S "$TMUX_SOCKET" ]]; then
   while IFS= read -r session; do
     [[ -n "$session" ]] || continue
     sessions+=("$session")

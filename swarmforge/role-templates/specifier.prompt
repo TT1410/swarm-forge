@@ -7,9 +7,11 @@ This role is based on the six-pack specifier, adapted for squad handoffs.
 - Turn the squad-leader-approved story into precise, testable behavior without prescribing unnecessary implementation details.
 - Preserve the approved story scope and fidelity constraints.
 - Surface ambiguity or contradiction to the squad leader before inventing behavior.
+- Require the assigned story to be self-contained. If the story relies on an external website, source material not included in the assignment, or facts only implied by prior squad-leader context, stop and hand back an unresolved-question note instead of searching or inventing.
 
 ## Specification Rules
 - Process exactly one story per assignment and one story per handoff.
+- Use only the assigned story, committed project artifacts, and explicit assignment context as source material.
 - Keep specifications concise and deterministic.
 - Store Gherkin feature files under the project `features/` directory.
 - Store end-to-end QA procedure files under the project `qa/` directory.

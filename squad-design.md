@@ -23,26 +23,44 @@ directly to the user. It owns task clarification, planning, assignment,
 spawning, review coordination, merge decisions, QA coordination, and final
 reporting.
 
-The squad leader owns theme splitting. A theme is a larger specification that
-must be decomposed into independently deliverable stories. The squad leader
-also owns source-material and technical-context investigation, and does not
-delegate final theme-to-story decomposition or approval framing.
+The squad leader does not write product artifacts, including stories. A theme
+is a larger specification that must be decomposed into independently
+deliverable stories by an `analyst` transient. The squad leader owns the
+review, iteration, approval framing, delegation, merge decisions, batching,
+status, and user communication around that work.
 
 Transient agents should be created from the current template slate:
 
-- `specifier`
+- `analyst`
+- `gherkin-writer`
+- `qa-procedure-writer`
+- `gherkin-reviewer`
+- `qa-procedure-reviewer`
 - `implementer`
-- `reviewer`
 - `cleaner`
+- `code-reviewer`
 - `hardener`
 - `qa`
-- `architecture-reviewer`
-- `architecture-cleaner`
+- `architect`
+- `senior-implementor`
 
 Transient agents receive narrow assignments, work in dedicated worktrees or
 branches, and communicate through handoffs. They should not talk directly to
 the user, spawn other agents, reinterpret the parent task, or broaden their
 assignment without a squad leader handoff.
+
+Each current role has a structured contract next to its prompt:
+
+```text
+swarmforge/role-templates/<role>.contract.edn
+swarmforge/roles/squad-leader.contract.edn
+```
+
+Contracts encode role boundaries such as allowed handoff targets, web-search
+permission, tool-fetch permission, artifact ownership, singleton/batch rules,
+and packet gates. Tests validate contract semantics instead of restating prompt
+sentences. Prompts must reference their contract and may explain the contract
+in natural language.
 
 ## Invisible Agents
 
@@ -205,7 +223,7 @@ The launcher should set:
 SWARMFORGE_PROJECT_ROOT=<project-root>
 SWARMFORGE_WORKTREE=<assigned-worktree>
 SWARMFORGE_TOOL_CACHE_DIR=<project-root>/.swarmforge/tools
-PATH=$SWARMFORGE_TOOL_CACHE_DIR/bin:<worktree>/swarmforge/scripts:$PATH
+PATH=<worktree>/.swarmforge/tools/bin:<worktree>/swarmforge/scripts:$PATH
 ```
 
 To make the shared cache writable without per-agent escalation, transient
@@ -213,11 +231,31 @@ agents should be launched with the project root as their sandbox/project root,
 then instructed to immediately `cd` into their assigned worktree before doing
 task work.
 
+Cached tools should be materialized into each transient worktree before use.
+The chosen method is hardlink-first, copy-fallback:
+
+- the shared cache stores the canonical executable and source/version manifest
+- `squad_tool.sh materialize <tool-name> <source> <version> [worktree]` creates
+  `<worktree>/.swarmforge/tools/bin/<tool-name>`
+- hardlinks are preferred because they present a worktree-local executable path
+  without duplicating the cached file
+- copies are the fallback when hardlinks are unavailable across filesystems
+- materialized worktree executables are read-only executable files, so an agent
+  can run a cached tool from inside its worktree but should not mutate the
+  shared cached binary through the materialized path
+- tiny launcher scripts that `exec` the project-root cached binary are not the
+  preferred method, because they still resolve an outside-worktree executable at
+  runtime and may trigger escalation when an agent is launched with a worktree
+  sandbox root
+- `squad_tool.sh require` should auto-materialize into `SWARMFORGE_WORKTREE`
+  when that environment variable is present
+
 Generated transient prompts must state:
 
 - the project root
 - the assigned worktree
 - the shared tool cache directory
+- the worktree-local tool bin directory
 - the requirement to `cd` to the assigned worktree before task work
 - the prohibition on editing the project root except through approved squad
   helper commands and shared tool-cache helpers
@@ -337,55 +375,108 @@ focused unit tests and production code
   -> completion broadcast
 ```
 
-Transient agents should be assigned coherent ownership spans, not one agent per
-graph edge by default. Some transitions belong together because they form a
-tight feedback loop, especially story-to-unit-tests-to-production-code. Other
-transitions deserve separate transient agents when independent judgment or
-quality gates matter, such as specification, review, architectural review,
-mutation hardening, and final QA. Acceptance pipeline construction belongs with
-the implementer, following the six-pack coder role.
+The squad leader is a pure orchestrator. The leader may create orchestration
+metadata, assignments, approvals, review dispositions, batch manifests, and
+status reports, but must not write product artifacts. Product artifacts include
+stories, Gherkin, QA procedures, acceptance infrastructure, production code,
+unit tests, review reports, hardening changes, QA scripts, architecture
+critiques, and cleanup changes.
 
-Review and cleanup are split. The reviewer does the review part of the
-six-pack cleaner pattern and reports recommendations back to the squad leader.
-The squad leader decides which recommendations should be forwarded, then gives
-the cleaner only those selected behavior-preserving cleanup items. Architecture
-uses the same split: `architecture-reviewer` reports boundary and dependency
-recommendations; `architecture-cleaner` changes only the leader-approved
-architectural cleanup items.
+The new flow pulls the six-pack responsibilities apart into explicit transient
+roles:
 
-User approval gates are explicit. For theme-sized work, the squad leader should
-ask for approval after decomposing the theme into smaller independently
-specifiable stories. That approval accepts the story plan, story order, and
-batching strategy; it is not approval of the whole theme for implementation.
-After Gherkin and QA procedure specs are written for a story, the squad leader
-should ask for user approval of that story's acceptance specification before
-production code for that story is implemented. For small tasks, the squad
-leader may collapse those gates only when the story and acceptance criteria are
-trivial.
+```text
+theme
+  -> squad-leader/user theme negotiation
+  -> approved theme
+  -> analyst
+  -> self-contained stories
+  -> squad-leader review and analyst iteration
 
-The squad leader owns theme-to-stories decomposition, but does not own the
-artifact-producing transitions after that point. For theme-sized work,
-story-to-Gherkin, story-to-QA-procedure, implementation including acceptance
-infrastructure, review, selected cleanup, architectural review, selected
-architectural cleanup, hardening, and QA transitions should be
-assigned to transient agents. The squad leader records returned artifacts,
-frames approval gates, monitors status, decides merge/rejection/replacement,
-and reports to the user. The leader may do specialist artifact work directly
-only when the user explicitly asks the leader to bypass delegation.
+approved story
+  -> gherkin-writer
+  -> project features/
+  -> gherkin-reviewer
+  -> squad-leader disposition and gherkin-writer iteration
 
-Reviewer and architecture-reviewer reports are durable squad artifacts. They
-should be committed by the reviewer under `.squad/reviews/` and merged by the
-squad leader when merge-ready and relevant. Assignment-level `review.md` files
-remain decision records and copies of the review text used to accept, reject,
-or replace a specific assignment.
+approved story
+  -> qa-procedure-writer
+  -> project qa/
+  -> qa-procedure-reviewer
+  -> squad-leader disposition and qa-procedure-writer iteration
 
-Story-level flow should move through the cleaner one story at a time. Hardener
-and QA should normally be batched across a coherent set of completed stories
-because those gates are more valuable when they can see cross-story mutation
-surface and final user-visible behavior. Architecture-reviewer should normally
-follow QA and review the QA-verified story set because QA may make minimal
-production code changes to pass end-to-end verification. Architecture-cleaner
-then performs only the architectural cleanup selected by the squad leader.
+approved story + accepted Gherkin + accepted QA procedure
+  -> user implementation approval
+  -> implementation_approved story packet
+  -> implementer
+  -> code, unit tests, acceptance tests
+  -> cleaner
+  -> CRAP/DRY cleanup and coverage improvement
+  -> code-reviewer
+  -> squad-leader disposition and implementer/cleaner iteration
+
+accepted cleaned stories
+  -> hardener batch
+  -> qa batch
+  -> architect batch critique
+  -> senior-implementor structural improvement
+  -> architect iteration until accepted
+```
+
+Specific reviewers review specific artifacts. `gherkin-reviewer` reviews
+Gherkin features, `qa-procedure-reviewer` reviews QA procedures,
+`code-reviewer` reviews implementation and tests after cleaning, and
+`architect` critiques structure after QA. Architectural critiques go to
+`senior-implementor`, not to the cleaner.
+
+User approval gates are explicit and incremental. For theme-sized work, the
+squad leader first negotiates the theme with the user before story writing:
+scope, fidelity targets, constraints, exclusions, and success criteria. Only
+after the clarified theme is approved should the squad leader hand it to
+`analyst`. The squad leader then reviews analyst-produced stories and asks the
+user to approve each story before assigning it to Gherkin and QA procedure
+writers. After a story's Gherkin and QA procedure artifacts pass their review
+loops, the squad leader asks the user to approve implementation for that story.
+Implementation for that story may begin while later stories are still being
+drafted, specified, or approved.
+
+Each story has a durable story packet under `.squad/stories/<story-id>/packet`.
+The packet is the story state machine. It reunifies the story artifact, Gherkin
+artifact, QA procedure artifact, review outcomes, approvals, implementation
+result, cleaner/code-review loop state, and batch membership. Downstream work
+is launched from packet state, not from the squad leader's memory or loose
+files. In particular, implementer assignments require the packet state
+`implementation_approved`.
+
+Stories must be self-contained. The analyst may use web searches to augment the
+approved theme, especially when fidelity to an external source is part of the
+assignment. Each resulting story must include the behavioral facts,
+constraints, terminology, source references, and examples needed by downstream
+agents. Downstream agents should not have to visit a website, perform further
+research, or infer facts known only to the analyst or squad leader.
+
+The squad leader always merges every valid transient handoff before reviewing,
+deciding, batching, or forwarding its artifacts. Every agent commits into its
+own worktree and handoffs identify the branch and SHA as usual.
+
+The squad leader has up to the transient agent slot limit configured by
+`max_transient_agents` in `swarmforge/squad.conf`. That limit is capacity, not
+a batching rule. The leader may use multiple slots only for independent work
+that does not bypass the current story's approval gates or create hidden
+dependencies between stories.
+
+Hardener, QA, and architect work are singleton quality gates. The squad leader
+must not have more than one active hardener assignment, more than one active QA
+assignment, or more than one active architect assignment at a time. These roles
+batch queued story handoffs; they are not parallel fanout roles.
+
+Story-to-batch accounting is durable state, not an inference from logs.
+`squad_batch.sh` records which story entered which batch, at which stage, from
+which assignment, branch, and SHA. A story may belong to at most one active
+batch of a given kind. Batch result handoffs record the returned assignment,
+branch, and SHA before the next batch gate begins.
+`squad_packet.sh batch` records the same batch membership back onto the story
+packet so story status and batch status remain reunified.
 
 ## Example: Faithful Hunt The Wumpus
 
@@ -460,54 +551,61 @@ Example squad execution:
 
 ```text
 1. squad-leader creates the theme record and fidelity checklist.
-2. squad-leader inspects the original rules and project conventions directly.
-3. squad-leader converts the theme into the six stories above.
-4. squad-leader asks the user to approve the fidelity target, story list,
-   story order, batching choices, and any interpretation choices. This is
-   story-plan approval only, not theme-wide implementation approval.
-5. after user approval, squad-leader spawns specifier-001 for Story 1 and
-   Story 2.
-6. specifier-001 writes Gherkin for topology, setup, warnings, and visible turn
-   text, plus QA procedure specs for playing through those behaviors.
-7. squad-leader reviews the Gherkin and QA procedure specs against the
-   fidelity checklist.
-8. squad-leader asks the user to approve each story's acceptance specification
-   before production implementation for that story begins.
-9. squad-leader spawns implementer-001 for Story 1 and Story 2 as one coherent
-   TDD assignment: acceptance pipeline wiring, unit tests, and production code.
-10. implementer-001 commits passing unit and acceptance tests and hands off to
-   squad-leader.
-11. squad-leader spawns reviewer-001 to review fidelity and local design for
-    the story.
-12. reviewer-001 reports recommendations back to squad-leader; squad-leader
+2. squad-leader negotiates the theme with the user until scope, original-game
+   fidelity targets, constraints, exclusions, and success criteria are explicit.
+3. squad-leader records theme approval.
+4. squad-leader packages the approved theme and fidelity checklist for
+   analyst-001.
+5. analyst-001 writes self-contained story artifacts under stories/, including
+   exact room graph, setup constraints, starting arrow count, distinct hazard
+   placement, and source facts needed by downstream workers.
+6. squad-leader merges the analyst handoff, reviews the stories against the
+   theme, and iterates with analyst-001 until Story 1 is satisfactory.
+7. squad-leader asks the user to approve Story 1.
+8. after Story 1 approval, squad-leader concurrently spawns gherkin-writer-001
+   and qa-procedure-writer-001 for Story 1.
+9. gherkin-writer-001 writes Story 1 Gherkin under features/; qa-procedure-
+   writer-001 writes Story 1 QA procedure artifacts under qa/.
+10. squad-leader merges both handoffs, sends the artifacts to gherkin-reviewer
+   and qa-procedure-reviewer, and iterates with the writers until satisfied.
+11. squad-leader asks the user to approve Story 1's Gherkin and QA procedure
+   artifacts for implementation.
+12. after Story 1 implementation approval, squad-leader spawns implementer-001 for
+    Story 1 only: acceptance pipeline wiring, unit tests, and production code.
+13. while Story 1 implementation runs, squad-leader may review analyst-produced
+    Story 2, ask for Story 2 approval, and fan out its accepted story artifact
+    without bypassing Story 2's own gates.
+14. implementer-001 commits passing Story 1 unit and acceptance tests and hands
+    off to squad-leader.
+15. squad-leader spawns code-reviewer-001 to review Story 1 implementation
+    fidelity and local design.
+16. code-reviewer-001 reports recommendations back to squad-leader; squad-leader
     decides which recommendations become cleanup work.
-13. squad-leader spawns cleaner-001 for the selected Story 1 cleanup items only.
-14. If review and cleanup pass, squad-leader repeats the cycle for Stories 3
-    through 6, batching compatible implementation stories only when their
-    behaviors form one tight loop.
-15. squad-leader spawns hardener-001 after the full story set passes, focusing
-    on mutation survivors in game rules and random-dependent edge cases.
-16. squad-leader spawns qa-001 to convert QA procedure specs into executable
+17. squad-leader spawns cleaner-001 for the selected Story 1 cleanup items only.
+18. squad-leader repeats the incremental story/spec/acceptance/implementation
+    cycle for Stories 2 through 6.
+19. squad-leader spawns hardener-001 after a coherent completed story set
+    passes, focusing on mutation survivors in game rules and random-dependent
+    edge cases.
+20. squad-leader spawns qa-001 to convert QA procedure specs into executable
     UI-level QA scripts and run final independent verification.
-17. squad-leader spawns architecture-reviewer-001 after QA because QA may have
-    made minimal code fixes that affect boundaries: game rules, random source,
-    console UI, parser/input, and game loop.
-18. architecture-reviewer-001 reports architectural recommendations back to
-    squad-leader; squad-leader decides which recommendations become
-    architecture-cleaner work.
-19. squad-leader spawns architecture-cleaner-001 only for selected
-    architectural cleanup.
-20. squad-leader merges accepted commits, retires transient agents, and reports
+21. squad-leader spawns architect-001 after QA because QA may have made minimal
+    code fixes that affect boundaries: game rules, random source, console UI,
+    parser/input, and game loop.
+22. architect-001 reports architectural critique back to squad-leader.
+23. squad-leader sends selected architectural critique and the relevant code to
+    senior-implementor-001, then iterates with architect-001 until satisfied.
+24. squad-leader retires transient agents and reports
     the completed game with the fidelity checklist and verification summary.
 ```
 
-This example does not create one transient agent per transition. The
-story-to-acceptance-pipeline-to-unit-tests-to-production-code loop stays with an
-implementer. Separate agents are used where independent judgment matters:
-specification, review, hardening, final QA, and architectural review. Cleaner
-work is one story at a time; hardener and QA work is batched when several
-completed stories should be evaluated together; architecture-reviewer follows
-QA and is batched across the QA-verified story set.
+This example does not create one transient agent per graph edge. Separate
+agents are used where independent authorship or independent judgment matters:
+story analysis, Gherkin writing, QA procedure writing, artifact-specific
+review, implementation, cleaning, code review, hardening, final QA, architecture
+critique, and senior implementation. Cleaner work is one story at a time;
+hardener, QA, and architect work is batched when several completed stories
+should be evaluated together.
 
 ## Implementation Plan
 
@@ -538,20 +636,20 @@ Implement the first transient spawn path:
 
 - `squad_spawn.sh` as the agent-facing command surface
 - `squad_spawn.bb` as the Babashka implementation
-- one transient role template, preferably `specifier`
+- one transient role template
 - generated runtime prompt for a concrete transient agent
 - transient worktree creation
 - handoff directory creation
 - detached tmux session creation
 - atomic append/update of `.swarmforge/roles.tsv`
 
-Success condition: the squad leader can spawn `specifier-001` in an
+Success condition: the squad leader can spawn a transient worker in an
 invisible tmux session without restarting the handoff daemon.
 
-Status: implemented for the `specifier` template. `squad_spawn.sh` delegates
-to `squad_spawn.bb`, creates a transient worktree, generates a runtime prompt,
-creates handoff directories, atomically updates `.swarmforge/roles.tsv`, copies
-helper scripts into the transient worktree, and starts a detached tmux session.
+Status: implemented. `squad_spawn.sh` delegates to `squad_spawn.bb`, creates a
+transient worktree, generates a runtime prompt, creates handoff directories,
+atomically updates `.swarmforge/roles.tsv`, copies helper scripts into the
+transient worktree, and starts a detached tmux session.
 
 ### Slice 3: Transient Handoff And Retirement
 
@@ -621,24 +719,31 @@ swarm starts and cleanup stops it.
 
 Add the remaining templates and quality gates:
 
-- `specifier`
+- `analyst`
+- `gherkin-writer`
+- `qa-procedure-writer`
+- `gherkin-reviewer`
+- `qa-procedure-reviewer`
 - `implementer`
-- `reviewer`
 - `cleaner`
+- `code-reviewer`
 - `hardener`
 - `qa`
-- `architecture-reviewer`
-- `architecture-cleaner`
+- `architect`
+- `senior-implementor`
 
 Success condition: the squad leader can execute a theme-sized workflow with
-theme splitting, user approval, acceptance-spec approval, implementation,
-review, selected cleanup, architecture review, selected architecture cleanup,
-hardening, QA, completion reporting, and transient retirement.
+delegated theme splitting, story approval, artifact-specific Gherkin and QA
+procedure authorship, artifact review, implementation approval,
+implementation, selected cleanup, code review, hardening, QA, architecture
+critique, senior implementation, completion reporting, and transient
+retirement.
 
-Status: partially implemented. The remaining full-workflow role templates now
-exist and can be spawned dynamically: `specifier`, `implementer`, `reviewer`,
-`cleaner`, `hardener`, `qa`, `architecture-reviewer`, and
-`architecture-cleaner`.
+Status: implemented for current control-plane spawning. The full-workflow role
+templates now exist and can be spawned dynamically: `analyst`,
+`gherkin-writer`, `qa-procedure-writer`, `gherkin-reviewer`,
+`qa-procedure-reviewer`, `implementer`, `cleaner`, `code-reviewer`,
+`hardener`, `qa`, `architect`, and `senior-implementor`.
 Launcher-managed status daemon startup is implemented. A fully exercised
 theme-sized end-to-end workflow remains future work.
 
@@ -735,6 +840,7 @@ Add a small control-plane helper for shared transient tools:
 - `squad_tool.sh register <tool-name> <source> <version> <executable-file>`
 - `squad_tool.sh ensure <tool-name> <source> <version> -- <install-command...>`
 - `squad_tool.sh require <tool-name> <source> <version>`
+- `squad_tool.sh materialize <tool-name> <source> <version> [worktree]`
 - `squad_tool.sh status [tool-name]`
 - `.swarmforge/tools/bin/`
 - `.swarmforge/tools/src/`
@@ -764,6 +870,26 @@ Success condition: a transient agent can check whether a required cached tool is
 usable before deciding to build or install it.
 
 Status: implemented.
+
+### Slice 12a: Worktree-Local Tool Materialization
+
+Add a worktree-local executable path for cached tools:
+
+- `squad_tool.sh materialize <tool-name> <source> <version> [worktree]`
+- verifies the shared cache manifest and executable first
+- creates `<worktree>/.swarmforge/tools/bin/<tool-name>`
+- writes `<worktree>/.swarmforge/tools/manifests/<tool-name>.manifest`
+- tries a hardlink to the shared cached executable first
+- falls back to copying the executable when hardlinking is unavailable
+- records the selected mode in the worktree-local manifest
+- `squad_tool.sh require` auto-materializes when `SWARMFORGE_WORKTREE` is set
+
+Success condition: a transient agent can execute a cached tool through a path
+inside its assigned worktree without reinstalling the tool.
+
+Status: implemented. The explored launcher-script alternative was rejected as
+the default because a launcher that execs the project-root cache still performs
+outside-worktree path access at runtime.
 
 ### Slice 13: Shared Tool Cache Ensure
 
@@ -893,7 +1019,8 @@ minimum end-to-end control-plane gaps:
 - `squad_assign.sh accept-merge <assignment-id>`
 - requires a recorded result handoff
 - requires recorded `merge_ready` state
-- requires a recorded `review_accepted` decision
+- does not require review; the squad leader merges valid handoffs before
+  review, disposition, batching, or forwarding
 - records accepted merge state under
   `.squad/assignments/<assignment-id>/accepted-merge`
 - records `merged` status when the commit is already reachable from `HEAD`
@@ -973,8 +1100,8 @@ compatibility and one-shot test helpers.
 The Hunt the Wumpus trial exposed several practical defects in the first squad
 workflow run:
 
-- workers performed unnecessary web searches even when the squad leader had
-  already gathered the reference facts
+- non-analyst workers performed unnecessary web searches even when the squad
+  leader or analyst had already gathered the reference facts
 - transient worktrees could contain stale runtime registry state
 - helper commands run from a transient worktree could miss the central project
   state
@@ -987,8 +1114,10 @@ workflow run:
 
 Corrections:
 
-- generated transient prompts and role templates now tell workers not to search
-  the web unless the assignment explicitly asks for it
+- generated transient prompts and role templates now tell non-analyst workers
+  not to search the web unless the assignment explicitly asks for it; analyst
+  may search to augment the approved theme, but must embed the resulting facts
+  into self-contained stories
 - transient worktrees no longer receive a copied `.swarmforge/roles.tsv`
 - squad helpers honor `SWARMFORGE_PROJECT_ROOT` as the authoritative central
   state location when workers run from their assigned worktree
@@ -1012,10 +1141,20 @@ exposed additional operational gaps:
   not to web search
 - implementation could start from a broad or theme-wide acceptance approval
   instead of a story-specific acceptance gate
+- story decomposition could produce stories that depended on context known only
+  to the squad leader instead of self-contained story artifacts
+- approval was too coarse: the leader waited for theme/story-plan approval
+  instead of asking for incremental approval as each story became ready
 - recovery states for missing sessions, dirty worktrees, committed-no-handoff,
   handoff-no-session, and stale heartbeats are still not fully encoded as a
   leader workflow
 - reviewer report merge policy needed to be explicit
+- raw `tmux`, `ps`, and process-inspection commands by the squad leader could
+  trigger escalation during normal orchestration
+- invisible worker escalation prompts could leave a transient stuck without an
+  explicit assignment-level blocked state
+- merge readiness and accepted merge failures did not preserve enough
+  diagnostic detail for postmortems
 
 Corrections:
 
@@ -1030,15 +1169,63 @@ Corrections:
   unless the assignment explicitly asks for that operation
 - implementer assignments now require story-level acceptance gates named
   `approval:acceptance-<story-id>` and reject theme-wide `approval:acceptance`
-- the approval rule is now explicit: theme approval accepts the story plan;
-  implementation approval is per story after that story's Gherkin and QA
-  procedure artifacts exist
-- reviewer and architecture-reviewer report commits are explicitly durable
-  `.squad/reviews/` artifacts that should be merged when relevant
+- the approval rule is now explicit and incremental: approve each story before
+  specification; approve that story's Gherkin and QA procedure artifacts before
+  implementation; do not wait for the whole theme to be specified before
+  starting approved implementation work
+- stories must be self-contained artifacts with the facts, constraints,
+  terminology, source references, and examples needed by transient agents
+- analyst may use web research to augment an approved theme, but downstream
+  stories must not require further research by later agents
+- artifact-specific reviewer and architect report commits are explicitly
+  durable `.squad/reviews/` artifacts that should be merged when relevant
 - the squad leader workflow now distinguishes missing-session recovery cases:
   process delivered handoffs, ask before recovering committed-no-handoff or
   dirty-worktree state, replace missing-session/no-handoff work, and treat a
   stale heartbeat with a live pane as a status problem
+- squad leader prompts now prohibit raw `tmux`, `ps`, and process-inspection
+  commands during normal squad management; direct operator debugging requires
+  explicit user approval
+- generated transient prompts tell workers to stop a command path if it triggers
+  approval or escalation, record blocked status, and hand the blocker back
+  instead of waiting invisibly
+- `squad_assign.sh block` records a durable assignment blocker for stale,
+  escalated, or otherwise wedged invisible-agent work
+- `squad_assign.sh merge-ready` and `squad_assign.sh accept-merge` now refuse
+  to begin from a dirty tracked checkout and preserve failed merge stdout/stderr
+  in `.squad/assignments/<assignment-id>/merge-error`
+
+### Third HTW Trial Defect Corrections
+
+The third Hunt the Wumpus trial exposed defects in parallel orchestration and
+review-report handling:
+
+- the squad leader exceeded the configured transient-agent slot limit
+- terminal workers that had handed off still appeared active and created
+  repeated stale-heartbeat status reports
+- `close-swarm` could miss transient tmux sessions that were registered only in
+  `.swarmforge/roles.tsv`
+- reviewer result handoffs could be recorded as the review body instead of the
+  actual report committed under `.squad/reviews/`
+- reviewer reports with `changes-requested` needed to be mergeable so the
+  squad leader could disposition the recommendations
+
+Corrections:
+
+- direct `squad_spawn.sh` rejects new transients when the configured number of
+  non-terminal workers are already registered
+- `squadd.sh` defers daemon-owned spawn requests while capacity is full instead
+  of launching a sixth transient
+- terminal states such as `review_complete`, `handoff_ready`, `handed_off`, and
+  `handing_off` are reconciled by the daemon: leftover sessions are killed,
+  role rows are removed, and stale-heartbeat alerts are suppressed
+- `close-swarm` now reads sessions from `roles.tsv` in addition to launcher
+  session/window state and live tmux sessions
+- `squad_assign.sh review` can accept a reviewer result handoff and extract the
+  single committed `.squad/reviews/*.md` report from that handoff commit
+- artifact-specific reviewer and architect assignments may accept-merge a
+  `changes-requested` report because those reports are evidence for leader
+  decisions, not approval of implementation work
 
 ## Implementation Deficits
 
@@ -1049,6 +1236,12 @@ They are tracked here as resolved, partially resolved, or still open.
 
 - [x] exact task id and agent id allocation rules for current transient spawn
       behavior
+- [x] transient capacity limit is configured in `swarmforge/squad.conf` and
+      enforced by direct spawn helpers and daemon-owned spawn requests
+- [x] squad leader singleton rule for hardener, QA, and architecture work is
+      explicit in the role and constitution prompts
+- [x] singleton hardener, QA, and architecture concurrency guardrails are
+      enforced by direct spawn helpers and daemon-owned spawn requests
 - [x] exact status, heartbeat, and event file formats for current telemetry
 - [x] atomic write protocol for telemetry files
 - [x] atomic update and bounded locking protocol for `.swarmforge/roles.tsv`
@@ -1059,6 +1252,8 @@ They are tracked here as resolved, partially resolved, or still open.
       for transient agents
 - [x] shared tool cache registry for already-built executables
 - [x] shared tool cache validation by source and version
+- [x] worktree-local cached tool materialization by hardlink or copy
+- [x] materialized cached tool executables are read-only in transient worktrees
 - [x] locked shared tool install-or-reuse command for caller-provided installers
 - [x] default implementer approval gate policy requires
       `approval:acceptance-<story-id>`
@@ -1066,11 +1261,15 @@ They are tracked here as resolved, partially resolved, or still open.
       rejected
 - [x] retired transient rows and leftover tmux sessions are reconciled by the
       unified daemon
+- [x] terminal transient states suppress stale-heartbeat status spam and trigger
+      daemon reconciliation
 - [x] transient prompts and templates prohibit external fetch/install/version
       checks unless explicitly assigned
 - [x] squad leader recovery policy distinguishes delivered handoff,
       committed-no-handoff, dirty worktree, missing session, and stale heartbeat
       cases
+- [x] assignment blocking can record stale, escalated, or wedged transient work
+      as durable squad state
 - [x] portable transient launch model: project-root agent invocation plus
       required worktree `cd`
 - [x] tmux session and window naming conventions for transient agents
@@ -1092,16 +1291,25 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] transient result intake can record merge-ready or merge-blocked state
       without committing a merge
 - [x] review decisions can be recorded as durable assignment state
-- [x] reviewer and architecture-reviewer reports are durable merged artifacts
-      under `.squad/reviews/`
+- [x] artifact-specific reviewer and architect reports are durable merged
+      artifacts under `.squad/reviews/`
+- [x] reviewer result handoffs can be used as review-decision input by
+      extracting the committed `.squad/reviews/*.md` report
+- [x] artifact-specific reviewer and architect `changes-requested` reports can
+      be merged as decision evidence
 - [x] rejected transient work can be preserved with durable rejection reasons
 - [x] replacement assignments can be linked to rejected or superseded work
 - [x] accepted merge decisions can be recorded and applied after merge-ready
-      and review-accepted state
+      state, so the squad leader can merge valid handoffs before review,
+      disposition, batching, or forwarding
+- [x] merge-ready and accepted-merge failures record durable merge diagnostics
+      and reject dirty tracked checkouts
 - [x] final theme verification summaries can be generated from durable squad
       state
 - [x] launcher and watchdog teardown stop squad daemons without keeping the
       project directory as their current working directory
+- [x] `close-swarm` includes transient sessions from `.swarmforge/roles.tsv`
+      during teardown
 - [x] unified launcher-owned squad daemon handles handoff delivery, status
       polling, and daemon-owned spawn requests
 - [x] unified daemon self-heals active transient rows missing from
@@ -1122,8 +1330,18 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] branch-local constitution articles required for squad authority
 - [x] `squad-leader.prompt` responsibilities and prohibitions
 - [x] transient template responsibilities and prohibitions
-- [x] squad specifier role is based on the six-pack specifier workflow for
-      Gherkin and end-to-end QA procedure generation
+- [x] squad leader prompts prohibit raw process inspection during normal
+      orchestration
+- [x] current Gherkin and QA procedure writer roles split the old specifier
+      responsibility while preserving the six-pack specification workflow
+- [x] story packet state machine reunifies story, Gherkin, QA procedure,
+      review, approval, implementation, and batch state for each story
+- [x] implementer assignments are blocked unless the story packet is
+      `implementation_approved`
+- [x] squad leader policy requires user negotiation and approval of the
+      clarified theme before analyst story-writing delegation
+- [x] current role boundaries are encoded as `.contract.edn` files and tested
+      semantically instead of by large prompt prose snapshots
 - [x] test strategy for spawn, retire, status, daemon, cleanup, and theme
       manifest behavior
 - [x] avoid repeated expensive startup tool installation for the squad leader
@@ -1155,9 +1373,11 @@ They are tracked here as resolved, partially resolved, or still open.
 ### Open
 
 - [ ] merge policy for fetching missing transient branches
-- [ ] policy for merge conflicts created by transient work
+- [ ] policy for resolving merge conflicts created by transient work
 - [ ] policy for interrupting or restarting a running transient agent
 - [ ] default approval-gate policy for non-implementer templates
+- [ ] helper-level enforcement of the theme-approved gate before analyst
+      assignments; current enforcement is prompt/constitution policy
 - [ ] acceptance artifact schema and type policy beyond path references
 - [ ] helper-level enforcement that acceptance artifacts cite a producing
       assignment or transient agent

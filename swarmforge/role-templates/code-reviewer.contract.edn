@@ -1,0 +1,9 @@
+{:role "code-reviewer"
+ :handoff-targets ["squad-leader"]
+ :may-web-search false
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :writes ["review-report"]
+ :artifact-roots [".squad/reviews/"]
+ :forbidden-artifact-roots ["stories/" "features/" "qa/" "src/" "test/"]}

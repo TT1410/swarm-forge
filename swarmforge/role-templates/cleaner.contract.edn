@@ -1,0 +1,9 @@
+{:role "cleaner"
+ :handoff-targets ["squad-leader"]
+ :may-web-search false
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :writes ["cleanup" "coverage-improvements"]
+ :artifact-roots ["src/" "test/"]
+ :behavior-preserving true}

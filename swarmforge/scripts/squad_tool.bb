@@ -11,6 +11,7 @@
        "  squad_tool.sh register <tool-name> <source> <version> <executable-file>\n"
        "  squad_tool.sh ensure <tool-name> <source> <version> -- <install-command...>\n"
        "  squad_tool.sh require <tool-name> <source> <version>\n"
+       "  squad_tool.sh materialize <tool-name> <source> <version> [worktree]\n"
        "  squad_tool.sh status [tool-name]"))
 
 (def valid-tool #"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -104,6 +105,12 @@
 (defn executable-target [paths tool]
   (fs/path (:bin paths) tool))
 
+(defn local-tool-paths [worktree]
+  (let [root (fs/path worktree ".swarmforge" "tools")]
+    {:root root
+     :bin (fs/path root "bin")
+     :manifests (fs/path root "manifests")}))
+
 (defn read-value [file field]
   (when (fs/exists? file)
     (let [prefix (str field ": ")]
@@ -145,6 +152,74 @@
                       "executable: " executable "\n"
                       "registered_at: " now "\n")))
 
+(defn write-local-manifest! [manifest tool source version executable cached mode now]
+  (write-atomic! manifest
+                 (str "tool: " tool "\n"
+                      "source: " source "\n"
+                      "version: " version "\n"
+                      "executable: " executable "\n"
+                      "cached_executable: " cached "\n"
+                      "mode: " mode "\n"
+                      "materialized_at: " now "\n")))
+
+(defn hardlink! [source target]
+  (java.nio.file.Files/createLink
+   (.toPath (fs/file target))
+   (.toPath (fs/file source))))
+
+(defn materialize-tool! [tool source version maybe-worktree]
+  (validate-tool! tool)
+  (let [worktree (or maybe-worktree (not-empty (System/getenv "SWARMFORGE_WORKTREE")))]
+    (when (str/blank? worktree)
+      (exit! 1 "No worktree supplied and SWARMFORGE_WORKTREE is not set."))
+    (let [paths (ensure-cache!)
+          state (tool-state paths tool source version)]
+      (case (:state state)
+        :missing
+        (exit! 3
+               (str "SQUAD_TOOL_MISSING: " tool)
+               (str "REASON: " (:reason state)))
+
+        :mismatch
+        (exit! 4
+               (str "SQUAD_TOOL_MISMATCH: " tool)
+               (str "FIELD: " (:field state))
+               (str "EXPECTED: " (:expected state))
+               (str "ACTUAL: " (:actual state)))
+
+        :available
+        (let [local (local-tool-paths worktree)
+              target (fs/path (:bin local) tool)
+              manifest (fs/path (:manifests local) (str tool ".manifest"))
+              cached (:executable state)
+              lock-dir (acquire-lock! (:locks paths) (str tool ".materialize"))]
+          (try
+            (fs/create-dirs (:bin local))
+            (fs/create-dirs (:manifests local))
+            (fs/delete-if-exists target)
+            (let [mode (try
+                         (hardlink! cached target)
+                         "hardlink"
+                         (catch Exception _
+                           (fs/copy cached target {:replace-existing true})
+                           "copy"))]
+              (fs/set-posix-file-permissions target "r-xr-xr-x")
+              (write-local-manifest! manifest tool source version target cached mode (timestamp))
+              {:tool tool
+               :state :materialized
+               :executable target
+               :manifest manifest
+               :mode mode})
+            (finally
+              (fs/delete-tree lock-dir))))))))
+
+(defn print-materialized! [{:keys [tool executable manifest mode]}]
+  (println "SQUAD_TOOL:" tool)
+  (println "STATE: materialized")
+  (println "MODE:" mode)
+  (println "EXECUTABLE:" (str executable))
+  (println "MANIFEST:" (str manifest)))
+
 (defn register-tool! [tool source version executable]
   (validate-tool! tool)
   (let [paths (ensure-cache!)
@@ -182,10 +257,14 @@
              (str "ACTUAL: " (:actual state)))
 
       :available
-      (do
+      (let [materialized (when (not-empty (System/getenv "SWARMFORGE_WORKTREE"))
+                           (materialize-tool! tool source version nil))]
         (println "SQUAD_TOOL:" tool)
         (println "STATE: available")
-        (println "EXECUTABLE:" (str (:executable state)))))))
+        (println "EXECUTABLE:" (str (:executable state)))
+        (when materialized
+          (println "LOCAL_EXECUTABLE:" (str (:executable materialized)))
+          (println "LOCAL_MODE:" (:mode materialized)))))))
 
 (defn split-command [args]
   (let [[before after] (split-with #(not= "--" %) args)]
@@ -289,6 +368,13 @@
     "require" (if (= 4 (count args))
                 (require-tool! (second args) (nth args 2) (nth args 3))
                 (exit! 1 usage-text))
+    "materialize" (if (<= 4 (count args) 5)
+                    (print-materialized!
+                     (materialize-tool! (second args)
+                                        (nth args 2)
+                                        (nth args 3)
+                                        (nth args 4 nil)))
+                    (exit! 1 usage-text))
     "status" (if (<= 1 (count args) 2)
                (apply status! (rest args))
                (exit! 1 usage-text))

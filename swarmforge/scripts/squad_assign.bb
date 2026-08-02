@@ -12,6 +12,7 @@
        "  squad_assign.sh merge-ready <assignment-id>\n"
        "  squad_assign.sh review <assignment-id> <accepted|changes-requested> <review-file>\n"
        "  squad_assign.sh accept-merge <assignment-id>\n"
+       "  squad_assign.sh block <assignment-id> <reason-file>\n"
        "  squad_assign.sh reject <assignment-id> <reason-file>\n"
        "  squad_assign.sh replace <old-assignment-id> <new-assignment-id> <template> <instructions-file>\n"
        "  squad_assign.sh status <assignment-id>"))
@@ -91,6 +92,21 @@
   (when (fs/exists? ref-file)
     (when-let [relative (read-value ref-file "path")]
       (fs/path root relative))))
+
+(defn story-packet-file [root story-id]
+  (fs/path root ".squad" "stories" story-id "packet"))
+
+(defn ensure-implementer-packet-ready! [root story-id assignment-id]
+  (let [packet (story-packet-file root story-id)]
+    (when-not (fs/regular-file? packet)
+      (exit! 3
+             (str "SQUAD_ASSIGNMENT_BLOCKED: " assignment-id)
+             (str "REASON: missing story packet for " story-id)))
+    (when-not (= "implementation_approved" (read-value packet "state"))
+      (exit! 3
+             (str "SQUAD_ASSIGNMENT_BLOCKED: " assignment-id)
+             (str "REASON: story packet " story-id " is not implementation_approved")))
+    packet))
 
 (defn approval-gates [theme]
   (let [file (fs/path theme "approvals.tsv")]
@@ -178,6 +194,49 @@
 (defn append-file! [file content]
   (spit (str file) content :append true))
 
+(defn relative-to-root [root file]
+  (let [root-path (.normalize (.toAbsolutePath (fs/path root)))
+        file-path (.normalize (.toAbsolutePath (fs/path file)))]
+    (when (.startsWith file-path root-path)
+      (str/replace (str (.relativize root-path file-path)) "\\" "/"))))
+
+(defn durable-review-file? [root file]
+  (when-let [relative (relative-to-root root file)]
+    (str/starts-with? relative ".squad/reviews/")))
+
+(defn read-header [file field]
+  (let [prefix (str field ": ")]
+    (some (fn [line]
+            (when (str/starts-with? line prefix)
+              (subs line (count prefix))))
+          (take-while #(not (str/blank? %))
+                      (str/split-lines (slurp (str file)))))))
+
+(defn reviewer-report-from-handoff [root file]
+  (when (= "git_handoff" (read-header file "type"))
+    (when-let [commit (read-header file "commit")]
+      (when (re-matches #"[0-9a-fA-F]{10}" commit)
+        (let [paths-result (sh-at root "git" "show" "--name-only" "--format=" commit)
+              review-paths (->> (str/split-lines (:out paths-result))
+                                (filter #(and (str/starts-with? % ".squad/reviews/")
+                                              (str/ends-with? % ".md")))
+                                distinct
+                                vec)]
+          (when (= 1 (count review-paths))
+            (let [path (first review-paths)
+                  content (sh-at root "git" "show" (str commit ":" path))]
+              (when (zero? (:exit content))
+                {:content (:out content)
+                 :source (str commit ":" path)
+                 :durable? true}))))))))
+
+(defn review-source! [root path]
+  (let [file (source-file! path)]
+    (or (reviewer-report-from-handoff root file)
+        {:content (slurp (str file))
+         :source (str file)
+         :durable? (boolean (durable-review-file? root file))})))
+
 (defn assignment-theme-event! [root dir state assignment-id & fields]
   (let [metadata (fs/path dir "metadata")
         theme-id (read-value metadata "theme_id")
@@ -201,7 +260,7 @@
        "task: " assignment-id "\n"
        "commit: <10-char-commit>\n"))
 
-(defn render-assignment [{:keys [theme-id story-id template assignment-id theme-text story-text instructions-text requirement]}]
+(defn render-assignment [{:keys [theme-id story-id template assignment-id theme-text story-text instructions-text requirement packet-text]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
@@ -214,6 +273,11 @@
        theme-text "\n\n"
        "## Story\n\n"
        story-text "\n\n"
+       (when packet-text
+         (str "## Story Packet\n\n"
+              "```text\n"
+              packet-text
+              "```\n\n"))
        "## Leader Instructions\n\n"
        instructions-text "\n\n"
        "## Required Transient Protocol\n\n"
@@ -252,17 +316,28 @@
       (exit! 3
              (str "SQUAD_ASSIGNMENT_BLOCKED: " assignment-id)
              (str "REASON: missing required approval gate " (:value requirement))))
+    (let [packet (when (= "implementer" template)
+                   (ensure-implementer-packet-ready! root story-id assignment-id))]
+      (when (and packet
+                 (not= theme-id (read-value packet "theme_id")))
+        (exit! 3
+               (str "SQUAD_ASSIGNMENT_BLOCKED: " assignment-id)
+               (str "REASON: story packet " story-id " belongs to a different theme"))))
     (when (fs/exists? dir)
       (exit! 2 (str "Assignment already exists: " assignment-id)))
     (fs/create-dirs dir)
-    (let [assignment-text (render-assignment {:theme-id theme-id
+    (let [packet (when (= "implementer" template)
+                   (story-packet-file root story-id))
+          assignment-text (render-assignment {:theme-id theme-id
                                               :story-id story-id
                                               :template template
                                               :assignment-id assignment-id
                                               :theme-text (slurp (str theme-file))
                                               :story-text (slurp (str story-file))
                                               :instructions-text (slurp (str instructions))
-                                              :requirement requirement})
+                                              :requirement requirement
+                                              :packet-text (when packet
+                                                             (slurp (str packet)))})
           assignment-file (fs/path dir "assignment.md")]
       (write-atomic! assignment-file assignment-text)
       (write-atomic! (fs/path dir "result-handoff.draft")
@@ -304,6 +379,8 @@
         merge-file (fs/path dir "merge")
         accepted-merge-file (fs/path dir "accepted-merge")
         review-file (fs/path dir "review")
+        merge-error-file (fs/path dir "merge-error")
+        blocker-file (fs/path dir "blocker")
         rejection-file (fs/path dir "rejection")
         replacement-file (fs/path dir "replacement")]
     (ensure-assignment-dir! dir assignment-id)
@@ -317,7 +394,9 @@
     (println "RESULT:" (if (fs/exists? result-file) (str result-file) "none"))
     (println "MERGE:" (if (fs/exists? merge-file) (str merge-file) "none"))
     (println "ACCEPTED_MERGE:" (if (fs/exists? accepted-merge-file) (str accepted-merge-file) "none"))
+    (println "MERGE_ERROR:" (if (fs/exists? merge-error-file) (str merge-error-file) "none"))
     (println "REVIEW:" (if (fs/exists? review-file) (str review-file) "none"))
+    (println "BLOCKER:" (if (fs/exists? blocker-file) (str blocker-file) "none"))
     (println "REJECTION:" (if (fs/exists? rejection-file) (str rejection-file) "none"))
     (println "REPLACEMENT:" (if (fs/exists? replacement-file) (str replacement-file) "none"))))
 
@@ -355,6 +434,13 @@
         story-id (or (read-value metadata "story_id") "unknown")
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
+    (let [sender-branch (str "swarmforge-" from)
+          branch-exists (sh-at root "git" "rev-parse" "--verify" (str sender-branch "^{commit}"))]
+      (when (zero? (:exit branch-exists))
+        (let [reachable (sh-at root "git" "merge-base" "--is-ancestor" commit sender-branch)]
+          (when-not (zero? (:exit reachable))
+            (exit! 2
+                   (str "Result commit " commit " is not reachable from sender branch " sender-branch))))))
     (write-atomic! (fs/path dir "result.handoff")
                    (slurp (str handoff-file)))
     (write-atomic! (fs/path dir "result")
@@ -384,6 +470,22 @@
 (defn abort-merge! [root]
   (when (merge-head-exists? root)
     (sh-at root "git" "merge" "--abort")))
+
+(defn tracked-dirty? [root]
+  (not (str/blank?
+        (str/trim (:out (sh-at root "git" "status" "--porcelain" "--untracked-files=no"))))))
+
+(defn write-merge-error! [dir phase result]
+  (write-atomic! (fs/path dir "merge-error")
+                 (str "phase: " phase "\n"
+                      "exit: " (:exit result) "\n"
+                      "\n"
+                      "stdout:\n"
+                      (:out result)
+                      "\n"
+                      "stderr:\n"
+                      (:err result)
+                      "\n")))
 
 (defn write-merge-state! [root dir assignment-id state detail commit now]
   (write-atomic! (fs/path dir "merge")
@@ -421,6 +523,14 @@
         (let [known (sh-at root "git" "rev-parse" "--verify" (str commit "^{commit}"))]
           (when-not (zero? (:exit known))
             (exit! 2 (str "Unknown result commit: " commit))))
+        (when (tracked-dirty? root)
+          (write-merge-state! root dir assignment-id "merge_blocked" "tracked checkout dirty" commit now)
+          (binding [*out* *err*]
+            (println "SQUAD_ASSIGNMENT:" assignment-id)
+            (println "STATE: merge_blocked")
+            (println "COMMIT:" commit)
+            (println "DETAIL: tracked checkout dirty"))
+          (System/exit 4))
         (let [ancestor (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD")]
           (if (zero? (:exit ancestor))
             (do
@@ -440,6 +550,7 @@
                   (println "DETAIL: dry-run merge passed"))
                 (do
                   (abort-merge! root)
+                  (write-merge-error! dir "merge-ready" merge)
                   (write-merge-state! root dir assignment-id "merge_blocked" "dry-run merge failed" commit now)
                   (binding [*out* *err*]
                     (println "SQUAD_ASSIGNMENT:" assignment-id)
@@ -455,18 +566,25 @@
   (let [state (review-state! decision)
         root (fs/absolutize (project-root))
         dir (assignment-dir root assignment-id)
-        review-source (source-file! review-path)
+        review-source (review-source! root review-path)
         result-file (fs/path dir "result")
+        metadata (fs/path dir "metadata")
+        template (read-value metadata "template")
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
     (ensure-file! "Assignment result not found" result-file)
+    (when-not (#{"reviewer" "architecture-reviewer"} template)
+      (when-not (:durable? review-source)
+        (exit! 2
+               "Review decisions for worker assignments must use a durable reviewer report under .squad/reviews/.")))
     (write-atomic! (fs/path dir "review.md")
-                   (slurp (str review-source)))
+                   (:content review-source))
     (write-atomic! (fs/path dir "review")
                    (str "assignment_id: " assignment-id "\n"
                         "state: " state "\n"
                         "decision: " decision "\n"
                         "review_file: " (fs/path dir "review.md") "\n"
+                        "source: " (:source review-source) "\n"
                         "updated_at: " now "\n"))
     (write-atomic! (fs/path dir "status")
                    (str "assignment_id: " assignment-id "\n"
@@ -480,6 +598,32 @@
     (println "STATE:" state)
     (println "DECISION:" decision)
     (println "REVIEW:" (str (fs/path dir "review.md")))))
+
+(defn block-assignment! [assignment-id reason-path]
+  (validate-id! "Assignment id" assignment-id)
+  (let [root (fs/absolutize (project-root))
+        dir (assignment-dir root assignment-id)
+        reason-source (source-file! reason-path)
+        now (timestamp)]
+    (ensure-assignment-dir! dir assignment-id)
+    (write-atomic! (fs/path dir "blocker.md")
+                   (slurp (str reason-source)))
+    (write-atomic! (fs/path dir "blocker")
+                   (str "assignment_id: " assignment-id "\n"
+                        "state: blocked\n"
+                        "reason_file: " (fs/path dir "blocker.md") "\n"
+                        "updated_at: " now "\n"))
+    (write-atomic! (fs/path dir "status")
+                   (str "assignment_id: " assignment-id "\n"
+                        "state: blocked\n"
+                        "detail: blocked by squad leader\n"
+                        "updated_at: " now "\n"))
+    (append-line! (fs/path dir "events.log")
+                  (str now "\tblocked\t" (fs/path dir "blocker.md")))
+    (assignment-theme-event! root dir "blocked" assignment-id)
+    (println "SQUAD_ASSIGNMENT:" assignment-id)
+    (println "STATE: blocked")
+    (println "BLOCKER:" (str (fs/path dir "blocker.md")))))
 
 (defn record-accepted-merge! [root dir assignment-id commit detail now]
   (let [head (str/trim (:out (sh-at root "git" "rev-parse" "--short=10" "HEAD")))]
@@ -506,26 +650,31 @@
         dir (assignment-dir root assignment-id)
         result-file (fs/path dir "result")
         merge-file (fs/path dir "merge")
-        review-file (fs/path dir "review")
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
     (ensure-file! "Assignment result not found" result-file)
     (ensure-file! "Assignment merge readiness not found" merge-file)
-    (ensure-file! "Assignment accepted review not found" review-file)
     (when-not (= "merge_ready" (read-value merge-file "state"))
       (exit! 3 "Assignment is not merge_ready."))
-    (when-not (= "review_accepted" (read-value review-file "state"))
-      (exit! 3 "Assignment review is not accepted."))
     (let [commit (read-value result-file "commit")]
       (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
         (exit! 2 "Assignment result must contain a 10-character commit."))
       (try
+        (when (tracked-dirty? root)
+          (write-merge-state! root dir assignment-id "merge_blocked" "tracked checkout dirty" commit now)
+          (binding [*out* *err*]
+            (println "SQUAD_ASSIGNMENT:" assignment-id)
+            (println "STATE: merge_blocked")
+            (println "COMMIT:" commit)
+            (println "DETAIL: tracked checkout dirty"))
+          (System/exit 4))
         (let [ancestor (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD")
               detail (if (zero? (:exit ancestor))
                        "commit already reachable from HEAD"
                        (let [merge (sh-at root "git" "merge" "--no-ff" "-m" (str "Merge squad assignment " assignment-id) commit)]
                          (when-not (zero? (:exit merge))
                            (abort-merge! root)
+                           (write-merge-error! dir "accept-merge" merge)
                            (write-merge-state! root dir assignment-id "merge_blocked" "accepted merge failed" commit now)
                            (binding [*out* *err*]
                              (println "SQUAD_ASSIGNMENT:" assignment-id)
@@ -628,6 +777,9 @@
     "accept-merge" (if (= 2 (count args))
                      (accept-merge! (second args))
                      (exit! 1 usage-text))
+    "block" (if (= 3 (count args))
+              (block-assignment! (second args) (nth args 2))
+              (exit! 1 usage-text))
     "reject" (if (= 3 (count args))
                (reject-assignment! (second args) (nth args 2))
                (exit! 1 usage-text))

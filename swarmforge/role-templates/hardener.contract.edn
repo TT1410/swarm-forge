@@ -1,0 +1,10 @@
+{:role "hardener"
+ :handoff-targets ["squad-leader"]
+ :may-web-search false
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :writes ["hardening-tests" "hardening-fixes" "tool-manifests"]
+ :artifact-roots ["src/" "test/" ".squad/"]
+ :singleton true
+ :batch-kind "hardener"}

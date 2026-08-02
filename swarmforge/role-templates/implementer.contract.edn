@@ -1,0 +1,9 @@
+{:role "implementer"
+ :handoff-targets ["squad-leader"]
+ :may-web-search false
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :writes ["production-code" "unit-tests" "acceptance-tests"]
+ :artifact-roots ["src/" "test/" "features/" "qa/"]
+ :requires-packet-state "implementation_approved"}

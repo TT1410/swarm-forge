@@ -10,6 +10,7 @@
        "Creates one invisible transient agent from swarmforge/role-templates/<template>.prompt."))
 
 (def script-dir (fs/parent *file*))
+(load-file (str (fs/path script-dir "squad_config.bb")))
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -95,6 +96,74 @@
                               (fs/list-dir agent-dir)))]
     (concat row-numbers worktree-numbers agent-numbers)))
 
+(def terminal-agent-states
+  #{"complete" "review_complete" "handoff_ready" "handed_off" "handing_off" "retired"})
+
+(defn read-value [file field]
+  (when (fs/exists? file)
+    (let [prefix (str field ": ")]
+      (some (fn [line]
+              (when (str/starts-with? line prefix)
+                (subs line (count prefix))))
+            (str/split-lines (slurp (str file)))))))
+
+(defn active-transient-count [root rows]
+  (count
+   (for [row rows
+         :let [role (first row)
+               state (read-value (fs/path root ".squad" "agents" role "status") "state")]
+         :when (and (not= "squad-leader" role)
+                    (not (contains? terminal-agent-states state)))]
+     role)))
+
+(defn template-from-role [role]
+  (str/replace role #"-\d{3}$" ""))
+
+(defn role-template [root role]
+  (or (read-value (fs/path root ".squad" "agents" role "metadata") "template")
+      (template-from-role role)))
+
+(defn active-template-count [root rows template]
+  (count
+   (for [row rows
+         :let [role (first row)
+               state (read-value (fs/path root ".squad" "agents" role "status") "state")]
+         :when (and (not= "squad-leader" role)
+                    (not (contains? terminal-agent-states state))
+                    (= template (role-template root role)))]
+     role)))
+
+(defn active-group-count [root rows templates]
+  (count
+   (for [row rows
+         :let [role (first row)
+               state (read-value (fs/path root ".squad" "agents" role "status") "state")]
+         :when (and (not= "squad-leader" role)
+                    (not (contains? terminal-agent-states state))
+                    (contains? templates (role-template root role)))]
+     role)))
+
+(defn template-capacity-error [root rows template]
+  (or
+   (when-let [limit (squad-template-limit root template)]
+     (let [active (active-template-count root rows template)]
+       (when (>= active limit)
+         [3
+          "SQUAD_SPAWN_TEMPLATE_CAPACITY_FULL"
+          (str "TEMPLATE: " template)
+          (str "ACTIVE_TEMPLATE_TRANSIENTS: " active)
+          (str "MAX_TEMPLATE_TRANSIENTS: " limit)])))
+   (some (fn [{:keys [group limit templates]}]
+           (let [active (active-group-count root rows templates)]
+             (when (>= active limit)
+               [3
+                "SQUAD_SPAWN_GROUP_CAPACITY_FULL"
+                (str "GROUP: " group)
+                (str "TEMPLATE: " template)
+                (str "ACTIVE_GROUP_TRANSIENTS: " active)
+                (str "MAX_GROUP_TRANSIENTS: " limit)])))
+         (squad-template-group-limits root template))))
+
 (defn next-agent-id [root rows template]
   (let [numbers (existing-agent-numbers root rows template)]
     (format "%s-%03d" template (inc (reduce max 0 numbers)))))
@@ -144,8 +213,11 @@
        "tool_cache_dir: " tool-cache-dir "\n\n"
        "You are a transient squad agent. Communicate through handoffs only. Do not talk directly to the user. Do not spawn other agents. Do not broaden this assignment without a squad-leader handoff.\n\n"
        "Before task work, verify that your current directory is the assigned worktree. Do not edit the project root except through approved squad helper commands and shared tool-cache helpers.\n\n"
-       "Do not search the web unless the assignment explicitly asks you to. The squad leader is responsible for source/context investigation and should provide the reference facts you need.\n"
+       (if (= "analyst" template)
+         "As an analyst, you may search the web to augment the approved theme when source material is needed. Any stories you produce must be self-contained and must not require downstream agents to do further research.\n"
+         "Do not search the web unless the assignment explicitly asks you to. The squad leader or analyst-provided artifacts should provide the reference facts you need.\n")
        "Do not fetch, clone, install, update, or check remote versions of external tools unless the assignment explicitly asks for that exact operation. Use already-present project scripts and the shared tool cache first.\n\n"
+       "If a command triggers an approval or escalation prompt, stop that command path, record a blocked status with `squad_event.sh`, and hand the blocker back to `squad-leader`. Do not wait indefinitely at an invisible approval prompt.\n\n"
        "# Role Template\n\n"
        template-text "\n\n"
        "# Assignment\n\n"
@@ -169,8 +241,8 @@
        "export SWARMFORGE_PROJECT_ROOT=" (sq (str root)) "\n"
        "export SWARMFORGE_WORKTREE=" (sq (str worktree)) "\n"
        "export SWARMFORGE_TOOL_CACHE_DIR=" (sq (str tool-cache-dir)) "\n"
-       "export PATH=\"$SWARMFORGE_TOOL_CACHE_DIR/bin:" (str script-dir) ":$PATH\"\n\n"
-       "mkdir -p \"$SWARMFORGE_TOOL_CACHE_DIR/bin\" \"$SWARMFORGE_TOOL_CACHE_DIR/src\" \"$SWARMFORGE_TOOL_CACHE_DIR/cache\" \"$SWARMFORGE_TOOL_CACHE_DIR/manifests\" \"$SWARMFORGE_TOOL_CACHE_DIR/locks\"\n"
+       "export PATH=\"$SWARMFORGE_WORKTREE/.swarmforge/tools/bin:" (str script-dir) ":$PATH\"\n\n"
+       "mkdir -p \"$SWARMFORGE_TOOL_CACHE_DIR/bin\" \"$SWARMFORGE_TOOL_CACHE_DIR/src\" \"$SWARMFORGE_TOOL_CACHE_DIR/cache\" \"$SWARMFORGE_TOOL_CACHE_DIR/manifests\" \"$SWARMFORGE_TOOL_CACHE_DIR/locks\" \"$SWARMFORGE_WORKTREE/.swarmforge/tools/bin\" \"$SWARMFORGE_WORKTREE/.swarmforge/tools/manifests\"\n"
        "cd \"$SWARMFORGE_WORKTREE\"\n"
        "exec zsh -lc " (sq (agent-exec-command agent prompt-file worktree root display)) "\n"))
 
@@ -261,85 +333,96 @@
           (exit! 1 "Run ./swarm before spawning transient agents; .swarmforge/roles.tsv is missing."))
         (fs/create-dirs (fs/parent lock-dir))
         (acquire-lock! lock-dir)
-        (try
-          (let [rows (role-rows roles-file)
-                agent-id (next-agent-id root rows template)
-                worktree (fs/path root ".worktrees" agent-id)
-                branch (str "swarmforge-" agent-id)
-                session (str "swarmforge-" agent-id)
-                display (display-name-for-role agent-id)
-                agent (or (not-empty (System/getenv "SWARMFORGE_SQUAD_AGENT")) "codex")
-                squad-dir (fs/path root ".squad")
-                agent-dir (fs/path squad-dir "agents" agent-id)
-                task-dir (fs/path squad-dir "tasks" task-id)
-                prompt-file (fs/path agent-dir "prompt.md")
-                launch-script (fs/path agent-dir "launch.sh")
-                script-dir (fs/path worktree "swarmforge" "scripts")
-                tool-cache-dir (fs/path root ".swarmforge" "tools")
-                row [agent-id agent-id (str worktree) session display agent "task"]]
-            (when-not (#{"claude" "codex" "copilot" "grok"} agent)
-              (exit! 2 (str "Unsupported transient agent backend: " agent)))
-            (when (some #(= agent-id (first %)) rows)
-              (exit! 2 (str "Role already registered: " agent-id)))
-            (when (fs/exists? worktree)
-              (exit! 2 (str "Worktree already exists: " worktree)))
-            (when (fs/exists? agent-dir)
-              (exit! 2 (str "Agent state already exists: " agent-dir)))
-            (run! "git" "-C" (str root) "worktree" "add" "--force" "-B" branch (str worktree) "HEAD")
-            (create-dirs! (concat [(fs/path task-dir "assignments")
-                                   agent-dir]
-                                  (handoff-dirs worktree)))
-            (copy-scripts! worktree)
-            (write-atomic! prompt-file
-                           (render-prompt {:agent-id agent-id
-                                          :template template
-                                          :task-id task-id
-                                          :assignment (str assignment)
-                                          :root (str root)
-                                          :worktree (str worktree)
-                                          :tool-cache-dir (str tool-cache-dir)
-                                          :template-text (slurp (str template-file))
-                                          :assignment-text (slurp (str assignment))}))
-            (write-atomic! launch-script
-                           (render-launch-script {:agent-id agent-id
-                                                  :root root
-                                                  :worktree worktree
-                                                  :prompt-file prompt-file
-                                                  :script-dir script-dir
-                                                  :tool-cache-dir tool-cache-dir
-                                                  :agent agent
-                                                  :display display}))
-            (fs/set-posix-file-permissions launch-script "rwxr-xr-x")
-            (fs/copy assignment (fs/path task-dir "assignments" (str agent-id ".md")) {:replace-existing true})
-            (append-role-atomic! roles-file row)
-            (sync-runtime-files! root worktree)
-            (write-metadata! agent-dir {:agent-id agent-id
-                                        :template template
-                                        :task-id task-id
-                                        :root (str root)
-                                        :worktree (str worktree)
+        (let [capacity-error (atom nil)]
+          (try
+            (let [rows (role-rows roles-file)
+                  global-capacity-error (when (>= (active-transient-count root rows)
+                                                  (squad-max-transient-agents root))
+                                          [3
+                                           "SQUAD_SPAWN_CAPACITY_FULL"
+                                           (str "ACTIVE_TRANSIENTS: " (active-transient-count root rows))
+                                           (str "MAX_TRANSIENTS: " (squad-max-transient-agents root))])
+                  specific-capacity-error (template-capacity-error root rows template)]
+              (if-let [error (or global-capacity-error specific-capacity-error)]
+                (reset! capacity-error error)
+                (let [agent-id (next-agent-id root rows template)
+                      worktree (fs/path root ".worktrees" agent-id)
+                      branch (str "swarmforge-" agent-id)
+                      session (str "swarmforge-" agent-id)
+                      display (display-name-for-role agent-id)
+                      agent (or (not-empty (System/getenv "SWARMFORGE_SQUAD_AGENT")) "codex")
+                      squad-dir (fs/path root ".squad")
+                      agent-dir (fs/path squad-dir "agents" agent-id)
+                      task-dir (fs/path squad-dir "tasks" task-id)
+                      prompt-file (fs/path agent-dir "prompt.md")
+                      launch-script (fs/path agent-dir "launch.sh")
+                      script-dir (fs/path worktree "swarmforge" "scripts")
+                      tool-cache-dir (fs/path root ".swarmforge" "tools")
+                      row [agent-id agent-id (str worktree) session display agent "task"]]
+                  (when-not (#{"claude" "codex" "copilot" "grok"} agent)
+                    (exit! 2 (str "Unsupported transient agent backend: " agent)))
+                  (when (some #(= agent-id (first %)) rows)
+                    (exit! 2 (str "Role already registered: " agent-id)))
+                  (when (fs/exists? worktree)
+                    (exit! 2 (str "Worktree already exists: " worktree)))
+                  (when (fs/exists? agent-dir)
+                    (exit! 2 (str "Agent state already exists: " agent-dir)))
+                  (run! "git" "-C" (str root) "worktree" "add" "--force" "-B" branch (str worktree) "HEAD")
+                  (create-dirs! (concat [(fs/path task-dir "assignments")
+                                         agent-dir]
+                                        (handoff-dirs worktree)))
+                  (copy-scripts! worktree)
+                  (write-atomic! prompt-file
+                                 (render-prompt {:agent-id agent-id
+                                                 :template template
+                                                 :task-id task-id
+                                                 :assignment (str assignment)
+                                                 :root (str root)
+                                                 :worktree (str worktree)
+                                                 :tool-cache-dir (str tool-cache-dir)
+                                                 :template-text (slurp (str template-file))
+                                                 :assignment-text (slurp (str assignment))}))
+                  (write-atomic! launch-script
+                                 (render-launch-script {:agent-id agent-id
+                                                        :root root
+                                                        :worktree worktree
+                                                        :prompt-file prompt-file
+                                                        :script-dir script-dir
+                                                        :tool-cache-dir tool-cache-dir
+                                                        :agent agent
+                                                        :display display}))
+                  (fs/set-posix-file-permissions launch-script "rwxr-xr-x")
+                  (fs/copy assignment (fs/path task-dir "assignments" (str agent-id ".md")) {:replace-existing true})
+                  (append-role-atomic! roles-file row)
+                  (sync-runtime-files! root worktree)
+                  (write-metadata! agent-dir {:agent-id agent-id
+                                              :template template
+                                              :task-id task-id
+                                              :root (str root)
+                                              :worktree (str worktree)
+                                              :session session
+                                              :display display
+                                              :agent agent
+                                              :tool-cache-dir (str tool-cache-dir)
+                                              :launch-script (str launch-script)})
+                  (write-status-and-heartbeat! agent-dir agent-id task-id "spawned" "registered transient agent")
+                  (when-not (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
+                    (let [socket (str/trim (slurp (str (fs/path state-dir "tmux-socket"))))]
+                      (launch-session! {:socket socket
                                         :session session
                                         :display display
-                                        :agent agent
-                                        :tool-cache-dir (str tool-cache-dir)
-                                        :launch-script (str launch-script)})
-            (write-status-and-heartbeat! agent-dir agent-id task-id "spawned" "registered transient agent")
-            (when-not (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
-              (let [socket (str/trim (slurp (str (fs/path state-dir "tmux-socket"))))
-                    launch-script launch-script]
-                (launch-session! {:socket socket
-                                  :session session
-                                  :display display
-                                  :launch-script launch-script})
-                (write-status-and-heartbeat! agent-dir agent-id task-id "running" "detached tmux session started")))
-            (println "SQUAD_AGENT:" agent-id)
-            (println "TEMPLATE:" template)
-            (println "TASK_ID:" task-id)
-            (println "WORKTREE:" (str worktree))
-            (println "SESSION:" session)
-            (println "PROMPT:" (str prompt-file)))
-          (finally
-            (fs/delete-tree lock-dir)))))))
+                                        :launch-script launch-script})
+                      (write-status-and-heartbeat! agent-dir agent-id task-id "running" "detached tmux session started")))
+                  (println "SQUAD_AGENT:" agent-id)
+                  (println "TEMPLATE:" template)
+                  (println "TASK_ID:" task-id)
+                  (println "WORKTREE:" (str worktree))
+                  (println "SESSION:" session)
+                  (println "PROMPT:" (str prompt-file)))))
+            (finally
+              (fs/delete-tree lock-dir)))
+          (when-let [error @capacity-error]
+            (apply exit! error)))))))
 
 (defn -main [& args]
   (when-not (= 3 (count args))

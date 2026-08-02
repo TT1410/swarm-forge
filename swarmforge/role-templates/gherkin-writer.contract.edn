@@ -1,0 +1,9 @@
+{:role "gherkin-writer"
+ :handoff-targets ["squad-leader"]
+ :may-web-search false
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :writes ["gherkin"]
+ :artifact-roots ["features/"]
+ :forbidden-artifact-roots ["stories/" "qa/" "src/" "test/" ".squad/reviews/"]}
