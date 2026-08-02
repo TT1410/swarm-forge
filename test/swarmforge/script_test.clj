@@ -467,7 +467,7 @@
         (is (str/includes? (slurp (str metadata-file)) (str "launch_script: " expected-launch-script)))
         (is (str/includes? (slurp (str prompt-file)) "assigned_worktree:"))
         (is (str/includes? (slurp (str prompt-file)) "tool_cache_dir:"))
-        (is (str/includes? (slurp (str prompt-file)) "Your agent process may be rooted at the project root"))
+        (is (str/includes? (slurp (str prompt-file)) "Your agent process starts from the assigned worktree."))
         (is (str/includes? (slurp (str prompt-file)) "Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree."))
         (is (str/includes? (slurp (str prompt-file)) "Do not search the web unless the assignment explicitly asks you to."))
         (is (str/includes? (slurp (str prompt-file)) "Do not fetch, clone, install, update, or check remote versions of external tools"))
@@ -478,8 +478,9 @@
           (is (str/includes? launcher "export SWARMFORGE_TOOL_CACHE_DIR="))
           (is (str/includes? launcher "$SWARMFORGE_WORKTREE/.swarmforge/tools/bin"))
           (is (str/includes? launcher "cd \"$SWARMFORGE_WORKTREE\""))
-          (is (str/includes? launcher "codex -C"))
-          (is (str/includes? launcher (str "codex -C '\"'\"'" expected-root "'\"'\"'")))
+          (is (str/includes? launcher "codex --dangerously-bypass-approvals-and-sandbox"))
+          (is (not (str/includes? launcher "codex -C")))
+          (is (not (str/includes? launcher (str "codex -C '\"'\"'" expected-root "'\"'\"'"))))
           (is (not (str/includes? launcher (str "codex -C '\"'\"'" expected-worktree "'\"'\"'")))))
         (is (str/includes? (slurp (str prompt-file))
                            "Find the original rules."))
@@ -2297,7 +2298,10 @@
                             (str root))
             liveness-file (fs/path root ".squad/agents/specifier-001/liveness")
             first-liveness (slurp (str liveness-file))
-            status (run {:dir root} (script "squad_status.sh") "specifier-001")
+            status (run {:dir root
+                         :env {"PATH" (str bin ":" (System/getenv "PATH"))}}
+                        (script "squad_status.sh")
+                        "specifier-001")
             second-pass (run {:dir root
                               :env {"PATH" (str bin ":" (System/getenv "PATH"))
                                     "SWARMFORGE_SQUAD_STALE_SECONDS" "1"}}
@@ -2310,7 +2314,67 @@
         (is (str/includes? first-liveness "last_10_lines:\nline 1\nline 2\nline 3\n"))
         (is (str/includes? (:out status) "LIVENESS_STATE: running_pane_active"))
         (is (str/includes? (:out status) "LAST_10_LINES:\nline 1\nline 2\nline 3"))
+        (is (str/includes? (:out status) "PANE_LIVE: true"))
+        (is (str/includes? (:out status) "LAST_20_LINES:\nline 1\nline 2\nline 3"))
         (is (str/includes? (:out second-pass) "tmux pane alive but unchanged")))
+    (finally
+      (fs/delete-tree root)))))
+
+(deftest squad-statusd-graces-transient-missing-tmux-session
+  (let [root (tmp-dir)
+        bin (fs/path root "bin")
+        fake-tmux (fs/path bin "tmux")]
+    (try
+      (init-repo! root)
+      (fs/create-dirs bin)
+      (write-file fake-tmux
+                  (str "#!/usr/bin/env sh\n"
+                       "cmd=\"$3\"\n"
+                       "case \"$cmd\" in\n"
+                       "  has-session) exit 1 ;;\n"
+                       "  list-sessions) exit 0 ;;\n"
+                       "  send-keys) exit 0 ;;\n"
+                       "  *) exit 0 ;;\n"
+                       "esac\n"))
+      (run {:dir root} "chmod" "+x" (str fake-tmux))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".swarmforge/tmux-socket")
+                  "/tmp/swarmforge-test.sock\n")
+      (write-file (fs/path root ".squad/agents/specifier-001/metadata")
+                  (str "agent_id: specifier-001\n"
+                       "template: specifier\n"
+                       "task_id: wumpus-spec\n"
+                       "project_root: " root "\n"
+                       "worktree: " root "/.worktrees/specifier-001\n"
+                       "session: swarmforge-specifier-001\n"
+                       "display: Specifier 001\n"
+                       "backend: codex\n"))
+      (write-file (fs/path root ".squad/agents/specifier-001/status")
+                  "state: running\ndetail: starting\nupdated_at: 2000-01-01T00:00:00Z\n")
+      (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
+                  "agent: specifier-001\ntask_id: wumpus-spec\nstate: running\ndetail: starting\nupdated_at: 2000-01-01T00:00:00Z\n")
+      (let [first-pass (run {:dir root
+                             :env {"PATH" (str bin ":" (System/getenv "PATH"))
+                                   "SWARMFORGE_SQUAD_STALE_SECONDS" "1"
+                                   "SWARMFORGE_SQUAD_MISSING_SESSION_GRACE_SECONDS" "60"}}
+                            (script "squad_statusd.sh")
+                            "--once"
+                            "--no-notify"
+                            (str root))
+            missing-file (fs/path root ".squad/agents/specifier-001/missing-session")
+            second-pass (run {:dir root
+                              :env {"PATH" (str bin ":" (System/getenv "PATH"))
+                                    "SWARMFORGE_SQUAD_STALE_SECONDS" "1"
+                                    "SWARMFORGE_SQUAD_MISSING_SESSION_GRACE_SECONDS" "0"}}
+                             (script "squad_statusd.sh")
+                             "--once"
+                             "--no-notify"
+                             (str root))]
+        (is (str/includes? (:out first-pass) "SQUAD_STATUS_OK"))
+        (is (str/includes? (slurp (str missing-file)) "session: swarmforge-specifier-001"))
+        (is (str/includes? (:out second-pass) "tmux session missing for")))
     (finally
       (fs/delete-tree root)))))
 
@@ -2526,6 +2590,9 @@
         pid (str (.pid daemon))
         squad-pid (str (.pid squad-daemon))]
     (try
+      (init-repo! root)
+      (let [reviewer-worktree (fs/path root ".worktrees/reviewer-001")]
+        (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-reviewer-001" (str reviewer-worktree) "HEAD"))
       (write-file (fs/path root ".swarmforge/tmux-socket") (str sock "\n"))
       (write-file (fs/path root ".swarmforge/sessions.tsv")
                   (str "1\tcoder\tswarmforge-coder\tCoder\tcodex\n"
@@ -2554,6 +2621,9 @@
         (is (not (fs/exists? pid-file)))
         (is (not (fs/exists? squad-pid-file)))
         (is (not (fs/exists? squadd-pid-file)))
+        (is (not (fs/exists? (fs/path root ".worktrees/reviewer-001"))))
+        (is (not (git-worktree-registered? root (fs/path root ".worktrees/reviewer-001"))))
+        (is (not (git-branch-exists? root "swarmforge-reviewer-001")))
         (is (false? (.isAlive squadd)))
         (is (false? (.isAlive daemon)))
         (is (false? (.isAlive squad-daemon))))

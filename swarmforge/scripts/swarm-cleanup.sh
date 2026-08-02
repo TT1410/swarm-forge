@@ -58,6 +58,17 @@ else
   fi
 fi
 
+if has_command git && [[ -d "$WORKING_DIR/.git" ]]; then
+  while IFS= read -r worktree_path; do
+    [[ "$worktree_path" == "$WORKING_DIR/.worktrees/"* || "$worktree_path" == */.worktrees/* ]] || continue
+    agent_id="${worktree_path:t}"
+    branch="swarmforge-$agent_id"
+    git -C "$WORKING_DIR" worktree remove --force "$worktree_path" 2>/dev/null || rm -rf "$worktree_path"
+    git -C "$WORKING_DIR" worktree prune 2>/dev/null || true
+    git -C "$WORKING_DIR" branch -D "$branch" 2>/dev/null || true
+  done < <(git -C "$WORKING_DIR" worktree list --porcelain 2>/dev/null | awk '/^worktree / {print substr($0, 10)}')
+fi
+
 for session in "$@"; do
   tmux -S "$TMUX_SOCKET" kill-session -t "$session" 2>/dev/null || true
 done

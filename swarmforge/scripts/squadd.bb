@@ -57,6 +57,8 @@
   (-> alert
       (str/replace #" heartbeat stale for [0-9]+ seconds; tmux pane alive but unchanged$"
                    " heartbeat stale; tmux pane alive but unchanged")
+      (str/replace #" tmux session missing for [0-9]+ seconds:"
+                   " tmux session missing:")
       (str/replace #" heartbeat stale for [0-9]+ seconds$"
                    " heartbeat stale")))
 
@@ -382,10 +384,39 @@
                "last_10_lines:\n"
                (or tail "")))))
 
+(defn missing-session-file [root agent]
+  (fs/path root ".squad" "agents" agent "missing-session"))
+
+(defn clear-missing-session! [root agent]
+  (fs/delete-if-exists (missing-session-file root agent)))
+
+(defn missing-session-grace-seconds []
+  (env-long "SWARMFORGE_SQUAD_MISSING_SESSION_GRACE_SECONDS" 30))
+
+(defn missing-session-alert [root agent session]
+  (let [file (missing-session-file root agent)
+        first-seen (read-value file "first_seen")
+        recorded-session (read-value file "session")
+        now-instant (instant-now)
+        same-session? (= session recorded-session)
+        baseline (if same-session? first-seen (now))
+        first-instant (when same-session?
+                        (parse-instant first-seen))
+        age (when first-instant
+              (.getSeconds (java.time.Duration/between first-instant now-instant)))
+        grace (missing-session-grace-seconds)]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file)
+          (str "session: " session "\n"
+               "first_seen: " baseline "\n"
+               "observed_at: " (now) "\n"))
+    (when (and age (>= age grace))
+      (str "agent " agent " tmux session missing for " age " seconds: " session))))
+
 (defn pane-liveness-alert [root socket agent session age]
   (cond
     (str/blank? session) (str "agent " agent " has no tmux session metadata")
-    (not (tmux-session-exists? socket session)) (str "agent " agent " tmux session missing: " session)
+    (not (tmux-session-exists? socket session)) (missing-session-alert root agent session)
     (pane-dead? socket session) (str "agent " agent " tmux pane is dead: " session)
     :else (let [liveness (fs/path root ".squad" "agents" agent "liveness")
                 previous-hash (read-value liveness "pane_hash")
@@ -393,6 +424,7 @@
                 current-hash (sha256 tail)
                 changed? (not= previous-hash current-hash)
                 state (if changed? "running_pane_active" "running_pane_idle")]
+            (clear-missing-session! root agent)
             (write-liveness! root agent state changed? tail)
             (when-not changed?
               (str "agent " agent " heartbeat stale for " age " seconds; tmux pane alive but unchanged")))))
@@ -410,13 +442,15 @@
                 (Thread/sleep 100)
                 (recur (dec remaining)))))))
 
-(defn maybe-tmux-alert [socket skip-tmux? agent session]
+(defn maybe-tmux-alert [root socket skip-tmux? agent session]
   (cond
     skip-tmux? nil
     (str/blank? session) (str "agent " agent " has no tmux session metadata")
-    (not (tmux-session-exists? socket session)) (str "agent " agent " tmux session missing: " session)
+    (not (tmux-session-exists? socket session)) nil
     (pane-dead? socket session) (str "agent " agent " tmux pane is dead: " session)
-    :else nil))
+    :else (do
+            (clear-missing-session! root agent)
+            nil)))
 
 (defn retire-role-row! [root agent]
   (let [roles (load-roles root)]
@@ -490,7 +524,7 @@
                               (if-let [alert (pane-liveness-alert root socket agent session age)]
                                 [alert]
                                 []))
-      :else (if-let [alert (maybe-tmux-alert socket skip-tmux? agent session)]
+      :else (if-let [alert (maybe-tmux-alert root socket skip-tmux? agent session)]
               [alert]
               []))))
 
