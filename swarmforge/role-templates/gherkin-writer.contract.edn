@@ -4,6 +4,7 @@
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
+ :may-run-broad-tests false
  :writes ["gherkin"]
  :artifact-roots ["features/"]
  :forbidden-artifact-roots ["stories/" "qa/" "src/" "test/" ".squad/reviews/"]}

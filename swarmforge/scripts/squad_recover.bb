@@ -78,6 +78,31 @@
       (Long/parseLong (str/trim (:out result)))
       0)))
 
+(defn parse-instant [value]
+  (try
+    (when-not (str/blank? value)
+      (java.time.Instant/parse value))
+    (catch Exception _ nil)))
+
+(defn env-long [name default-value]
+  (if-let [value (System/getenv name)]
+    (if (re-matches #"[0-9]+" value)
+      (Long/parseLong value)
+      default-value)
+    default-value))
+
+(defn recent-status? [root agent]
+  (let [grace-seconds (env-long "SWARMFORGE_SQUAD_RECOVERY_GRACE_SECONDS" 300)
+        status-file (fs/path root ".squad" "agents" agent "status")
+        heartbeat-file (fs/path root ".squad" "agents" agent "heartbeat")
+        instants (keep #(parse-instant (read-value % "updated_at"))
+                       [status-file heartbeat-file])
+        newest (when (seq instants)
+                 (apply max-key #(.toEpochMilli %) instants))]
+    (and newest
+         (< (.getSeconds (java.time.Duration/between newest (java.time.Instant/now)))
+            grace-seconds))))
+
 (defn handoff-files [root worktree agent]
   (let [dirs [(fs/path root ".swarmforge" "handoffs")
               (fs/path worktree ".swarmforge" "handoffs")]]
@@ -132,6 +157,7 @@
             (seq handoffs) ["delivered_handoff" "Process the delivered handoff before deciding recovery."]
             (seq dirty) ["dirty_worktree" "Ask the user before retiring, replacing, editing, or recovering this worktree."]
             (pos? committed) ["committed_no_handoff" "Ask the user before recovering committed work without a handoff."]
+            (recent-status? root agent) ["recently_active_no_work" "Do not reject or replace yet. Wait for handoff delivery or another recovery check after the grace period."]
             :else ["failed_no_work" "It is safe to reject or replace if the assignment still needs work."])]
       (print-recovery {:agent agent
                        :task-id task-id

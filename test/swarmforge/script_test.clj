@@ -169,6 +169,8 @@
     (is (= ["stories/"] (:artifact-roots (by-role "analyst"))))
     (is (= ["features/"] (:artifact-roots (by-role "gherkin-writer"))))
     (is (= ["qa/"] (:artifact-roots (by-role "qa-procedure-writer"))))
+    (doseq [artifact-role ["gherkin-writer" "qa-procedure-writer" "gherkin-reviewer" "qa-procedure-reviewer"]]
+      (is (false? (:may-run-broad-tests (by-role artifact-role))) artifact-role))
     (doseq [review-role ["gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"]]
       (is (= [".squad/reviews/"] (:artifact-roots (by-role review-role))) review-role))
     (is (= "implementation_approved" (:requires-packet-state (by-role "implementer"))))
@@ -1022,6 +1024,60 @@
         (is (str/includes? packet "gherkin_path: features/cave-topology.feature"))
         (is (str/includes? packet "qa_procedure_path: qa/cave-topology.md"))
         (is (str/includes? packet "implementation_approval: approved")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-packet-records-post-implementation-story-state
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (let [sha (prepare-implementation-packet! root "wumpus" "cave-topology")
+            implemented (run {:dir root}
+                             (script "squad_packet.sh")
+                             "record"
+                             "cave-topology"
+                             "implementation"
+                             "wumpus-cave-impl"
+                             "swarmforge-implementer-001"
+                             sha)
+            cleaned (run {:dir root}
+                         (script "squad_packet.sh")
+                         "record"
+                         "cave-topology"
+                         "cleaner"
+                         "wumpus-cave-clean"
+                         "swarmforge-cleaner-001"
+                         sha)
+            reviewed (run {:dir root}
+                          (script "squad_packet.sh")
+                          "review"
+                          "cave-topology"
+                          "code"
+                          "accepted"
+                          "wumpus-cave-code-review"
+                          "swarmforge-code-reviewer-001"
+                          sha)
+            status (run {:dir root}
+                        (script "squad_packet.sh")
+                        "status"
+                        "cave-topology")
+            packet (slurp (str (fs/path root ".squad/stories/cave-topology/packet")))]
+        (is (str/includes? (:out implemented) "STATE: implemented"))
+        (is (str/includes? (:out cleaned) "STATE: cleaned"))
+        (is (str/includes? (:out reviewed) "STATE: code_reviewed"))
+        (is (str/includes? (:out status) "IMPLEMENTATION:"))
+        (is (str/includes? (:out status) "CLEANER:"))
+        (is (str/includes? (:out status) "CODE_REVIEW: accepted"))
+        (is (str/includes? packet "implementation_assignment: wumpus-cave-impl"))
+        (is (str/includes? packet "cleaner_assignment: wumpus-cave-clean")))
       (finally
         (fs/delete-tree root)))))
 
@@ -2284,6 +2340,36 @@
         (is (str/includes? (:out result) "DIRTY: ?? stories/hunt-wumpus-001.md"))
         (is (str/includes? (:out result) "RECOVERY_STATE: dirty_worktree"))
         (is (str/includes? (:out result) "Ask the user before retiring")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-recover-graces-recently-active-missing-worker
+  (let [root (tmp-dir)
+        worktree (fs/path root ".worktrees/analyst-001")]
+    (try
+      (init-repo! root)
+      (run {:dir root} "git" "worktree" "add" "-q" "-b" "analyst-001" (str worktree))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" worktree "\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "missing.sock") "\n"))
+      (write-file (fs/path root ".squad/agents/analyst-001/metadata")
+                  (str "agent_id: analyst-001\n"
+                       "template: analyst\n"
+                       "task_id: hunt-wumpus-analysis\n"
+                       "worktree: " worktree "\n"
+                       "session: swarmforge-analyst-001\n"))
+      (write-agent-status! root "analyst-001" "working")
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_RECOVERY_GRACE_SECONDS" "999999999"}}
+                        (script "squad_recover.sh")
+                        "analyst-001")]
+        (is (str/includes? (:out result) "SESSION_LIVE: false"))
+        (is (str/includes? (:out result) "DIRTY_FILES: 0"))
+        (is (str/includes? (:out result) "COMMITS_AHEAD: 0"))
+        (is (str/includes? (:out result) "HANDOFFS: 0"))
+        (is (str/includes? (:out result) "RECOVERY_STATE: recently_active_no_work"))
+        (is (str/includes? (:out result) "Do not reject or replace yet")))
       (finally
         (fs/delete-tree root)))))
 

@@ -11,12 +11,14 @@
        "  squad_packet.sh attach <story-id> <gherkin|qa-procedure> <assignment-id> <branch> <sha> <artifact-file>\n"
        "  squad_packet.sh review <story-id> <gherkin|qa-procedure|code|architecture> <accepted|changes-requested> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh approve <story-id> <story|implementation> <detail...>\n"
+       "  squad_packet.sh record <story-id> <implementation|cleaner|hardener|qa|architecture> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh batch <story-id> <hardener|qa|architecture> <batch-id> <stage> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh status <story-id>"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
 (def artifact-kinds #{"gherkin" "qa-procedure"})
 (def review-kinds #{"gherkin" "qa-procedure" "code" "architecture"})
+(def result-kinds #{"implementation" "cleaner" "hardener" "qa" "architecture"})
 (def batch-kinds #{"hardener" "qa" "architecture"})
 
 (defn exit! [status & lines]
@@ -131,6 +133,13 @@
 
 (defn recompute-state [packet]
   (cond
+    (contains? packet "architecture_sha") "architecture_returned"
+    (contains? packet "qa_sha") "qa_returned"
+    (contains? packet "hardener_sha") "hardener_returned"
+    (and (= "accepted" (get packet "code_review"))
+         (contains? packet "cleaner_sha")) "code_reviewed"
+    (contains? packet "cleaner_sha") "cleaned"
+    (contains? packet "implementation_sha") "implemented"
     (approved? packet "implementation_approval") "implementation_approved"
     (and (approved? packet "story_approval")
          (accepted? packet "gherkin_review")
@@ -152,7 +161,15 @@
                  "implementation_assignment" "implementation_branch" "implementation_sha"
                  "cleaner_assignment" "cleaner_branch" "cleaner_sha"
                  "code_review" "code_review_assignment" "code_review_branch" "code_review_sha"
-                 "hardener_batch" "qa_batch" "architecture_batch" "updated_at"]
+                 "hardener_batch" "hardener_batch_stage" "hardener_batch_assignment"
+                 "hardener_batch_branch" "hardener_batch_sha" "hardener_assignment"
+                 "hardener_branch" "hardener_sha" "qa_batch" "qa_batch_stage"
+                 "qa_batch_assignment" "qa_batch_branch" "qa_batch_sha"
+                 "qa_assignment" "qa_branch" "qa_sha" "architecture_batch"
+                 "architecture_batch_stage" "architecture_batch_assignment"
+                 "architecture_batch_branch" "architecture_batch_sha"
+                 "architecture_assignment" "architecture_branch" "architecture_sha"
+                 "updated_at"]
         emitted (set ordered)]
     (concat
      (keep (fn [k]
@@ -282,6 +299,31 @@
     (println "STATE:" (get packet "state"))
     (println "APPROVAL:" gate)))
 
+(defn record-result! [story-id kind assignment-id branch sha]
+  (when-not (contains? result-kinds kind)
+    (exit! 2 "Result kind must be implementation, cleaner, hardener, qa, or architecture."))
+  (doseq [[label value] [["Story id" story-id]
+                         ["Assignment id" assignment-id]
+                         ["Branch" branch]]]
+    (validate-id! label value))
+  (validate-sha! sha)
+  (let [root (fs/absolutize (project-root))
+        _ (ensure-packet! root story-id)
+        packet (packet-map root story-id)
+        prefix (str/replace kind "-" "_")
+        packet (write-packet! root story-id
+                              (assoc packet
+                                     (str prefix "_assignment") assignment-id
+                                     (str prefix "_branch") branch
+                                     (str prefix "_sha") sha))]
+    (event! root story-id (str prefix "_recorded") assignment-id branch sha)
+    (println "SQUAD_PACKET:" story-id)
+    (println "STATE:" (get packet "state"))
+    (println "RESULT:" kind)
+    (println "ASSIGNMENT:" assignment-id)
+    (println "BRANCH:" branch)
+    (println "SHA:" sha)))
+
 (defn batch-story! [story-id kind batch-id stage assignment-id branch sha]
   (when-not (contains? batch-kinds kind)
     (exit! 2 "Batch kind must be hardener, qa, or architecture."))
@@ -323,9 +365,15 @@
     (println "QA_PROCEDURE:" (get packet "qa_procedure_path" "none"))
     (println "QA_PROCEDURE_REVIEW:" (get packet "qa_procedure_review" "none"))
     (println "IMPLEMENTATION_APPROVAL:" (get packet "implementation_approval" "none"))
+    (println "IMPLEMENTATION:" (get packet "implementation_sha" "none"))
+    (println "CLEANER:" (get packet "cleaner_sha" "none"))
+    (println "CODE_REVIEW:" (get packet "code_review" "none"))
     (println "HARDENER_BATCH:" (get packet "hardener_batch" "none"))
+    (println "HARDENER:" (get packet "hardener_sha" "none"))
     (println "QA_BATCH:" (get packet "qa_batch" "none"))
+    (println "QA:" (get packet "qa_sha" "none"))
     (println "ARCHITECTURE_BATCH:" (get packet "architecture_batch" "none"))
+    (println "ARCHITECTURE:" (get packet "architecture_sha" "none"))
     (println "PACKET:" (str file))))
 
 (defn -main [& args]
@@ -342,6 +390,9 @@
     "approve" (if (>= (count args) 4)
                 (approve! (second args) (nth args 2) (drop 3 args))
                 (exit! 1 usage-text))
+    "record" (if (= 6 (count args))
+               (apply record-result! (rest args))
+               (exit! 1 usage-text))
     "batch" (if (= 8 (count args))
               (apply batch-story! (rest args))
               (exit! 1 usage-text))

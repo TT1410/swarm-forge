@@ -20,6 +20,7 @@
 (def stopping? (atom false))
 (def last-status-poll (atom 0))
 (def last-status-notification (atom {:alerts #{} :notified-at nil}))
+(def last-status-log-state (atom nil))
 (def terminal-agent-states
   #{"complete" "review_complete" "handoff_ready" "handed_off" "handing_off"})
 
@@ -432,9 +433,14 @@
         alert-set (set alerts)
         now-instant (instant-now)]
     (doseq [alert alerts]
-      (println "SQUAD_STATUS_ALERT:" alert)
-      (log! root "status-alert" alert)
-      (append-compat-log! root "squad-statusd.log" "alert" alert))
+      (println "SQUAD_STATUS_ALERT:" alert))
+    (when (seq alerts)
+      (let [state-key [:alerts alert-set]]
+        (when (not= state-key @last-status-log-state)
+          (reset! last-status-log-state state-key)
+          (doseq [alert alerts]
+            (log! root "status-alert" alert)
+            (append-compat-log! root "squad-statusd.log" "alert" alert)))))
     (when (seq alerts)
       (if no-notify?
         (append-compat-log! root "squad-statusd.log" "notify-skipped" (count alerts))
@@ -454,8 +460,10 @@
     (when (empty? alerts)
       (reset! last-status-notification {:alerts #{} :notified-at nil})
       (println "SQUAD_STATUS_OK")
-      (log! root "status-ok")
-      (append-compat-log! root "squad-statusd.log" "ok"))
+      (when (not= :ok @last-status-log-state)
+        (reset! last-status-log-state :ok)
+        (log! root "status-ok")
+        (append-compat-log! root "squad-statusd.log" "ok")))
     alerts))
 
 (defn parse-kv-file [file]

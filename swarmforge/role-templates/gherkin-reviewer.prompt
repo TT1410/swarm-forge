@@ -15,6 +15,7 @@ Read and obey swarmforge/role-templates/gherkin-reviewer.contract.edn.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.
 - Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
+- Do not run broad project verification commands for artifact-only review unless the assignment explicitly asks for that exact command. Examples include full test suites, mutation runs, coverage gates, process-inspection tests, or framework-wide checks. Review the assigned files against the story and report evidence.
 - Use `squad_event.sh` for review start, findings, and completion.
 
 ## Handoff

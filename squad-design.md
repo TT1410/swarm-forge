@@ -1239,6 +1239,44 @@ Corrections:
   `changes-requested` report because those reports are evidence for leader
   decisions, not approval of implementation work
 
+### Fourth HTW Trial Defect Corrections
+
+The fourth Hunt the Wumpus trial reached analyst output, story packets, and
+parallel Gherkin/QA procedure fanout. It exposed remaining defects in recovery
+races, artifact-only verification, story packet accounting, and status noise:
+
+- an analyst with a valid late handoff could be rejected and replaced after a
+  transient session disappeared, creating duplicate analyst work and dirty
+  replacement state
+- artifact-only writers and reviewers could run broad project verification
+  commands even though they were producing or reviewing specification artifacts
+  rather than executable implementation
+- story packets tracked story approval, Gherkin, QA procedures, and review
+  gates, but post-implementation result SHAs were still too dependent on
+  assignment records
+- the unified daemon could keep appending repeated `status-ok` or identical
+  alert records every polling interval
+
+Corrections:
+
+- `squad_recover.sh` now has a `recently_active_no_work` grace state. A missing
+  worker with recent status or heartbeat but no dirty work, commits, or handoff
+  should not be immediately rejected or replaced; the leader should wait for
+  handoff delivery or rerun recovery after the grace period.
+- Gherkin writers, QA procedure writers, and their artifact reviewers now have
+  a contract-level `:may-run-broad-tests false` boundary. Their prompts prohibit
+  broad project verification commands such as full test suites, mutation runs,
+  coverage gates, process-inspection tests, or framework-wide checks unless the
+  assignment explicitly asks for that command.
+- `squad_packet.sh record` records post-implementation result SHAs directly on
+  each story packet for `implementation`, `cleaner`, `hardener`, `qa`, and
+  `architecture` returns.
+- `squad_packet.sh status` now prints implementation, cleaner, code review,
+  hardener, QA, and architecture fields so the leader can inspect story progress
+  from the packet instead of scattered assignment state.
+- `squadd.sh` logs `status-ok` and repeated identical alert sets only when the
+  status condition changes, while still printing current one-shot status output.
+
 ## Implementation Deficits
 
 The following implementation deficits were identified before the first slices.
@@ -1333,6 +1371,9 @@ They are tracked here as resolved, partially resolved, or still open.
       artifact-producing transitions
 - [x] transient prompts and templates prohibit web searches unless explicitly
       assigned
+- [x] artifact-only writers and artifact-only reviewers are contractually
+      prohibited from broad project verification commands unless explicitly
+      assigned
 - [x] transient worktrees avoid copied central `roles.tsv` registry state
 - [x] worker helper commands can use `SWARMFORGE_PROJECT_ROOT` while running
       from the assigned worktree
@@ -1350,6 +1391,8 @@ They are tracked here as resolved, partially resolved, or still open.
       responsibility while preserving the six-pack specification workflow
 - [x] story packet state machine reunifies story, Gherkin, QA procedure,
       review, approval, implementation, and batch state for each story
+- [x] story packets can record post-implementation result SHAs for
+      implementation, cleaner, hardener, QA, and architecture returns
 - [x] implementer assignments are blocked unless the story packet is
       `implementation_approved`
 - [x] squad leader policy requires user negotiation and approval of the

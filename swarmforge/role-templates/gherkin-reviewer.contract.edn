@@ -4,6 +4,7 @@
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
+ :may-run-broad-tests false
  :writes ["review-report"]
  :artifact-roots [".squad/reviews/"]
  :forbidden-artifact-roots ["stories/" "features/" "qa/" "src/" "test/"]}
