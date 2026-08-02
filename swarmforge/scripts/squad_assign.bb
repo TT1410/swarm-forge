@@ -260,10 +260,15 @@
        "task: " assignment-id "\n"
        "commit: <10-char-commit>\n"))
 
-(defn render-assignment [{:keys [theme-id story-id template assignment-id theme-text story-text instructions-text requirement packet-text]}]
+(defn theme-scoped-assignment? [template story-id]
+  (and (= "analyst" template)
+       (= "theme" story-id)))
+
+(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text story-text instructions-text requirement packet-text]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
+       "scope: " scope "\n"
        "story_id: " story-id "\n"
        "template: " template "\n"
        (when requirement
@@ -271,8 +276,9 @@
        "\n"
        "## Theme\n\n"
        theme-text "\n\n"
-       "## Story\n\n"
-       story-text "\n\n"
+       (when story-text
+         (str "## Story\n\n"
+              story-text "\n\n"))
        (when packet-text
          (str "## Story Packet\n\n"
               "```text\n"
@@ -299,16 +305,19 @@
   (let [root (fs/absolutize (project-root))
         theme (theme-dir root theme-id)
         theme-file (fs/path theme "theme.md")
+        theme-scoped? (theme-scoped-assignment? template story-id)
         story-ref (fs/path theme "stories" (str story-id ".ref"))
         legacy-story-file (fs/path theme "stories" (str story-id ".md"))
-        story-file (or (referenced-project-file root story-ref)
-                       legacy-story-file)
+        story-file (when-not theme-scoped?
+                     (or (referenced-project-file root story-ref)
+                         legacy-story-file))
         template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
         instructions (source-file! instructions-file)
         dir (assignment-dir root assignment-id)
         now (timestamp)]
     (ensure-file! "Theme file not found" theme-file)
-    (ensure-file! "Story file not found" story-file)
+    (when-not theme-scoped?
+      (ensure-file! "Story file not found" story-file))
     (ensure-file! "Role template not found" template-file)
     (when (and requirement
                (= "approval" (:kind requirement))
@@ -332,8 +341,10 @@
                                               :story-id story-id
                                               :template template
                                               :assignment-id assignment-id
+                                              :scope (if theme-scoped? "theme" "story")
                                               :theme-text (slurp (str theme-file))
-                                              :story-text (slurp (str story-file))
+                                              :story-text (when story-file
+                                                            (slurp (str story-file)))
                                               :instructions-text (slurp (str instructions))
                                               :requirement requirement
                                               :packet-text (when packet
@@ -345,6 +356,7 @@
       (write-atomic! (fs/path dir "metadata")
                      (str "assignment_id: " assignment-id "\n"
                           "theme_id: " theme-id "\n"
+                          "scope: " (if theme-scoped? "theme" "story") "\n"
                           "story_id: " story-id "\n"
                           "template: " template "\n"
                           (when requirement

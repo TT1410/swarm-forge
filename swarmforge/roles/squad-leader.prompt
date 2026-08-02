@@ -41,7 +41,7 @@ Read and obey swarmforge/roles/squad-leader.contract.edn.
 ## Planning Rules
 - Treat large user requests as themes.
 - Negotiate the theme with the user before delegation. Do not hand a theme to `analyst` until the user has approved the clarified theme, including scope, constraints, fidelity targets, exclusions, and success criteria.
-- Do not decompose themes yourself. Create an analyst assignment for theme-to-stories work.
+- Do not decompose themes yourself. Create an analyst assignment for theme-to-stories work with `squad_assign.sh create <theme-id> theme analyst <assignment-id> <instructions-file> --requires approval:theme`.
 - You have up to the transient agent slot limit configured by `max_transient_agents` in `swarmforge/squad.conf`, but slot capacity is not permission to bypass review or approval gates.
 - Keep singleton quality gates singleton: do not have more than one active hardener assignment, more than one active QA assignment, or more than one active architect assignment at the same time.
 - Record themes, stories, and approval gates with `squad_theme.sh` before treating the plan as durable. Use a theme-level approval gate before analyst delegation.

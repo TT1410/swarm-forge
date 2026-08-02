@@ -1177,6 +1177,10 @@ Corrections:
   terminology, source references, and examples needed by transient agents
 - analyst may use web research to augment an approved theme, but downstream
   stories must not require further research by later agents
+- analyst theme-to-stories assignments are theme-scoped: use
+  `squad_assign.sh create <theme-id> theme analyst <assignment-id>
+  <instructions-file> --requires approval:theme`; the assignment includes the
+  approved theme and does not require a pre-existing story artifact
 - artifact-specific reviewer and architect report commits are explicitly
   durable `.squad/reviews/` artifacts that should be merged when relevant
 - the squad leader workflow now distinguishes missing-session recovery cases:
@@ -1386,8 +1390,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [ ] policy for resolving merge conflicts created by transient work
 - [ ] policy for interrupting or restarting a running transient agent
 - [ ] default approval-gate policy for non-implementer templates
-- [ ] helper-level enforcement of the theme-approved gate before analyst
-      assignments; current enforcement is prompt/constitution policy
+- [x] helper-level enforcement of the theme-approved gate before analyst
+      assignments
 - [ ] acceptance artifact schema and type policy beyond path references
 - [ ] helper-level enforcement that acceptance artifacts cite a producing
       assignment or transient agent

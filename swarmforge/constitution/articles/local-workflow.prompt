@@ -40,6 +40,7 @@
 
 ## Assignments
 - For theme/story work, create an assignment with `squad_assign.sh create` before requesting the transient agent.
+- For analyst theme-to-stories work, use `squad_assign.sh create <theme-id> theme analyst <assignment-id> <instructions-file> --requires approval:theme`; the analyst receives the approved theme as the assignment source and creates project story files.
 - Use the generated `.squad/assignments/<assignment-id>/assignment.md` as the assignment file passed to `squad_spawn_request.sh`.
 - Analyst handoffs may include multiple stories for one theme. Gherkin-writer, QA-procedure-writer, artifact reviewer, implementer, cleaner, and code-reviewer handoffs should move one story at a time unless the user explicitly approves a tight implementation batch.
 - The squad leader has up to the transient agent slot limit configured by `max_transient_agents` in `swarmforge/squad.conf`. Slot capacity is not permission to batch dependent story flow; use those slots only for independent work that does not bypass the current story's approval gates.

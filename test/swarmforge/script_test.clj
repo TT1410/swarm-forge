@@ -1250,6 +1250,51 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-assign-allows-analyst-theme-assignment-without-story
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt")
+                  "analyze theme into self-contained stories\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus CLI.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Break the approved theme into self-contained stories.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus-cli" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus-cli" "theme" "approved by user")
+      (let [create (run {:dir root}
+                        (script "squad_assign.sh")
+                        "create"
+                        "wumpus-cli"
+                        "theme"
+                        "analyst"
+                        "wumpus-cli-analysis"
+                        "instructions.md"
+                        "--requires"
+                        "approval:theme")
+            status (run {:dir root}
+                        (script "squad_assign.sh")
+                        "status"
+                        "wumpus-cli-analysis")
+            assignment (slurp (str (fs/path root ".squad/assignments/wumpus-cli-analysis/assignment.md")))
+            metadata (slurp (str (fs/path root ".squad/assignments/wumpus-cli-analysis/metadata")))]
+        (is (str/includes? (:out create) "SQUAD_ASSIGNMENT: wumpus-cli-analysis"))
+        (is (str/includes? (:out create) "STORY: theme"))
+        (is (str/includes? (:out status) "STATE: assignment_created"))
+        (is (str/includes? assignment "scope: theme"))
+        (is (str/includes? assignment "## Theme"))
+        (is (str/includes? assignment "Implement a faithful Hunt the Wumpus CLI."))
+        (is (not (str/includes? assignment "## Story")))
+        (is (str/includes? assignment "Break the approved theme into self-contained stories."))
+        (is (str/includes? metadata "scope: theme"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus-cli/events.log")))
+                           "\tassignment_created\twumpus-cli-analysis\tanalyst\ttheme")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-assign-enforces-required-approval-gates
   (let [root (tmp-dir)]
     (try
