@@ -1183,6 +1183,10 @@ Corrections:
   process delivered handoffs, ask before recovering committed-no-handoff or
   dirty-worktree state, replace missing-session/no-handoff work, and treat a
   stale heartbeat with a live pane as a status problem
+- the squad leader must run `squad_recover.sh <agent-id>` before rejecting,
+  replacing, or retiring a transient for suspected disappearance; the helper
+  treats untracked files as dirty work and uses both `tmux has-session` and an
+  exact `list-sessions` match before declaring a tmux session missing
 - squad leader prompts now prohibit raw `tmux`, `ps`, and process-inspection
   commands during normal squad management; direct operator debugging requires
   explicit user approval
@@ -1268,6 +1272,8 @@ They are tracked here as resolved, partially resolved, or still open.
 - [x] squad leader recovery policy distinguishes delivered handoff,
       committed-no-handoff, dirty worktree, missing session, and stale heartbeat
       cases
+- [x] recovery classification is helper-backed and includes untracked files
+      before a transient can be rejected, replaced, or retired as missing
 - [x] assignment blocking can record stale, escalated, or wedged transient work
       as durable squad state
 - [x] portable transient launch model: project-root agent invocation plus

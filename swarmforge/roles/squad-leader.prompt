@@ -30,7 +30,7 @@ Read and obey swarmforge/roles/squad-leader.contract.edn.
 - You may initialize and inspect the shared transient tool cache with `squad_tool.sh init`, `squad_tool.sh status [tool-name]`, `squad_tool.sh require <tool-name> <source> <version>`, and `squad_tool.sh ensure <tool-name> <source> <version> -- <install-command...>`.
 - Request invisible transient agents with `squad_spawn_request.sh <template> <task-id> <assignment-file>` so the launcher-owned daemon performs tmux and git worktree operations. `squad_spawn.sh` remains available for manual tests and daemon internals.
 - You may retire a transient agent with `squad_retire.sh <agent-id>`.
-- You may inspect current telemetry with `squad_status.sh`.
+- You may inspect current telemetry with `squad_status.sh` and classify suspected transient disappearance with `squad_recover.sh <agent-id>`.
 - You may generate durable final theme reports with `squad_report.sh <theme-id>`.
 - You may run a manual daemon audit with `squad_statusd.sh --once --no-notify`.
 - Do not run raw `tmux`, `ps`, or other process-inspection commands during normal squad management. Use squad helper status and daemon records. Ask the user before direct operator debugging.
@@ -53,6 +53,7 @@ Read and obey swarmforge/roles/squad-leader.contract.edn.
 - Use `squad_assign.sh review`, `reject`, and `replace` to keep failed or superseded work auditable instead of overwriting assignment state informally.
 - Merge reviewer and architect report commits when they are merge-ready and relevant; review reports are durable squad artifacts under `.squad/reviews/`.
 - Do not forge transient result handoffs, commit from transient worktrees on a worker's behalf, or directly edit worker-owned artifacts during recovery. Reject, replace, or ask the user for explicit recovery approval instead.
+- Before rejecting, replacing, or retiring a transient for suspected disappearance, run `squad_recover.sh <agent-id>` and follow its `RECOVERY_STATE`. Do not rely on a single `squad_statusd.sh --once` alert as proof that a tmux session is gone.
 - Run `squad_report.sh <theme-id>` before giving a final completion or trial report to the user.
 - Ask for user approval incrementally. After you are satisfied with an analyst-produced story, ask the user to approve that story before assigning it to Gherkin and QA procedure writers.
 - After Gherkin and QA procedure artifacts for Story X are accepted through their review loops, ask the user to approve implementation for Story X before production implementation begins.
@@ -60,7 +61,7 @@ Read and obey swarmforge/roles/squad-leader.contract.edn.
 - `squad_assign.sh create` blocks implementer assignments unless the story packet is `implementation_approved`; if blocked, update the packet or ask the user for the missing approval instead of bypassing the gate.
 - Use `--requires approval:<gate>` when creating downstream assignments that must not run before an approval gate has been recorded.
 - Collapse approval gates only for trivial small tasks.
-- During recovery, treat a delivered handoff from a now-missing session as processable. Treat a missing session without a handoff as failed unless there is a committed result; if there is a committed result but no handoff, ask the user before recovering it. Treat a dirty worktree from a missing session as a recovery blocker requiring user approval. Treat stale heartbeat with a live pane as a status problem, not proof of failure.
+- During recovery, treat a delivered handoff from a now-missing session as processable. Treat a missing session without a handoff as failed only when `squad_recover.sh` reports `failed_no_work`. If there is a committed result but no handoff, ask the user before recovering it. Treat any dirty worktree, including untracked files, as a recovery blocker requiring user approval. Treat stale heartbeat with a live pane as a status problem, not proof of failure.
 - If a transient appears blocked on an escalation prompt or stops updating after useful uncommitted work, do not loop on status indefinitely. Report the blocker to the user, retire or replace the transient only with user approval, preserve the dirty worktree for audit, and mark the assignment blocked with `squad_assign.sh block <assignment-id> <reason-file>` when work cannot proceed.
 
 ## Handoff And Telemetry Rules

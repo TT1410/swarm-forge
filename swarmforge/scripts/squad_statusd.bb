@@ -104,7 +104,10 @@
 
 (defn tmux-session-exists? [socket session]
   (and (not (str/blank? socket))
-       (zero? (:exit (sh-continue "tmux" "-S" socket "has-session" "-t" session)))))
+       (or (zero? (:exit (sh-continue "tmux" "-S" socket "has-session" "-t" session)))
+           (let [result (sh-continue "tmux" "-S" socket "list-sessions" "-F" "#S")]
+             (and (zero? (:exit result))
+                  (contains? (set (str/split-lines (:out result))) session))))))
 
 (defn pane-dead? [socket session]
   (let [result (sh-continue "tmux" "-S" socket "list-panes" "-t" session "-F" "#{pane_dead}")]

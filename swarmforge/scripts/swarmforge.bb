@@ -228,6 +228,7 @@
    "squad_batch.bb" "squad_batch.sh"
    "squad_config.bb"
    "squad_packet.bb" "squad_packet.sh"
+   "squad_recover.bb" "squad_recover.sh"
    "squad_report.bb" "squad_report.sh"
    "squad_tool.bb" "squad_tool.sh"
    "squad_theme.bb" "squad_theme.sh"
