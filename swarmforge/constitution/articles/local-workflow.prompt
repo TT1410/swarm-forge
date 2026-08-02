@@ -24,6 +24,7 @@
 - The branch can record and inspect durable story packet state with `squad_packet.sh`.
 - The branch can generate a durable theme report with `squad_report.sh <theme-id>`.
 - The launcher starts `squadd.sh` automatically when the swarm starts; manual checks can still use `squad_statusd.sh --once --no-notify`.
+- Normal squad workflow must not require reading helper implementation source. Use documented command forms and helper output; do not inspect `swarmforge/scripts/*.bb` or `swarmforge/scripts/*.sh` unless the user explicitly asks for SwarmForge debugging.
 - Available transient role templates are `analyst`, `gherkin-writer`, `qa-procedure-writer`, `gherkin-reviewer`, `qa-procedure-reviewer`, `implementer`, `cleaner`, `code-reviewer`, `hardener`, `qa`, `architect`, and `senior-implementor`.
 - Legacy templates may exist for compatibility, but do not use them for this flow unless the user explicitly asks for a legacy role.
 - Transient squad agents are not intermediate pack-pipeline roles. They must not hand off to each other; every transient result handoff goes only back to `squad-leader`.

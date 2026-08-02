@@ -2281,6 +2281,39 @@
         (run {:dir root :ok? false} "tmux" "-S" sock "kill-server")
         (fs/delete-tree root)))))
 
+(deftest window-watchdog-cleanup-kills-transient-only-sessions
+  (let [root (tmp-dir)
+        sock (str (fs/path root "swarm.sock"))
+        state-file (fs/path root ".swarmforge/windows.tsv")
+        ids-file (fs/path root ".swarmforge/window-ids")]
+    (try
+      (write-file state-file
+                  "1\tmissing-cleanup-window\tswarmforge-squad-leader\tSquad Leader\n")
+      (write-file ids-file "missing-cleanup-window\n")
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
+      (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-squad-leader" "sleep" "120")
+      (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-analyst-001" "sleep" "120")
+      (let [result (run {:dir root}
+                        (script "swarm-window-watchdog.bb")
+                        (str state-file)
+                        (str ids-file)
+                        "1"
+                        sock
+                        (str root)
+                        "none")]
+        (is (= 0 (:exit result)))
+        (is (not= 0 (:exit (run {:dir root :ok? false}
+                                "tmux" "-S" sock "has-session" "-t" "swarmforge-squad-leader"))))
+        (is (not= 0 (:exit (run {:dir root :ok? false}
+                                "tmux" "-S" sock "has-session" "-t" "swarmforge-analyst-001"))))
+        (is (not= 0 (:exit (run {:dir root :ok? false}
+                                "tmux" "-S" sock "list-sessions")))))
+      (finally
+        (run {:dir root :ok? false} "tmux" "-S" sock "kill-server")
+        (fs/delete-tree root)))))
+
 (deftest swarm-cleanup-tolerates-missing-runtime-state
   (let [root (tmp-dir)
         ids-file (fs/path root ".swarmforge/window-ids")]

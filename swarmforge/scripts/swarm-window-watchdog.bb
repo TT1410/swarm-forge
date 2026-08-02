@@ -57,6 +57,23 @@
 (defn kill-session! [tmux-socket session]
   (process/sh {:continue true} "tmux" "-S" tmux-socket "kill-session" "-t" session))
 
+(defn role-sessions [working-dir]
+  (let [roles-file (fs/path working-dir ".swarmforge" "roles.tsv")]
+    (when (fs/exists? roles-file)
+      (->> (str/split-lines (slurp (str roles-file)))
+           (remove str/blank?)
+           (map #(nth (str/split % #"\t" -1) 3 nil))
+           (remove str/blank?)
+           vec))))
+
+(defn tmux-sessions [tmux-socket]
+  (let [result (process/sh {:continue true}
+                           "tmux" "-S" tmux-socket "list-sessions" "-F" "#{session_name}")]
+    (when (zero? (:exit result))
+      (->> (str/split-lines (:out result))
+           (remove str/blank?)
+           vec))))
+
 (defn stop-handoff-daemon! [script-dir working-dir]
   (process/sh {:continue true}
               "bb" (str (fs/path script-dir "stop_handoff_daemon.bb"))
@@ -80,9 +97,12 @@
   (stop-squadd! script-dir working-dir)
   (stop-squad-status-daemon! script-dir working-dir)
   (stop-handoff-daemon! script-dir working-dir)
-  (doseq [{:keys [session]} (rows window-state-file)]
-    (when-not (str/blank? session)
+  (doseq [session (distinct (concat (map :session (rows window-state-file))
+                                    (role-sessions working-dir)
+                                    (tmux-sessions tmux-socket)))]
+    (when-not (str/blank? (str session))
       (kill-session! tmux-socket session)))
+  (process/sh {:continue true} "tmux" "-S" tmux-socket "kill-server")
   (doseq [{:keys [window-id]} (rows window-state-file)]
     (when-not (str/blank? window-id)
       (terminal-ok? script-dir working-dir tmux-socket backend "terminal_close_window" window-id))))
