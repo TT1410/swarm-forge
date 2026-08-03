@@ -49,7 +49,21 @@
                     [k v])))
           (take-while (complement str/blank?)
                       (str/split-lines (slurp (str file)))))
-    {}))
+	    {}))
+
+(defn parse-instant [value]
+  (try
+    (when-not (str/blank? value)
+      (java.time.Instant/parse value))
+    (catch Exception _ nil)))
+
+(defn now-instant []
+  (or (parse-instant (System/getenv "SWARMFORGE_NOW"))
+      (java.time.Instant/now)))
+
+(defn seconds-between [earlier later]
+  (when earlier
+    (.getSeconds (java.time.Duration/between earlier later))))
 
 (defn handoff-sender [file]
   (or (second (re-find #"_from_([^_]+)_to_" (fs/file-name file)))
@@ -166,13 +180,31 @@
 (defn agent-records [root rows]
   (->> rows
        (filter transient-row?)
-       (map (fn [row]
-              (let [agent (first row)
-                    metadata (file-map (fs/path root ".squad" "agents" agent "metadata"))]
-                {:agent agent
-                 :template (get metadata "template")
-                 :task-id (get metadata "task_id")
-                 :state (agent-state root agent)})))
+	      (map (fn [row]
+	              (let [agent (first row)
+                      row-task (second row)
+	                    agent-dir (fs/path root ".squad" "agents" agent)
+	                    metadata (file-map (fs/path agent-dir "metadata"))
+                    status (file-map (fs/path agent-dir "status"))
+                    heartbeat (file-map (fs/path agent-dir "heartbeat"))
+                    liveness (file-map (fs/path agent-dir "liveness"))
+                    instants (keep parse-instant
+                                   [(get status "updated_at")
+                                    (get heartbeat "updated_at")
+                                    (when (= "true" (get liveness "pane_changed"))
+                                      (get liveness "observed_at"))])
+                    last-activity (when (seq instants)
+                                    (apply max-key #(.toEpochMilli %) instants))]
+	                {:agent agent
+	                 :template (get metadata "template")
+	                 :task-id (or (get metadata "task_id") row-task)
+                 :state (get status "state" "unknown")
+                 :last-activity-at last-activity
+                 :activity-source (cond
+                                    (= "true" (get liveness "pane_changed")) "pane"
+                                    (get heartbeat "updated_at") "heartbeat"
+                                    (get status "updated_at") "status"
+                                    :else "none")})))
        vec))
 
 (defn active-agent? [agent]
@@ -794,23 +826,59 @@
   (println "REASON: completed handoff has been processed and role is still registered")
   (println "COMMAND:" (str "squad_retire.sh " agent)))
 
+(defn recovery-candidate [root rows]
+  (let [now (now-instant)
+        threshold (squad-recovery-quiet-seconds root)
+        retry-threshold (squad-recovery-retry-seconds root)]
+    (some (fn [{:keys [agent task-id state last-activity-at activity-source] :as record}]
+            (when (active-agent? record)
+              (let [quiet-for (or (seconds-between last-activity-at now) Long/MAX_VALUE)
+                    recovery (file-map (fs/path root ".squad" "agents" agent "recovery"))
+                    checked-at (parse-instant (get recovery "checked_at"))
+                    checked-age (seconds-between checked-at now)]
+                (when (and (>= quiet-for threshold)
+                           (or (nil? checked-age)
+                               (>= checked-age retry-threshold)))
+                  {:agent agent
+                   :task-id task-id
+                   :state state
+                   :last-activity-at last-activity-at
+                   :activity-source activity-source
+                   :quiet-for quiet-for
+                   :threshold threshold
+                   :retry-threshold retry-threshold}))))
+          (agent-records root rows))))
+
+(defn print-recovery-action! [{:keys [agent task-id state last-activity-at activity-source quiet-for threshold retry-threshold]}]
+  (println "NEXT_ACTION: recover_agent")
+  (println "AGENT:" agent)
+  (println "TASK_ID:" (or task-id "unknown"))
+  (println "STATE:" state)
+  (println "LAST_ACTIVITY_AT:" (or last-activity-at "none"))
+  (println "ACTIVITY_SOURCE:" activity-source)
+  (println "QUIET_FOR_SECONDS:" quiet-for)
+  (println "RECOVERY_QUIET_SECONDS:" threshold)
+  (println "RECOVERY_RETRY_SECONDS:" retry-threshold)
+  (println "REASON: active agent has no recent activity; classify recovery before waiting longer")
+  (println "COMMAND:" (str "squad_recover.sh " agent)))
+
 (defn active-transients [root rows]
-  (->> rows
-       (filter transient-row?)
-       (map (fn [row]
-              {:agent (first row)
-               :task (second row)
-               :state (agent-state root (first row))}))
+  (let [now (now-instant)]
+    (->> (agent-records root rows)
+         (map (fn [agent]
+                (assoc agent :quiet-for (seconds-between (:last-activity-at agent) now))))
        (remove #(= "retired" (:state %)))
-       vec))
+         vec)))
 
 (defn print-wait-action! [active]
   (println "NEXT_ACTION: wait")
   (println "REASON:" (if (seq active)
                        "active agents are still working or awaiting handoff delivery"
                        "no handoffs, pending approvals, active transient agents, or stale locks"))
-  (doseq [{:keys [agent task state]} active]
-    (println "ACTIVE:" agent task state))
+  (doseq [{:keys [agent task-id state quiet-for activity-source]} active]
+    (println "ACTIVE:" agent task-id state
+             (str "quiet_for=" (or quiet-for "unknown"))
+             (str "activity_source=" activity-source)))
   (println "CHECK_AFTER_SECONDS: 30")
   (println "COMMAND: sleep 30 && squad_next.sh"))
 
@@ -821,10 +889,11 @@
         new-handoff (first (files-with-extension (fs/path inbox "new") ".handoff"))
         rows (role-rows root)
         pending-approval-file (pending-approval root)
-        stale-lock-info (stale-lock root)
-        pending-spawn-file (pending-spawn-request root)
-	        retire-candidate (retirement-candidate root rows)
-	        theme-actions (theme-candidates root rows)
+	        stale-lock-info (stale-lock root)
+	        pending-spawn-file (pending-spawn-request root)
+		        retire-candidate (retirement-candidate root rows)
+            recover-candidate (recovery-candidate root rows)
+		        theme-actions (theme-candidates root rows)
 	        story-actions (story-candidates root rows)
 	        batch-actions (batch-candidates root rows)]
     (cond
@@ -849,9 +918,12 @@
       pending-spawn-file
       (print-spawn-wait-action! pending-spawn-file)
 
-      retire-candidate
-      (print-retirement-action! retire-candidate)
+	      retire-candidate
+	      (print-retirement-action! retire-candidate)
 
+        recover-candidate
+        (print-recovery-action! recover-candidate)
+	
 	      (seq (concat theme-actions story-actions batch-actions))
 	      (let [actions (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id)
 	                             (concat theme-actions story-actions batch-actions))]

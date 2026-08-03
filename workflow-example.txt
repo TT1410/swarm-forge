@@ -1,5 +1,6 @@
-SIM_START theme=hunt-the-wumpus stories=2 reviewer_policy=reject-once user_policy=approve max_transient_slots=3 handoff_latency_ticks=3 approval_latency_ticks=5
-SIM_ROOT: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466
+SIM_SEED: 1
+SIM_START theme=hunt-the-wumpus run=1 stories=2 reviewer_policy=reject-once architect_policy=reject-once user_policy=approve max_transient_slots=3 handoff_ticks=3..3 approval_ticks=5..5 stall_percent=0 stall_mode=dark stall_active_ticks=5..5
+SIM_ROOT: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191
 
 TICK 000
 NEXT_ACTION: create_approval_request
@@ -90,31 +91,25 @@ TEMPLATE: analyst
 ASSIGNMENT: hunt-the-wumpus-analysis
 REASON: approved theme needs story analysis
 CANDIDATES: 1
-COMMAND: squad_spawn_request.sh analyst hunt-the-wumpus-analysis /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-analysis/assignment.md
+COMMAND: squad_spawn_request.sh analyst hunt-the-wumpus-analysis /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/hunt-the-wumpus-analysis/assignment.md
+AGENT: analyst-001
 DUE_TICK: 010
 
-TICK 008
+TICK 008..009
+WAIT_TICKS: 2
 NEXT_ACTION: wait
 REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: analyst-001 analyst-001 running
-CHECK_AFTER_SECONDS: 30
-COMMAND: sleep 30 && squad_next.sh
-SIM_WAIT: no executable simulated event
-
-TICK 009
-NEXT_ACTION: wait
-REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: analyst-001 analyst-001 running
+ACTIVE: analyst-001 hunt-the-wumpus-analysis running quiet_for=2 activity_source=heartbeat
 CHECK_AFTER_SECONDS: 30
 COMMAND: sleep 30 && squad_next.sh
 SIM_WAIT: no executable simulated event
 
 TICK 010
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000010_000001_from_analyst-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000010_000001_from_analyst-001_to_squad-leader.handoff
 TASK: hunt-the-wumpus-analysis
 FROM: analyst-001
-COMMIT: 3e62e6a146
+COMMIT: 4a933df3b7
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: analyst-001 assignment=hunt-the-wumpus-analysis
@@ -287,7 +282,8 @@ TEMPLATE: gherkin-writer
 ASSIGNMENT: cave-topology-gherkin
 REASON: approved story needs Gherkin
 CANDIDATES: 6
-COMMAND: squad_spawn_request.sh gherkin-writer cave-topology-gherkin /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-gherkin/assignment.md
+COMMAND: squad_spawn_request.sh gherkin-writer cave-topology-gherkin /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-gherkin/assignment.md
+AGENT: gherkin-writer-001
 DUE_TICK: 028
 
 TICK 026
@@ -309,15 +305,16 @@ TEMPLATE: qa-procedure-writer
 ASSIGNMENT: cave-topology-qa-procedure
 REASON: approved story needs QA procedure
 CANDIDATES: 5
-COMMAND: squad_spawn_request.sh qa-procedure-writer cave-topology-qa-procedure /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-qa-procedure/assignment.md
+COMMAND: squad_spawn_request.sh qa-procedure-writer cave-topology-qa-procedure /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-qa-procedure/assignment.md
+AGENT: qa-procedure-writer-001
 DUE_TICK: 030
 
 TICK 028
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000028_000001_from_gherkin-writer-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000028_000001_from_gherkin-writer-001_to_squad-leader.handoff
 TASK: cave-topology-gherkin
 FROM: gherkin-writer-001
-COMMIT: fd888a3862
+COMMIT: 755d221c00
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: gherkin-writer-001 assignment=cave-topology-gherkin
@@ -333,10 +330,10 @@ SIM_APPLIED: agent retired
 
 TICK 030
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000030_000001_from_qa-procedure-writer-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000030_000001_from_qa-procedure-writer-001_to_squad-leader.handoff
 TASK: cave-topology-qa-procedure
 FROM: qa-procedure-writer-001
-COMMIT: 2930ad197c
+COMMIT: 7d3195db0a
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: qa-procedure-writer-001 assignment=cave-topology-qa-procedure
@@ -369,7 +366,8 @@ TEMPLATE: gherkin-reviewer
 ASSIGNMENT: cave-topology-gherkin-review
 REASON: Gherkin artifact needs review
 CANDIDATES: 6
-COMMAND: squad_spawn_request.sh gherkin-reviewer cave-topology-gherkin-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-gherkin-review/assignment.md
+COMMAND: squad_spawn_request.sh gherkin-reviewer cave-topology-gherkin-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-gherkin-review/assignment.md
+AGENT: gherkin-reviewer-001
 DUE_TICK: 036
 
 TICK 034
@@ -391,15 +389,16 @@ TEMPLATE: qa-procedure-reviewer
 ASSIGNMENT: cave-topology-qa-procedure-review
 REASON: QA procedure artifact needs review
 CANDIDATES: 5
-COMMAND: squad_spawn_request.sh qa-procedure-reviewer cave-topology-qa-procedure-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-qa-procedure-review/assignment.md
+COMMAND: squad_spawn_request.sh qa-procedure-reviewer cave-topology-qa-procedure-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-qa-procedure-review/assignment.md
+AGENT: qa-procedure-reviewer-001
 DUE_TICK: 038
 
 TICK 036
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000036_000001_from_gherkin-reviewer-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000036_000001_from_gherkin-reviewer-001_to_squad-leader.handoff
 TASK: cave-topology-gherkin-review
 FROM: gherkin-reviewer-001
-COMMIT: fe1ef54d18
+COMMIT: bcc3906d2b
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: gherkin-reviewer-001 assignment=cave-topology-gherkin-review
@@ -416,10 +415,10 @@ SIM_APPLIED: agent retired
 
 TICK 038
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000038_000001_from_qa-procedure-reviewer-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000038_000001_from_qa-procedure-reviewer-001_to_squad-leader.handoff
 TASK: cave-topology-qa-procedure-review
 FROM: qa-procedure-reviewer-001
-COMMIT: 0054549c0e
+COMMIT: b1f02efeb7
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: qa-procedure-reviewer-001 assignment=cave-topology-qa-procedure-review
@@ -453,7 +452,8 @@ TEMPLATE: gherkin-writer
 ASSIGNMENT: cave-topology-gherkin-r2
 REASON: Gherkin review requested changes
 CANDIDATES: 6
-COMMAND: squad_spawn_request.sh gherkin-writer cave-topology-gherkin-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-gherkin-r2/assignment.md
+COMMAND: squad_spawn_request.sh gherkin-writer cave-topology-gherkin-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-gherkin-r2/assignment.md
+AGENT: gherkin-writer-002
 DUE_TICK: 044
 
 TICK 042
@@ -475,15 +475,16 @@ TEMPLATE: qa-procedure-writer
 ASSIGNMENT: cave-topology-qa-procedure-r2
 REASON: QA procedure review requested changes
 CANDIDATES: 5
-COMMAND: squad_spawn_request.sh qa-procedure-writer cave-topology-qa-procedure-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-qa-procedure-r2/assignment.md
+COMMAND: squad_spawn_request.sh qa-procedure-writer cave-topology-qa-procedure-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-qa-procedure-r2/assignment.md
+AGENT: qa-procedure-writer-002
 DUE_TICK: 046
 
 TICK 044
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000044_000001_from_gherkin-writer-002_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000044_000001_from_gherkin-writer-002_to_squad-leader.handoff
 TASK: cave-topology-gherkin-r2
 FROM: gherkin-writer-002
-COMMIT: 3012b70a08
+COMMIT: 7246db09be
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: gherkin-writer-002 assignment=cave-topology-gherkin-r2
@@ -499,10 +500,10 @@ SIM_APPLIED: agent retired
 
 TICK 046
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000046_000001_from_qa-procedure-writer-002_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000046_000001_from_qa-procedure-writer-002_to_squad-leader.handoff
 TASK: cave-topology-qa-procedure-r2
 FROM: qa-procedure-writer-002
-COMMIT: 50ddae0887
+COMMIT: 86d976e317
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: qa-procedure-writer-002 assignment=cave-topology-qa-procedure-r2
@@ -535,7 +536,8 @@ TEMPLATE: gherkin-reviewer
 ASSIGNMENT: cave-topology-gherkin-review-r2
 REASON: Gherkin artifact needs review
 CANDIDATES: 6
-COMMAND: squad_spawn_request.sh gherkin-reviewer cave-topology-gherkin-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-gherkin-review-r2/assignment.md
+COMMAND: squad_spawn_request.sh gherkin-reviewer cave-topology-gherkin-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-gherkin-review-r2/assignment.md
+AGENT: gherkin-reviewer-002
 DUE_TICK: 052
 
 TICK 050
@@ -557,15 +559,16 @@ TEMPLATE: qa-procedure-reviewer
 ASSIGNMENT: cave-topology-qa-procedure-review-r2
 REASON: QA procedure artifact needs review
 CANDIDATES: 5
-COMMAND: squad_spawn_request.sh qa-procedure-reviewer cave-topology-qa-procedure-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-qa-procedure-review-r2/assignment.md
+COMMAND: squad_spawn_request.sh qa-procedure-reviewer cave-topology-qa-procedure-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-qa-procedure-review-r2/assignment.md
+AGENT: qa-procedure-reviewer-002
 DUE_TICK: 054
 
 TICK 052
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000052_000001_from_gherkin-reviewer-002_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000052_000001_from_gherkin-reviewer-002_to_squad-leader.handoff
 TASK: cave-topology-gherkin-review-r2
 FROM: gherkin-reviewer-002
-COMMIT: 8801d253cb
+COMMIT: d3b97fe28e
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: gherkin-reviewer-002 assignment=cave-topology-gherkin-review-r2
@@ -582,10 +585,10 @@ SIM_APPLIED: agent retired
 
 TICK 054
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000054_000001_from_qa-procedure-reviewer-002_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000054_000001_from_qa-procedure-reviewer-002_to_squad-leader.handoff
 TASK: cave-topology-qa-procedure-review-r2
 FROM: qa-procedure-reviewer-002
-COMMIT: efdc5ce0d3
+COMMIT: bef02b2710
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: qa-procedure-reviewer-002 assignment=cave-topology-qa-procedure-review-r2
@@ -769,7 +772,8 @@ TEMPLATE: implementer
 ASSIGNMENT: cave-topology-implementation
 REASON: story is approved for implementation
 CANDIDATES: 4
-COMMAND: squad_spawn_request.sh implementer cave-topology-implementation /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-implementation/assignment.md
+COMMAND: squad_spawn_request.sh implementer cave-topology-implementation /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-implementation/assignment.md
+AGENT: implementer-001
 DUE_TICK: 073
 
 TICK 071
@@ -791,15 +795,16 @@ TEMPLATE: gherkin-writer
 ASSIGNMENT: player-actions-gherkin
 REASON: approved story needs Gherkin
 CANDIDATES: 3
-COMMAND: squad_spawn_request.sh gherkin-writer player-actions-gherkin /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-gherkin/assignment.md
+COMMAND: squad_spawn_request.sh gherkin-writer player-actions-gherkin /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-gherkin/assignment.md
+AGENT: gherkin-writer-003
 DUE_TICK: 075
 
 TICK 073
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000073_000001_from_implementer-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000073_000001_from_implementer-001_to_squad-leader.handoff
 TASK: cave-topology-implementation
 FROM: implementer-001
-COMMIT: ab1b7c3b28
+COMMIT: 398b39aead
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: implementer-001 assignment=cave-topology-implementation
@@ -815,10 +820,10 @@ SIM_APPLIED: agent retired
 
 TICK 075
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000075_000001_from_gherkin-writer-003_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000075_000001_from_gherkin-writer-003_to_squad-leader.handoff
 TASK: player-actions-gherkin
 FROM: gherkin-writer-003
-COMMIT: 497bd00167
+COMMIT: e0a529be90
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: gherkin-writer-003 assignment=player-actions-gherkin
@@ -851,7 +856,8 @@ TEMPLATE: cleaner
 ASSIGNMENT: cave-topology-cleaner
 REASON: implemented story needs cleaning
 CANDIDATES: 4
-COMMAND: squad_spawn_request.sh cleaner cave-topology-cleaner /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-cleaner/assignment.md
+COMMAND: squad_spawn_request.sh cleaner cave-topology-cleaner /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-cleaner/assignment.md
+AGENT: cleaner-001
 DUE_TICK: 081
 
 TICK 079
@@ -873,15 +879,16 @@ TEMPLATE: qa-procedure-writer
 ASSIGNMENT: player-actions-qa-procedure
 REASON: approved story needs QA procedure
 CANDIDATES: 3
-COMMAND: squad_spawn_request.sh qa-procedure-writer player-actions-qa-procedure /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-qa-procedure/assignment.md
+COMMAND: squad_spawn_request.sh qa-procedure-writer player-actions-qa-procedure /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-qa-procedure/assignment.md
+AGENT: qa-procedure-writer-003
 DUE_TICK: 083
 
 TICK 081
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000081_000001_from_cleaner-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000081_000001_from_cleaner-001_to_squad-leader.handoff
 TASK: cave-topology-cleaner
 FROM: cleaner-001
-COMMIT: 470674293e
+COMMIT: 818fd31c7f
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: cleaner-001 assignment=cave-topology-cleaner
@@ -897,10 +904,10 @@ SIM_APPLIED: agent retired
 
 TICK 083
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000083_000001_from_qa-procedure-writer-003_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000083_000001_from_qa-procedure-writer-003_to_squad-leader.handoff
 TASK: player-actions-qa-procedure
 FROM: qa-procedure-writer-003
-COMMIT: e2eb3cacbf
+COMMIT: 9c5be0b58f
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: qa-procedure-writer-003 assignment=player-actions-qa-procedure
@@ -933,7 +940,8 @@ TEMPLATE: code-reviewer
 ASSIGNMENT: cave-topology-code-review
 REASON: cleaned story needs code review
 CANDIDATES: 4
-COMMAND: squad_spawn_request.sh code-reviewer cave-topology-code-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-code-review/assignment.md
+COMMAND: squad_spawn_request.sh code-reviewer cave-topology-code-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/cave-topology-code-review/assignment.md
+AGENT: code-reviewer-001
 DUE_TICK: 089
 
 TICK 087
@@ -955,15 +963,16 @@ TEMPLATE: gherkin-reviewer
 ASSIGNMENT: player-actions-gherkin-review
 REASON: Gherkin artifact needs review
 CANDIDATES: 3
-COMMAND: squad_spawn_request.sh gherkin-reviewer player-actions-gherkin-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-gherkin-review/assignment.md
+COMMAND: squad_spawn_request.sh gherkin-reviewer player-actions-gherkin-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-gherkin-review/assignment.md
+AGENT: gherkin-reviewer-003
 DUE_TICK: 091
 
 TICK 089
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000089_000001_from_code-reviewer-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000089_000001_from_code-reviewer-001_to_squad-leader.handoff
 TASK: cave-topology-code-review
 FROM: code-reviewer-001
-COMMIT: 46a9eaba80
+COMMIT: 21b3785bb0
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: code-reviewer-001 assignment=cave-topology-code-review
@@ -979,10 +988,10 @@ SIM_APPLIED: agent retired
 
 TICK 091
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000091_000001_from_gherkin-reviewer-003_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000091_000001_from_gherkin-reviewer-003_to_squad-leader.handoff
 TASK: player-actions-gherkin-review
 FROM: gherkin-reviewer-003
-COMMIT: e651b9d664
+COMMIT: a923c69363
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: gherkin-reviewer-003 assignment=player-actions-gherkin-review
@@ -1015,7 +1024,7 @@ BATCH_KIND: hardener
 BATCH: hunt-the-wumpus-hardener
 REASON: code-reviewed story is ready for hardener batch
 CANDIDATES: 4
-COMMAND: squad_batch_story.sh add cave-topology hardener hunt-the-wumpus-hardener code_reviewed cave-topology-code-review code-reviewer-001 e651b9d664
+COMMAND: squad_batch_story.sh add cave-topology hardener hunt-the-wumpus-hardener code_reviewed cave-topology-code-review code-reviewer-001 a923c69363
 SIM_APPLIED: batch membership recorded
 
 TICK 095
@@ -1037,7 +1046,8 @@ TEMPLATE: gherkin-writer
 ASSIGNMENT: player-actions-gherkin-r2
 REASON: Gherkin review requested changes
 CANDIDATES: 3
-COMMAND: squad_spawn_request.sh gherkin-writer player-actions-gherkin-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-gherkin-r2/assignment.md
+COMMAND: squad_spawn_request.sh gherkin-writer player-actions-gherkin-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-gherkin-r2/assignment.md
+AGENT: gherkin-writer-004
 DUE_TICK: 099
 
 TICK 097
@@ -1059,15 +1069,16 @@ TEMPLATE: qa-procedure-reviewer
 ASSIGNMENT: player-actions-qa-procedure-review
 REASON: QA procedure artifact needs review
 CANDIDATES: 2
-COMMAND: squad_spawn_request.sh qa-procedure-reviewer player-actions-qa-procedure-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-qa-procedure-review/assignment.md
+COMMAND: squad_spawn_request.sh qa-procedure-reviewer player-actions-qa-procedure-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-qa-procedure-review/assignment.md
+AGENT: qa-procedure-reviewer-003
 DUE_TICK: 101
 
 TICK 099
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000099_000001_from_gherkin-writer-004_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000099_000001_from_gherkin-writer-004_to_squad-leader.handoff
 TASK: player-actions-gherkin-r2
 FROM: gherkin-writer-004
-COMMIT: c65b418b31
+COMMIT: 30ceb2eabe
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: gherkin-writer-004 assignment=player-actions-gherkin-r2
@@ -1083,10 +1094,10 @@ SIM_APPLIED: agent retired
 
 TICK 101
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000101_000001_from_qa-procedure-reviewer-003_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000101_000001_from_qa-procedure-reviewer-003_to_squad-leader.handoff
 TASK: player-actions-qa-procedure-review
 FROM: qa-procedure-reviewer-003
-COMMIT: d10cdc08a5
+COMMIT: a5c1bc8727
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: qa-procedure-reviewer-003 assignment=player-actions-qa-procedure-review
@@ -1120,7 +1131,8 @@ TEMPLATE: qa-procedure-writer
 ASSIGNMENT: player-actions-qa-procedure-r2
 REASON: QA procedure review requested changes
 CANDIDATES: 3
-COMMAND: squad_spawn_request.sh qa-procedure-writer player-actions-qa-procedure-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-qa-procedure-r2/assignment.md
+COMMAND: squad_spawn_request.sh qa-procedure-writer player-actions-qa-procedure-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-qa-procedure-r2/assignment.md
+AGENT: qa-procedure-writer-004
 DUE_TICK: 107
 
 TICK 105
@@ -1142,15 +1154,16 @@ TEMPLATE: gherkin-reviewer
 ASSIGNMENT: player-actions-gherkin-review-r2
 REASON: Gherkin artifact needs review
 CANDIDATES: 2
-COMMAND: squad_spawn_request.sh gherkin-reviewer player-actions-gherkin-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-gherkin-review-r2/assignment.md
+COMMAND: squad_spawn_request.sh gherkin-reviewer player-actions-gherkin-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-gherkin-review-r2/assignment.md
+AGENT: gherkin-reviewer-004
 DUE_TICK: 109
 
 TICK 107
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000107_000001_from_qa-procedure-writer-004_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000107_000001_from_qa-procedure-writer-004_to_squad-leader.handoff
 TASK: player-actions-qa-procedure-r2
 FROM: qa-procedure-writer-004
-COMMIT: d0e8f78467
+COMMIT: f3116ea3d5
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: qa-procedure-writer-004 assignment=player-actions-qa-procedure-r2
@@ -1166,10 +1179,10 @@ SIM_APPLIED: agent retired
 
 TICK 109
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000109_000001_from_gherkin-reviewer-004_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000109_000001_from_gherkin-reviewer-004_to_squad-leader.handoff
 TASK: player-actions-gherkin-review-r2
 FROM: gherkin-reviewer-004
-COMMIT: 061f84a2c0
+COMMIT: 237f404e2a
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: gherkin-reviewer-004 assignment=player-actions-gherkin-review-r2
@@ -1273,7 +1286,8 @@ TEMPLATE: qa-procedure-reviewer
 ASSIGNMENT: player-actions-qa-procedure-review-r2
 REASON: QA procedure artifact needs review
 CANDIDATES: 2
-COMMAND: squad_spawn_request.sh qa-procedure-reviewer player-actions-qa-procedure-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-qa-procedure-review-r2/assignment.md
+COMMAND: squad_spawn_request.sh qa-procedure-reviewer player-actions-qa-procedure-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-qa-procedure-review-r2/assignment.md
+AGENT: qa-procedure-reviewer-004
 DUE_TICK: 121
 
 TICK 119
@@ -1295,15 +1309,16 @@ TEMPLATE: implementer
 ASSIGNMENT: player-actions-implementation
 REASON: story is approved for implementation
 CANDIDATES: 1
-COMMAND: squad_spawn_request.sh implementer player-actions-implementation /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-implementation/assignment.md
+COMMAND: squad_spawn_request.sh implementer player-actions-implementation /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-implementation/assignment.md
+AGENT: implementer-002
 DUE_TICK: 123
 
 TICK 121
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000121_000001_from_qa-procedure-reviewer-004_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000121_000001_from_qa-procedure-reviewer-004_to_squad-leader.handoff
 TASK: player-actions-qa-procedure-review-r2
 FROM: qa-procedure-reviewer-004
-COMMIT: 2f608c8a6d
+COMMIT: f1fc06f7d3
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: qa-procedure-reviewer-004 assignment=player-actions-qa-procedure-review-r2
@@ -1320,10 +1335,10 @@ SIM_APPLIED: agent retired
 
 TICK 123
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000123_000001_from_implementer-002_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000123_000001_from_implementer-002_to_squad-leader.handoff
 TASK: player-actions-implementation
 FROM: implementer-002
-COMMIT: 3b6b4532f3
+COMMIT: 0e7f564dfc
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: implementer-002 assignment=player-actions-implementation
@@ -1436,31 +1451,25 @@ TEMPLATE: cleaner
 ASSIGNMENT: player-actions-cleaner
 REASON: implemented story needs cleaning
 CANDIDATES: 1
-COMMAND: squad_spawn_request.sh cleaner player-actions-cleaner /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-cleaner/assignment.md
+COMMAND: squad_spawn_request.sh cleaner player-actions-cleaner /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-cleaner/assignment.md
+AGENT: cleaner-002
 DUE_TICK: 136
 
-TICK 134
+TICK 134..135
+WAIT_TICKS: 2
 NEXT_ACTION: wait
 REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: cleaner-002 cleaner-002 running
-CHECK_AFTER_SECONDS: 30
-COMMAND: sleep 30 && squad_next.sh
-SIM_WAIT: no executable simulated event
-
-TICK 135
-NEXT_ACTION: wait
-REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: cleaner-002 cleaner-002 running
+ACTIVE: cleaner-002 player-actions-cleaner running quiet_for=2 activity_source=heartbeat
 CHECK_AFTER_SECONDS: 30
 COMMAND: sleep 30 && squad_next.sh
 SIM_WAIT: no executable simulated event
 
 TICK 136
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000136_000001_from_cleaner-002_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000136_000001_from_cleaner-002_to_squad-leader.handoff
 TASK: player-actions-cleaner
 FROM: cleaner-002
-COMMIT: c25ef5f58d
+COMMIT: f979abc929
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: cleaner-002 assignment=player-actions-cleaner
@@ -1493,31 +1502,25 @@ TEMPLATE: code-reviewer
 ASSIGNMENT: player-actions-code-review
 REASON: cleaned story needs code review
 CANDIDATES: 1
-COMMAND: squad_spawn_request.sh code-reviewer player-actions-code-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-code-review/assignment.md
+COMMAND: squad_spawn_request.sh code-reviewer player-actions-code-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/player-actions-code-review/assignment.md
+AGENT: code-reviewer-002
 DUE_TICK: 142
 
-TICK 140
+TICK 140..141
+WAIT_TICKS: 2
 NEXT_ACTION: wait
 REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: code-reviewer-002 code-reviewer-002 running
-CHECK_AFTER_SECONDS: 30
-COMMAND: sleep 30 && squad_next.sh
-SIM_WAIT: no executable simulated event
-
-TICK 141
-NEXT_ACTION: wait
-REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: code-reviewer-002 code-reviewer-002 running
+ACTIVE: code-reviewer-002 player-actions-code-review running quiet_for=2 activity_source=heartbeat
 CHECK_AFTER_SECONDS: 30
 COMMAND: sleep 30 && squad_next.sh
 SIM_WAIT: no executable simulated event
 
 TICK 142
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000142_000001_from_code-reviewer-002_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000142_000001_from_code-reviewer-002_to_squad-leader.handoff
 TASK: player-actions-code-review
 FROM: code-reviewer-002
-COMMIT: 591ead4b9a
+COMMIT: afdbba479b
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: code-reviewer-002 assignment=player-actions-code-review
@@ -1549,7 +1552,7 @@ BATCH_KIND: hardener
 BATCH: hunt-the-wumpus-hardener
 REASON: code-reviewed story is ready for hardener batch
 CANDIDATES: 1
-COMMAND: squad_batch_story.sh add player-actions hardener hunt-the-wumpus-hardener code_reviewed player-actions-code-review code-reviewer-002 130455bf1d
+COMMAND: squad_batch_story.sh add player-actions hardener hunt-the-wumpus-hardener code_reviewed player-actions-code-review code-reviewer-002 615863ea72
 SIM_APPLIED: batch membership recorded
 
 TICK 146
@@ -1571,31 +1574,25 @@ TEMPLATE: hardener
 ASSIGNMENT: hunt-the-wumpus-hardener
 REASON: hardener batch is ready
 CANDIDATES: 1
-COMMAND: squad_spawn_request.sh hardener hunt-the-wumpus-hardener /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-hardener/assignment.md
+COMMAND: squad_spawn_request.sh hardener hunt-the-wumpus-hardener /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/hunt-the-wumpus-hardener/assignment.md
+AGENT: hardener-001
 DUE_TICK: 150
 
-TICK 148
+TICK 148..149
+WAIT_TICKS: 2
 NEXT_ACTION: wait
 REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: hardener-001 hardener-001 running
-CHECK_AFTER_SECONDS: 30
-COMMAND: sleep 30 && squad_next.sh
-SIM_WAIT: no executable simulated event
-
-TICK 149
-NEXT_ACTION: wait
-REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: hardener-001 hardener-001 running
+ACTIVE: hardener-001 hunt-the-wumpus-hardener running quiet_for=2 activity_source=heartbeat
 CHECK_AFTER_SECONDS: 30
 COMMAND: sleep 30 && squad_next.sh
 SIM_WAIT: no executable simulated event
 
 TICK 150
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000150_000001_from_hardener-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000150_000001_from_hardener-001_to_squad-leader.handoff
 TASK: hunt-the-wumpus-hardener
 FROM: hardener-001
-COMMIT: 130455bf1d
+COMMIT: 615863ea72
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: hardener-001 assignment=hunt-the-wumpus-hardener
@@ -1637,7 +1634,7 @@ BATCH_KIND: qa
 BATCH: hunt-the-wumpus-qa
 REASON: hardened story is ready for QA batch
 CANDIDATES: 2
-COMMAND: squad_batch_story.sh add cave-topology qa hunt-the-wumpus-qa hardening_approved hunt-the-wumpus-hardener hardener-001 390847ad54
+COMMAND: squad_batch_story.sh add cave-topology qa hunt-the-wumpus-qa hardening_approved hunt-the-wumpus-hardener hardener-001 73f5172323
 SIM_APPLIED: batch membership recorded
 
 TICK 155
@@ -1648,7 +1645,7 @@ BATCH_KIND: qa
 BATCH: hunt-the-wumpus-qa
 REASON: hardened story is ready for QA batch
 CANDIDATES: 1
-COMMAND: squad_batch_story.sh add player-actions qa hunt-the-wumpus-qa hardening_approved hunt-the-wumpus-hardener hardener-001 390847ad54
+COMMAND: squad_batch_story.sh add player-actions qa hunt-the-wumpus-qa hardening_approved hunt-the-wumpus-hardener hardener-001 73f5172323
 SIM_APPLIED: batch membership recorded
 
 TICK 156
@@ -1670,31 +1667,25 @@ TEMPLATE: qa
 ASSIGNMENT: hunt-the-wumpus-qa
 REASON: QA batch is ready
 CANDIDATES: 1
-COMMAND: squad_spawn_request.sh qa hunt-the-wumpus-qa /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-qa/assignment.md
+COMMAND: squad_spawn_request.sh qa hunt-the-wumpus-qa /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/hunt-the-wumpus-qa/assignment.md
+AGENT: qa-001
 DUE_TICK: 160
 
-TICK 158
+TICK 158..159
+WAIT_TICKS: 2
 NEXT_ACTION: wait
 REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: qa-001 qa-001 running
-CHECK_AFTER_SECONDS: 30
-COMMAND: sleep 30 && squad_next.sh
-SIM_WAIT: no executable simulated event
-
-TICK 159
-NEXT_ACTION: wait
-REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: qa-001 qa-001 running
+ACTIVE: qa-001 hunt-the-wumpus-qa running quiet_for=2 activity_source=heartbeat
 CHECK_AFTER_SECONDS: 30
 COMMAND: sleep 30 && squad_next.sh
 SIM_WAIT: no executable simulated event
 
 TICK 160
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000160_000001_from_qa-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000160_000001_from_qa-001_to_squad-leader.handoff
 TASK: hunt-the-wumpus-qa
 FROM: qa-001
-COMMIT: 390847ad54
+COMMIT: 73f5172323
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: qa-001 assignment=hunt-the-wumpus-qa
@@ -1736,7 +1727,7 @@ BATCH_KIND: architecture
 BATCH: hunt-the-wumpus-architecture
 REASON: QA-verified story is ready for architecture batch
 CANDIDATES: 2
-COMMAND: squad_batch_story.sh add cave-topology architecture hunt-the-wumpus-architecture qa_approved hunt-the-wumpus-qa qa-001 069cd6119b
+COMMAND: squad_batch_story.sh add cave-topology architecture hunt-the-wumpus-architecture qa_approved hunt-the-wumpus-qa qa-001 84ac989be8
 SIM_APPLIED: batch membership recorded
 
 TICK 165
@@ -1747,7 +1738,7 @@ BATCH_KIND: architecture
 BATCH: hunt-the-wumpus-architecture
 REASON: QA-verified story is ready for architecture batch
 CANDIDATES: 1
-COMMAND: squad_batch_story.sh add player-actions architecture hunt-the-wumpus-architecture qa_approved hunt-the-wumpus-qa qa-001 069cd6119b
+COMMAND: squad_batch_story.sh add player-actions architecture hunt-the-wumpus-architecture qa_approved hunt-the-wumpus-qa qa-001 84ac989be8
 SIM_APPLIED: batch membership recorded
 
 TICK 166
@@ -1769,31 +1760,25 @@ TEMPLATE: architect
 ASSIGNMENT: hunt-the-wumpus-architecture
 REASON: architecture batch is ready after QA
 CANDIDATES: 1
-COMMAND: squad_spawn_request.sh architect hunt-the-wumpus-architecture /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-architecture/assignment.md
+COMMAND: squad_spawn_request.sh architect hunt-the-wumpus-architecture /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/hunt-the-wumpus-architecture/assignment.md
+AGENT: architect-001
 DUE_TICK: 170
 
-TICK 168
+TICK 168..169
+WAIT_TICKS: 2
 NEXT_ACTION: wait
 REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: architect-001 architect-001 running
-CHECK_AFTER_SECONDS: 30
-COMMAND: sleep 30 && squad_next.sh
-SIM_WAIT: no executable simulated event
-
-TICK 169
-NEXT_ACTION: wait
-REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: architect-001 architect-001 running
+ACTIVE: architect-001 hunt-the-wumpus-architecture running quiet_for=2 activity_source=heartbeat
 CHECK_AFTER_SECONDS: 30
 COMMAND: sleep 30 && squad_next.sh
 SIM_WAIT: no executable simulated event
 
 TICK 170
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000170_000001_from_architect-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000170_000001_from_architect-001_to_squad-leader.handoff
 TASK: hunt-the-wumpus-architecture
 FROM: architect-001
-COMMIT: 069cd6119b
+COMMIT: 84ac989be8
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: architect-001 assignment=hunt-the-wumpus-architecture
@@ -1827,31 +1812,25 @@ TEMPLATE: senior-implementor
 ASSIGNMENT: hunt-the-wumpus-architecture-fix
 REASON: architecture critique needs senior implementation
 CANDIDATES: 1
-COMMAND: squad_spawn_request.sh senior-implementor hunt-the-wumpus-architecture-fix /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-architecture-fix/assignment.md
+COMMAND: squad_spawn_request.sh senior-implementor hunt-the-wumpus-architecture-fix /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/hunt-the-wumpus-architecture-fix/assignment.md
+AGENT: senior-implementor-001
 DUE_TICK: 176
 
-TICK 174
+TICK 174..175
+WAIT_TICKS: 2
 NEXT_ACTION: wait
 REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: senior-implementor-001 senior-implementor-001 running
-CHECK_AFTER_SECONDS: 30
-COMMAND: sleep 30 && squad_next.sh
-SIM_WAIT: no executable simulated event
-
-TICK 175
-NEXT_ACTION: wait
-REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: senior-implementor-001 senior-implementor-001 running
+ACTIVE: senior-implementor-001 hunt-the-wumpus-architecture-fix running quiet_for=2 activity_source=heartbeat
 CHECK_AFTER_SECONDS: 30
 COMMAND: sleep 30 && squad_next.sh
 SIM_WAIT: no executable simulated event
 
 TICK 176
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000176_000001_from_senior-implementor-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000176_000001_from_senior-implementor-001_to_squad-leader.handoff
 TASK: hunt-the-wumpus-architecture-fix
 FROM: senior-implementor-001
-COMMIT: 43011a020d
+COMMIT: 2c310eb387
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: senior-implementor-001 assignment=hunt-the-wumpus-architecture-fix
@@ -1884,31 +1863,25 @@ TEMPLATE: architect
 ASSIGNMENT: hunt-the-wumpus-architecture-r2
 REASON: architecture batch is ready after QA
 CANDIDATES: 1
-COMMAND: squad_spawn_request.sh architect hunt-the-wumpus-architecture-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-architecture-r2/assignment.md
+COMMAND: squad_spawn_request.sh architect hunt-the-wumpus-architecture-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/hunt-the-wumpus-architecture-r2/assignment.md
+AGENT: architect-002
 DUE_TICK: 182
 
-TICK 180
+TICK 180..181
+WAIT_TICKS: 2
 NEXT_ACTION: wait
 REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: architect-002 architect-002 running
-CHECK_AFTER_SECONDS: 30
-COMMAND: sleep 30 && squad_next.sh
-SIM_WAIT: no executable simulated event
-
-TICK 181
-NEXT_ACTION: wait
-REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: architect-002 architect-002 running
+ACTIVE: architect-002 hunt-the-wumpus-architecture-r2 running quiet_for=2 activity_source=heartbeat
 CHECK_AFTER_SECONDS: 30
 COMMAND: sleep 30 && squad_next.sh
 SIM_WAIT: no executable simulated event
 
 TICK 182
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000182_000001_from_architect-002_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000182_000001_from_architect-002_to_squad-leader.handoff
 TASK: hunt-the-wumpus-architecture-r2
 FROM: architect-002
-COMMIT: 1d6f5f3d21
+COMMIT: 913513ee9d
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
 AGENT_HANDOFF: architect-002 assignment=hunt-the-wumpus-architecture-r2
@@ -1964,6 +1937,7 @@ COMMAND: squad_packet.sh approve player-actions final auto-approved-by-config
 SIM_APPLIED: auto approval recorded
 
 TICK 188
+WAIT_TICKS: 1
 NEXT_ACTION: wait
 REASON: no handoffs, pending approvals, active transient agents, or stale locks
 CHECK_AFTER_SECONDS: 30

@@ -1256,8 +1256,51 @@
       (let [wait (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out wait) "NEXT_ACTION: wait"))
         (is (str/includes? (:out wait) "ACTIVE: gherkin-writer-001 gherkin-writer-001 running")))
-    (finally
-      (fs/delete-tree root)))))
+	    (finally
+	      (fs/delete-tree root)))))
+
+(deftest squad-next-recovers-only-after-agent-goes-quiet
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "recovery_quiet_seconds 5\nrecovery_retry_seconds 5\n")
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/agents/analyst-001/metadata")
+                  (str "agent: analyst-001\n"
+                       "template: analyst\n"
+                       "task_id: hunt-the-wumpus-analysis\n"
+                       "session: swarmforge-analyst-001\n"))
+      (write-agent-status! root "analyst-001" "running" "2026-08-03T00:00:00Z")
+      (write-file (fs/path root ".squad/agents/analyst-001/liveness")
+                  (str "state: running_pane_active\n"
+                       "observed_at: 2026-08-03T00:00:08Z\n"
+                       "pane_changed: true\n"
+                       "pane_hash: fresh\n"
+                       "last_10_lines:\nstill working\n"))
+      (let [wait (run {:dir root
+                       :env {"SWARMFORGE_NOW" "2026-08-03T00:00:10Z"}}
+                      (script "squad_next.sh"))]
+        (is (str/includes? (:out wait) "NEXT_ACTION: wait"))
+        (is (str/includes? (:out wait) "quiet_for=2"))
+        (is (str/includes? (:out wait) "activity_source=pane")))
+      (write-file (fs/path root ".squad/agents/analyst-001/liveness")
+                  (str "state: running_pane_active\n"
+                       "observed_at: 2026-08-03T00:00:08Z\n"
+                       "pane_changed: true\n"
+                       "pane_hash: stale\n"
+                       "last_10_lines:\nlast activity\n"))
+      (let [recover (run {:dir root
+                          :env {"SWARMFORGE_NOW" "2026-08-03T00:00:14Z"}}
+                         (script "squad_next.sh"))]
+        (is (str/includes? (:out recover) "NEXT_ACTION: recover_agent"))
+        (is (str/includes? (:out recover) "AGENT: analyst-001"))
+        (is (str/includes? (:out recover) "QUIET_FOR_SECONDS: 6"))
+        (is (str/includes? (:out recover) "COMMAND: squad_recover.sh analyst-001")))
+      (finally
+        (fs/delete-tree root)))))
 
 (deftest squad-next-selects-deterministic-story-candidates
   (let [root (tmp-dir)]
@@ -1316,11 +1359,27 @@
       (fs/delete-tree root)))))
 
 (deftest squad-simulator-runs-htw-through-tool-driven-workflow
-  (let [result (run {:dir repo-root} (script "squad_simulator.sh") "htw")
+  (let [result (run {:dir repo-root}
+                    (script "squad_simulator.sh")
+                    "htw"
+                    "--seed"
+                    "1"
+                    "--stories"
+                    "2"
+                    "--handoff-ticks"
+                    "3"
+                    "--approval-ticks"
+                    "5"
+                    "--stall-percent"
+                    "0")
         out (:out result)]
+    (is (str/includes? out "SIM_SEED: 1"))
     (is (str/includes? out "SIM_START theme=hunt-the-wumpus"))
+    (is (str/includes? out "handoff_ticks=3..3"))
+    (is (str/includes? out "approval_ticks=5..5"))
     (is (str/includes? out "NEXT_ACTION: create_approval_request"))
     (is (str/includes? out "USER_APPROVES: theme__hunt-the-wumpus"))
+    (is (str/includes? out "WAIT_TICKS:"))
     (is (str/includes? out "AGENT_HANDOFF: analyst-001"))
     (is (str/includes? out "decision=changes-requested"))
     (is (str/includes? out "decision=accepted"))
@@ -1337,6 +1396,81 @@
 	    (is (str/includes? out "state=workflow_idle"))
 	    (is (str/includes? out "cave_topology=final_approved"))
 	    (is (str/includes? out "player_actions=final_approved"))))
+
+(deftest squad-simulator-reports-stalled-agents
+  (let [result (run {:dir repo-root :ok? false}
+                    (script "squad_simulator.sh")
+                    "htw"
+                    "--seed"
+                    "7"
+                    "--stories"
+                    "2"
+                    "--handoff-ticks"
+                    "1..2"
+                    "--approval-ticks"
+                    "1"
+                    "--stall-percent"
+                    "100"
+                    "--max-ticks"
+                    "30")
+        out (:out result)]
+	    (is (= 2 (:exit result)))
+	    (is (str/includes? out "SIM_STALL: analyst-001 dark"))
+	    (is (str/includes? out "NEXT_ACTION: recover_agent"))
+	    (is (str/includes? out "RECOVERY_STATE: failed_no_work"))
+	    (is (str/includes? out "state=max_ticks_exceeded"))
+	    (is (str/includes? (:err result) "SIM_FAILED: exceeded max ticks"))))
+
+(deftest squad-simulator-keeps-live-stalls-from-recovery-and-recovers-dark-stalls
+  (let [live-result (run {:dir repo-root}
+                         (script "squad_simulator.sh")
+                         "htw"
+                         "--seed"
+                         "2"
+                         "--stories"
+                         "1"
+                         "--handoff-ticks"
+                         "1"
+                         "--approval-ticks"
+                         "1"
+                         "--stall-percent"
+                         "100"
+                         "--stall-mode"
+                         "active-then-handoff"
+                         "--stall-active-ticks"
+                         "4"
+                         "--max-ticks"
+                         "250")
+        live-out (:out live-result)
+        dark-result (run {:dir repo-root :ok? false}
+                         (script "squad_simulator.sh")
+                         "htw"
+                         "--seed"
+                         "3"
+                         "--stories"
+                         "1"
+                         "--handoff-ticks"
+                         "1"
+                         "--approval-ticks"
+                         "1"
+                         "--stall-percent"
+                         "100"
+                         "--stall-mode"
+                         "active-then-dark"
+                         "--stall-active-ticks"
+                         "3"
+                         "--max-ticks"
+                         "30")
+        dark-out (:out dark-result)]
+    (is (str/includes? live-out "SIM_STALL: analyst-001 active-then-handoff"))
+    (is (str/includes? live-out "AGENT_HANDOFF: analyst-001"))
+    (is (not (str/includes? live-out "NEXT_ACTION: recover_agent")))
+    (is (str/includes? live-out "state=workflow_idle"))
+    (is (= 2 (:exit dark-result)))
+    (is (str/includes? dark-out "SIM_STALL: analyst-001 active-then-dark"))
+    (is (str/includes? dark-out "NEXT_ACTION: recover_agent"))
+    (is (str/includes? dark-out "QUIET_FOR_SECONDS: 5"))
+    (is (str/includes? dark-out "RECOVERY_STATE: failed_no_work"))))
 
 (deftest squad-packet-records-post-implementation-story-state
   (let [root (tmp-dir)]

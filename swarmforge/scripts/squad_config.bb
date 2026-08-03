@@ -2,6 +2,8 @@
          '[clojure.string :as str])
 
 (def squad-default-max-transient-agents 5)
+(def squad-default-recovery-quiet-seconds 300)
+(def squad-default-recovery-retry-seconds 60)
 (def squad-default-approval-required
   {"theme" true
    "story" true
@@ -83,6 +85,18 @@
     (squad-env-long "SWARMFORGE_SQUAD_MAX_AGENTS"
                     (squad-config-long root "max_transient_agents" squad-default-max-transient-agents))
     (squad-config-long root "max_transient_agents" squad-default-max-transient-agents)))
+
+(defn squad-recovery-quiet-seconds [root]
+  (if (System/getenv "SWARMFORGE_SQUAD_RECOVERY_QUIET_SECONDS")
+    (squad-env-long "SWARMFORGE_SQUAD_RECOVERY_QUIET_SECONDS"
+                    (squad-config-long root "recovery_quiet_seconds" squad-default-recovery-quiet-seconds))
+    (squad-config-long root "recovery_quiet_seconds" squad-default-recovery-quiet-seconds)))
+
+(defn squad-recovery-retry-seconds [root]
+  (if (System/getenv "SWARMFORGE_SQUAD_RECOVERY_RETRY_SECONDS")
+    (squad-env-long "SWARMFORGE_SQUAD_RECOVERY_RETRY_SECONDS"
+                    (squad-config-long root "recovery_retry_seconds" squad-default-recovery-retry-seconds))
+    (squad-config-long root "recovery_retry_seconds" squad-default-recovery-retry-seconds)))
 
 (defn squad-template-limit [root template]
   (some (fn [[configured-template limit]]

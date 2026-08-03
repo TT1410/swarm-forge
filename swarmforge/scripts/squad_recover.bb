@@ -91,6 +91,10 @@
       default-value)
     default-value))
 
+(defn now-instant []
+  (or (parse-instant (System/getenv "SWARMFORGE_NOW"))
+      (java.time.Instant/now)))
+
 (defn recent-status? [root agent]
   (let [grace-seconds (env-long "SWARMFORGE_SQUAD_RECOVERY_GRACE_SECONDS" 300)
         status-file (fs/path root ".squad" "agents" agent "status")
@@ -100,8 +104,8 @@
         newest (when (seq instants)
                  (apply max-key #(.toEpochMilli %) instants))]
     (and newest
-         (< (.getSeconds (java.time.Duration/between newest (java.time.Instant/now)))
-            grace-seconds))))
+	         (< (.getSeconds (java.time.Duration/between newest (now-instant)))
+	            grace-seconds))))
 
 (defn handoff-files [root worktree agent]
   (let [dirs [(fs/path root ".swarmforge" "handoffs")
@@ -129,6 +133,13 @@
     (println "HANDOFF:" handoff))
   (println "RECOVERY_STATE:" state)
   (println "RECOMMENDATION:" recommendation))
+
+(defn write-recovery-check! [root agent state]
+  (let [file (fs/path root ".squad" "agents" agent "recovery")]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file)
+          (str "state: " state "\n"
+               "checked_at: " (str (now-instant)) "\n"))))
 
 (defn -main [& args]
   (when-not (= 1 (count args))
@@ -159,7 +170,8 @@
             (pos? committed) ["committed_no_handoff" "Ask the user before recovering committed work without a handoff."]
             (recent-status? root agent) ["recently_active_no_work" "Do not reject or replace yet. Wait for handoff delivery or another recovery check after the grace period."]
             :else ["failed_no_work" "It is safe to reject or replace if the assignment still needs work."])]
-      (print-recovery {:agent agent
+        (write-recovery-check! root agent state)
+	      (print-recovery {:agent agent
                        :task-id task-id
                        :template template
                        :session session
