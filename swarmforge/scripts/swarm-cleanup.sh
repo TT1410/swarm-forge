@@ -58,6 +58,14 @@ else
   fi
 fi
 
+for session in "$@"; do
+  tmux -S "$TMUX_SOCKET" kill-session -t "$session" 2>/dev/null || true
+done
+
+tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
+
+sleep 1
+
 if has_command git && [[ -d "$WORKING_DIR/.git" ]]; then
   while IFS= read -r worktree_path; do
     [[ "$worktree_path" == "$WORKING_DIR/.worktrees/"* || "$worktree_path" == */.worktrees/* ]] || continue
@@ -69,13 +77,14 @@ if has_command git && [[ -d "$WORKING_DIR/.git" ]]; then
   done < <(git -C "$WORKING_DIR" worktree list --porcelain 2>/dev/null | awk '/^worktree / {print substr($0, 10)}')
 fi
 
-for session in "$@"; do
-  tmux -S "$TMUX_SOCKET" kill-session -t "$session" 2>/dev/null || true
-done
+roles_file="$WORKING_DIR/.swarmforge/roles.tsv"
+if [[ -f "$roles_file" ]]; then
+  tmp_roles="$(mktemp)"
+  awk -F '\t' '$1 == "squad-leader" { print }' "$roles_file" > "$tmp_roles"
+  mv "$tmp_roles" "$roles_file"
+fi
 
-tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
-
-sleep 1
+rm -f "$WORKING_DIR/.swarmforge/daemon/squad-web-url"
 
 if [[ -f "$WINDOW_IDS_FILE" ]]; then
   while IFS= read -r window_id; do

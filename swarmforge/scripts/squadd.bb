@@ -13,9 +13,11 @@
 (def poll-ms 1000)
 (def status-poll-ms 5000)
 (def handoff-wake-message
-  "You have new handoff mail. If idle, run ready_for_next.sh.")
+  "You have new handoff mail. If idle, run squad_next.sh.")
 (def status-wake-message
-  "Squad status needs attention. If idle, run squad_status.sh.")
+  "Squad status needs attention. If idle, run squad_next.sh.")
+(def approval-wake-message
+  "A web approval changed state. If idle, run squad_next.sh.")
 (def dashboard-html
   "<!doctype html>
 <html lang=\"en\">
@@ -65,12 +67,19 @@
         `<button onclick=\"post('/api/approvals/${encodeURIComponent(a.approval_id)}/reject')\">Reject</button>`
       ])));
     }
+    function approvalHistory(items) {
+      if (!items.length) return '<p class=\"muted\">None.</p>';
+      return table(['Approval', 'Target', 'Gate', 'State', 'Resolved', 'Detail'], items.map(a => row([
+        esc(a.approval_id), esc(a.target_kind + ' ' + a.target_id), esc(a.gate), esc(a.state), esc(a.resolved_at), esc(a.resolution_detail)
+      ])));
+    }
     async function render() {
       try {
         const data = await (await fetch('/api/state', { cache: 'no-store' })).json();
         meta.textContent = data.project_root + ' | ' + data.generated_at;
         app.innerHTML =
-          `<section><h2>Approvals</h2>${approvals(data.approvals.pending)}</section>` +
+          `<section><h2>Pending Approvals</h2>${approvals(data.approvals.pending)}</section>` +
+          `<section><h2>Approval History</h2>${approvalHistory([...(data.approvals.approved || []), ...(data.approvals.rejected || [])])}</section>` +
           `<section><h2>Stories</h2>${table(['Story','State','Gherkin','QA Procedure','Implementation','Final'], data.stories.map(s => row([
             esc(s.story_id), '<span class=\"pill\">' + esc(s.state) + '</span>', esc(s.gherkin_review_state), esc(s.qa_procedure_review_state), esc(s.implementation_assignment_state), esc(s.final_state)
           ])))}</section>` +
@@ -97,6 +106,10 @@
 (def last-status-log-state (atom nil))
 (def active-agent-states
   #{"starting" "running"})
+(def web-active-agent-states
+  #{"starting" "running" "blocked" "handoff_ready" "handoff_sent"})
+(def web-active-assignment-states
+  #{"assignment_created" "result_received" "merge_ready" "review_changes_requested" "blocked"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -561,16 +574,19 @@
       (log! root "git-branch-absent" agent branch))))
 
 (defn reconcile-retired-agent! [root socket roles agent dir]
-  (let [metadata (fs/path dir "metadata")
-        session (or (read-value metadata "session")
-                    (get-in roles [agent :session]))
-        worktree (or (read-value metadata "worktree")
-                     (get-in roles [agent :worktree-path]))]
-    (when (kill-tmux-session! socket session)
-      (log! root "retired-session-killed" agent session)
-      (append-compat-log! root "squad-statusd.log" "retired-session-killed" agent session))
-    (cleanup-transient-git! root agent worktree)
-    (retire-role-row! root agent)))
+  (let [cleanup-marker (fs/path dir "retired-cleanup")]
+    (when-not (fs/regular-file? cleanup-marker)
+      (let [metadata (fs/path dir "metadata")
+            session (or (read-value metadata "session")
+                        (get-in roles [agent :session]))
+            worktree (or (read-value metadata "worktree")
+                         (get-in roles [agent :worktree-path]))]
+        (when (kill-tmux-session! socket session)
+          (log! root "retired-session-killed" agent session)
+          (append-compat-log! root "squad-statusd.log" "retired-session-killed" agent session))
+        (cleanup-transient-git! root agent worktree)
+        (retire-role-row! root agent)
+        (write-atomic! cleanup-marker (str "cleaned_at: " (now) "\n"))))))
 
 (defn alerts-for-agent [root roles socket skip-tmux? stale-seconds now-instant dir]
   (let [agent (fs/file-name dir)
@@ -706,10 +722,12 @@
       (->> (fs/list-dir dir)
            (filter fs/directory?)
            (sort-by fs/file-name)
-           (mapv (fn [assignment-dir]
-                   (merge (map-with-id "assignment_id" (fs/file-name assignment-dir)
-                                       (fs/path assignment-dir "metadata"))
-                          (parse-kv-file (fs/path assignment-dir "status"))))))
+           (map (fn [assignment-dir]
+                  (merge (map-with-id "assignment_id" (fs/file-name assignment-dir)
+                                      (fs/path assignment-dir "metadata"))
+                         (parse-kv-file (fs/path assignment-dir "status")))))
+           (filter #(contains? web-active-assignment-states (get % "state")))
+           vec)
       [])))
 
 (defn agent-state [root]
@@ -718,11 +736,13 @@
       (->> (fs/list-dir dir)
            (filter fs/directory?)
            (sort-by fs/file-name)
-           (mapv (fn [agent-dir]
-                   (merge (map-with-id "agent_id" (fs/file-name agent-dir)
-                                       (fs/path agent-dir "metadata"))
-                          (parse-kv-file (fs/path agent-dir "status"))
-                          {"heartbeat_at" (or (read-value (fs/path agent-dir "heartbeat") "updated_at") "none")}))))
+           (map (fn [agent-dir]
+                  (merge (map-with-id "agent_id" (fs/file-name agent-dir)
+                                      (fs/path agent-dir "metadata"))
+                         (parse-kv-file (fs/path agent-dir "status"))
+                         {"heartbeat_at" (or (read-value (fs/path agent-dir "heartbeat") "updated_at") "none")})))
+           (filter #(contains? web-active-agent-states (get % "state")))
+           vec)
       [])))
 
 (defn approval-state-for [root state]
@@ -775,7 +795,13 @@
                            approval-id
                            detail)]
     (if (zero? (:exit result))
-      {:ok true :output (:out result)}
+      (do
+        (let [socket-file (fs/path root ".swarmforge" "tmux-socket")]
+          (when (fs/regular-file? socket-file)
+            (tmux-notify! (str/trim (slurp (str socket-file)))
+                          "swarmforge-squad-leader"
+                          approval-wake-message)))
+        {:ok true :output (:out result)})
       {:ok false :status 409 :error (str (:err result) (:out result))})))
 
 (defn handle-web-request [root method path]
@@ -985,6 +1011,7 @@
   (reset! stopping? true)
   (try
     (fs/delete-if-exists (pid-file root))
+    (fs/delete-if-exists (fs/path (daemon-dir root) "squad-web-url"))
     (log! root "stopped")
     (catch Exception _ nil)))
 

@@ -63,6 +63,7 @@
       (fs/delete-if-exists pid-file))
     (doseq [pid (matching-orphan-pids project-root)]
       (terminate-pid! pid timeout-ms))
+    (fs/delete-if-exists (fs/path daemon-dir "squad-web-url"))
     (fs/delete-if-exists stop-file)))
 
 (defn -main [& args]

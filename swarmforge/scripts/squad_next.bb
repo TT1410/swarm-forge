@@ -83,8 +83,14 @@
 (defn pending-approval [root]
   (first (files-with-extension (fs/path root ".squad" "approvals" "pending") ".approval")))
 
+(defn dashboard-url [root]
+  (let [file (fs/path root ".swarmforge" "daemon" "squad-web-url")]
+    (when (fs/regular-file? file)
+      (not-empty (str/trim (slurp (str file)))))))
+
 (defn print-approval-action! [file]
   (let [approval (file-map file)
+        root (fs/absolutize (project-root))
         approval-id (get approval "approval_id" (str/replace (fs/file-name file) #"\.approval$" ""))]
     (println "NEXT_ACTION: request_user_approval")
     (println "APPROVAL:" approval-id)
@@ -93,6 +99,9 @@
     (println "TARGET_ID:" (get approval "target_id" "unknown"))
     (println "TITLE:" (get approval "title" ""))
     (println "REASON:" (get approval "reason" "approval requested"))
+    (when-let [url (dashboard-url root)]
+      (println "DASHBOARD_URL:" url)
+      (println "WEB_APPROVAL_PATH:" (str url "api/approvals/" approval-id "/approve")))
     (println "COMMAND_ON_APPROVAL:" (str "squad_approval.sh approve " approval-id " approved-by-user"))
     (println "COMMAND_ON_REJECTION:" (str "squad_approval.sh reject " approval-id " <reason>"))))
 
@@ -521,12 +530,17 @@
     :priority 60
     :stage-order 90
     :candidate (fn [ctx packet]
-                 (when (approval-satisfied? (:root ctx) packet "implementation")
+                 (when (and (approval-satisfied? (:root ctx) packet "story")
+                            (approval-satisfied? (:root ctx) packet "gherkin")
+                            (approval-satisfied? (:root ctx) packet "qa-procedure")
+                            (approval-satisfied? (:root ctx) packet "implementation")
+                            (field-accepted? packet "gherkin_review")
+                            (field-accepted? packet "qa_procedure_review"))
                    (when-not (field-present? packet "implementation_sha")
                      (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
                                            "implementer" "implementation"
                                            "story is approved for implementation" 60 90
-                                           (str "acceptance-" (get packet "story_id" (get packet "_story_id")))))))}
+                                           nil))))}
    {:id :cleaner-assignment
     :priority 60
     :stage-order 100
