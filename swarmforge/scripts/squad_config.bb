@@ -2,6 +2,19 @@
          '[clojure.string :as str])
 
 (def squad-default-max-transient-agents 5)
+(def squad-default-approval-required
+  {"theme" true
+   "story" true
+   "gherkin" true
+   "qa_procedure" true
+   "qa-procedure" true
+   "implementation" false
+   "code_review" false
+   "code-review" false
+   "hardening" false
+   "qa" false
+   "architecture" false
+   "final" false})
 
 (defn squad-env-long [name default-value]
   (if-let [value (System/getenv name)]
@@ -37,6 +50,30 @@
     (if (and value (re-matches #"[0-9]+" value))
       (Long/parseLong value)
       default-value)))
+
+(defn squad-config-bool [root key default-value]
+  (let [value (some-> (squad-config-value root key) str/lower-case str/trim)]
+    (cond
+      (#{"true" "yes" "1" "on" "required"} value) true
+      (#{"false" "no" "0" "off" "not-required"} value) false
+      :else default-value)))
+
+(defn squad-approval-required? [root gate]
+  (let [gate-key (str/replace gate "-" "_")
+        configured (some (fn [[configured-gate value]]
+                           (when (= (str/replace configured-gate "-" "_") gate-key)
+                             value))
+                         (squad-config-entries root "approval_required"))
+        default (or (get squad-default-approval-required gate)
+                    (get squad-default-approval-required gate-key)
+                    false)]
+    (if configured
+      (let [value (str/lower-case (str/trim configured))]
+        (cond
+          (#{"true" "yes" "1" "on" "required"} value) true
+          (#{"false" "no" "0" "off" "not-required"} value) false
+          :else default))
+      default)))
 
 (defn squad-transient-agent-config [root]
   (squad-config-value root "transient_agent"))

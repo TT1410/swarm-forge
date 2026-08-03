@@ -102,6 +102,12 @@
          sha)
     (run {:dir root}
          (script "squad_packet.sh")
+         "approve"
+         story-id
+         "gherkin"
+         "user approved gherkin")
+    (run {:dir root}
+         (script "squad_packet.sh")
          "attach"
          story-id
          "qa-procedure"
@@ -118,6 +124,12 @@
          (str story-id "-qa-procedure-review")
          "swarmforge-qa-procedure-reviewer-001"
          sha)
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "approve"
+         story-id
+         "qa-procedure"
+         "user approved qa procedure")
     (run {:dir root}
          (script "squad_packet.sh")
          "approve"
@@ -447,7 +459,9 @@
         (is (fs/exists? (fs/path worktree ".git")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_spawn.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_assign.sh")))
+        (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_approval.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_batch.sh")))
+        (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_next.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_packet.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_tool.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_theme.sh")))
@@ -1027,6 +1041,12 @@
                                 "wumpus-cave-gherkin-review"
                                 "swarmforge-gherkin-reviewer-001"
                                 sha)
+            gherkin-approval (run {:dir root}
+                                  (script "squad_packet.sh")
+                                  "approve"
+                                  "cave-topology"
+                                  "gherkin"
+                                  "user approved gherkin")
             qa-procedure (run {:dir root}
                               (script "squad_packet.sh")
                               "attach"
@@ -1045,6 +1065,12 @@
                            "wumpus-cave-qa-procedure-review"
                            "swarmforge-qa-procedure-reviewer-001"
                            sha)
+            qa-approval (run {:dir root}
+                             (script "squad_packet.sh")
+                             "approve"
+                             "cave-topology"
+                             "qa-procedure"
+                             "user approved qa procedure")
             ready (run {:dir root} (script "squad_packet.sh") "status" "cave-topology")
             implementation-approval (run {:dir root}
                                          (script "squad_packet.sh")
@@ -1058,17 +1084,259 @@
         (is (str/includes? (:out story-approved) "STATE: story_approved"))
         (is (str/includes? (:out gherkin) "PATH: features/cave-topology.feature"))
         (is (str/includes? (:out gherkin-review) "DECISION: accepted"))
+        (is (str/includes? (:out gherkin-approval) "APPROVAL: gherkin"))
         (is (str/includes? (:out qa-procedure) "PATH: qa/cave-topology.md"))
         (is (str/includes? (:out qa-review) "DECISION: accepted"))
+        (is (str/includes? (:out qa-approval) "APPROVAL: qa-procedure"))
         (is (str/includes? (:out ready) "STATE: implementation_approval_ready"))
         (is (str/includes? (:out implementation-approval) "STATE: implementation_approved"))
         (is (str/includes? (:out approved) "GHERKIN_REVIEW: accepted"))
+        (is (str/includes? (:out approved) "GHERKIN_APPROVAL: approved"))
         (is (str/includes? (:out approved) "QA_PROCEDURE_REVIEW: accepted"))
+        (is (str/includes? (:out approved) "QA_PROCEDURE_APPROVAL: approved"))
         (is (str/includes? packet "gherkin_path: features/cave-topology.feature"))
         (is (str/includes? packet "qa_procedure_path: qa/cave-topology.md"))
         (is (str/includes? packet "implementation_approval: approved")))
       (finally
         (fs/delete-tree root)))))
+
+(deftest squad-approval-tracks-required-gates-and-durable-requests
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (run {:dir root} "git" "add" "stories")
+      (run {:dir root} "git" "commit" "-q" "-m" "Prepare story artifact")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root}
+             (script "squad_packet.sh")
+             "create"
+             "wumpus"
+             "cave-topology"
+             "wumpus-analysis"
+             "swarmforge-analyst-001"
+             sha))
+      (let [theme-required (run {:dir root} (script "squad_approval.sh") "required" "theme")
+            implementation-required (run {:dir root} (script "squad_approval.sh") "required" "implementation")]
+        (is (str/includes? (:out theme-required) "REQUIRED: true"))
+        (is (str/includes? (:out implementation-required) "REQUIRED: false")))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required implementation true\napproval_required gherkin false\n")
+      (let [implementation-required (run {:dir root} (script "squad_approval.sh") "required" "implementation")
+            gherkin-required (run {:dir root} (script "squad_approval.sh") "required" "gherkin")]
+        (is (str/includes? (:out implementation-required) "REQUIRED: true"))
+        (is (str/includes? (:out gherkin-required) "REQUIRED: false")))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required qa_procedure true\n")
+      (let [qa-procedure-required (run {:dir root} (script "squad_approval.sh") "required" "qa-procedure")]
+        (is (str/includes? (:out qa-procedure-required) "REQUIRED: true")))
+      (let [request (run {:dir root}
+                         (script "squad_approval.sh")
+                         "request"
+                         "story__cave-topology"
+                         "story"
+                         "cave-topology"
+                         "story"
+                         "Approve story"
+                         "story is ready")
+            approve (run {:dir root}
+                         (script "squad_approval.sh")
+                         "approve"
+                         "story__cave-topology"
+                         "approved by test")
+            status (run {:dir root}
+                        (script "squad_approval.sh")
+                        "status"
+                        "story__cave-topology")
+            packet-status (run {:dir root}
+                               (script "squad_packet.sh")
+                               "status"
+                               "cave-topology")]
+        (is (str/includes? (:out request) "STATE: pending"))
+        (is (fs/exists? (fs/path root ".squad/approvals/approved/story__cave-topology.approval")))
+        (is (not (fs/exists? (fs/path root ".squad/approvals/pending/story__cave-topology.approval"))))
+        (is (str/includes? (:out approve) "STATE: approved"))
+        (is (str/includes? (:out status) "STATE: approved"))
+        (is (str/includes? (:out packet-status) "STORY_APPROVAL: approved")))
+      (let [request (run {:dir root}
+                         (script "squad_approval.sh")
+                         "request"
+                         "gherkin__cave-topology"
+                         "story"
+                         "cave-topology"
+                         "gherkin"
+                         "Approve Gherkin"
+                         "gherkin needs user review")
+            reject (run {:dir root}
+                        (script "squad_approval.sh")
+                        "reject"
+                        "gherkin__cave-topology"
+                        "needs revision")]
+        (is (str/includes? (:out request) "STATE: pending"))
+        (is (str/includes? (:out reject) "STATE: rejected"))
+        (is (fs/exists? (fs/path root ".squad/approvals/rejected/gherkin__cave-topology.approval"))))
+    (finally
+      (fs/delete-tree root)))))
+
+(deftest squad-next-reports-highest-priority-workflow-action
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
+      (write-agent-status! root "analyst-001" "running")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/new/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\n"
+                       "to: squad-leader\n"
+                       "from: analyst-001\n"
+                       "priority: 50\n"
+                       "task: story review\n"
+                       "commit: abcdef1234\n\n"
+                       "stories ready\n"))
+      (let [new-handoff (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out new-handoff) "NEXT_ACTION: process_handoff"))
+        (is (str/includes? (:out new-handoff) "FROM: analyst-001"))
+        (is (str/includes? (:out new-handoff) "COMMAND: ready_for_next.sh")))
+      (fs/create-dirs (fs/path root ".swarmforge/handoffs/inbox/in_process"))
+      (fs/move (fs/path root ".swarmforge/handoffs/inbox/new/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")
+               (fs/path root ".swarmforge/handoffs/inbox/in_process/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff"))
+      (let [in-process (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out in-process) "NEXT_ACTION: finish_in_process_handoff"))
+        (is (str/includes? (:out in-process) "done_with_current.sh")))
+      (fs/create-dirs (fs/path root ".swarmforge/handoffs/inbox/completed"))
+      (fs/move (fs/path root ".swarmforge/handoffs/inbox/in_process/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")
+               (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff"))
+      (let [retire (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out retire) "NEXT_ACTION: retire_agent"))
+        (is (str/includes? (:out retire) "COMMAND: squad_retire.sh analyst-001")))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root}
+           (script "squad_approval.sh")
+           "request"
+           "theme__wumpus"
+           "theme"
+           "wumpus"
+           "theme"
+           "Approve theme"
+           "theme is ready")
+      (let [approval (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out approval) "NEXT_ACTION: request_user_approval"))
+        (is (str/includes? (:out approval) "APPROVAL: theme__wumpus"))
+        (is (str/includes? (:out approval) "COMMAND_ON_APPROVAL: squad_approval.sh approve theme__wumpus approved-by-user")))
+      (fs/delete-tree (fs/path root ".squad/approvals"))
+      (write-file (fs/path root ".swarmforge/squad/spawn.lock/owner")
+                  "pid: 999999999\n")
+      (let [lock (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out lock) "NEXT_ACTION: clear_stale_lock"))
+        (is (str/includes? (:out lock) "OWNER_PID: 999999999")))
+      (fs/delete-tree (fs/path root ".swarmforge/squad/spawn.lock"))
+      (write-file (fs/path root ".squad/spawn-requests/new/wumpus-impl.request")
+                  "template: implementer\n")
+      (let [spawn (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out spawn) "NEXT_ACTION: wait_for_spawn"))
+        (is (str/includes? (:out spawn) "CHECK_AFTER_SECONDS: 10")))
+      (fs/delete-tree (fs/path root ".squad/spawn-requests"))
+      (fs/delete-tree (fs/path root ".squad/themes"))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "gherkin-writer-001\tgherkin-writer-001\t" root "/.worktrees/gherkin-writer-001\tswarmforge-gherkin-writer-001\tGherkin Writer 001\tcodex\ttask\n"))
+      (write-agent-status! root "gherkin-writer-001" "running")
+      (let [wait (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out wait) "NEXT_ACTION: wait"))
+        (is (str/includes? (:out wait) "ACTIVE: gherkin-writer-001 gherkin-writer-001 running")))
+    (finally
+      (fs/delete-tree root)))))
+
+(deftest squad-next-selects-deterministic-story-candidates
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/alpha.md")
+                  "Story: alpha.\n")
+      (write-file (fs/path root "stories/beta.md")
+                  "Story: beta.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "beta" "stories/beta.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
+      (run {:dir root} "git" "add" "stories")
+      (run {:dir root} "git" "commit" "-q" "-m" "Prepare alpha and beta stories")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "beta" "analysis-beta" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "analysis-alpha" "master" sha))
+      (let [first-approval (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out first-approval) "NEXT_ACTION: create_approval_request"))
+        (is (str/includes? (:out first-approval) "STORY: alpha"))
+        (is (str/includes? (:out first-approval) "GATE: story")))
+      (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved")
+      (let [second-approval (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out second-approval) "NEXT_ACTION: create_approval_request"))
+        (is (str/includes? (:out second-approval) "STORY: beta")))
+      (run {:dir root} (script "squad_packet.sh") "approve" "beta" "story" "approved")
+      (let [create-assignment (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out create-assignment) "NEXT_ACTION: create_assignment"))
+        (is (str/includes? (:out create-assignment) "STORY: alpha"))
+        (is (str/includes? (:out create-assignment) "TEMPLATE: gherkin-writer"))
+        (is (str/includes? (:out create-assignment) "COMMAND: squad_assign.sh create wumpus alpha gherkin-writer alpha-gherkin <instructions-file>")))
+      (write-file (fs/path root "instructions.md")
+                  "Write Gherkin.\n")
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin/metadata")
+                  (str "assignment_id: alpha-gherkin\n"
+                       "theme_id: wumpus\n"
+                       "story_id: alpha\n"
+                       "template: gherkin-writer\n"
+                       "assignment_file: " root "/instructions.md\n"
+                       "created_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin/status")
+                  (str "assignment_id: alpha-gherkin\n"
+                       "state: assignment_created\n"
+                       "detail: gherkin-writer for alpha\n"
+                       "updated_at: 2026-08-03T00:00:00Z\n"))
+      (let [spawn (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out spawn) "NEXT_ACTION: request_spawn"))
+        (is (str/includes? (:out spawn) "STORY: alpha"))
+        (is (str/includes? (:out spawn) "ASSIGNMENT: alpha-gherkin"))
+        (is (str/includes? (:out spawn) "COMMAND: squad_spawn_request.sh gherkin-writer alpha-gherkin")))
+    (finally
+      (fs/delete-tree root)))))
+
+(deftest squad-simulator-runs-htw-through-tool-driven-workflow
+  (let [result (run {:dir repo-root} (script "squad_simulator.sh") "htw")
+        out (:out result)]
+    (is (str/includes? out "SIM_START theme=hunt-the-wumpus"))
+    (is (str/includes? out "NEXT_ACTION: create_approval_request"))
+    (is (str/includes? out "USER_APPROVES: theme__hunt-the-wumpus"))
+    (is (str/includes? out "AGENT_HANDOFF: analyst-001"))
+    (is (str/includes? out "decision=changes-requested"))
+    (is (str/includes? out "decision=accepted"))
+	    (is (str/includes? out "NEXT_ACTION: record_auto_approval"))
+	    (is (str/includes? out "NEXT_ACTION: record_batch_membership"))
+	    (is (str/includes? out "STORY: batch"))
+	    (is (str/includes? out "TEMPLATE: hardener"))
+	    (is (str/includes? out "TEMPLATE: qa"))
+	    (is (str/includes? out "TEMPLATE: architect"))
+	    (is (str/includes? out "TEMPLATE: senior-implementor"))
+	    (is (str/includes? out "REVIEW_DECISION: batch architect decision=changes-requested"))
+	    (is (str/includes? out "REVIEW_DECISION: batch architect decision=accepted"))
+	    (is (str/includes? out "SIM_END"))
+	    (is (str/includes? out "state=workflow_idle"))
+	    (is (str/includes? out "cave_topology=final_approved"))
+	    (is (str/includes? out "player_actions=final_approved"))))
 
 (deftest squad-packet-records-post-implementation-story-state
   (let [root (tmp-dir)]

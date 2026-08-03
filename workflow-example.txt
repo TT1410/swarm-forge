@@ -1,0 +1,1973 @@
+SIM_START theme=hunt-the-wumpus stories=2 reviewer_policy=reject-once user_policy=approve max_transient_slots=3 handoff_latency_ticks=3 approval_latency_ticks=5
+SIM_ROOT: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466
+
+TICK 000
+NEXT_ACTION: create_approval_request
+THEME: hunt-the-wumpus
+STORY: theme
+GATE: theme
+REASON: theme-ready
+CANDIDATES: 1
+COMMAND: squad_approval.sh request theme__hunt-the-wumpus theme hunt-the-wumpus theme Approve_theme theme-ready
+APPROVAL_DUE_TICK: 005
+
+TICK 001
+NEXT_ACTION: request_user_approval
+APPROVAL: theme__hunt-the-wumpus
+GATE: theme
+TARGET_KIND: theme
+TARGET_ID: hunt-the-wumpus
+TITLE: Approve_theme
+REASON: theme-ready
+COMMAND_ON_APPROVAL: squad_approval.sh approve theme__hunt-the-wumpus approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject theme__hunt-the-wumpus <reason>
+SIM_WAIT: user approval pending
+
+TICK 002
+NEXT_ACTION: request_user_approval
+APPROVAL: theme__hunt-the-wumpus
+GATE: theme
+TARGET_KIND: theme
+TARGET_ID: hunt-the-wumpus
+TITLE: Approve_theme
+REASON: theme-ready
+COMMAND_ON_APPROVAL: squad_approval.sh approve theme__hunt-the-wumpus approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject theme__hunt-the-wumpus <reason>
+SIM_WAIT: user approval pending
+
+TICK 003
+NEXT_ACTION: request_user_approval
+APPROVAL: theme__hunt-the-wumpus
+GATE: theme
+TARGET_KIND: theme
+TARGET_ID: hunt-the-wumpus
+TITLE: Approve_theme
+REASON: theme-ready
+COMMAND_ON_APPROVAL: squad_approval.sh approve theme__hunt-the-wumpus approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject theme__hunt-the-wumpus <reason>
+SIM_WAIT: user approval pending
+
+TICK 004
+NEXT_ACTION: request_user_approval
+APPROVAL: theme__hunt-the-wumpus
+GATE: theme
+TARGET_KIND: theme
+TARGET_ID: hunt-the-wumpus
+TITLE: Approve_theme
+REASON: theme-ready
+COMMAND_ON_APPROVAL: squad_approval.sh approve theme__hunt-the-wumpus approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject theme__hunt-the-wumpus <reason>
+SIM_WAIT: user approval pending
+
+TICK 005
+NEXT_ACTION: request_user_approval
+APPROVAL: theme__hunt-the-wumpus
+GATE: theme
+TARGET_KIND: theme
+TARGET_ID: hunt-the-wumpus
+TITLE: Approve_theme
+REASON: theme-ready
+COMMAND_ON_APPROVAL: squad_approval.sh approve theme__hunt-the-wumpus approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject theme__hunt-the-wumpus <reason>
+USER_APPROVES: theme__hunt-the-wumpus
+
+TICK 006
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: theme
+TEMPLATE: analyst
+ASSIGNMENT: hunt-the-wumpus-analysis
+REASON: approved theme needs story analysis
+CANDIDATES: 1
+COMMAND: squad_assign.sh create hunt-the-wumpus theme analyst hunt-the-wumpus-analysis <instructions-file> --requires approval:theme
+SIM_APPLIED: assignment created
+
+TICK 007
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: theme
+TEMPLATE: analyst
+ASSIGNMENT: hunt-the-wumpus-analysis
+REASON: approved theme needs story analysis
+CANDIDATES: 1
+COMMAND: squad_spawn_request.sh analyst hunt-the-wumpus-analysis /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-analysis/assignment.md
+DUE_TICK: 010
+
+TICK 008
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: analyst-001 analyst-001 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 009
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: analyst-001 analyst-001 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 010
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000010_000001_from_analyst-001_to_squad-leader.handoff
+TASK: hunt-the-wumpus-analysis
+FROM: analyst-001
+COMMIT: 3e62e6a146
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: analyst-001 assignment=hunt-the-wumpus-analysis
+SIM_APPLIED: handoff processed
+
+TICK 011
+NEXT_ACTION: retire_agent
+AGENT: analyst-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh analyst-001
+SIM_APPLIED: agent retired
+
+TICK 012
+NEXT_ACTION: create_approval_request
+THEME: hunt-the-wumpus
+STORY: cave-topology
+GATE: story
+REASON: story-ready-for-approval
+CANDIDATES: 4
+COMMAND: squad_approval.sh request story__cave-topology story cave-topology story Approve_story story-ready-for-approval
+APPROVAL_DUE_TICK: 017
+
+TICK 013
+NEXT_ACTION: request_user_approval
+APPROVAL: story__cave-topology
+GATE: story
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_story
+REASON: story-ready-for-approval
+COMMAND_ON_APPROVAL: squad_approval.sh approve story__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject story__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 014
+NEXT_ACTION: request_user_approval
+APPROVAL: story__cave-topology
+GATE: story
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_story
+REASON: story-ready-for-approval
+COMMAND_ON_APPROVAL: squad_approval.sh approve story__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject story__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 015
+NEXT_ACTION: request_user_approval
+APPROVAL: story__cave-topology
+GATE: story
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_story
+REASON: story-ready-for-approval
+COMMAND_ON_APPROVAL: squad_approval.sh approve story__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject story__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 016
+NEXT_ACTION: request_user_approval
+APPROVAL: story__cave-topology
+GATE: story
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_story
+REASON: story-ready-for-approval
+COMMAND_ON_APPROVAL: squad_approval.sh approve story__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject story__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 017
+NEXT_ACTION: request_user_approval
+APPROVAL: story__cave-topology
+GATE: story
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_story
+REASON: story-ready-for-approval
+COMMAND_ON_APPROVAL: squad_approval.sh approve story__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject story__cave-topology <reason>
+USER_APPROVES: story__cave-topology
+
+TICK 018
+NEXT_ACTION: create_approval_request
+THEME: hunt-the-wumpus
+STORY: player-actions
+GATE: story
+REASON: story-ready-for-approval
+CANDIDATES: 5
+COMMAND: squad_approval.sh request story__player-actions story player-actions story Approve_story story-ready-for-approval
+APPROVAL_DUE_TICK: 023
+
+TICK 019
+NEXT_ACTION: request_user_approval
+APPROVAL: story__player-actions
+GATE: story
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_story
+REASON: story-ready-for-approval
+COMMAND_ON_APPROVAL: squad_approval.sh approve story__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject story__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 020
+NEXT_ACTION: request_user_approval
+APPROVAL: story__player-actions
+GATE: story
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_story
+REASON: story-ready-for-approval
+COMMAND_ON_APPROVAL: squad_approval.sh approve story__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject story__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 021
+NEXT_ACTION: request_user_approval
+APPROVAL: story__player-actions
+GATE: story
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_story
+REASON: story-ready-for-approval
+COMMAND_ON_APPROVAL: squad_approval.sh approve story__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject story__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 022
+NEXT_ACTION: request_user_approval
+APPROVAL: story__player-actions
+GATE: story
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_story
+REASON: story-ready-for-approval
+COMMAND_ON_APPROVAL: squad_approval.sh approve story__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject story__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 023
+NEXT_ACTION: request_user_approval
+APPROVAL: story__player-actions
+GATE: story
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_story
+REASON: story-ready-for-approval
+COMMAND_ON_APPROVAL: squad_approval.sh approve story__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject story__player-actions <reason>
+USER_APPROVES: story__player-actions
+
+TICK 024
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: gherkin-writer
+ASSIGNMENT: cave-topology-gherkin
+REASON: approved story needs Gherkin
+CANDIDATES: 6
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology gherkin-writer cave-topology-gherkin <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 025
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: gherkin-writer
+ASSIGNMENT: cave-topology-gherkin
+REASON: approved story needs Gherkin
+CANDIDATES: 6
+COMMAND: squad_spawn_request.sh gherkin-writer cave-topology-gherkin /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-gherkin/assignment.md
+DUE_TICK: 028
+
+TICK 026
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: qa-procedure-writer
+ASSIGNMENT: cave-topology-qa-procedure
+REASON: approved story needs QA procedure
+CANDIDATES: 5
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology qa-procedure-writer cave-topology-qa-procedure <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 027
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: qa-procedure-writer
+ASSIGNMENT: cave-topology-qa-procedure
+REASON: approved story needs QA procedure
+CANDIDATES: 5
+COMMAND: squad_spawn_request.sh qa-procedure-writer cave-topology-qa-procedure /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-qa-procedure/assignment.md
+DUE_TICK: 030
+
+TICK 028
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000028_000001_from_gherkin-writer-001_to_squad-leader.handoff
+TASK: cave-topology-gherkin
+FROM: gherkin-writer-001
+COMMIT: fd888a3862
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: gherkin-writer-001 assignment=cave-topology-gherkin
+SIM_APPLIED: handoff processed
+
+TICK 029
+NEXT_ACTION: retire_agent
+AGENT: gherkin-writer-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh gherkin-writer-001
+SIM_APPLIED: agent retired
+
+TICK 030
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000030_000001_from_qa-procedure-writer-001_to_squad-leader.handoff
+TASK: cave-topology-qa-procedure
+FROM: qa-procedure-writer-001
+COMMIT: 2930ad197c
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: qa-procedure-writer-001 assignment=cave-topology-qa-procedure
+SIM_APPLIED: handoff processed
+
+TICK 031
+NEXT_ACTION: retire_agent
+AGENT: qa-procedure-writer-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh qa-procedure-writer-001
+SIM_APPLIED: agent retired
+
+TICK 032
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: gherkin-reviewer
+ASSIGNMENT: cave-topology-gherkin-review
+REASON: Gherkin artifact needs review
+CANDIDATES: 6
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology gherkin-reviewer cave-topology-gherkin-review <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 033
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: gherkin-reviewer
+ASSIGNMENT: cave-topology-gherkin-review
+REASON: Gherkin artifact needs review
+CANDIDATES: 6
+COMMAND: squad_spawn_request.sh gherkin-reviewer cave-topology-gherkin-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-gherkin-review/assignment.md
+DUE_TICK: 036
+
+TICK 034
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: qa-procedure-reviewer
+ASSIGNMENT: cave-topology-qa-procedure-review
+REASON: QA procedure artifact needs review
+CANDIDATES: 5
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology qa-procedure-reviewer cave-topology-qa-procedure-review <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 035
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: qa-procedure-reviewer
+ASSIGNMENT: cave-topology-qa-procedure-review
+REASON: QA procedure artifact needs review
+CANDIDATES: 5
+COMMAND: squad_spawn_request.sh qa-procedure-reviewer cave-topology-qa-procedure-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-qa-procedure-review/assignment.md
+DUE_TICK: 038
+
+TICK 036
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000036_000001_from_gherkin-reviewer-001_to_squad-leader.handoff
+TASK: cave-topology-gherkin-review
+FROM: gherkin-reviewer-001
+COMMIT: fe1ef54d18
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: gherkin-reviewer-001 assignment=cave-topology-gherkin-review
+REVIEW_DECISION: cave-topology gherkin-reviewer decision=changes-requested
+SIM_APPLIED: handoff processed
+
+TICK 037
+NEXT_ACTION: retire_agent
+AGENT: gherkin-reviewer-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh gherkin-reviewer-001
+SIM_APPLIED: agent retired
+
+TICK 038
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000038_000001_from_qa-procedure-reviewer-001_to_squad-leader.handoff
+TASK: cave-topology-qa-procedure-review
+FROM: qa-procedure-reviewer-001
+COMMIT: 0054549c0e
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: qa-procedure-reviewer-001 assignment=cave-topology-qa-procedure-review
+REVIEW_DECISION: cave-topology qa-procedure-reviewer decision=changes-requested
+SIM_APPLIED: handoff processed
+
+TICK 039
+NEXT_ACTION: retire_agent
+AGENT: qa-procedure-reviewer-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh qa-procedure-reviewer-001
+SIM_APPLIED: agent retired
+
+TICK 040
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: gherkin-writer
+ASSIGNMENT: cave-topology-gherkin-r2
+REASON: Gherkin review requested changes
+CANDIDATES: 6
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology gherkin-writer cave-topology-gherkin-r2 <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 041
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: gherkin-writer
+ASSIGNMENT: cave-topology-gherkin-r2
+REASON: Gherkin review requested changes
+CANDIDATES: 6
+COMMAND: squad_spawn_request.sh gherkin-writer cave-topology-gherkin-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-gherkin-r2/assignment.md
+DUE_TICK: 044
+
+TICK 042
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: qa-procedure-writer
+ASSIGNMENT: cave-topology-qa-procedure-r2
+REASON: QA procedure review requested changes
+CANDIDATES: 5
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology qa-procedure-writer cave-topology-qa-procedure-r2 <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 043
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: qa-procedure-writer
+ASSIGNMENT: cave-topology-qa-procedure-r2
+REASON: QA procedure review requested changes
+CANDIDATES: 5
+COMMAND: squad_spawn_request.sh qa-procedure-writer cave-topology-qa-procedure-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-qa-procedure-r2/assignment.md
+DUE_TICK: 046
+
+TICK 044
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000044_000001_from_gherkin-writer-002_to_squad-leader.handoff
+TASK: cave-topology-gherkin-r2
+FROM: gherkin-writer-002
+COMMIT: 3012b70a08
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: gherkin-writer-002 assignment=cave-topology-gherkin-r2
+SIM_APPLIED: handoff processed
+
+TICK 045
+NEXT_ACTION: retire_agent
+AGENT: gherkin-writer-002
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh gherkin-writer-002
+SIM_APPLIED: agent retired
+
+TICK 046
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000046_000001_from_qa-procedure-writer-002_to_squad-leader.handoff
+TASK: cave-topology-qa-procedure-r2
+FROM: qa-procedure-writer-002
+COMMIT: 50ddae0887
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: qa-procedure-writer-002 assignment=cave-topology-qa-procedure-r2
+SIM_APPLIED: handoff processed
+
+TICK 047
+NEXT_ACTION: retire_agent
+AGENT: qa-procedure-writer-002
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh qa-procedure-writer-002
+SIM_APPLIED: agent retired
+
+TICK 048
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: gherkin-reviewer
+ASSIGNMENT: cave-topology-gherkin-review-r2
+REASON: Gherkin artifact needs review
+CANDIDATES: 6
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology gherkin-reviewer cave-topology-gherkin-review-r2 <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 049
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: gherkin-reviewer
+ASSIGNMENT: cave-topology-gherkin-review-r2
+REASON: Gherkin artifact needs review
+CANDIDATES: 6
+COMMAND: squad_spawn_request.sh gherkin-reviewer cave-topology-gherkin-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-gherkin-review-r2/assignment.md
+DUE_TICK: 052
+
+TICK 050
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: qa-procedure-reviewer
+ASSIGNMENT: cave-topology-qa-procedure-review-r2
+REASON: QA procedure artifact needs review
+CANDIDATES: 5
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology qa-procedure-reviewer cave-topology-qa-procedure-review-r2 <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 051
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: qa-procedure-reviewer
+ASSIGNMENT: cave-topology-qa-procedure-review-r2
+REASON: QA procedure artifact needs review
+CANDIDATES: 5
+COMMAND: squad_spawn_request.sh qa-procedure-reviewer cave-topology-qa-procedure-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-qa-procedure-review-r2/assignment.md
+DUE_TICK: 054
+
+TICK 052
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000052_000001_from_gherkin-reviewer-002_to_squad-leader.handoff
+TASK: cave-topology-gherkin-review-r2
+FROM: gherkin-reviewer-002
+COMMIT: 8801d253cb
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: gherkin-reviewer-002 assignment=cave-topology-gherkin-review-r2
+REVIEW_DECISION: cave-topology gherkin-reviewer decision=accepted
+SIM_APPLIED: handoff processed
+
+TICK 053
+NEXT_ACTION: retire_agent
+AGENT: gherkin-reviewer-002
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh gherkin-reviewer-002
+SIM_APPLIED: agent retired
+
+TICK 054
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000054_000001_from_qa-procedure-reviewer-002_to_squad-leader.handoff
+TASK: cave-topology-qa-procedure-review-r2
+FROM: qa-procedure-reviewer-002
+COMMIT: efdc5ce0d3
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: qa-procedure-reviewer-002 assignment=cave-topology-qa-procedure-review-r2
+REVIEW_DECISION: cave-topology qa-procedure-reviewer decision=accepted
+SIM_APPLIED: handoff processed
+
+TICK 055
+NEXT_ACTION: retire_agent
+AGENT: qa-procedure-reviewer-002
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh qa-procedure-reviewer-002
+SIM_APPLIED: agent retired
+
+TICK 056
+NEXT_ACTION: create_approval_request
+THEME: hunt-the-wumpus
+STORY: cave-topology
+GATE: gherkin
+REASON: gherkin-review-accepted
+CANDIDATES: 6
+COMMAND: squad_approval.sh request gherkin__cave-topology story cave-topology gherkin Approve_Gherkin gherkin-review-accepted
+APPROVAL_DUE_TICK: 061
+
+TICK 057
+NEXT_ACTION: request_user_approval
+APPROVAL: gherkin__cave-topology
+GATE: gherkin
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_Gherkin
+REASON: gherkin-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve gherkin__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject gherkin__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 058
+NEXT_ACTION: request_user_approval
+APPROVAL: gherkin__cave-topology
+GATE: gherkin
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_Gherkin
+REASON: gherkin-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve gherkin__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject gherkin__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 059
+NEXT_ACTION: request_user_approval
+APPROVAL: gherkin__cave-topology
+GATE: gherkin
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_Gherkin
+REASON: gherkin-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve gherkin__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject gherkin__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 060
+NEXT_ACTION: request_user_approval
+APPROVAL: gherkin__cave-topology
+GATE: gherkin
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_Gherkin
+REASON: gherkin-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve gherkin__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject gherkin__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 061
+NEXT_ACTION: request_user_approval
+APPROVAL: gherkin__cave-topology
+GATE: gherkin
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_Gherkin
+REASON: gherkin-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve gherkin__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject gherkin__cave-topology <reason>
+USER_APPROVES: gherkin__cave-topology
+
+TICK 062
+NEXT_ACTION: create_approval_request
+THEME: hunt-the-wumpus
+STORY: cave-topology
+GATE: qa-procedure
+REASON: qa-procedure-review-accepted
+CANDIDATES: 5
+COMMAND: squad_approval.sh request qa-procedure__cave-topology story cave-topology qa-procedure Approve_QA_procedure qa-procedure-review-accepted
+APPROVAL_DUE_TICK: 067
+
+TICK 063
+NEXT_ACTION: request_user_approval
+APPROVAL: qa-procedure__cave-topology
+GATE: qa-procedure
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_QA_procedure
+REASON: qa-procedure-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve qa-procedure__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject qa-procedure__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 064
+NEXT_ACTION: request_user_approval
+APPROVAL: qa-procedure__cave-topology
+GATE: qa-procedure
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_QA_procedure
+REASON: qa-procedure-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve qa-procedure__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject qa-procedure__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 065
+NEXT_ACTION: request_user_approval
+APPROVAL: qa-procedure__cave-topology
+GATE: qa-procedure
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_QA_procedure
+REASON: qa-procedure-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve qa-procedure__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject qa-procedure__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 066
+NEXT_ACTION: request_user_approval
+APPROVAL: qa-procedure__cave-topology
+GATE: qa-procedure
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_QA_procedure
+REASON: qa-procedure-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve qa-procedure__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject qa-procedure__cave-topology <reason>
+SIM_WAIT: user approval pending
+
+TICK 067
+NEXT_ACTION: request_user_approval
+APPROVAL: qa-procedure__cave-topology
+GATE: qa-procedure
+TARGET_KIND: story
+TARGET_ID: cave-topology
+TITLE: Approve_QA_procedure
+REASON: qa-procedure-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve qa-procedure__cave-topology approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject qa-procedure__cave-topology <reason>
+USER_APPROVES: qa-procedure__cave-topology
+
+TICK 068
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: cave-topology
+GATE: implementation
+REASON: implementation approval is not required by configuration
+CANDIDATES: 5
+COMMAND: squad_packet.sh approve cave-topology implementation auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 069
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: implementer
+ASSIGNMENT: cave-topology-implementation
+REASON: story is approved for implementation
+CANDIDATES: 4
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology implementer cave-topology-implementation <instructions-file> --requires approval:acceptance-cave-topology
+SIM_APPLIED: assignment created
+
+TICK 070
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: implementer
+ASSIGNMENT: cave-topology-implementation
+REASON: story is approved for implementation
+CANDIDATES: 4
+COMMAND: squad_spawn_request.sh implementer cave-topology-implementation /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-implementation/assignment.md
+DUE_TICK: 073
+
+TICK 071
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: gherkin-writer
+ASSIGNMENT: player-actions-gherkin
+REASON: approved story needs Gherkin
+CANDIDATES: 3
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions gherkin-writer player-actions-gherkin <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 072
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: gherkin-writer
+ASSIGNMENT: player-actions-gherkin
+REASON: approved story needs Gherkin
+CANDIDATES: 3
+COMMAND: squad_spawn_request.sh gherkin-writer player-actions-gherkin /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-gherkin/assignment.md
+DUE_TICK: 075
+
+TICK 073
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000073_000001_from_implementer-001_to_squad-leader.handoff
+TASK: cave-topology-implementation
+FROM: implementer-001
+COMMIT: ab1b7c3b28
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: implementer-001 assignment=cave-topology-implementation
+SIM_APPLIED: handoff processed
+
+TICK 074
+NEXT_ACTION: retire_agent
+AGENT: implementer-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh implementer-001
+SIM_APPLIED: agent retired
+
+TICK 075
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000075_000001_from_gherkin-writer-003_to_squad-leader.handoff
+TASK: player-actions-gherkin
+FROM: gherkin-writer-003
+COMMIT: 497bd00167
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: gherkin-writer-003 assignment=player-actions-gherkin
+SIM_APPLIED: handoff processed
+
+TICK 076
+NEXT_ACTION: retire_agent
+AGENT: gherkin-writer-003
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh gherkin-writer-003
+SIM_APPLIED: agent retired
+
+TICK 077
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: cleaner
+ASSIGNMENT: cave-topology-cleaner
+REASON: implemented story needs cleaning
+CANDIDATES: 4
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology cleaner cave-topology-cleaner <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 078
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: cleaner
+ASSIGNMENT: cave-topology-cleaner
+REASON: implemented story needs cleaning
+CANDIDATES: 4
+COMMAND: squad_spawn_request.sh cleaner cave-topology-cleaner /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-cleaner/assignment.md
+DUE_TICK: 081
+
+TICK 079
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: qa-procedure-writer
+ASSIGNMENT: player-actions-qa-procedure
+REASON: approved story needs QA procedure
+CANDIDATES: 3
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions qa-procedure-writer player-actions-qa-procedure <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 080
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: qa-procedure-writer
+ASSIGNMENT: player-actions-qa-procedure
+REASON: approved story needs QA procedure
+CANDIDATES: 3
+COMMAND: squad_spawn_request.sh qa-procedure-writer player-actions-qa-procedure /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-qa-procedure/assignment.md
+DUE_TICK: 083
+
+TICK 081
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000081_000001_from_cleaner-001_to_squad-leader.handoff
+TASK: cave-topology-cleaner
+FROM: cleaner-001
+COMMIT: 470674293e
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: cleaner-001 assignment=cave-topology-cleaner
+SIM_APPLIED: handoff processed
+
+TICK 082
+NEXT_ACTION: retire_agent
+AGENT: cleaner-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh cleaner-001
+SIM_APPLIED: agent retired
+
+TICK 083
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000083_000001_from_qa-procedure-writer-003_to_squad-leader.handoff
+TASK: player-actions-qa-procedure
+FROM: qa-procedure-writer-003
+COMMIT: e2eb3cacbf
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: qa-procedure-writer-003 assignment=player-actions-qa-procedure
+SIM_APPLIED: handoff processed
+
+TICK 084
+NEXT_ACTION: retire_agent
+AGENT: qa-procedure-writer-003
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh qa-procedure-writer-003
+SIM_APPLIED: agent retired
+
+TICK 085
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: code-reviewer
+ASSIGNMENT: cave-topology-code-review
+REASON: cleaned story needs code review
+CANDIDATES: 4
+COMMAND: squad_assign.sh create hunt-the-wumpus cave-topology code-reviewer cave-topology-code-review <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 086
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: cave-topology
+TEMPLATE: code-reviewer
+ASSIGNMENT: cave-topology-code-review
+REASON: cleaned story needs code review
+CANDIDATES: 4
+COMMAND: squad_spawn_request.sh code-reviewer cave-topology-code-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/cave-topology-code-review/assignment.md
+DUE_TICK: 089
+
+TICK 087
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: gherkin-reviewer
+ASSIGNMENT: player-actions-gherkin-review
+REASON: Gherkin artifact needs review
+CANDIDATES: 3
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions gherkin-reviewer player-actions-gherkin-review <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 088
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: gherkin-reviewer
+ASSIGNMENT: player-actions-gherkin-review
+REASON: Gherkin artifact needs review
+CANDIDATES: 3
+COMMAND: squad_spawn_request.sh gherkin-reviewer player-actions-gherkin-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-gherkin-review/assignment.md
+DUE_TICK: 091
+
+TICK 089
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000089_000001_from_code-reviewer-001_to_squad-leader.handoff
+TASK: cave-topology-code-review
+FROM: code-reviewer-001
+COMMIT: 46a9eaba80
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: code-reviewer-001 assignment=cave-topology-code-review
+SIM_APPLIED: handoff processed
+
+TICK 090
+NEXT_ACTION: retire_agent
+AGENT: code-reviewer-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh code-reviewer-001
+SIM_APPLIED: agent retired
+
+TICK 091
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000091_000001_from_gherkin-reviewer-003_to_squad-leader.handoff
+TASK: player-actions-gherkin-review
+FROM: gherkin-reviewer-003
+COMMIT: e651b9d664
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: gherkin-reviewer-003 assignment=player-actions-gherkin-review
+REVIEW_DECISION: player-actions gherkin-reviewer decision=changes-requested
+SIM_APPLIED: handoff processed
+
+TICK 092
+NEXT_ACTION: retire_agent
+AGENT: gherkin-reviewer-003
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh gherkin-reviewer-003
+SIM_APPLIED: agent retired
+
+TICK 093
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: cave-topology
+GATE: code-review
+REASON: code-review approval is not required by configuration
+CANDIDATES: 5
+COMMAND: squad_packet.sh approve cave-topology code-review auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 094
+NEXT_ACTION: record_batch_membership
+THEME: hunt-the-wumpus
+STORY: cave-topology
+BATCH_KIND: hardener
+BATCH: hunt-the-wumpus-hardener
+REASON: code-reviewed story is ready for hardener batch
+CANDIDATES: 4
+COMMAND: squad_batch_story.sh add cave-topology hardener hunt-the-wumpus-hardener code_reviewed cave-topology-code-review code-reviewer-001 e651b9d664
+SIM_APPLIED: batch membership recorded
+
+TICK 095
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: gherkin-writer
+ASSIGNMENT: player-actions-gherkin-r2
+REASON: Gherkin review requested changes
+CANDIDATES: 3
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions gherkin-writer player-actions-gherkin-r2 <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 096
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: gherkin-writer
+ASSIGNMENT: player-actions-gherkin-r2
+REASON: Gherkin review requested changes
+CANDIDATES: 3
+COMMAND: squad_spawn_request.sh gherkin-writer player-actions-gherkin-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-gherkin-r2/assignment.md
+DUE_TICK: 099
+
+TICK 097
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: qa-procedure-reviewer
+ASSIGNMENT: player-actions-qa-procedure-review
+REASON: QA procedure artifact needs review
+CANDIDATES: 2
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions qa-procedure-reviewer player-actions-qa-procedure-review <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 098
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: qa-procedure-reviewer
+ASSIGNMENT: player-actions-qa-procedure-review
+REASON: QA procedure artifact needs review
+CANDIDATES: 2
+COMMAND: squad_spawn_request.sh qa-procedure-reviewer player-actions-qa-procedure-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-qa-procedure-review/assignment.md
+DUE_TICK: 101
+
+TICK 099
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000099_000001_from_gherkin-writer-004_to_squad-leader.handoff
+TASK: player-actions-gherkin-r2
+FROM: gherkin-writer-004
+COMMIT: c65b418b31
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: gherkin-writer-004 assignment=player-actions-gherkin-r2
+SIM_APPLIED: handoff processed
+
+TICK 100
+NEXT_ACTION: retire_agent
+AGENT: gherkin-writer-004
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh gherkin-writer-004
+SIM_APPLIED: agent retired
+
+TICK 101
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000101_000001_from_qa-procedure-reviewer-003_to_squad-leader.handoff
+TASK: player-actions-qa-procedure-review
+FROM: qa-procedure-reviewer-003
+COMMIT: d10cdc08a5
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: qa-procedure-reviewer-003 assignment=player-actions-qa-procedure-review
+REVIEW_DECISION: player-actions qa-procedure-reviewer decision=changes-requested
+SIM_APPLIED: handoff processed
+
+TICK 102
+NEXT_ACTION: retire_agent
+AGENT: qa-procedure-reviewer-003
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh qa-procedure-reviewer-003
+SIM_APPLIED: agent retired
+
+TICK 103
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: qa-procedure-writer
+ASSIGNMENT: player-actions-qa-procedure-r2
+REASON: QA procedure review requested changes
+CANDIDATES: 3
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions qa-procedure-writer player-actions-qa-procedure-r2 <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 104
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: qa-procedure-writer
+ASSIGNMENT: player-actions-qa-procedure-r2
+REASON: QA procedure review requested changes
+CANDIDATES: 3
+COMMAND: squad_spawn_request.sh qa-procedure-writer player-actions-qa-procedure-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-qa-procedure-r2/assignment.md
+DUE_TICK: 107
+
+TICK 105
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: gherkin-reviewer
+ASSIGNMENT: player-actions-gherkin-review-r2
+REASON: Gherkin artifact needs review
+CANDIDATES: 2
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions gherkin-reviewer player-actions-gherkin-review-r2 <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 106
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: gherkin-reviewer
+ASSIGNMENT: player-actions-gherkin-review-r2
+REASON: Gherkin artifact needs review
+CANDIDATES: 2
+COMMAND: squad_spawn_request.sh gherkin-reviewer player-actions-gherkin-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-gherkin-review-r2/assignment.md
+DUE_TICK: 109
+
+TICK 107
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000107_000001_from_qa-procedure-writer-004_to_squad-leader.handoff
+TASK: player-actions-qa-procedure-r2
+FROM: qa-procedure-writer-004
+COMMIT: d0e8f78467
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: qa-procedure-writer-004 assignment=player-actions-qa-procedure-r2
+SIM_APPLIED: handoff processed
+
+TICK 108
+NEXT_ACTION: retire_agent
+AGENT: qa-procedure-writer-004
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh qa-procedure-writer-004
+SIM_APPLIED: agent retired
+
+TICK 109
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000109_000001_from_gherkin-reviewer-004_to_squad-leader.handoff
+TASK: player-actions-gherkin-review-r2
+FROM: gherkin-reviewer-004
+COMMIT: 061f84a2c0
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: gherkin-reviewer-004 assignment=player-actions-gherkin-review-r2
+REVIEW_DECISION: player-actions gherkin-reviewer decision=accepted
+SIM_APPLIED: handoff processed
+
+TICK 110
+NEXT_ACTION: retire_agent
+AGENT: gherkin-reviewer-004
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh gherkin-reviewer-004
+SIM_APPLIED: agent retired
+
+TICK 111
+NEXT_ACTION: create_approval_request
+THEME: hunt-the-wumpus
+STORY: player-actions
+GATE: gherkin
+REASON: gherkin-review-accepted
+CANDIDATES: 3
+COMMAND: squad_approval.sh request gherkin__player-actions story player-actions gherkin Approve_Gherkin gherkin-review-accepted
+APPROVAL_DUE_TICK: 116
+
+TICK 112
+NEXT_ACTION: request_user_approval
+APPROVAL: gherkin__player-actions
+GATE: gherkin
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_Gherkin
+REASON: gherkin-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve gherkin__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject gherkin__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 113
+NEXT_ACTION: request_user_approval
+APPROVAL: gherkin__player-actions
+GATE: gherkin
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_Gherkin
+REASON: gherkin-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve gherkin__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject gherkin__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 114
+NEXT_ACTION: request_user_approval
+APPROVAL: gherkin__player-actions
+GATE: gherkin
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_Gherkin
+REASON: gherkin-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve gherkin__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject gherkin__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 115
+NEXT_ACTION: request_user_approval
+APPROVAL: gherkin__player-actions
+GATE: gherkin
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_Gherkin
+REASON: gherkin-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve gherkin__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject gherkin__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 116
+NEXT_ACTION: request_user_approval
+APPROVAL: gherkin__player-actions
+GATE: gherkin
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_Gherkin
+REASON: gherkin-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve gherkin__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject gherkin__player-actions <reason>
+USER_APPROVES: gherkin__player-actions
+
+TICK 117
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: qa-procedure-reviewer
+ASSIGNMENT: player-actions-qa-procedure-review-r2
+REASON: QA procedure artifact needs review
+CANDIDATES: 2
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions qa-procedure-reviewer player-actions-qa-procedure-review-r2 <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 118
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: qa-procedure-reviewer
+ASSIGNMENT: player-actions-qa-procedure-review-r2
+REASON: QA procedure artifact needs review
+CANDIDATES: 2
+COMMAND: squad_spawn_request.sh qa-procedure-reviewer player-actions-qa-procedure-review-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-qa-procedure-review-r2/assignment.md
+DUE_TICK: 121
+
+TICK 119
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: implementer
+ASSIGNMENT: player-actions-implementation
+REASON: story is approved for implementation
+CANDIDATES: 1
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions implementer player-actions-implementation <instructions-file> --requires approval:acceptance-player-actions
+SIM_APPLIED: assignment created
+
+TICK 120
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: implementer
+ASSIGNMENT: player-actions-implementation
+REASON: story is approved for implementation
+CANDIDATES: 1
+COMMAND: squad_spawn_request.sh implementer player-actions-implementation /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-implementation/assignment.md
+DUE_TICK: 123
+
+TICK 121
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000121_000001_from_qa-procedure-reviewer-004_to_squad-leader.handoff
+TASK: player-actions-qa-procedure-review-r2
+FROM: qa-procedure-reviewer-004
+COMMIT: 2f608c8a6d
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: qa-procedure-reviewer-004 assignment=player-actions-qa-procedure-review-r2
+REVIEW_DECISION: player-actions qa-procedure-reviewer decision=accepted
+SIM_APPLIED: handoff processed
+
+TICK 122
+NEXT_ACTION: retire_agent
+AGENT: qa-procedure-reviewer-004
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh qa-procedure-reviewer-004
+SIM_APPLIED: agent retired
+
+TICK 123
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000123_000001_from_implementer-002_to_squad-leader.handoff
+TASK: player-actions-implementation
+FROM: implementer-002
+COMMIT: 3b6b4532f3
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: implementer-002 assignment=player-actions-implementation
+SIM_APPLIED: handoff processed
+
+TICK 124
+NEXT_ACTION: retire_agent
+AGENT: implementer-002
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh implementer-002
+SIM_APPLIED: agent retired
+
+TICK 125
+NEXT_ACTION: create_approval_request
+THEME: hunt-the-wumpus
+STORY: player-actions
+GATE: qa-procedure
+REASON: qa-procedure-review-accepted
+CANDIDATES: 2
+COMMAND: squad_approval.sh request qa-procedure__player-actions story player-actions qa-procedure Approve_QA_procedure qa-procedure-review-accepted
+APPROVAL_DUE_TICK: 130
+
+TICK 126
+NEXT_ACTION: request_user_approval
+APPROVAL: qa-procedure__player-actions
+GATE: qa-procedure
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_QA_procedure
+REASON: qa-procedure-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve qa-procedure__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject qa-procedure__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 127
+NEXT_ACTION: request_user_approval
+APPROVAL: qa-procedure__player-actions
+GATE: qa-procedure
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_QA_procedure
+REASON: qa-procedure-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve qa-procedure__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject qa-procedure__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 128
+NEXT_ACTION: request_user_approval
+APPROVAL: qa-procedure__player-actions
+GATE: qa-procedure
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_QA_procedure
+REASON: qa-procedure-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve qa-procedure__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject qa-procedure__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 129
+NEXT_ACTION: request_user_approval
+APPROVAL: qa-procedure__player-actions
+GATE: qa-procedure
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_QA_procedure
+REASON: qa-procedure-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve qa-procedure__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject qa-procedure__player-actions <reason>
+SIM_WAIT: user approval pending
+
+TICK 130
+NEXT_ACTION: request_user_approval
+APPROVAL: qa-procedure__player-actions
+GATE: qa-procedure
+TARGET_KIND: story
+TARGET_ID: player-actions
+TITLE: Approve_QA_procedure
+REASON: qa-procedure-review-accepted
+COMMAND_ON_APPROVAL: squad_approval.sh approve qa-procedure__player-actions approved-by-user
+COMMAND_ON_REJECTION: squad_approval.sh reject qa-procedure__player-actions <reason>
+USER_APPROVES: qa-procedure__player-actions
+
+TICK 131
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: player-actions
+GATE: implementation
+REASON: implementation approval is not required by configuration
+CANDIDATES: 2
+COMMAND: squad_packet.sh approve player-actions implementation auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 132
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: cleaner
+ASSIGNMENT: player-actions-cleaner
+REASON: implemented story needs cleaning
+CANDIDATES: 1
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions cleaner player-actions-cleaner <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 133
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: cleaner
+ASSIGNMENT: player-actions-cleaner
+REASON: implemented story needs cleaning
+CANDIDATES: 1
+COMMAND: squad_spawn_request.sh cleaner player-actions-cleaner /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-cleaner/assignment.md
+DUE_TICK: 136
+
+TICK 134
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: cleaner-002 cleaner-002 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 135
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: cleaner-002 cleaner-002 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 136
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000136_000001_from_cleaner-002_to_squad-leader.handoff
+TASK: player-actions-cleaner
+FROM: cleaner-002
+COMMIT: c25ef5f58d
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: cleaner-002 assignment=player-actions-cleaner
+SIM_APPLIED: handoff processed
+
+TICK 137
+NEXT_ACTION: retire_agent
+AGENT: cleaner-002
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh cleaner-002
+SIM_APPLIED: agent retired
+
+TICK 138
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: code-reviewer
+ASSIGNMENT: player-actions-code-review
+REASON: cleaned story needs code review
+CANDIDATES: 1
+COMMAND: squad_assign.sh create hunt-the-wumpus player-actions code-reviewer player-actions-code-review <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 139
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: player-actions
+TEMPLATE: code-reviewer
+ASSIGNMENT: player-actions-code-review
+REASON: cleaned story needs code review
+CANDIDATES: 1
+COMMAND: squad_spawn_request.sh code-reviewer player-actions-code-review /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/player-actions-code-review/assignment.md
+DUE_TICK: 142
+
+TICK 140
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: code-reviewer-002 code-reviewer-002 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 141
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: code-reviewer-002 code-reviewer-002 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 142
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000142_000001_from_code-reviewer-002_to_squad-leader.handoff
+TASK: player-actions-code-review
+FROM: code-reviewer-002
+COMMIT: 591ead4b9a
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: code-reviewer-002 assignment=player-actions-code-review
+SIM_APPLIED: handoff processed
+
+TICK 143
+NEXT_ACTION: retire_agent
+AGENT: code-reviewer-002
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh code-reviewer-002
+SIM_APPLIED: agent retired
+
+TICK 144
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: player-actions
+GATE: code-review
+REASON: code-review approval is not required by configuration
+CANDIDATES: 2
+COMMAND: squad_packet.sh approve player-actions code-review auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 145
+NEXT_ACTION: record_batch_membership
+THEME: hunt-the-wumpus
+STORY: player-actions
+BATCH_KIND: hardener
+BATCH: hunt-the-wumpus-hardener
+REASON: code-reviewed story is ready for hardener batch
+CANDIDATES: 1
+COMMAND: squad_batch_story.sh add player-actions hardener hunt-the-wumpus-hardener code_reviewed player-actions-code-review code-reviewer-002 130455bf1d
+SIM_APPLIED: batch membership recorded
+
+TICK 146
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: batch
+TEMPLATE: hardener
+ASSIGNMENT: hunt-the-wumpus-hardener
+REASON: hardener batch is ready
+CANDIDATES: 1
+COMMAND: squad_assign.sh create hunt-the-wumpus batch hardener hunt-the-wumpus-hardener <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 147
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: batch
+TEMPLATE: hardener
+ASSIGNMENT: hunt-the-wumpus-hardener
+REASON: hardener batch is ready
+CANDIDATES: 1
+COMMAND: squad_spawn_request.sh hardener hunt-the-wumpus-hardener /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-hardener/assignment.md
+DUE_TICK: 150
+
+TICK 148
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: hardener-001 hardener-001 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 149
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: hardener-001 hardener-001 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 150
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000150_000001_from_hardener-001_to_squad-leader.handoff
+TASK: hunt-the-wumpus-hardener
+FROM: hardener-001
+COMMIT: 130455bf1d
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: hardener-001 assignment=hunt-the-wumpus-hardener
+SIM_APPLIED: handoff processed
+
+TICK 151
+NEXT_ACTION: retire_agent
+AGENT: hardener-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh hardener-001
+SIM_APPLIED: agent retired
+
+TICK 152
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: cave-topology
+GATE: hardening
+REASON: hardening approval is not required by configuration
+CANDIDATES: 4
+COMMAND: squad_packet.sh approve cave-topology hardening auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 153
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: player-actions
+GATE: hardening
+REASON: hardening approval is not required by configuration
+CANDIDATES: 3
+COMMAND: squad_packet.sh approve player-actions hardening auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 154
+NEXT_ACTION: record_batch_membership
+THEME: hunt-the-wumpus
+STORY: cave-topology
+BATCH_KIND: qa
+BATCH: hunt-the-wumpus-qa
+REASON: hardened story is ready for QA batch
+CANDIDATES: 2
+COMMAND: squad_batch_story.sh add cave-topology qa hunt-the-wumpus-qa hardening_approved hunt-the-wumpus-hardener hardener-001 390847ad54
+SIM_APPLIED: batch membership recorded
+
+TICK 155
+NEXT_ACTION: record_batch_membership
+THEME: hunt-the-wumpus
+STORY: player-actions
+BATCH_KIND: qa
+BATCH: hunt-the-wumpus-qa
+REASON: hardened story is ready for QA batch
+CANDIDATES: 1
+COMMAND: squad_batch_story.sh add player-actions qa hunt-the-wumpus-qa hardening_approved hunt-the-wumpus-hardener hardener-001 390847ad54
+SIM_APPLIED: batch membership recorded
+
+TICK 156
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: batch
+TEMPLATE: qa
+ASSIGNMENT: hunt-the-wumpus-qa
+REASON: QA batch is ready
+CANDIDATES: 1
+COMMAND: squad_assign.sh create hunt-the-wumpus batch qa hunt-the-wumpus-qa <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 157
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: batch
+TEMPLATE: qa
+ASSIGNMENT: hunt-the-wumpus-qa
+REASON: QA batch is ready
+CANDIDATES: 1
+COMMAND: squad_spawn_request.sh qa hunt-the-wumpus-qa /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-qa/assignment.md
+DUE_TICK: 160
+
+TICK 158
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: qa-001 qa-001 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 159
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: qa-001 qa-001 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 160
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000160_000001_from_qa-001_to_squad-leader.handoff
+TASK: hunt-the-wumpus-qa
+FROM: qa-001
+COMMIT: 390847ad54
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: qa-001 assignment=hunt-the-wumpus-qa
+SIM_APPLIED: handoff processed
+
+TICK 161
+NEXT_ACTION: retire_agent
+AGENT: qa-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh qa-001
+SIM_APPLIED: agent retired
+
+TICK 162
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: cave-topology
+GATE: qa
+REASON: qa approval is not required by configuration
+CANDIDATES: 4
+COMMAND: squad_packet.sh approve cave-topology qa auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 163
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: player-actions
+GATE: qa
+REASON: qa approval is not required by configuration
+CANDIDATES: 3
+COMMAND: squad_packet.sh approve player-actions qa auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 164
+NEXT_ACTION: record_batch_membership
+THEME: hunt-the-wumpus
+STORY: cave-topology
+BATCH_KIND: architecture
+BATCH: hunt-the-wumpus-architecture
+REASON: QA-verified story is ready for architecture batch
+CANDIDATES: 2
+COMMAND: squad_batch_story.sh add cave-topology architecture hunt-the-wumpus-architecture qa_approved hunt-the-wumpus-qa qa-001 069cd6119b
+SIM_APPLIED: batch membership recorded
+
+TICK 165
+NEXT_ACTION: record_batch_membership
+THEME: hunt-the-wumpus
+STORY: player-actions
+BATCH_KIND: architecture
+BATCH: hunt-the-wumpus-architecture
+REASON: QA-verified story is ready for architecture batch
+CANDIDATES: 1
+COMMAND: squad_batch_story.sh add player-actions architecture hunt-the-wumpus-architecture qa_approved hunt-the-wumpus-qa qa-001 069cd6119b
+SIM_APPLIED: batch membership recorded
+
+TICK 166
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: batch
+TEMPLATE: architect
+ASSIGNMENT: hunt-the-wumpus-architecture
+REASON: architecture batch is ready after QA
+CANDIDATES: 1
+COMMAND: squad_assign.sh create hunt-the-wumpus batch architect hunt-the-wumpus-architecture <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 167
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: batch
+TEMPLATE: architect
+ASSIGNMENT: hunt-the-wumpus-architecture
+REASON: architecture batch is ready after QA
+CANDIDATES: 1
+COMMAND: squad_spawn_request.sh architect hunt-the-wumpus-architecture /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-architecture/assignment.md
+DUE_TICK: 170
+
+TICK 168
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: architect-001 architect-001 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 169
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: architect-001 architect-001 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 170
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000170_000001_from_architect-001_to_squad-leader.handoff
+TASK: hunt-the-wumpus-architecture
+FROM: architect-001
+COMMIT: 069cd6119b
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: architect-001 assignment=hunt-the-wumpus-architecture
+REVIEW_DECISION: batch architect decision=changes-requested
+SIM_APPLIED: handoff processed
+
+TICK 171
+NEXT_ACTION: retire_agent
+AGENT: architect-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh architect-001
+SIM_APPLIED: agent retired
+
+TICK 172
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: batch
+TEMPLATE: senior-implementor
+ASSIGNMENT: hunt-the-wumpus-architecture-fix
+REASON: architecture critique needs senior implementation
+CANDIDATES: 1
+COMMAND: squad_assign.sh create hunt-the-wumpus batch senior-implementor hunt-the-wumpus-architecture-fix <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 173
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: batch
+TEMPLATE: senior-implementor
+ASSIGNMENT: hunt-the-wumpus-architecture-fix
+REASON: architecture critique needs senior implementation
+CANDIDATES: 1
+COMMAND: squad_spawn_request.sh senior-implementor hunt-the-wumpus-architecture-fix /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-architecture-fix/assignment.md
+DUE_TICK: 176
+
+TICK 174
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: senior-implementor-001 senior-implementor-001 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 175
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: senior-implementor-001 senior-implementor-001 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 176
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000176_000001_from_senior-implementor-001_to_squad-leader.handoff
+TASK: hunt-the-wumpus-architecture-fix
+FROM: senior-implementor-001
+COMMIT: 43011a020d
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: senior-implementor-001 assignment=hunt-the-wumpus-architecture-fix
+SIM_APPLIED: handoff processed
+
+TICK 177
+NEXT_ACTION: retire_agent
+AGENT: senior-implementor-001
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh senior-implementor-001
+SIM_APPLIED: agent retired
+
+TICK 178
+NEXT_ACTION: create_assignment
+THEME: hunt-the-wumpus
+STORY: batch
+TEMPLATE: architect
+ASSIGNMENT: hunt-the-wumpus-architecture-r2
+REASON: architecture batch is ready after QA
+CANDIDATES: 1
+COMMAND: squad_assign.sh create hunt-the-wumpus batch architect hunt-the-wumpus-architecture-r2 <instructions-file>
+SIM_APPLIED: assignment created
+
+TICK 179
+NEXT_ACTION: request_spawn
+THEME: hunt-the-wumpus
+STORY: batch
+TEMPLATE: architect
+ASSIGNMENT: hunt-the-wumpus-architecture-r2
+REASON: architecture batch is ready after QA
+CANDIDATES: 1
+COMMAND: squad_spawn_request.sh architect hunt-the-wumpus-architecture-r2 /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.squad/assignments/hunt-the-wumpus-architecture-r2/assignment.md
+DUE_TICK: 182
+
+TICK 180
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: architect-002 architect-002 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 181
+NEXT_ACTION: wait
+REASON: active agents are still working or awaiting handoff delivery
+ACTIVE: architect-002 architect-002 running
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+TICK 182
+NEXT_ACTION: process_handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.3879394183572153466/.swarmforge/handoffs/inbox/new/50_000182_000001_from_architect-002_to_squad-leader.handoff
+TASK: hunt-the-wumpus-architecture-r2
+FROM: architect-002
+COMMIT: 1d6f5f3d21
+REASON: new handoff mail is waiting
+COMMAND: ready_for_next.sh
+AGENT_HANDOFF: architect-002 assignment=hunt-the-wumpus-architecture-r2
+REVIEW_DECISION: batch architect decision=accepted
+SIM_APPLIED: handoff processed
+
+TICK 183
+NEXT_ACTION: retire_agent
+AGENT: architect-002
+STATE: running
+REASON: completed handoff has been processed and role is still registered
+COMMAND: squad_retire.sh architect-002
+SIM_APPLIED: agent retired
+
+TICK 184
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: cave-topology
+GATE: architecture
+REASON: architecture approval is not required by configuration
+CANDIDATES: 4
+COMMAND: squad_packet.sh approve cave-topology architecture auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 185
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: cave-topology
+GATE: final
+REASON: final approval is not required by configuration
+CANDIDATES: 3
+COMMAND: squad_packet.sh approve cave-topology final auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 186
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: player-actions
+GATE: architecture
+REASON: architecture approval is not required by configuration
+CANDIDATES: 2
+COMMAND: squad_packet.sh approve player-actions architecture auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 187
+NEXT_ACTION: record_auto_approval
+THEME: hunt-the-wumpus
+STORY: player-actions
+GATE: final
+REASON: final approval is not required by configuration
+CANDIDATES: 1
+COMMAND: squad_packet.sh approve player-actions final auto-approved-by-config
+SIM_APPLIED: auto approval recorded
+
+TICK 188
+NEXT_ACTION: wait
+REASON: no handoffs, pending approvals, active transient agents, or stale locks
+CHECK_AFTER_SECONDS: 30
+COMMAND: sleep 30 && squad_next.sh
+SIM_WAIT: no executable simulated event
+
+SIM_END tick=188 state=workflow_idle stories=2 cave_topology=final_approved player_actions=final_approved max_transient_slots=3

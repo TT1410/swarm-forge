@@ -10,16 +10,18 @@
        "  squad_packet.sh create <theme-id> <story-id> <story-assignment-id> <branch> <sha>\n"
        "  squad_packet.sh attach <story-id> <gherkin|qa-procedure> <assignment-id> <branch> <sha> <artifact-file>\n"
        "  squad_packet.sh review <story-id> <gherkin|qa-procedure|code|architecture> <accepted|changes-requested> <assignment-id> <branch> <sha>\n"
-       "  squad_packet.sh approve <story-id> <story|implementation> <detail...>\n"
-       "  squad_packet.sh record <story-id> <implementation|cleaner|hardener|qa|architecture> <assignment-id> <branch> <sha>\n"
+       "  squad_packet.sh approve <story-id> <story|gherkin|qa-procedure|implementation|code-review|hardening|qa|architecture|final> <detail...>\n"
+       "  squad_packet.sh record <story-id> <implementation|cleaner|hardener|qa|architecture|senior-implementor> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh batch <story-id> <hardener|qa|architecture> <batch-id> <stage> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh status <story-id>"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
 (def artifact-kinds #{"gherkin" "qa-procedure"})
 (def review-kinds #{"gherkin" "qa-procedure" "code" "architecture"})
-(def result-kinds #{"implementation" "cleaner" "hardener" "qa" "architecture"})
+(def result-kinds #{"implementation" "cleaner" "hardener" "qa" "architecture" "senior-implementor"})
 (def batch-kinds #{"hardener" "qa" "architecture"})
+(def approval-gates #{"story" "gherkin" "qa-procedure" "implementation"
+                      "code-review" "hardening" "qa" "architecture" "final"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -133,15 +135,24 @@
 
 (defn recompute-state [packet]
   (cond
+    (approved? packet "final_approval") "final_approved"
+    (approved? packet "architecture_approval") "architecture_approved"
+    (accepted? packet "architecture_review") "architecture_reviewed"
+    (contains? packet "senior_implementor_sha") "architecture_revision_returned"
     (contains? packet "architecture_sha") "architecture_returned"
+    (approved? packet "qa_approval") "qa_approved"
     (contains? packet "qa_sha") "qa_returned"
+    (approved? packet "hardening_approval") "hardening_approved"
     (contains? packet "hardener_sha") "hardener_returned"
+    (approved? packet "code_review_approval") "code_review_approved"
     (and (= "accepted" (get packet "code_review"))
          (contains? packet "cleaner_sha")) "code_reviewed"
     (contains? packet "cleaner_sha") "cleaned"
     (contains? packet "implementation_sha") "implemented"
     (approved? packet "implementation_approval") "implementation_approved"
     (and (approved? packet "story_approval")
+         (approved? packet "gherkin_approval")
+         (approved? packet "qa_procedure_approval")
          (accepted? packet "gherkin_review")
          (accepted? packet "qa_procedure_review")) "implementation_approval_ready"
     (and (approved? packet "story_approval")
@@ -155,20 +166,31 @@
                  "story_branch" "story_sha" "story_approval" "story_approval_detail"
                  "gherkin_path" "gherkin_assignment" "gherkin_branch" "gherkin_sha"
                  "gherkin_review" "gherkin_review_assignment" "gherkin_review_branch" "gherkin_review_sha"
+                 "gherkin_approval" "gherkin_approval_detail"
                  "qa_procedure_path" "qa_procedure_assignment" "qa_procedure_branch" "qa_procedure_sha"
                  "qa_procedure_review" "qa_procedure_review_assignment" "qa_procedure_review_branch"
-                 "qa_procedure_review_sha" "implementation_approval" "implementation_approval_detail"
+                 "qa_procedure_review_sha" "qa_procedure_approval" "qa_procedure_approval_detail"
+                 "implementation_approval" "implementation_approval_detail"
                  "implementation_assignment" "implementation_branch" "implementation_sha"
                  "cleaner_assignment" "cleaner_branch" "cleaner_sha"
                  "code_review" "code_review_assignment" "code_review_branch" "code_review_sha"
+                 "code_review_approval" "code_review_approval_detail"
                  "hardener_batch" "hardener_batch_stage" "hardener_batch_assignment"
                  "hardener_batch_branch" "hardener_batch_sha" "hardener_assignment"
-                 "hardener_branch" "hardener_sha" "qa_batch" "qa_batch_stage"
+                 "hardener_branch" "hardener_sha" "hardening_approval" "hardening_approval_detail"
+                 "qa_batch" "qa_batch_stage"
                  "qa_batch_assignment" "qa_batch_branch" "qa_batch_sha"
-                 "qa_assignment" "qa_branch" "qa_sha" "architecture_batch"
+                 "qa_assignment" "qa_branch" "qa_sha" "qa_approval" "qa_approval_detail"
+                 "architecture_batch"
                  "architecture_batch_stage" "architecture_batch_assignment"
                  "architecture_batch_branch" "architecture_batch_sha"
                  "architecture_assignment" "architecture_branch" "architecture_sha"
+                 "architecture_review" "architecture_review_assignment"
+                 "architecture_review_branch" "architecture_review_sha"
+                 "architecture_approval" "architecture_approval_detail"
+                 "senior_implementor_assignment" "senior_implementor_branch"
+                 "senior_implementor_sha"
+                 "final_approval" "final_approval_detail"
                  "updated_at"]
         emitted (set ordered)]
     (concat
@@ -243,7 +265,13 @@
         packet (packet-map root story-id)
         prefix (str/replace kind "-" "_")
         packet (write-packet! root story-id
-                              (assoc packet
+                              (assoc (apply dissoc packet
+                                            [(str prefix "_review")
+                                             (str prefix "_review_assignment")
+                                             (str prefix "_review_branch")
+                                             (str prefix "_review_sha")
+                                             (str prefix "_approval")
+                                             (str prefix "_approval_detail")])
                                      (str prefix "_path") relative
                                      (str prefix "_assignment") assignment-id
                                      (str prefix "_branch") branch
@@ -282,26 +310,27 @@
     (println "DECISION:" decision)))
 
 (defn approve! [story-id gate detail-parts]
-  (when-not (#{"story" "implementation"} gate)
-    (exit! 2 "Approval gate must be story or implementation."))
+  (when-not (contains? approval-gates gate)
+    (exit! 2 "Approval gate must be story, gherkin, qa-procedure, implementation, code-review, hardening, qa, architecture, or final."))
   (validate-id! "Story id" story-id)
   (let [root (fs/absolutize (project-root))
         _ (ensure-packet! root story-id)
         packet (packet-map root story-id)
+        gate-key (str/replace gate "-" "_")
         detail (str/replace (str/join " " detail-parts) #"\R+" " ")
         detail (if (str/blank? detail) "approved" detail)
         packet (write-packet! root story-id
                               (assoc packet
-                                     (str gate "_approval") "approved"
-                                     (str gate "_approval_detail") detail))]
-    (event! root story-id (str gate "_approved") detail)
+                                     (str gate-key "_approval") "approved"
+                                     (str gate-key "_approval_detail") detail))]
+    (event! root story-id (str gate-key "_approved") detail)
     (println "SQUAD_PACKET:" story-id)
     (println "STATE:" (get packet "state"))
     (println "APPROVAL:" gate)))
 
 (defn record-result! [story-id kind assignment-id branch sha]
   (when-not (contains? result-kinds kind)
-    (exit! 2 "Result kind must be implementation, cleaner, hardener, qa, or architecture."))
+    (exit! 2 "Result kind must be implementation, cleaner, hardener, qa, architecture, or senior-implementor."))
   (doseq [[label value] [["Story id" story-id]
                          ["Assignment id" assignment-id]
                          ["Branch" branch]]]
@@ -311,6 +340,13 @@
         _ (ensure-packet! root story-id)
         packet (packet-map root story-id)
         prefix (str/replace kind "-" "_")
+        packet (if (= "senior-implementor" kind)
+                 (apply dissoc packet
+                        ["architecture_review" "architecture_review_assignment"
+                         "architecture_review_branch" "architecture_review_sha"
+                         "architecture_approval" "architecture_approval_detail"
+                         "final_approval" "final_approval_detail"])
+                 packet)
         packet (write-packet! root story-id
                               (assoc packet
                                      (str prefix "_assignment") assignment-id
@@ -362,8 +398,10 @@
     (println "STORY_APPROVAL:" (get packet "story_approval" "none"))
     (println "GHERKIN:" (get packet "gherkin_path" "none"))
     (println "GHERKIN_REVIEW:" (get packet "gherkin_review" "none"))
+    (println "GHERKIN_APPROVAL:" (get packet "gherkin_approval" "none"))
     (println "QA_PROCEDURE:" (get packet "qa_procedure_path" "none"))
     (println "QA_PROCEDURE_REVIEW:" (get packet "qa_procedure_review" "none"))
+    (println "QA_PROCEDURE_APPROVAL:" (get packet "qa_procedure_approval" "none"))
     (println "IMPLEMENTATION_APPROVAL:" (get packet "implementation_approval" "none"))
     (println "IMPLEMENTATION:" (get packet "implementation_sha" "none"))
     (println "CLEANER:" (get packet "cleaner_sha" "none"))
@@ -371,10 +409,13 @@
     (println "HARDENER_BATCH:" (get packet "hardener_batch" "none"))
     (println "HARDENER:" (get packet "hardener_sha" "none"))
     (println "QA_BATCH:" (get packet "qa_batch" "none"))
-    (println "QA:" (get packet "qa_sha" "none"))
-    (println "ARCHITECTURE_BATCH:" (get packet "architecture_batch" "none"))
-    (println "ARCHITECTURE:" (get packet "architecture_sha" "none"))
-    (println "PACKET:" (str file))))
+	    (println "QA:" (get packet "qa_sha" "none"))
+	    (println "ARCHITECTURE_BATCH:" (get packet "architecture_batch" "none"))
+	    (println "ARCHITECTURE:" (get packet "architecture_sha" "none"))
+	    (println "ARCHITECTURE_REVIEW:" (get packet "architecture_review" "none"))
+	    (println "SENIOR_IMPLEMENTOR:" (get packet "senior_implementor_sha" "none"))
+	    (println "FINAL_APPROVAL:" (get packet "final_approval" "none"))
+	    (println "PACKET:" (str file))))
 
 (defn -main [& args]
   (case (first args)

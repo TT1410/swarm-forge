@@ -20,6 +20,7 @@
 - The branch can record telemetry with `squad_event.sh`, wrap commands with `squad_run.sh`, and inspect current telemetry with `squad_status.sh`.
 - The squad leader should use squad helper telemetry and daemon records for process state. Do not run raw `tmux`, `ps`, or other process-inspection commands during normal squad management unless the user explicitly approves operator debugging.
 - The branch can record durable theme workflow state with `squad_theme.sh`.
+- The branch can create, inspect, approve, and reject durable approval requests with `squad_approval.sh`.
 - The branch can generate durable transient assignment files from theme/story state with `squad_assign.sh`.
 - The branch can record and inspect durable story packet state with `squad_packet.sh`.
 - The branch can generate a durable theme report with `squad_report.sh <theme-id>`.
@@ -37,7 +38,7 @@
 - Once a story packet reaches `implementation_approved`, implementation for that story may begin while later stories are still being drafted, specified, or approved.
 - Implementer assignments must be launched from the story packet, not from loose paths or squad leader memory. `squad_assign.sh create` blocks implementer assignments unless the packet is `implementation_approved`.
 - For small tasks, these approval gates may be collapsed only when the story and acceptance criteria are trivial.
-- Record approval gates with `squad_theme.sh approve`.
+- Record direct theme approval gates with `squad_theme.sh approve`; use `squad_approval.sh` for durable pending user approval requests.
 
 ## Assignments
 - For theme/story work, create an assignment with `squad_assign.sh create` before requesting the transient agent.
