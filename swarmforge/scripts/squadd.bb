@@ -4,7 +4,8 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
             [clojure.java.shell :refer [sh]]
-            [clojure.string :as str]))
+            [clojure.string :as str])
+  (:import [java.net InetAddress ServerSocket URLDecoder]))
 
 (def usage-text
   "Usage: squadd.sh [--once] [--no-notify] [project-root]")
@@ -15,6 +16,79 @@
   "You have new handoff mail. If idle, run ready_for_next.sh.")
 (def status-wake-message
   "Squad status needs attention. If idle, run squad_status.sh.")
+(def dashboard-html
+  "<!doctype html>
+<html lang=\"en\">
+<head>
+  <meta charset=\"utf-8\">
+  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
+  <title>SwarmForge Squad</title>
+  <style>
+    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
+    body { margin: 0; background: #f7f7f4; color: #202124; }
+    header { padding: 14px 18px; border-bottom: 1px solid #d9d9d2; display: flex; gap: 16px; align-items: baseline; }
+    h1 { font-size: 18px; margin: 0; }
+    main { padding: 16px 18px 32px; display: grid; gap: 18px; }
+    section { display: grid; gap: 8px; }
+    h2 { font-size: 14px; margin: 0; text-transform: uppercase; color: #59615b; }
+    table { width: 100%; border-collapse: collapse; background: white; border: 1px solid #d9d9d2; }
+    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #ecece6; font-size: 13px; vertical-align: top; }
+    th { background: #f0f0ea; color: #3b413d; }
+    button { border: 1px solid #9aa59e; background: #fff; color: #202124; padding: 5px 9px; border-radius: 6px; cursor: pointer; }
+    button + button { margin-left: 6px; }
+    .muted { color: #68726c; }
+    .pill { display: inline-block; padding: 2px 6px; border-radius: 999px; background: #e8eee9; }
+    .error { color: #9b1c1c; }
+  </style>
+</head>
+<body>
+  <header><h1>SwarmForge Squad</h1><span id=\"meta\" class=\"muted\"></span></header>
+  <main id=\"app\"></main>
+  <script>
+    const app = document.getElementById('app');
+    const meta = document.getElementById('meta');
+    const esc = value => String(value ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    async function post(path) {
+      const response = await fetch(path, { method: 'POST' });
+      if (!response.ok) throw new Error(await response.text());
+      await render();
+    }
+    function row(cells) { return '<tr>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>'; }
+    function table(headers, rows) {
+      return '<table><thead><tr>' + headers.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
+    }
+    function approvals(items) {
+      if (!items.length) return '<p class=\"muted\">No pending approvals.</p>';
+      return table(['Approval', 'Target', 'Gate', 'Reason', 'Actions'], items.map(a => row([
+        esc(a.approval_id), esc(a.target_kind + ' ' + a.target_id), esc(a.gate), esc(a.reason),
+        `<button onclick=\"post('/api/approvals/${encodeURIComponent(a.approval_id)}/approve')\">Approve</button>` +
+        `<button onclick=\"post('/api/approvals/${encodeURIComponent(a.approval_id)}/reject')\">Reject</button>`
+      ])));
+    }
+    async function render() {
+      try {
+        const data = await (await fetch('/api/state', { cache: 'no-store' })).json();
+        meta.textContent = data.project_root + ' | ' + data.generated_at;
+        app.innerHTML =
+          `<section><h2>Approvals</h2>${approvals(data.approvals.pending)}</section>` +
+          `<section><h2>Stories</h2>${table(['Story','State','Gherkin','QA Procedure','Implementation','Final'], data.stories.map(s => row([
+            esc(s.story_id), '<span class=\"pill\">' + esc(s.state) + '</span>', esc(s.gherkin_review_state), esc(s.qa_procedure_review_state), esc(s.implementation_assignment_state), esc(s.final_state)
+          ])))}</section>` +
+          `<section><h2>Agents</h2>${table(['Agent','Template','Task','State','Detail'], data.agents.map(a => row([
+            esc(a.agent_id), esc(a.template), esc(a.task_id), esc(a.state), esc(a.detail)
+          ])))}</section>` +
+          `<section><h2>Assignments</h2>${table(['Assignment','Template','Story','State'], data.assignments.map(a => row([
+            esc(a.assignment_id), esc(a.template), esc(a.story_id), esc(a.state)
+          ])))}</section>`;
+      } catch (err) {
+        app.innerHTML = '<p class=\"error\">' + esc(err.message) + '</p>';
+      }
+    }
+    render();
+    setInterval(render, 2000);
+  </script>
+</body>
+</html>")
 (def script-dir (fs/parent *file*))
 (load-file (str (fs/path script-dir "squad_config.bb")))
 (def stopping? (atom false))
@@ -578,6 +652,215 @@
               :when (and k v)]
           [k v])))
 
+(defn json-escape [value]
+  (-> (str value)
+      (str/replace "\\" "\\\\")
+      (str/replace "\"" "\\\"")
+      (str/replace "\b" "\\b")
+      (str/replace "\f" "\\f")
+      (str/replace "\n" "\\n")
+      (str/replace "\r" "\\r")
+      (str/replace "\t" "\\t")))
+
+(declare to-json)
+
+(defn map-entry-json [[k v]]
+  (str "\"" (json-escape (name k)) "\":" (to-json v)))
+
+(defn to-json [value]
+  (cond
+    (nil? value) "null"
+    (string? value) (str "\"" (json-escape value) "\"")
+    (keyword? value) (str "\"" (json-escape (name value)) "\"")
+    (number? value) (str value)
+    (true? value) "true"
+    (false? value) "false"
+    (map? value) (str "{" (str/join "," (map map-entry-json value)) "}")
+    (sequential? value) (str "[" (str/join "," (map to-json value)) "]")
+    :else (str "\"" (json-escape value) "\"")))
+
+(defn state-files [dir name]
+  (if (fs/exists? dir)
+    (->> (fs/list-dir dir)
+         (filter #(and (fs/regular-file? %) (str/ends-with? (fs/file-name %) name)))
+         (sort-by fs/file-name)
+         vec)
+    []))
+
+(defn map-with-id [id-key id file]
+  (assoc (parse-kv-file file) id-key id))
+
+(defn story-state [root]
+  (let [dir (fs/path root ".squad" "stories")]
+    (if (fs/exists? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/directory?)
+           (sort-by fs/file-name)
+           (mapv (fn [story-dir]
+                   (map-with-id "story_id" (fs/file-name story-dir) (fs/path story-dir "packet")))))
+      [])))
+
+(defn assignment-state [root]
+  (let [dir (fs/path root ".squad" "assignments")]
+    (if (fs/exists? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/directory?)
+           (sort-by fs/file-name)
+           (mapv (fn [assignment-dir]
+                   (merge (map-with-id "assignment_id" (fs/file-name assignment-dir)
+                                       (fs/path assignment-dir "metadata"))
+                          (parse-kv-file (fs/path assignment-dir "status"))))))
+      [])))
+
+(defn agent-state [root]
+  (let [dir (fs/path root ".squad" "agents")]
+    (if (fs/exists? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/directory?)
+           (sort-by fs/file-name)
+           (mapv (fn [agent-dir]
+                   (merge (map-with-id "agent_id" (fs/file-name agent-dir)
+                                       (fs/path agent-dir "metadata"))
+                          (parse-kv-file (fs/path agent-dir "status"))
+                          {"heartbeat_at" (or (read-value (fs/path agent-dir "heartbeat") "updated_at") "none")}))))
+      [])))
+
+(defn approval-state-for [root state]
+  (->> (state-files (fs/path root ".squad" "approvals" state) ".approval")
+       (mapv #(parse-kv-file %))))
+
+(defn batch-state [root]
+  (let [dir (fs/path root ".squad" "batches")]
+    (if (fs/exists? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/directory?)
+           (sort-by fs/file-name)
+           (mapv (fn [batch-dir]
+                   (merge (map-with-id "batch_id" (fs/file-name batch-dir)
+                                       (fs/path batch-dir "metadata"))
+                          (parse-kv-file (if (fs/exists? (fs/path batch-dir "status"))
+                                           (fs/path batch-dir "status")
+                                           (fs/path batch-dir "state")))))))
+      [])))
+
+(defn web-state [root]
+  {"generated_at" (now)
+   "project_root" (str root)
+   "stories" (story-state root)
+   "assignments" (assignment-state root)
+   "agents" (agent-state root)
+   "batches" (batch-state root)
+   "approvals" {"pending" (approval-state-for root "pending")
+                "approved" (approval-state-for root "approved")
+                "rejected" (approval-state-for root "rejected")}})
+
+(def status-reasons
+  {200 "OK"
+   404 "Not Found"
+   405 "Method Not Allowed"
+   409 "Conflict"
+   500 "Internal Server Error"})
+
+(defn response [status content-type body]
+  {:status status :content-type content-type :body body})
+
+(defn url-decode [value]
+  (URLDecoder/decode value "UTF-8"))
+
+(defn approval-web-action! [root approval-id action]
+  (let [detail (if (= action "approve") "approved-by-web" "rejected-by-web")
+        result (process/sh {:continue true :dir (str root)}
+                           (str (fs/path script-dir "squad_approval.sh"))
+                           action
+                           approval-id
+                           detail)]
+    (if (zero? (:exit result))
+      {:ok true :output (:out result)}
+      {:ok false :status 409 :error (str (:err result) (:out result))})))
+
+(defn handle-web-request [root method path]
+  (try
+    (cond
+      (and (= method "GET") (= path "/"))
+      (response 200 "text/html; charset=utf-8" dashboard-html)
+
+      (and (= method "GET") (= path "/api/state"))
+      (response 200 "application/json; charset=utf-8" (to-json (web-state root)))
+
+      (and (= method "POST") (re-matches #"/api/approvals/[^/]+/(approve|reject)" path))
+      (let [[_ encoded-id action] (re-matches #"/api/approvals/([^/]+)/(approve|reject)" path)
+            result (approval-web-action! root (url-decode encoded-id) action)]
+        (if (:ok result)
+          (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
+          (response (:status result) "text/plain; charset=utf-8" (:error result))))
+
+      (contains? #{"GET" "POST"} method)
+      (response 404 "text/plain; charset=utf-8" "Not found\n")
+
+      :else
+      (response 405 "text/plain; charset=utf-8" "Method not allowed\n"))
+    (catch Exception e
+      (response 500 "text/plain; charset=utf-8" (str (.getMessage e) "\n")))))
+
+(defn send-socket-response! [socket {:keys [status content-type body]}]
+  (let [body (or body "")
+        bytes (.getBytes body "UTF-8")
+        reason (get status-reasons status "OK")
+        header (str "HTTP/1.1 " status " " reason "\r\n"
+                    "Content-Type: " content-type "\r\n"
+                    "Cache-Control: no-store\r\n"
+                    "Content-Length: " (alength bytes) "\r\n"
+                    "Connection: close\r\n"
+                    "\r\n")
+        out (.getOutputStream socket)]
+    (.write out (.getBytes header "UTF-8"))
+    (.write out bytes)
+    (.flush out)))
+
+(defn handle-client! [root socket]
+  (with-open [socket socket
+              reader (java.io.BufferedReader.
+                      (java.io.InputStreamReader. (.getInputStream socket) "UTF-8"))]
+    (let [request-line (.readLine reader)
+          [_ method target] (when request-line
+                              (re-matches #"([A-Z]+)\s+(\S+)\s+HTTP/.*" request-line))]
+      (loop []
+        (let [line (.readLine reader)]
+          (when (and line (not (str/blank? line)))
+            (recur))))
+      (send-socket-response! socket
+                             (if (and method target)
+                               (handle-web-request root method (first (str/split target #"\?" 2)))
+                               (response 400 "text/plain; charset=utf-8" "Bad request\n"))))))
+
+(defn start-web-server! [root]
+  (when-not (= "0" (System/getenv "SWARMFORGE_SQUADD_WEB"))
+    (let [port (env-long "SWARMFORGE_SQUADD_WEB_PORT" 0)
+          server-socket (ServerSocket. port 50 (InetAddress/getByName "127.0.0.1"))
+          actual-port (.getLocalPort server-socket)
+          url (str "http://127.0.0.1:" actual-port "/")
+          thread (Thread.
+                  (fn []
+                    (try
+                      (while (not (.isClosed server-socket))
+                        (try
+                          (handle-client! root (.accept server-socket))
+                          (catch java.net.SocketException _ nil)
+                          (catch Exception e
+                            (log! root "web-error" (.getMessage e)))))
+                      (catch java.net.SocketException _ nil))))]
+      (.setDaemon thread true)
+      (.start thread)
+      (write-atomic! (fs/path (daemon-dir root) "squad-web-url") (str url "\n"))
+      (log! root "web-started" url)
+      {:socket server-socket :thread thread})))
+
+(defn stop-web-server! [web-server]
+  (when-let [socket (:socket web-server)]
+    (try
+      (.close socket)
+      (catch Exception _ nil))))
+
 (defn spawn-request-dirs [root]
   {:new (fs/path root ".squad" "spawn-requests" "new")
    :in-process (fs/path root ".squad" "spawn-requests" "in_process")
@@ -718,11 +1001,13 @@
         (spit (str (pid-file root)) (str (.pid (java.lang.ProcessHandle/current)) "\n"))
         (.addShutdownHook (Runtime/getRuntime) (Thread. #(shutdown! root)))
         (log! root "started")
-        (try
-          (while (not (should-stop? root))
-            (poll-loop-once! opts)
-            (sleep-poll! root poll-ms))
-          (finally
-            (shutdown! root)))))))
+        (let [web-server (start-web-server! root)]
+          (try
+            (while (not (should-stop? root))
+              (poll-loop-once! opts)
+              (sleep-poll! root poll-ms))
+            (finally
+              (stop-web-server! web-server)
+              (shutdown! root))))))))
 
 (apply -main *command-line-args*)

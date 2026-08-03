@@ -64,6 +64,14 @@
     (spit (str tmp) content)
     (fs/move tmp file {:replace-existing true})))
 
+(defn write-batch-status! [dir batch-id kind state]
+  (let [content (str "batch_id: " batch-id "\n"
+                     "kind: " kind "\n"
+                     "state: " state "\n"
+                     "updated_at: " (timestamp) "\n")]
+    (write-atomic! (fs/path dir "state") content)
+    (write-atomic! (fs/path dir "status") content)))
+
 (defn append-line! [file line]
   (fs/create-dirs (fs/parent file))
   (spit (str file) (str line "\n") :append true))
@@ -99,12 +107,10 @@
                    (str "batch_id: " batch-id "\n"
                         "kind: " kind "\n"
                         "created_at: " now "\n"))
-    (write-atomic! (fs/path dir "state")
-                   (str "batch_id: " batch-id "\n"
-                        "kind: " kind "\n"
-                        "state: open\n"
-                        "updated_at: " now "\n"))
+    (write-batch-status! dir batch-id kind "open")
     (write-atomic! (fs/path dir "manifest.tsv")
+                   "story_id\tstage\tassignment_id\tbranch\tsha\tadded_at\n")
+    (write-atomic! (fs/path dir "manifest")
                    "story_id\tstage\tassignment_id\tbranch\tsha\tadded_at\n")
     (println "SQUAD_BATCH:" batch-id)
     (println "KIND:" kind)
@@ -138,6 +144,8 @@
                     (str/trim (slurp (str active)))))))
     (append-line! (fs/path dir "manifest.tsv")
                   (str/join "\t" [story-id stage assignment-id branch sha now]))
+    (append-line! (fs/path dir "manifest")
+                  (str/join "\t" [story-id stage assignment-id branch sha now]))
     (append-line! (fs/path dir "events.log")
                   (str now "\tstory_added\t" story-id "\t" stage "\t" assignment-id "\t" branch "\t" sha))
     (let [sdir (story-dir root story-id)]
@@ -169,11 +177,7 @@
                         "branch: " branch "\n"
                         "sha: " sha "\n"
                         "received_at: " now "\n"))
-    (write-atomic! (fs/path dir "state")
-                   (str "batch_id: " batch-id "\n"
-                        "kind: " kind "\n"
-                        "state: result_received\n"
-                        "updated_at: " now "\n"))
+    (write-batch-status! dir batch-id kind "result_received")
     (append-line! (fs/path dir "events.log")
                   (str now "\tresult_received\t" assignment-id "\t" branch "\t" sha))
     (println "SQUAD_BATCH:" batch-id)
@@ -188,7 +192,8 @@
   (let [root (fs/absolutize (project-root))
         dir (batch-dir root batch-id)
         metadata (fs/path dir "metadata")
-        state-file (fs/path dir "state")
+        status-file (fs/path dir "status")
+        state-file (if (fs/exists? status-file) status-file (fs/path dir "state"))
         manifest (fs/path dir "manifest.tsv")]
     (ensure-batch! dir batch-id)
     (println "BATCH:" batch-id)

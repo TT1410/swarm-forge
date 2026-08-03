@@ -196,6 +196,11 @@ This prevents approval requests from getting lost in the squad leader transcript
 
 Story packets should be the canonical progress record.
 
+Status: implemented for explicit packet stage states, final state, per-stage
+iteration summaries, and first-class batch `status`/`manifest` files. The packet
+now records replacement/revision iterations as data rather than relying only on
+assignment naming conventions.
+
 They should clearly represent:
 
 ```text
@@ -263,6 +268,11 @@ explicit batch policy says to wait.
 ## 5. Support a Web Status and Approval Surface
 
 The existing durable state is close to enough for a web status screen:
+
+Status: implemented as a local `squadd` web surface. The daemon writes its URL to
+`.swarmforge/daemon/squad-web-url`, serves `GET /api/state`, renders a small
+JavaScript dashboard, and accepts approval/rejection POSTs that delegate to
+`squad_approval.sh`.
 
 - story packets show per-story phase and artifact status
 - assignments show task execution status

@@ -133,6 +133,9 @@
 (defn approved? [packet field]
   (= "approved" (get packet field)))
 
+(defn value-or [value fallback]
+  (if (str/blank? value) fallback value))
+
 (defn recompute-state [packet]
   (cond
     (approved? packet "final_approval") "final_approved"
@@ -161,36 +164,107 @@
     (approved? packet "story_approval") "story_approved"
     :else "story_recorded"))
 
+(defn derived-stage-fields [packet state]
+  {"story_approval_state" (value-or (get packet "story_approval") "pending")
+   "gherkin_assignment_state" (cond
+                                (contains? packet "gherkin_path") "complete"
+                                (contains? packet "gherkin_assignment") "assigned"
+                                :else "pending")
+   "gherkin_review_state" (value-or (get packet "gherkin_review")
+                                    (if (contains? packet "gherkin_path") "pending" "blocked"))
+   "gherkin_approval_state" (value-or (get packet "gherkin_approval")
+                                      (if (accepted? packet "gherkin_review") "pending" "blocked"))
+   "qa_procedure_assignment_state" (cond
+                                     (contains? packet "qa_procedure_path") "complete"
+                                     (contains? packet "qa_procedure_assignment") "assigned"
+                                     :else "pending")
+   "qa_procedure_review_state" (value-or (get packet "qa_procedure_review")
+                                         (if (contains? packet "qa_procedure_path") "pending" "blocked"))
+   "qa_procedure_approval_state" (value-or (get packet "qa_procedure_approval")
+                                           (if (accepted? packet "qa_procedure_review") "pending" "blocked"))
+   "implementation_approval_state" (value-or (get packet "implementation_approval")
+                                             (if (= "implementation_approval_ready" state) "pending" "blocked"))
+   "implementation_assignment_state" (cond
+                                       (contains? packet "implementation_sha") "complete"
+                                       (contains? packet "implementation_assignment") "assigned"
+                                       (approved? packet "implementation_approval") "ready"
+                                       :else "blocked")
+   "cleaner_review_state" (cond
+                            (contains? packet "code_review") (get packet "code_review")
+                            (contains? packet "cleaner_sha") "pending"
+                            :else "blocked")
+   "hardener_review_state" (cond
+                             (approved? packet "hardening_approval") "approved"
+                             (contains? packet "hardener_sha") "pending"
+                             (contains? packet "hardener_batch") "batched"
+                             :else "blocked")
+   "qa_result_state" (cond
+                       (approved? packet "qa_approval") "approved"
+                       (contains? packet "qa_sha") "pending"
+                       (contains? packet "qa_batch") "batched"
+                       :else "blocked")
+   "architecture_result_state" (cond
+                                 (approved? packet "architecture_approval") "approved"
+                                 (contains? packet "architecture_review") (get packet "architecture_review")
+                                 (contains? packet "architecture_sha") "pending_review"
+                                 (contains? packet "architecture_batch") "batched"
+                                 :else "blocked")
+   "final_state" state})
+
+(defn append-iteration [packet stage assignment-id state]
+  (let [field (str stage "_iterations")
+        entry (str assignment-id "=" state)
+        existing (get packet field)]
+    (assoc packet field
+           (if (str/blank? existing)
+             entry
+             (str existing "," entry)))))
+
 (defn ordered-packet-lines [packet]
-  (let [ordered ["story_id" "theme_id" "state" "story_path" "story_assignment"
-                 "story_branch" "story_sha" "story_approval" "story_approval_detail"
+  (let [ordered ["story_id" "theme_id" "state" "final_state"
+                 "story_path" "story_assignment" "story_branch" "story_sha"
+                 "story_approval" "story_approval_state" "story_approval_detail"
+                 "story_iterations"
                  "gherkin_path" "gherkin_assignment" "gherkin_branch" "gherkin_sha"
-                 "gherkin_review" "gherkin_review_assignment" "gherkin_review_branch" "gherkin_review_sha"
-                 "gherkin_approval" "gherkin_approval_detail"
+                 "gherkin_assignment_state" "gherkin_iterations"
+                 "gherkin_review" "gherkin_review_state" "gherkin_review_assignment"
+                 "gherkin_review_branch" "gherkin_review_sha" "gherkin_review_iterations"
+                 "gherkin_approval" "gherkin_approval_state" "gherkin_approval_detail"
+                 "gherkin_approval_iterations"
                  "qa_procedure_path" "qa_procedure_assignment" "qa_procedure_branch" "qa_procedure_sha"
-                 "qa_procedure_review" "qa_procedure_review_assignment" "qa_procedure_review_branch"
-                 "qa_procedure_review_sha" "qa_procedure_approval" "qa_procedure_approval_detail"
-                 "implementation_approval" "implementation_approval_detail"
+                 "qa_procedure_assignment_state" "qa_procedure_iterations"
+                 "qa_procedure_review" "qa_procedure_review_state" "qa_procedure_review_assignment"
+                 "qa_procedure_review_branch" "qa_procedure_review_sha" "qa_procedure_review_iterations"
+                 "qa_procedure_approval" "qa_procedure_approval_state" "qa_procedure_approval_detail"
+                 "qa_procedure_approval_iterations"
+                 "implementation_approval" "implementation_approval_state" "implementation_approval_detail"
+                 "implementation_approval_iterations"
                  "implementation_assignment" "implementation_branch" "implementation_sha"
+                 "implementation_assignment_state" "implementation_iterations"
                  "cleaner_assignment" "cleaner_branch" "cleaner_sha"
+                 "cleaner_review_state" "cleaner_iterations"
                  "code_review" "code_review_assignment" "code_review_branch" "code_review_sha"
-                 "code_review_approval" "code_review_approval_detail"
+                 "code_review_iterations" "code_review_approval" "code_review_approval_detail"
+                 "code_review_approval_iterations"
                  "hardener_batch" "hardener_batch_stage" "hardener_batch_assignment"
-                 "hardener_batch_branch" "hardener_batch_sha" "hardener_assignment"
-                 "hardener_branch" "hardener_sha" "hardening_approval" "hardening_approval_detail"
-                 "qa_batch" "qa_batch_stage"
-                 "qa_batch_assignment" "qa_batch_branch" "qa_batch_sha"
-                 "qa_assignment" "qa_branch" "qa_sha" "qa_approval" "qa_approval_detail"
-                 "architecture_batch"
-                 "architecture_batch_stage" "architecture_batch_assignment"
-                 "architecture_batch_branch" "architecture_batch_sha"
+                 "hardener_batch_branch" "hardener_batch_sha" "hardener_batch_iterations"
+                 "hardener_assignment" "hardener_branch" "hardener_sha"
+                 "hardener_review_state" "hardener_iterations"
+                 "hardening_approval" "hardening_approval_detail" "hardening_approval_iterations"
+                 "qa_batch" "qa_batch_stage" "qa_batch_assignment" "qa_batch_branch" "qa_batch_sha"
+                 "qa_batch_iterations" "qa_assignment" "qa_branch" "qa_sha"
+                 "qa_result_state" "qa_iterations" "qa_approval" "qa_approval_detail"
+                 "qa_approval_iterations"
+                 "architecture_batch" "architecture_batch_stage" "architecture_batch_assignment"
+                 "architecture_batch_branch" "architecture_batch_sha" "architecture_batch_iterations"
                  "architecture_assignment" "architecture_branch" "architecture_sha"
+                 "architecture_result_state" "architecture_iterations"
                  "architecture_review" "architecture_review_assignment"
-                 "architecture_review_branch" "architecture_review_sha"
-                 "architecture_approval" "architecture_approval_detail"
+                 "architecture_review_branch" "architecture_review_sha" "architecture_review_iterations"
+                 "architecture_approval" "architecture_approval_detail" "architecture_approval_iterations"
                  "senior_implementor_assignment" "senior_implementor_branch"
-                 "senior_implementor_sha"
-                 "final_approval" "final_approval_detail"
+                 "senior_implementor_sha" "senior_implementor_iterations"
+                 "final_approval" "final_approval_detail" "final_approval_iterations"
                  "updated_at"]
         emitted (set ordered)]
     (concat
@@ -203,8 +277,10 @@
 
 (defn write-packet! [root story-id packet]
   (let [now (timestamp)
+        state (recompute-state packet)
+        packet (merge packet (derived-stage-fields packet state))
         packet (assoc packet
-                      "state" (recompute-state packet)
+                      "state" state
                       "updated_at" now)]
     (write-atomic! (packet-file root story-id)
                    (str (str/join "\n" (ordered-packet-lines packet)) "\n"))
@@ -234,12 +310,14 @@
       (exit! 2 (str "Story packet already exists: " story-id)))
     (fs/create-dirs dir)
     (let [packet (write-packet! root story-id
-                                {"story_id" story-id
-                                 "theme_id" theme-id
-                                 "story_path" story-path
-                                 "story_assignment" assignment-id
-                                 "story_branch" branch
-                                 "story_sha" sha})]
+                                (append-iteration
+                                 {"story_id" story-id
+                                  "theme_id" theme-id
+                                  "story_path" story-path
+                                  "story_assignment" assignment-id
+                                  "story_branch" branch
+                                  "story_sha" sha}
+                                 "story" assignment-id "recorded"))]
       (event! root story-id "story_recorded" assignment-id branch sha)
       (println "SQUAD_PACKET:" story-id)
       (println "STATE:" (get packet "state"))
@@ -265,17 +343,19 @@
         packet (packet-map root story-id)
         prefix (str/replace kind "-" "_")
         packet (write-packet! root story-id
-                              (assoc (apply dissoc packet
-                                            [(str prefix "_review")
-                                             (str prefix "_review_assignment")
-                                             (str prefix "_review_branch")
-                                             (str prefix "_review_sha")
-                                             (str prefix "_approval")
-                                             (str prefix "_approval_detail")])
-                                     (str prefix "_path") relative
-                                     (str prefix "_assignment") assignment-id
-                                     (str prefix "_branch") branch
-                                     (str prefix "_sha") sha))]
+                              (append-iteration
+                               (assoc (apply dissoc packet
+                                             [(str prefix "_review")
+                                              (str prefix "_review_assignment")
+                                              (str prefix "_review_branch")
+                                              (str prefix "_review_sha")
+                                              (str prefix "_approval")
+                                              (str prefix "_approval_detail")])
+                                      (str prefix "_path") relative
+                                      (str prefix "_assignment") assignment-id
+                                      (str prefix "_branch") branch
+                                      (str prefix "_sha") sha)
+                               prefix assignment-id "attached"))]
     (event! root story-id (str prefix "_attached") assignment-id branch sha relative)
     (println "SQUAD_PACKET:" story-id)
     (println "STATE:" (get packet "state"))
@@ -298,11 +378,13 @@
         _ (ensure-packet! root story-id)
         prefix (str/replace kind "-" "_")
         packet (write-packet! root story-id
-                              (assoc packet
-                                     (str prefix "_review") decision
-                                     (str prefix "_review_assignment") assignment-id
-                                     (str prefix "_review_branch") branch
-                                     (str prefix "_review_sha") sha))]
+                              (append-iteration
+                               (assoc packet
+                                      (str prefix "_review") decision
+                                      (str prefix "_review_assignment") assignment-id
+                                      (str prefix "_review_branch") branch
+                                      (str prefix "_review_sha") sha)
+                               (str prefix "_review") assignment-id decision))]
     (event! root story-id (str prefix "_review_" decision) assignment-id branch sha)
     (println "SQUAD_PACKET:" story-id)
     (println "STATE:" (get packet "state"))
@@ -320,9 +402,11 @@
         detail (str/replace (str/join " " detail-parts) #"\R+" " ")
         detail (if (str/blank? detail) "approved" detail)
         packet (write-packet! root story-id
-                              (assoc packet
-                                     (str gate-key "_approval") "approved"
-                                     (str gate-key "_approval_detail") detail))]
+                              (append-iteration
+                               (assoc packet
+                                      (str gate-key "_approval") "approved"
+                                      (str gate-key "_approval_detail") detail)
+                               (str gate-key "_approval") gate-key "approved"))]
     (event! root story-id (str gate-key "_approved") detail)
     (println "SQUAD_PACKET:" story-id)
     (println "STATE:" (get packet "state"))
@@ -348,10 +432,12 @@
                          "final_approval" "final_approval_detail"])
                  packet)
         packet (write-packet! root story-id
-                              (assoc packet
-                                     (str prefix "_assignment") assignment-id
-                                     (str prefix "_branch") branch
-                                     (str prefix "_sha") sha))]
+                              (append-iteration
+                               (assoc packet
+                                      (str prefix "_assignment") assignment-id
+                                      (str prefix "_branch") branch
+                                      (str prefix "_sha") sha)
+                               prefix assignment-id "recorded"))]
     (event! root story-id (str prefix "_recorded") assignment-id branch sha)
     (println "SQUAD_PACKET:" story-id)
     (println "STATE:" (get packet "state"))
@@ -374,12 +460,14 @@
         _ (ensure-packet! root story-id)
         packet (packet-map root story-id)
         packet (write-packet! root story-id
-                              (assoc packet
-                                     (str kind "_batch") batch-id
-                                     (str kind "_batch_stage") stage
-                                     (str kind "_batch_assignment") assignment-id
-                                     (str kind "_batch_branch") branch
-                                     (str kind "_batch_sha") sha))]
+                              (append-iteration
+                               (assoc packet
+                                      (str kind "_batch") batch-id
+                                      (str kind "_batch_stage") stage
+                                      (str kind "_batch_assignment") assignment-id
+                                      (str kind "_batch_branch") branch
+                                      (str kind "_batch_sha") sha)
+                               (str kind "_batch") batch-id "member"))]
     (event! root story-id (str kind "_batch_added") batch-id stage assignment-id branch sha)
     (println "SQUAD_PACKET:" story-id)
     (println "STATE:" (get packet "state"))
@@ -394,25 +482,39 @@
     (println "STORY:" story-id)
     (println "THEME:" (get packet "theme_id" "unknown"))
     (println "STATE:" (get packet "state" "unknown"))
+    (println "FINAL_STATE:" (get packet "final_state" "unknown"))
     (println "STORY_PATH:" (get packet "story_path" "none"))
     (println "STORY_APPROVAL:" (get packet "story_approval" "none"))
+    (println "STORY_APPROVAL_STATE:" (get packet "story_approval_state" "none"))
     (println "GHERKIN:" (get packet "gherkin_path" "none"))
+    (println "GHERKIN_ASSIGNMENT_STATE:" (get packet "gherkin_assignment_state" "none"))
     (println "GHERKIN_REVIEW:" (get packet "gherkin_review" "none"))
+    (println "GHERKIN_REVIEW_STATE:" (get packet "gherkin_review_state" "none"))
     (println "GHERKIN_APPROVAL:" (get packet "gherkin_approval" "none"))
+    (println "GHERKIN_APPROVAL_STATE:" (get packet "gherkin_approval_state" "none"))
     (println "QA_PROCEDURE:" (get packet "qa_procedure_path" "none"))
+    (println "QA_PROCEDURE_ASSIGNMENT_STATE:" (get packet "qa_procedure_assignment_state" "none"))
     (println "QA_PROCEDURE_REVIEW:" (get packet "qa_procedure_review" "none"))
+    (println "QA_PROCEDURE_REVIEW_STATE:" (get packet "qa_procedure_review_state" "none"))
     (println "QA_PROCEDURE_APPROVAL:" (get packet "qa_procedure_approval" "none"))
+    (println "QA_PROCEDURE_APPROVAL_STATE:" (get packet "qa_procedure_approval_state" "none"))
     (println "IMPLEMENTATION_APPROVAL:" (get packet "implementation_approval" "none"))
+    (println "IMPLEMENTATION_APPROVAL_STATE:" (get packet "implementation_approval_state" "none"))
     (println "IMPLEMENTATION:" (get packet "implementation_sha" "none"))
+    (println "IMPLEMENTATION_ASSIGNMENT_STATE:" (get packet "implementation_assignment_state" "none"))
     (println "CLEANER:" (get packet "cleaner_sha" "none"))
+    (println "CLEANER_REVIEW_STATE:" (get packet "cleaner_review_state" "none"))
     (println "CODE_REVIEW:" (get packet "code_review" "none"))
     (println "HARDENER_BATCH:" (get packet "hardener_batch" "none"))
     (println "HARDENER:" (get packet "hardener_sha" "none"))
+    (println "HARDENER_REVIEW_STATE:" (get packet "hardener_review_state" "none"))
     (println "QA_BATCH:" (get packet "qa_batch" "none"))
 	    (println "QA:" (get packet "qa_sha" "none"))
+	    (println "QA_RESULT_STATE:" (get packet "qa_result_state" "none"))
 	    (println "ARCHITECTURE_BATCH:" (get packet "architecture_batch" "none"))
 	    (println "ARCHITECTURE:" (get packet "architecture_sha" "none"))
 	    (println "ARCHITECTURE_REVIEW:" (get packet "architecture_review" "none"))
+	    (println "ARCHITECTURE_RESULT_STATE:" (get packet "architecture_result_state" "none"))
 	    (println "SENIOR_IMPLEMENTOR:" (get packet "senior_implementor_sha" "none"))
 	    (println "FINAL_APPROVAL:" (get packet "final_approval" "none"))
 	    (println "PACKET:" (str file))))

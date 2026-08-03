@@ -45,6 +45,34 @@
 (defn script [name]
   (str (fs/path scripts-dir name)))
 
+(defn wait-for-file [path timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (cond
+        (fs/exists? path) true
+        (> (System/currentTimeMillis) deadline) false
+        :else (do
+                (Thread/sleep 50)
+                (recur))))))
+
+(defn http-post [url]
+  (let [[_ host port path] (re-matches #"http://([^:/]+):([0-9]+)(/.*)" url)
+        socket (java.net.Socket. host (Long/parseLong port))]
+    (with-open [socket socket
+                reader (java.io.BufferedReader.
+                        (java.io.InputStreamReader. (.getInputStream socket) "UTF-8"))]
+      (let [request (str "POST " path " HTTP/1.1\r\n"
+                         "Host: " host "\r\n"
+                         "Content-Length: 0\r\n"
+                         "Connection: close\r\n\r\n")]
+        (.write (.getOutputStream socket) (.getBytes request "UTF-8"))
+        (.flush (.getOutputStream socket))
+        (let [status-line (.readLine reader)
+              status (parse-long (second (re-find #"HTTP/[0-9.]+\s+([0-9]+)" status-line)))
+              lines (line-seq reader)
+              body (str/join "\n" (drop 1 (drop-while #(not= "" %) lines)))]
+          {:status status :body body})))))
+
 (defn write-agent-status!
   ([root agent-id state]
    (write-agent-status! root agent-id state "2099-01-01T00:00:00Z"))
@@ -952,7 +980,13 @@
         (is (str/includes? (:out add) "STATE: story_added"))
         (is (str/includes? (:out status) "STORIES: 1"))
         (is (str/includes? (:out ready) "BATCH: hardener-20260802"))
+        (is (fs/exists? (fs/path root ".squad/batches/hardener-20260802/status")))
+        (is (fs/exists? (fs/path root ".squad/batches/hardener-20260802/manifest")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/batches/hardener-20260802/status")))
+                           "state: open"))
         (is (str/includes? (slurp (str (fs/path root ".squad/batches/hardener-20260802/manifest.tsv")))
+                           "cave-topology\tcode_reviewed\tcave-clean\tswarmforge-cleaner-001\tabcdef1234"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/batches/hardener-20260802/manifest")))
                            "cave-topology\tcode_reviewed\tcave-clean\tswarmforge-cleaner-001\tabcdef1234"))
         (is (= "hardener-20260802"
                (str/trim (slurp (str (fs/path root ".squad/stories/cave-topology/active-batches/hardener")))))))
@@ -985,6 +1019,8 @@
                         "hardener-20260802")]
         (is (str/includes? (:out result) "STATE: result_received"))
         (is (str/includes? (:out status) "STATE: result_received"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/batches/hardener-20260802/status")))
+                           "state: result_received"))
         (is (str/includes? (slurp (str (fs/path root ".squad/batches/hardener-20260802/result")))
                            "sha: cccccccccc")))
       (finally
@@ -1091,12 +1127,85 @@
         (is (str/includes? (:out ready) "STATE: implementation_approval_ready"))
         (is (str/includes? (:out implementation-approval) "STATE: implementation_approved"))
         (is (str/includes? (:out approved) "GHERKIN_REVIEW: accepted"))
+        (is (str/includes? (:out approved) "FINAL_STATE: implementation_approved"))
+        (is (str/includes? (:out approved) "GHERKIN_ASSIGNMENT_STATE: complete"))
+        (is (str/includes? (:out approved) "GHERKIN_REVIEW_STATE: accepted"))
         (is (str/includes? (:out approved) "GHERKIN_APPROVAL: approved"))
+        (is (str/includes? (:out approved) "QA_PROCEDURE_ASSIGNMENT_STATE: complete"))
+        (is (str/includes? (:out approved) "QA_PROCEDURE_REVIEW_STATE: accepted"))
         (is (str/includes? (:out approved) "QA_PROCEDURE_REVIEW: accepted"))
         (is (str/includes? (:out approved) "QA_PROCEDURE_APPROVAL: approved"))
         (is (str/includes? packet "gherkin_path: features/cave-topology.feature"))
         (is (str/includes? packet "qa_procedure_path: qa/cave-topology.md"))
+        (is (str/includes? packet "final_state: implementation_approved"))
+        (is (str/includes? packet "story_iterations: wumpus-analysis=recorded"))
+        (is (str/includes? packet "gherkin_iterations: wumpus-cave-gherkin=attached"))
+        (is (str/includes? packet "gherkin_review_iterations: wumpus-cave-gherkin-review=accepted"))
+        (is (str/includes? packet "qa_procedure_iterations: wumpus-cave-qa-procedure=attached"))
+        (is (str/includes? packet "qa_procedure_review_iterations: wumpus-cave-qa-procedure-review=accepted"))
         (is (str/includes? packet "implementation_approval: approved")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-packet-records-explicit-replacement-iterations
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "features/cave-topology.feature")
+                  "Feature: cave topology\n")
+      (write-file (fs/path root "features/cave-topology-v2.feature")
+                  "Feature: cave topology revised\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (run {:dir root} "git" "add" "stories" "features")
+      (run {:dir root} "git" "commit" "-q" "-m" "Prepare revised gherkin artifacts")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root}
+             (script "squad_packet.sh")
+             "create"
+             "wumpus"
+             "cave-topology"
+             "wumpus-analysis"
+             "swarmforge-analyst-001"
+             sha)
+        (run {:dir root}
+             (script "squad_packet.sh")
+             "attach"
+             "cave-topology"
+             "gherkin"
+             "wumpus-cave-gherkin"
+             "swarmforge-gherkin-writer-001"
+             sha
+             "features/cave-topology.feature")
+        (run {:dir root}
+             (script "squad_packet.sh")
+             "review"
+             "cave-topology"
+             "gherkin"
+             "changes-requested"
+             "wumpus-cave-gherkin-review"
+             "swarmforge-gherkin-reviewer-001"
+             sha)
+        (run {:dir root}
+             (script "squad_packet.sh")
+             "attach"
+             "cave-topology"
+             "gherkin"
+             "wumpus-cave-gherkin-r2"
+             "swarmforge-gherkin-writer-002"
+             sha
+             "features/cave-topology-v2.feature")
+        (let [packet (slurp (str (fs/path root ".squad/stories/cave-topology/packet")))]
+          (is (str/includes? packet "gherkin_path: features/cave-topology-v2.feature"))
+          (is (str/includes? packet "gherkin_iterations: wumpus-cave-gherkin=attached,wumpus-cave-gherkin-r2=attached"))
+          (is (str/includes? packet "gherkin_review_iterations: wumpus-cave-gherkin-review=changes-requested"))
+          (is (str/includes? packet "gherkin_review_state: pending"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -2800,6 +2909,59 @@
           (is (not (fs/exists? pid-file)))
           (is (not= 0 (:exit (run {:dir root :ok? false} "kill" "-0" pid))))))
       (finally
+        (fs/delete-tree root)))))
+
+(deftest squadd-serves-web-status-and-registers-approvals
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (fs/create-dirs (fs/path root ".swarmforge/daemon"))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (run {:dir root} "git" "add" "stories")
+      (run {:dir root} "git" "commit" "-q" "-m" "Prepare story for dashboard")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root}
+             (script "squad_packet.sh")
+             "create"
+             "wumpus"
+             "cave-topology"
+             "wumpus-analysis"
+             "swarmforge-analyst-001"
+             sha))
+      (run {:dir root}
+           (script "squad_approval.sh")
+           "request"
+           "story__cave-topology"
+           "story"
+           "cave-topology"
+           "story"
+           "Approve story"
+           "story is ready")
+      (run {:dir root :ok? false}
+           "sh" "-c"
+           (str "SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX=1 SWARMFORGE_SQUADD_WEB_PORT=0 bb "
+                (script "squadd.bb") " " root " >/dev/null 2>&1 &"))
+      (let [url-file (fs/path root ".swarmforge/daemon/squad-web-url")]
+        (is (wait-for-file url-file 3000))
+        (let [base-url (str/trim (slurp (str url-file)))
+              state (slurp (str base-url "api/state"))
+              approve (http-post (str base-url "api/approvals/story__cave-topology/approve"))
+              approved (slurp (str base-url "api/state"))]
+          (is (str/includes? state "\"approval_id\":\"story__cave-topology\""))
+          (is (str/includes? state "\"story_id\":\"cave-topology\""))
+          (is (= 200 (:status approve)))
+          (is (str/includes? approved "\"approved\""))
+          (is (fs/exists? (fs/path root ".squad/approvals/approved/story__cave-topology.approval")))
+          (is (not (fs/exists? (fs/path root ".squad/approvals/pending/story__cave-topology.approval"))))))
+      (finally
+        (run {:dir root :ok? false} (script "stop_squadd.bb") (str root))
         (fs/delete-tree root)))))
 
 (deftest grok-launch-command-passes-initial-prompt
