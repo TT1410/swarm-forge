@@ -16,6 +16,26 @@
 (defn process-alive? [pid]
   (zero? (:exit (process/sh {:continue true} "kill" "-0" pid))))
 
+(defn numeric-pid [pid-file]
+  (when (fs/exists? pid-file)
+    (let [pid (str/trim (slurp (str pid-file)))]
+      (when (re-matches #"[0-9]+" pid)
+        pid))))
+
+(defn wait-for-exit! [pid timeout-ms]
+  (loop [waited 0]
+    (when (and (< waited timeout-ms) (process-alive? pid))
+      (Thread/sleep poll-ms)
+      (recur (+ waited poll-ms)))))
+
+(defn terminate-process! [pid timeout-ms]
+  (when (process-alive? pid)
+    (process/sh {:continue true} "kill" "-TERM" pid)
+    (wait-for-exit! pid timeout-ms)
+    (when (process-alive? pid)
+      (process/sh {:continue true} "kill" "-KILL" pid)
+      (Thread/sleep poll-ms))))
+
 (defn stop! [project-root & {:keys [timeout-ms] :or {timeout-ms default-timeout-ms}}]
   (let [daemon-dir (fs/path project-root ".swarmforge" "daemon")
         pid-file (fs/path daemon-dir "handoffd.pid")
@@ -23,18 +43,9 @@
     (fs/create-dirs daemon-dir)
     (when-not (fs/exists? stop-file)
       (spit (str stop-file) ""))
+    (when-let [pid (numeric-pid pid-file)]
+      (terminate-process! pid timeout-ms))
     (when (fs/exists? pid-file)
-      (let [pid (str/trim (slurp (str pid-file)))]
-        (when (re-matches #"[0-9]+" pid)
-          (when (process-alive? pid)
-            (process/sh {:continue true} "kill" "-TERM" pid)
-            (loop [waited 0]
-              (when (and (< waited timeout-ms) (process-alive? pid))
-                (Thread/sleep poll-ms)
-                (recur (+ waited poll-ms))))
-            (when (process-alive? pid)
-              (process/sh {:continue true} "kill" "-KILL" pid)
-              (Thread/sleep poll-ms)))))
       (fs/delete-if-exists pid-file))
     (fs/delete-if-exists stop-file)))
 

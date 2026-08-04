@@ -3,6 +3,7 @@
 (ns ready-for-next
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [clojure.java.shell :as sh]
             [clojure.string :as str]))
 
@@ -30,22 +31,8 @@
           (str (fs/absolutize path)))))))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))]
-    (cond
-      (and configured (fs/exists? (fs/path configured ".swarmforge" "roles.tsv")))
-      configured
-
-      :else
-      (if-let [root (git-root)]
-        (if (fs/exists? (fs/path root ".swarmforge" "roles.tsv"))
-          root
-          (if-let [common (git-common-dir)]
-            (let [candidate (str (fs/parent common))]
-              (if (fs/exists? (fs/path candidate ".swarmforge" "roles.tsv"))
-                candidate
-                (exit! 1 "Cannot find SwarmForge project root")))
-            (exit! 1 "Cannot find SwarmForge project root")))
-        (exit! 1 "Cannot find SwarmForge project root")))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn role []
   (or (not-empty (System/getenv "SWARMFORGE_ROLE"))

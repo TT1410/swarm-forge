@@ -1,0 +1,172 @@
+(ns swarmforge.test-support
+  (:require [babashka.fs :as fs]
+            [clojure.edn :as edn]
+            [clojure.java.shell :as sh]
+            [clojure.string :as str]))
+
+(def repo-root (fs/cwd))
+
+(def scripts-dir (fs/path repo-root "swarmforge" "scripts"))
+
+(defn write-file [path text]
+  (fs/create-dirs (fs/parent path))
+  (spit (str path) text))
+
+(defn run
+  [{:keys [dir env ok?]} & args]
+  (let [result (apply sh/sh (concat args [:dir (str dir)
+                                          :env (merge {"PATH" (System/getenv "PATH")
+                                                       "GIT_CONFIG_NOSYSTEM" "1"}
+                                                      env)]))]
+    (when (and (not (false? ok?)) (not= 0 (:exit result)))
+      (throw (ex-info (str "Command failed: " (str/join " " args))
+                      (assoc result :args args))))
+    result))
+
+(defn init-repo! [root]
+  (run {:dir root} "git" "init" "-q")
+  (run {:dir root} "git" "config" "user.email" "test@example.com")
+  (run {:dir root} "git" "config" "user.name" "Test User")
+  (write-file (fs/path root "README.md") "initial\n")
+  (run {:dir root} "git" "add" "README.md")
+  (run {:dir root} "git" "commit" "-q" "-m" "Initial commit"))
+
+(defn git-branch-exists? [root branch]
+  (not (str/blank? (:out (run {:dir root}
+                              "git" "branch" "--list" branch)))))
+
+(defn git-worktree-registered? [root worktree]
+  (str/includes? (:out (run {:dir root} "git" "worktree" "list"))
+                 (str worktree)))
+
+(defn tmp-dir []
+  (fs/create-temp-dir {:prefix "swarmforge-script-test."}))
+
+(defn script [name]
+  (str (fs/path scripts-dir name)))
+
+(defn wait-for-file [path timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (cond
+        (fs/exists? path) true
+        (> (System/currentTimeMillis) deadline) false
+        :else (do
+                (Thread/sleep 50)
+                (recur))))))
+
+(defn http-post
+  ([url] (http-post url ""))
+  ([url body]
+  (let [[_ host port path] (re-matches #"http://([^:/]+):([0-9]+)(/.*)" url)
+        socket (java.net.Socket. host (Long/parseLong port))]
+    (with-open [socket socket
+                reader (java.io.BufferedReader.
+                        (java.io.InputStreamReader. (.getInputStream socket) "UTF-8"))]
+      (let [body-bytes (.getBytes body "UTF-8")
+            request (str "POST " path " HTTP/1.1\r\n"
+                         "Host: " host "\r\n"
+                         "Content-Type: text/plain; charset=utf-8\r\n"
+                         "Content-Length: " (alength body-bytes) "\r\n"
+                         "Connection: close\r\n\r\n")]
+        (.write (.getOutputStream socket) (.getBytes request "UTF-8"))
+        (.write (.getOutputStream socket) body-bytes)
+        (.flush (.getOutputStream socket))
+        (let [status-line (.readLine reader)
+              status (parse-long (second (re-find #"HTTP/[0-9.]+\s+([0-9]+)" status-line)))
+              lines (line-seq reader)
+              body (str/join "\n" (drop 1 (drop-while #(not= "" %) lines)))]
+          {:status status :body body}))))))
+
+(defn write-agent-status!
+  ([root agent-id state]
+   (write-agent-status! root agent-id state "2099-01-01T00:00:00Z"))
+  ([root agent-id state updated-at]
+   (write-file (fs/path root ".squad/agents" agent-id "status")
+               (str "state: " state "\n"
+                    "detail: test\n"
+                    "updated_at: " updated-at "\n"))
+   (write-file (fs/path root ".squad/agents" agent-id "heartbeat")
+               (str "agent: " agent-id "\n"
+                    "task_id: " agent-id "-task\n"
+                    "state: " state "\n"
+                    "detail: test\n"
+                    "updated_at: " updated-at "\n"))))
+
+(defn prepare-implementation-packet! [root theme-id story-id]
+  (write-file (fs/path root "features" (str story-id ".feature"))
+              (str "Feature: " story-id "\n"))
+  (write-file (fs/path root "qa" (str story-id ".md"))
+              (str "# QA Procedure: " story-id "\n"))
+  (run {:dir root} "git" "add" "stories" "features" "qa")
+  (run {:dir root} "git" "commit" "-q" "-m" (str "Prepare packet artifacts for " story-id))
+  (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "create"
+         theme-id
+         story-id
+         (str story-id "-analysis")
+         "master"
+         sha)
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "approve"
+         story-id
+         "story"
+         "user approved story")
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "attach"
+         story-id
+         "gherkin"
+         (str story-id "-gherkin")
+         "swarmforge-gherkin-writer-001"
+         sha
+         (str "features/" story-id ".feature"))
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "review"
+         story-id
+         "gherkin"
+         "accepted"
+         (str story-id "-gherkin-review")
+         "swarmforge-gherkin-reviewer-001"
+         sha)
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "approve"
+         story-id
+         "gherkin"
+         "user approved gherkin")
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "attach"
+         story-id
+         "qa-procedure"
+         (str story-id "-qa-procedure")
+         "swarmforge-qa-procedure-writer-001"
+         sha
+         (str "qa/" story-id ".md"))
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "review"
+         story-id
+         "qa-procedure"
+         "accepted"
+         (str story-id "-qa-procedure-review")
+         "swarmforge-qa-procedure-reviewer-001"
+         sha)
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "approve"
+         story-id
+         "qa-procedure"
+         "user approved qa procedure")
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "approve"
+         story-id
+         "implementation"
+         "user approved implementation")
+    sha))

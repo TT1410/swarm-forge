@@ -3,6 +3,7 @@
 (ns squad-event
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [clojure.string :as str]))
 
 (def lifecycle-states
@@ -30,19 +31,8 @@
   (apply process/sh (concat [{:continue true}] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (and configured (fs/exists? configured-roles))
-      (fs/path configured)
-      (if (fs/exists? direct)
-      cwd
-      (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-        (if (and (not (str/blank? git-root))
-                 (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-          (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root")))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
@@ -71,27 +61,25 @@
   (or (read-value (fs/path root ".squad" "agents" agent "metadata") "task_id")
       (exit! 1 (str "Cannot find task id for " agent))))
 
+(def state-validation-rules
+  [{:invalid? (fn [agent _ state] (= state agent))
+    :message (fn [_ _ _] "SQUAD_EVENT_USAGE_ERROR: first argument is the state, not the agent id.")}
+   {:invalid? (fn [_ task state] (= state task))
+    :message (fn [_ _ _] "SQUAD_EVENT_USAGE_ERROR: first argument is the state, not the task id.")}
+   {:invalid? (fn [_ _ state] (re-matches #"[a-z][a-z0-9-]*-[0-9][0-9][0-9]" state))
+    :message (fn [_ _ _] "SQUAD_EVENT_USAGE_ERROR: state looks like an agent id.")}
+   {:invalid? (fn [_ _ state] (not (contains? lifecycle-states state)))
+    :message (fn [_ _ state] (str "SQUAD_EVENT_USAGE_ERROR: unsupported lifecycle state: " state))}])
+
+(defn state-validation-error [agent task state]
+  (some (fn [{:keys [invalid? message]}]
+          (when (invalid? agent task state)
+            (message agent task state)))
+        state-validation-rules))
+
 (defn validate-state! [agent task state]
-  (cond
-    (= state agent)
-    (exit! 2
-           "SQUAD_EVENT_USAGE_ERROR: first argument is the state, not the agent id."
-           usage-text)
-
-    (= state task)
-    (exit! 2
-           "SQUAD_EVENT_USAGE_ERROR: first argument is the state, not the task id."
-           usage-text)
-
-    (re-matches #"[a-z][a-z0-9-]*-[0-9][0-9][0-9]" state)
-    (exit! 2
-           "SQUAD_EVENT_USAGE_ERROR: state looks like an agent id."
-           usage-text)
-
-    (not (contains? lifecycle-states state))
-    (exit! 2
-           (str "SQUAD_EVENT_USAGE_ERROR: unsupported lifecycle state: " state)
-           usage-text)))
+  (when-let [message (state-validation-error agent task state)]
+    (exit! 2 message usage-text)))
 
 (defn append-event! [file line]
   (fs/create-dirs (fs/parent file))

@@ -3,6 +3,7 @@
 (ns squad-recover
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [clojure.string :as str]))
 
 (def usage-text
@@ -18,19 +19,8 @@
   (apply process/sh (concat [{:continue true}] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (and configured (fs/exists? configured-roles))
-      (fs/path configured)
-      (if (fs/exists? direct)
-        cwd
-        (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-          (if (and (not (str/blank? git-root))
-                   (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-            (fs/path git-root)
-            (exit! 1 "Cannot find SwarmForge project root")))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn read-value [file field]
   (when (fs/exists? file)
@@ -117,20 +107,39 @@
          sort
          vec)))
 
-(defn print-recovery [{:keys [agent task-id template session worktree live? dirty committed handoffs state recommendation]}]
-  (println "AGENT:" agent)
-  (println "TASK_ID:" (or task-id "unknown"))
-  (println "TEMPLATE:" (or template "unknown"))
-  (println "SESSION:" (or session "unknown"))
-  (println "SESSION_LIVE:" (if live? "true" "false"))
-  (println "WORKTREE:" (or worktree "unknown"))
+(defn print-dirty-lines! [dirty]
   (println "DIRTY_FILES:" (count dirty))
   (doseq [line dirty]
-    (println "DIRTY:" line))
-  (println "COMMITS_AHEAD:" committed)
+    (println "DIRTY:" line)))
+
+(defn print-handoffs! [handoffs]
   (println "HANDOFFS:" (count handoffs))
   (doseq [handoff handoffs]
-    (println "HANDOFF:" handoff))
+    (println "HANDOFF:" handoff)))
+
+(defn value-or-unknown [value]
+  (clojure.core/or value "unknown"))
+
+(defn bool-string [value]
+  (if value "true" "false"))
+
+(defn recovery-header-fields [{:keys [agent task-id template session worktree live?]}]
+  [["AGENT" agent]
+   ["TASK_ID" (value-or-unknown task-id)]
+   ["TEMPLATE" (value-or-unknown template)]
+   ["SESSION" (value-or-unknown session)]
+   ["SESSION_LIVE" (bool-string live?)]
+   ["WORKTREE" (value-or-unknown worktree)]])
+
+(defn print-recovery-header! [check]
+  (doseq [[label value] (recovery-header-fields check)]
+    (println (str label ":") value)))
+
+(defn print-recovery [{:keys [dirty committed handoffs state recommendation] :as check}]
+  (print-recovery-header! check)
+  (print-dirty-lines! dirty)
+  (println "COMMITS_AHEAD:" committed)
+  (print-handoffs! handoffs)
   (println "RECOVERY_STATE:" state)
   (println "RECOMMENDATION:" recommendation))
 
@@ -141,47 +150,89 @@
           (str "state: " state "\n"
                "checked_at: " (str (now-instant)) "\n"))))
 
-(defn -main [& args]
+(def recovery-recommendations
+  {"live" "Do not retire or replace this agent based on missing-session status."
+   "delivered_handoff" "Process the delivered handoff before deciding recovery."
+   "dirty_worktree" "Ask the user before retiring, replacing, editing, or recovering this worktree."
+   "committed_no_handoff" "Ask the user before recovering committed work without a handoff."
+   "recently_active_no_work" "Do not reject or replace yet. Wait for handoff delivery or another recovery check after the grace period."
+   "failed_no_work" "It is safe to reject or replace if the assignment still needs work."})
+
+(def recovery-state-rules
+  [["live" :live?]
+   ["delivered_handoff" #(seq (:handoffs %))]
+   ["dirty_worktree" #(seq (:dirty %))]
+   ["committed_no_handoff" #(pos? (:committed %))]
+   ["recently_active_no_work" #(recent-status? (:root %) (:agent %))]])
+
+(defn recovery-rule-matches? [context [_ predicate]]
+  (if (keyword? predicate)
+    (predicate context)
+    (predicate context)))
+
+(defn recovery-state [{:keys [root agent live? dirty committed handoffs]}]
+  (or (some (fn [[state :as rule]]
+              (when (recovery-rule-matches? {:root root
+                                             :agent agent
+                                             :live? live?
+                                             :dirty dirty
+                                             :committed committed
+                                             :handoffs handoffs}
+                                            rule)
+                state))
+            recovery-state-rules)
+      "failed_no_work"))
+
+(defn recovery-check [root agent worktree socket session]
+  (let [live? (tmux-session-exists? socket session)
+        dirty (dirty-lines worktree)
+        committed (committed-count root worktree)
+        handoffs (handoff-files root worktree agent)
+        state (recovery-state {:root root
+                               :agent agent
+                               :live? live?
+                               :dirty dirty
+                               :committed committed
+                               :handoffs handoffs})]
+    {:live? live?
+     :dirty dirty
+     :committed committed
+     :handoffs handoffs
+     :state state
+     :recommendation (recovery-recommendations state)}))
+
+(defn ensure-agent-arg! [args]
   (when-not (= 1 (count args))
-    (exit! 2 usage-text))
+    (exit! 2 usage-text)))
+
+(defn recovery-context [root agent]
+  (let [metadata (fs/path root ".squad" "agents" agent "metadata")
+        row (role-row root agent)
+        socket-file (fs/path root ".swarmforge" "tmux-socket")]
+    {:metadata metadata
+     :row row
+     :worktree (or (read-value metadata "worktree") (:worktree-path row))
+     :session (or (read-value metadata "session") (:session row))
+     :template (read-value metadata "template")
+     :task-id (read-value metadata "task_id")
+     :socket (when (fs/exists? socket-file) (str/trim (slurp (str socket-file))))}))
+
+(defn ensure-known-worktree! [agent worktree]
+  (when (str/blank? worktree)
+    (exit! 1 (str "Unknown squad agent worktree: " agent))))
+
+(defn checked-recovery [root agent {:keys [worktree socket session] :as context}]
+  (ensure-known-worktree! agent worktree)
+  (let [check (recovery-check root agent worktree socket session)]
+    (write-recovery-check! root agent (:state check))
+    (merge context check {:agent agent})))
+
+(defn -main [& args]
+  (ensure-agent-arg! args)
   (let [agent (first args)
         root (fs/absolutize (project-root))
-        metadata (fs/path root ".squad" "agents" agent "metadata")
-        row (role-row root agent)
-        worktree (or (read-value metadata "worktree")
-                     (:worktree-path row))
-        session (or (read-value metadata "session")
-                    (:session row))
-        template (read-value metadata "template")
-        task-id (read-value metadata "task_id")
-        socket-file (fs/path root ".swarmforge" "tmux-socket")
-        socket (when (fs/exists? socket-file) (str/trim (slurp (str socket-file))))]
-    (when (str/blank? worktree)
-      (exit! 1 (str "Unknown squad agent worktree: " agent)))
-    (let [live? (tmux-session-exists? socket session)
-          dirty (dirty-lines worktree)
-          committed (committed-count root worktree)
-          handoffs (handoff-files root worktree agent)
-          [state recommendation]
-          (cond
-            live? ["live" "Do not retire or replace this agent based on missing-session status."]
-            (seq handoffs) ["delivered_handoff" "Process the delivered handoff before deciding recovery."]
-            (seq dirty) ["dirty_worktree" "Ask the user before retiring, replacing, editing, or recovering this worktree."]
-            (pos? committed) ["committed_no_handoff" "Ask the user before recovering committed work without a handoff."]
-            (recent-status? root agent) ["recently_active_no_work" "Do not reject or replace yet. Wait for handoff delivery or another recovery check after the grace period."]
-            :else ["failed_no_work" "It is safe to reject or replace if the assignment still needs work."])]
-        (write-recovery-check! root agent state)
-	      (print-recovery {:agent agent
-                       :task-id task-id
-                       :template template
-                       :session session
-                       :worktree worktree
-                       :live? live?
-                       :dirty dirty
-                       :committed committed
-                       :handoffs handoffs
-                       :state state
-                       :recommendation recommendation}))))
+        context (recovery-context root agent)]
+    (print-recovery (checked-recovery root agent context))))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))

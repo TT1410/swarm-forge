@@ -3,6 +3,7 @@
 (ns squad-status
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [clojure.string :as str]))
 
 (def usage-text
@@ -22,19 +23,8 @@
            (java.time.Instant/now)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (and configured (fs/exists? configured-roles))
-      (fs/path configured)
-      (if (fs/exists? direct)
-      cwd
-      (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-        (if (and (not (str/blank? git-root))
-                 (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-          (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root")))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn read-value [file field]
   (when (fs/exists? file)
@@ -69,6 +59,28 @@
     (when (zero? (:exit result))
       (:out result))))
 
+(defn pane-status [socket session]
+  (cond
+    (str/blank? socket) :unknown
+    (str/blank? session) :not-live
+    (not (tmux-session-exists? socket session)) :not-live
+    (pane-dead? socket session) :dead
+    :else :live))
+
+(defn print-live-pane-tail! [socket session]
+  (println "PANE_LIVE: true")
+  (println "PANE_CAPTURED_AT:" (now))
+  (println "LAST_20_LINES:")
+  (println (or (capture-pane-tail socket session) "")))
+
+(def pane-status-printers
+  {:unknown (fn [_ _] (println "PANE_LIVE: unknown"))
+   :not-live (fn [_ _] (println "PANE_LIVE: false"))
+   :dead (fn [_ _]
+           (println "PANE_LIVE: false")
+           (println "PANE_DEAD: true"))
+   :live print-live-pane-tail!})
+
 (defn agent-dirs [root maybe-agent]
   (let [agents-dir (fs/path root ".squad" "agents")]
     (cond
@@ -81,28 +93,41 @@
 
 (defn print-pane-tail! [root session]
   (let [socket-file (fs/path root ".swarmforge" "tmux-socket")
-        socket (when (fs/exists? socket-file) (str/trim (slurp (str socket-file))))]
-    (cond
-      (str/blank? socket)
-      (println "PANE_LIVE: unknown")
+        socket (when (fs/exists? socket-file) (str/trim (slurp (str socket-file))))
+        status (pane-status socket session)]
+    ((pane-status-printers status) socket session)))
 
-      (str/blank? session)
-      (println "PANE_LIVE: false")
+(defn field-value [file field default]
+  (or (read-value file field) default))
 
-      (not (tmux-session-exists? socket session))
-      (println "PANE_LIVE: false")
+(defn agent-metadata-fields [agent metadata status heartbeat session]
+  [["AGENT" agent]
+   ["TASK_ID" (field-value metadata "task_id" "unknown")]
+   ["TEMPLATE" (field-value metadata "template" "unknown")]
+   ["SESSION" session]
+   ["STATE" (field-value status "state" "unknown")]
+   ["DETAIL" (field-value status "detail" "")]
+   ["UPDATED_AT" (field-value status "updated_at" "unknown")]
+   ["HEARTBEAT_AT" (field-value heartbeat "updated_at" "none")]])
 
-      (pane-dead? socket session)
-      (do
-        (println "PANE_LIVE: false")
-        (println "PANE_DEAD: true"))
+(defn print-agent-metadata! [agent metadata status heartbeat session]
+  (doseq [[label value] (agent-metadata-fields agent metadata status heartbeat session)]
+    (println (str label ":") value)))
 
-      :else
-      (do
-        (println "PANE_LIVE: true")
-        (println "PANE_CAPTURED_AT:" (now))
-        (println "LAST_20_LINES:")
-        (println (or (capture-pane-tail socket session) ""))))))
+(defn liveness-fields [liveness]
+  [["LIVENESS_STATE" (or (read-value liveness "state") "unknown")]
+   ["LIVENESS_AT" (or (read-value liveness "observed_at") "unknown")]
+   ["PANE_CHANGED" (or (read-value liveness "pane_changed") "unknown")]])
+
+(defn print-liveness-tail! [liveness]
+  (println "LAST_10_LINES:")
+  (println (or (read-liveness-tail liveness) "")))
+
+(defn print-liveness! [liveness]
+  (when (fs/exists? liveness)
+    (doseq [[label value] (liveness-fields liveness)]
+      (println (str label ":") value))
+    (print-liveness-tail! liveness)))
 
 (defn print-agent [root dir]
   (let [agent (fs/file-name dir)
@@ -113,21 +138,9 @@
         session (or (read-value metadata "session") "unknown")]
     (when-not (fs/exists? dir)
       (exit! 1 (str "Unknown squad agent: " agent)))
-    (println "AGENT:" agent)
-    (println "TASK_ID:" (or (read-value metadata "task_id") "unknown"))
-    (println "TEMPLATE:" (or (read-value metadata "template") "unknown"))
-    (println "SESSION:" session)
-    (println "STATE:" (or (read-value status "state") "unknown"))
-    (println "DETAIL:" (or (read-value status "detail") ""))
-    (println "UPDATED_AT:" (or (read-value status "updated_at") "unknown"))
-    (println "HEARTBEAT_AT:" (or (read-value heartbeat "updated_at") "none"))
+    (print-agent-metadata! agent metadata status heartbeat session)
     (print-pane-tail! root session)
-    (when (fs/exists? liveness)
-      (println "LIVENESS_STATE:" (or (read-value liveness "state") "unknown"))
-      (println "LIVENESS_AT:" (or (read-value liveness "observed_at") "unknown"))
-      (println "PANE_CHANGED:" (or (read-value liveness "pane_changed") "unknown"))
-      (println "LAST_10_LINES:")
-      (println (or (read-liveness-tail liveness) "")))
+    (print-liveness! liveness)
     (println)))
 
 (defn -main [& args]

@@ -38,17 +38,26 @@
          distinct
          vec)))
 
+(defn numeric-pid? [pid]
+  (boolean (re-matches #"[0-9]+" pid)))
+
+(defn wait-for-exit! [pid timeout-ms]
+  (loop [waited 0]
+    (when (and (< waited timeout-ms) (process-alive? pid))
+      (Thread/sleep poll-ms)
+      (recur (+ waited poll-ms)))))
+
 (defn terminate-pid! [pid timeout-ms]
-  (when (and (re-matches #"[0-9]+" pid)
-             (process-alive? pid))
+  (when (and (numeric-pid? pid) (process-alive? pid))
     (process/sh {:continue true} "kill" "-TERM" pid)
-    (loop [waited 0]
-      (when (and (< waited timeout-ms) (process-alive? pid))
-        (Thread/sleep poll-ms)
-        (recur (+ waited poll-ms))))
+    (wait-for-exit! pid timeout-ms)
     (when (process-alive? pid)
       (process/sh {:continue true} "kill" "-KILL" pid)
       (Thread/sleep poll-ms))))
+
+(defn pid-file-pid [pid-file]
+  (when (fs/exists? pid-file)
+    (str/trim (slurp (str pid-file)))))
 
 (defn stop! [project-root & {:keys [timeout-ms] :or {timeout-ms default-timeout-ms}}]
   (let [daemon-dir (fs/path project-root ".swarmforge" "daemon")
@@ -57,9 +66,8 @@
     (fs/create-dirs daemon-dir)
     (when-not (fs/exists? stop-file)
       (spit (str stop-file) ""))
-    (when (fs/exists? pid-file)
-      (let [pid (str/trim (slurp (str pid-file)))]
-        (terminate-pid! pid timeout-ms))
+    (when-let [pid (pid-file-pid pid-file)]
+      (terminate-pid! pid timeout-ms)
       (fs/delete-if-exists pid-file))
     (doseq [pid (matching-orphan-pids project-root)]
       (terminate-pid! pid timeout-ms))

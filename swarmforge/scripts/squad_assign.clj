@@ -3,6 +3,7 @@
 (ns squad-assign
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [clojure.edn :as edn]
             [clojure.string :as str]))
 
@@ -33,19 +34,8 @@
   (apply process/sh (concat [{:dir (str dir) :continue true}] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (and configured (fs/exists? configured-roles))
-      (fs/path configured)
-      (if (fs/exists? direct)
-      cwd
-      (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-        (if (and (not (str/blank? git-root))
-                 (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-          (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root")))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
@@ -173,23 +163,32 @@
           (take-while #(not (str/blank? %))
                       (str/split-lines (slurp (str file)))))))
 
-(defn reviewer-report-from-handoff [root file]
+(defn handoff-commit [file]
   (when (= "git_handoff" (read-header file "type"))
-    (when-let [commit (read-header file "commit")]
-      (when (re-matches #"[0-9a-fA-F]{10}" commit)
-        (let [paths-result (sh-at root "git" "show" "--name-only" "--format=" commit)
-              review-paths (->> (str/split-lines (:out paths-result))
-                                (filter #(and (str/starts-with? % ".squad/reviews/")
-                                              (str/ends-with? % ".md")))
-                                distinct
-                                vec)]
-          (when (= 1 (count review-paths))
-            (let [path (first review-paths)
-                  content (sh-at root "git" "show" (str commit ":" path))]
-              (when (zero? (:exit content))
-                {:content (:out content)
-                 :source (str commit ":" path)
-                 :durable? true}))))))))
+    (let [commit (read-header file "commit")]
+      (when (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
+        commit))))
+
+(defn review-paths-in-commit [root commit]
+  (let [paths-result (sh-at root "git" "show" "--name-only" "--format=" commit)]
+    (->> (str/split-lines (:out paths-result))
+         (filter #(and (str/starts-with? % ".squad/reviews/")
+                       (str/ends-with? % ".md")))
+         distinct
+         vec)))
+
+(defn review-content-in-commit [root commit path]
+  (let [content (sh-at root "git" "show" (str commit ":" path))]
+    (when (zero? (:exit content))
+      {:content (:out content)
+       :source (str commit ":" path)
+       :durable? true})))
+
+(defn reviewer-report-from-handoff [root file]
+  (when-let [commit (handoff-commit file)]
+    (let [review-paths (review-paths-in-commit root commit)]
+      (when (= 1 (count review-paths))
+        (review-content-in-commit root commit (first review-paths))))))
 
 (defn review-source! [root path]
   (let [file (source-file! path)]
@@ -273,116 +272,194 @@
        (result-handoff-template assignment-id)
        "```\n"))
 
-(defn create-assignment! [{:keys [theme-id story-id template assignment-id instructions-file requirement]}]
+(defn validate-create-ids! [theme-id story-id assignment-id]
   (doseq [[kind value] [["Theme id" theme-id]
                         ["Story id" story-id]
                         ["Assignment id" assignment-id]]]
-    (validate-id! kind value))
-  (validate-template! template)
-  (validate-template-requirement! template story-id requirement)
+    (validate-id! kind value)))
+
+(defn assignment-story-file [root theme story-id theme-scoped?]
+  (when-not theme-scoped?
+    (or (referenced-project-file root (fs/path theme "stories" (str story-id ".ref")))
+        (fs/path theme "stories" (str story-id ".md")))))
+
+(defn assignment-create-context [{:keys [theme-id story-id template assignment-id instructions-file requirement]}]
   (let [root (fs/absolutize (project-root))
         theme (theme-dir root theme-id)
-        theme-file (fs/path theme "theme.md")
-        theme-scoped? (theme-scoped-assignment? template story-id)
-        story-ref (fs/path theme "stories" (str story-id ".ref"))
-        legacy-story-file (fs/path theme "stories" (str story-id ".md"))
-        story-file (when-not theme-scoped?
-                     (or (referenced-project-file root story-ref)
-                         legacy-story-file))
-        template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
-        instructions (source-file! instructions-file)
-        dir (assignment-dir root assignment-id)
-        contract (role-contract root template)
-        now (timestamp)]
-    (ensure-file! "Theme file not found" theme-file)
-    (when-not theme-scoped?
-      (ensure-file! "Story file not found" story-file))
-    (ensure-file! "Role template not found" template-file)
-    (let [packet (optional-story-packet root story-id)]
-      (when (and packet
-                 (not= theme-id (read-value packet "theme_id")))
-        (exit! 2
-               (str "Story packet " story-id " belongs to a different theme."))))
-    (when (fs/exists? dir)
-      (exit! 2 (str "Assignment already exists: " assignment-id)))
-    (fs/create-dirs dir)
-    (let [packet (optional-story-packet root story-id)
-          assignment-text (render-assignment {:theme-id theme-id
-                                              :story-id story-id
-                                              :template template
-                                              :assignment-id assignment-id
-                                              :scope (if theme-scoped? "theme" "story")
-                                              :theme-text (slurp (str theme-file))
-                                              :story-text (when story-file
-                                                            (slurp (str story-file)))
-                                              :instructions-text (slurp (str instructions))
-                                              :requirement requirement
-                                              :packet-text (when packet
-                                                             (slurp (str packet)))
-                                              :required-tools (:required-tools contract)
-                                              :optional-tools (:optional-tools contract)})
-          assignment-file (fs/path dir "assignment.md")]
-      (write-atomic! assignment-file assignment-text)
-      (write-atomic! (fs/path dir "result-handoff.draft")
-                     (result-handoff-template assignment-id))
-      (write-atomic! (fs/path dir "metadata")
-                     (str "assignment_id: " assignment-id "\n"
-                          "theme_id: " theme-id "\n"
-                          "scope: " (if theme-scoped? "theme" "story") "\n"
-                          "story_id: " story-id "\n"
-                          "template: " template "\n"
-                          (when requirement
-                            (str "requires: " (:text requirement) "\n"))
-                          "assignment_file: " assignment-file "\n"
-                          "created_at: " now "\n"))
-      (write-atomic! (fs/path dir "status")
-                     (str "assignment_id: " assignment-id "\n"
-                          "state: assignment_created\n"
-                          "detail: " template " for " story-id "\n"
-                          "updated_at: " now "\n"))
-      (fs/create-dirs (fs/path theme "assignments"))
-      (write-atomic! (fs/path theme "assignments" (str assignment-id ".md"))
-                     assignment-text)
-      (append-line! (fs/path theme "events.log")
-                    (str now "\tassignment_created\t" assignment-id "\t" template "\t" story-id))
-      (println "SQUAD_ASSIGNMENT:" assignment-id)
-      (println "THEME:" theme-id)
-      (println "STORY:" story-id)
-      (println "TEMPLATE:" template)
-      (when requirement
-        (println "REQUIRES:" (:text requirement)))
-      (println "ASSIGNMENT:" (str assignment-file)))))
+        theme-scoped? (theme-scoped-assignment? template story-id)]
+    {:root root
+     :theme theme
+     :theme-id theme-id
+     :story-id story-id
+     :template template
+     :assignment-id assignment-id
+     :requirement requirement
+     :theme-scoped? theme-scoped?
+     :scope (if theme-scoped? "theme" "story")
+     :theme-file (fs/path theme "theme.md")
+     :story-file (assignment-story-file root theme story-id theme-scoped?)
+     :template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
+     :instructions (source-file! instructions-file)
+     :dir (assignment-dir root assignment-id)
+     :contract (role-contract root template)
+     :packet (optional-story-packet root story-id)
+     :now (timestamp)}))
+
+(defn ensure-packet-theme! [{:keys [packet theme-id story-id]}]
+  (when (and packet
+             (not= theme-id (read-value packet "theme_id")))
+    (exit! 2
+           (str "Story packet " story-id " belongs to a different theme."))))
+
+(defn ensure-create-context! [{:keys [theme-file theme-scoped? story-file template-file dir] :as context}]
+  (ensure-file! "Theme file not found" theme-file)
+  (when-not theme-scoped?
+    (ensure-file! "Story file not found" story-file))
+  (ensure-file! "Role template not found" template-file)
+  (ensure-packet-theme! context)
+  (when (fs/exists? dir)
+    (exit! 2 (str "Assignment already exists: " (:assignment-id context)))))
+
+(defn assignment-text [context]
+  (render-assignment (merge context
+                            {:theme-text (slurp (str (:theme-file context)))
+                             :story-text (when-let [story-file (:story-file context)]
+                                           (slurp (str story-file)))
+                             :instructions-text (slurp (str (:instructions context)))
+                             :packet-text (when-let [packet (:packet context)]
+                                            (slurp (str packet)))
+                             :required-tools (get-in context [:contract :required-tools])
+                             :optional-tools (get-in context [:contract :optional-tools])})))
+
+(defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now]}]
+  (str "assignment_id: " assignment-id "\n"
+       "theme_id: " theme-id "\n"
+       "scope: " scope "\n"
+       "story_id: " story-id "\n"
+       "template: " template "\n"
+       (when requirement
+         (str "requires: " (:text requirement) "\n"))
+       "assignment_file: " assignment-file "\n"
+       "created_at: " now "\n"))
+
+(defn assignment-status-text [{:keys [assignment-id template story-id now]}]
+  (str "assignment_id: " assignment-id "\n"
+       "state: assignment_created\n"
+       "detail: " template " for " story-id "\n"
+       "updated_at: " now "\n"))
+
+(defn write-assignment-records! [{:keys [dir theme assignment-id template story-id now] :as context} text]
+  (fs/create-dirs dir)
+  (let [assignment-file (fs/path dir "assignment.md")
+        context (assoc context :assignment-file assignment-file)]
+    (write-atomic! assignment-file text)
+    (write-atomic! (fs/path dir "result-handoff.draft")
+                   (result-handoff-template assignment-id))
+    (write-atomic! (fs/path dir "metadata") (assignment-metadata-text context))
+    (write-atomic! (fs/path dir "status") (assignment-status-text context))
+    (fs/create-dirs (fs/path theme "assignments"))
+    (write-atomic! (fs/path theme "assignments" (str assignment-id ".md")) text)
+    (append-line! (fs/path theme "events.log")
+                  (str now "\tassignment_created\t" assignment-id "\t" template "\t" story-id))
+    assignment-file))
+
+(defn print-create-result! [{:keys [assignment-id theme-id story-id template requirement]} assignment-file]
+  (println "SQUAD_ASSIGNMENT:" assignment-id)
+  (println "THEME:" theme-id)
+  (println "STORY:" story-id)
+  (println "TEMPLATE:" template)
+  (when requirement
+    (println "REQUIRES:" (:text requirement)))
+  (println "ASSIGNMENT:" (str assignment-file)))
+
+(defn create-assignment! [{:keys [theme-id story-id template assignment-id instructions-file requirement]}]
+  (validate-create-ids! theme-id story-id assignment-id)
+  (validate-template! template)
+  (validate-template-requirement! template story-id requirement)
+  (let [context (assignment-create-context {:theme-id theme-id
+                                            :story-id story-id
+                                            :template template
+                                            :assignment-id assignment-id
+                                            :instructions-file instructions-file
+                                            :requirement requirement})]
+    (ensure-create-context! context)
+    (print-create-result! context
+                          (write-assignment-records! context (assignment-text context)))))
+
+(defn assignment-status-paths [dir]
+  {:metadata (fs/path dir "metadata")
+   :status (fs/path dir "status")
+   :result-file (fs/path dir "result.handoff")
+   :merge-file (fs/path dir "merge")
+   :accepted-merge-file (fs/path dir "accepted-merge")
+   :review-file (fs/path dir "review")
+   :merge-error-file (fs/path dir "merge-error")
+   :blocker-file (fs/path dir "blocker")
+   :rejection-file (fs/path dir "rejection")
+   :replacement-file (fs/path dir "replacement")})
+
+(defn print-status-value! [label value]
+  (println (str label ":") value))
+
+(defn print-status-file! [label file]
+  (print-status-value! label (if (fs/exists? file) (str file) "none")))
+
+(defn field-value [file field default]
+  (or (read-value file field) default))
+
+(defn assignment-metadata-fields [assignment-id metadata status]
+  [["ASSIGNMENT" assignment-id]
+   ["THEME" (field-value metadata "theme_id" "unknown")]
+   ["STORY" (field-value metadata "story_id" "unknown")]
+   ["TEMPLATE" (field-value metadata "template" "unknown")]
+   ["STATE" (field-value status "state" "unknown")]
+   ["DETAIL" (field-value status "detail" "")]
+   ["ASSIGNMENT_FILE" (field-value metadata "assignment_file" "unknown")]])
+
+(defn print-assignment-metadata! [assignment-id {:keys [metadata status]}]
+  (doseq [[label value] (assignment-metadata-fields assignment-id metadata status)]
+    (print-status-value! label value)))
+
+(defn print-assignment-files! [{:keys [result-file merge-file accepted-merge-file merge-error-file review-file blocker-file rejection-file replacement-file]}]
+  (print-status-file! "RESULT" result-file)
+  (print-status-file! "MERGE" merge-file)
+  (print-status-file! "ACCEPTED_MERGE" accepted-merge-file)
+  (print-status-file! "MERGE_ERROR" merge-error-file)
+  (print-status-file! "REVIEW" review-file)
+  (print-status-file! "BLOCKER" blocker-file)
+  (print-status-file! "REJECTION" rejection-file)
+  (print-status-file! "REPLACEMENT" replacement-file))
 
 (defn print-status! [assignment-id]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
         dir (assignment-dir root assignment-id)
-        metadata (fs/path dir "metadata")
-        status (fs/path dir "status")
-        result-file (fs/path dir "result.handoff")
-        merge-file (fs/path dir "merge")
-        accepted-merge-file (fs/path dir "accepted-merge")
-        review-file (fs/path dir "review")
-        merge-error-file (fs/path dir "merge-error")
-        blocker-file (fs/path dir "blocker")
-        rejection-file (fs/path dir "rejection")
-        replacement-file (fs/path dir "replacement")]
+        paths (assignment-status-paths dir)]
     (ensure-assignment-dir! dir assignment-id)
-    (println "ASSIGNMENT:" assignment-id)
-    (println "THEME:" (or (read-value metadata "theme_id") "unknown"))
-    (println "STORY:" (or (read-value metadata "story_id") "unknown"))
-    (println "TEMPLATE:" (or (read-value metadata "template") "unknown"))
-    (println "STATE:" (or (read-value status "state") "unknown"))
-    (println "DETAIL:" (or (read-value status "detail") ""))
-    (println "ASSIGNMENT_FILE:" (or (read-value metadata "assignment_file") "unknown"))
-    (println "RESULT:" (if (fs/exists? result-file) (str result-file) "none"))
-    (println "MERGE:" (if (fs/exists? merge-file) (str merge-file) "none"))
-    (println "ACCEPTED_MERGE:" (if (fs/exists? accepted-merge-file) (str accepted-merge-file) "none"))
-    (println "MERGE_ERROR:" (if (fs/exists? merge-error-file) (str merge-error-file) "none"))
-    (println "REVIEW:" (if (fs/exists? review-file) (str review-file) "none"))
-    (println "BLOCKER:" (if (fs/exists? blocker-file) (str blocker-file) "none"))
-    (println "REJECTION:" (if (fs/exists? rejection-file) (str rejection-file) "none"))
-    (println "REPLACEMENT:" (if (fs/exists? replacement-file) (str replacement-file) "none"))))
+    (print-assignment-metadata! assignment-id paths)
+    (print-assignment-files! paths)))
+
+(defn validate-result-type! [type]
+  (when-not (= "git_handoff" type)
+    (exit! 2 "Result handoff must have type: git_handoff.")))
+
+(defn validate-result-recipient! [to]
+  (when-not (= "squad-leader" to)
+    (exit! 2 "Result handoff must have to: squad-leader.")))
+
+(defn validate-result-task! [assignment-id task]
+  (when-not (= assignment-id task)
+    (exit! 2 (str "Result handoff task must match assignment id: " assignment-id))))
+
+(defn validate-result-commit! [commit]
+  (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
+    (exit! 2 "Result handoff must have a 10-character commit header.")))
+
+(defn validate-result-sender! [from]
+  (when (str/blank? from)
+    (exit! 2 "Result handoff must have a from header."))
+  (when (= "squad-leader" from)
+    (exit! 2 "Transient result handoff may not be from: squad-leader.")))
 
 (defn validate-result-handoff! [assignment-id handoff-file]
   (let [type (read-value handoff-file "type")
@@ -390,63 +467,63 @@
         task (read-value handoff-file "task")
         commit (read-value handoff-file "commit")
         from (read-value handoff-file "from")]
-    (when-not (= "git_handoff" type)
-      (exit! 2 "Result handoff must have type: git_handoff."))
-    (when-not (= "squad-leader" to)
-      (exit! 2 "Result handoff must have to: squad-leader."))
-    (when-not (= assignment-id task)
-      (exit! 2 (str "Result handoff task must match assignment id: " assignment-id)))
-    (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
-      (exit! 2 "Result handoff must have a 10-character commit header."))
-    (when (str/blank? from)
-      (exit! 2 "Result handoff must have a from header."))
-    (when (= "squad-leader" from)
-      (exit! 2 "Transient result handoff may not be from: squad-leader."))
+    (validate-result-type! type)
+    (validate-result-recipient! to)
+    (validate-result-task! assignment-id task)
+    (validate-result-commit! commit)
+    (validate-result-sender! from)
     {:from from
      :commit commit
      :body (handoff-body handoff-file)}))
+
+(defn ensure-result-reachable! [root from commit]
+  (let [sender-branch (str "swarmforge-" from)
+        branch-exists (sh-at root "git" "rev-parse" "--verify" (str sender-branch "^{commit}"))]
+    (when (zero? (:exit branch-exists))
+      (let [reachable (sh-at root "git" "merge-base" "--is-ancestor" commit sender-branch)]
+        (when-not (zero? (:exit reachable))
+          (exit! 2
+                 (str "Result commit " commit " is not reachable from sender branch " sender-branch)))))))
+
+(defn write-result-record! [dir assignment-id from commit now]
+  (write-atomic! (fs/path dir "result")
+                 (str "assignment_id: " assignment-id "\n"
+                      "from: " from "\n"
+                      "commit: " commit "\n"
+                      "received_at: " now "\n"))
+  (write-atomic! (fs/path dir "status")
+                 (str "assignment_id: " assignment-id "\n"
+                      "state: result_received\n"
+                      "detail: " from " " commit "\n"
+                      "updated_at: " now "\n"))
+  (append-line! (fs/path dir "events.log")
+                (str now "\tresult_received\t" from "\t" commit)))
+
+(defn print-result-recorded! [assignment-id from commit body]
+  (println "SQUAD_ASSIGNMENT:" assignment-id)
+  (println "STATE: result_received")
+  (println "FROM:" from)
+  (println "COMMIT:" commit)
+  (when-not (str/blank? body)
+    (println "BODY_RECORDED: true")))
 
 (defn record-result! [assignment-id handoff-path]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
         dir (assignment-dir root assignment-id)
         metadata (fs/path dir "metadata")
-        status (fs/path dir "status")
         handoff-file (source-file! handoff-path)
         {:keys [from commit body]} (validate-result-handoff! assignment-id handoff-file)
         theme-id (or (read-value metadata "theme_id") "unknown")
-        story-id (or (read-value metadata "story_id") "unknown")
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
-    (let [sender-branch (str "swarmforge-" from)
-          branch-exists (sh-at root "git" "rev-parse" "--verify" (str sender-branch "^{commit}"))]
-      (when (zero? (:exit branch-exists))
-        (let [reachable (sh-at root "git" "merge-base" "--is-ancestor" commit sender-branch)]
-          (when-not (zero? (:exit reachable))
-            (exit! 2
-                   (str "Result commit " commit " is not reachable from sender branch " sender-branch))))))
+    (ensure-result-reachable! root from commit)
     (write-atomic! (fs/path dir "result.handoff")
                    (slurp (str handoff-file)))
-    (write-atomic! (fs/path dir "result")
-                   (str "assignment_id: " assignment-id "\n"
-                        "from: " from "\n"
-                        "commit: " commit "\n"
-                        "received_at: " now "\n"))
-    (write-atomic! status
-                   (str "assignment_id: " assignment-id "\n"
-                        "state: result_received\n"
-                        "detail: " from " " commit "\n"
-                        "updated_at: " now "\n"))
-    (append-line! (fs/path dir "events.log")
-                  (str now "\tresult_received\t" from "\t" commit))
+    (write-result-record! dir assignment-id from commit now)
     (when-not (= "unknown" theme-id)
       (assignment-theme-event! root dir "result_received" assignment-id from commit))
-    (println "SQUAD_ASSIGNMENT:" assignment-id)
-    (println "STATE: result_received")
-    (println "FROM:" from)
-    (println "COMMIT:" commit)
-    (when-not (str/blank? body)
-      (println "BODY_RECORDED: true"))))
+    (print-result-recorded! assignment-id from commit body)))
 
 (defn merge-head-exists? [root]
   (fs/exists? (fs/path root ".git" "MERGE_HEAD")))
@@ -514,6 +591,60 @@
       (append-line! (fs/path root ".squad" "themes" theme-id "events.log")
                     (str now "\tassignment_" state "\t" assignment-id "\t" commit "\t" (or story-id "unknown"))))))
 
+(defn valid-result-commit? [commit]
+  (and commit (re-matches #"[0-9a-fA-F]{10}" commit)))
+
+(defn ensure-result-commit! [commit]
+  (when-not (valid-result-commit? commit)
+    (exit! 2 "Assignment result must contain a 10-character commit.")))
+
+(defn ensure-known-commit! [root commit]
+  (let [known (sh-at root "git" "rev-parse" "--verify" (str commit "^{commit}"))]
+    (when-not (zero? (:exit known))
+      (exit! 2 (str "Unknown result commit: " commit)))))
+
+(defn ancestor-commit? [root commit]
+  (zero? (:exit (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD"))))
+
+(defn dry-run-merge [root commit]
+  (with-merge-check-worktree
+    root
+    (fn [worktree]
+      (sh-at worktree "git" "merge" "--no-commit" "--no-ff" commit))))
+
+(defn print-merge-ready! [assignment-id commit detail]
+  (println "SQUAD_ASSIGNMENT:" assignment-id)
+  (println "STATE: merge_ready")
+  (println "COMMIT:" commit)
+  (println "DETAIL:" detail))
+
+(defn print-merge-blocked-ready! [assignment-id commit]
+  (binding [*out* *err*]
+    (println "SQUAD_ASSIGNMENT:" assignment-id)
+    (println "STATE: merge_blocked")
+    (println "COMMIT:" commit)
+    (println "DETAIL: dry-run merge failed")))
+
+(defn mark-merge-ready-state! [root dir assignment-id commit now detail]
+  (write-merge-state! root dir assignment-id "merge_ready" detail commit now)
+  (print-merge-ready! assignment-id commit detail))
+
+(defn mark-merge-blocked-state! [root dir assignment-id commit now merge]
+  (write-merge-error! dir "merge-ready" merge)
+  (write-merge-state! root dir assignment-id "merge_blocked" "dry-run merge failed" commit now)
+  (print-merge-blocked-ready! assignment-id commit)
+  (System/exit 4))
+
+(defn mark-merge-result! [root dir assignment-id commit now merge]
+  (if (zero? (:exit merge))
+    (mark-merge-ready-state! root dir assignment-id commit now "dry-run merge passed")
+    (mark-merge-blocked-state! root dir assignment-id commit now merge)))
+
+(defn check-merge-ready! [root dir assignment-id commit now]
+  (if (ancestor-commit? root commit)
+    (mark-merge-ready-state! root dir assignment-id commit now "commit already reachable from HEAD")
+    (mark-merge-result! root dir assignment-id commit now (dry-run-merge root commit))))
+
 (defn mark-merge-ready! [assignment-id]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
@@ -523,40 +654,10 @@
     (ensure-assignment-dir! dir assignment-id)
     (ensure-file! "Assignment result not found" result-file)
     (let [commit (read-value result-file "commit")]
-      (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
-        (exit! 2 "Assignment result must contain a 10-character commit."))
+      (ensure-result-commit! commit)
       (try
-        (let [known (sh-at root "git" "rev-parse" "--verify" (str commit "^{commit}"))]
-          (when-not (zero? (:exit known))
-            (exit! 2 (str "Unknown result commit: " commit))))
-        (let [ancestor (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD")]
-          (if (zero? (:exit ancestor))
-            (do
-              (write-merge-state! root dir assignment-id "merge_ready" "commit already reachable from HEAD" commit now)
-              (println "SQUAD_ASSIGNMENT:" assignment-id)
-              (println "STATE: merge_ready")
-              (println "COMMIT:" commit)
-              (println "DETAIL: commit already reachable from HEAD"))
-            (let [merge (with-merge-check-worktree
-                          root
-                          (fn [worktree]
-                            (sh-at worktree "git" "merge" "--no-commit" "--no-ff" commit)))]
-              (if (zero? (:exit merge))
-                (do
-                  (write-merge-state! root dir assignment-id "merge_ready" "dry-run merge passed" commit now)
-                  (println "SQUAD_ASSIGNMENT:" assignment-id)
-                  (println "STATE: merge_ready")
-                  (println "COMMIT:" commit)
-                  (println "DETAIL: dry-run merge passed"))
-                (do
-                  (write-merge-error! dir "merge-ready" merge)
-                  (write-merge-state! root dir assignment-id "merge_blocked" "dry-run merge failed" commit now)
-                  (binding [*out* *err*]
-                    (println "SQUAD_ASSIGNMENT:" assignment-id)
-                    (println "STATE: merge_blocked")
-                    (println "COMMIT:" commit)
-                    (println "DETAIL: dry-run merge failed"))
-                  (System/exit 4))))))
+        (ensure-known-commit! root commit)
+        (check-merge-ready! root dir assignment-id commit now)
         (finally
           (abort-merge! root))))))
 
@@ -643,6 +744,47 @@
     (assignment-theme-event! root dir "merged" assignment-id commit head)
     head))
 
+(defn ensure-merge-ready! [merge-file]
+  (when-not (= "merge_ready" (read-value merge-file "state"))
+    (exit! 3 "Assignment is not merge_ready.")))
+
+(defn result-commit! [result-file]
+  (let [commit (read-value result-file "commit")]
+    (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
+      (exit! 2 "Assignment result must contain a 10-character commit."))
+    commit))
+
+(defn print-merge-blocked! [assignment-id commit detail]
+  (binding [*out* *err*]
+    (println "SQUAD_ASSIGNMENT:" assignment-id)
+    (println "STATE: merge_blocked")
+    (println "COMMIT:" commit)
+    (println "DETAIL:" detail))
+  (System/exit 4))
+
+(defn block-merge! [root dir assignment-id phase detail commit now result]
+  (when result
+    (write-merge-error! dir phase result))
+  (write-merge-state! root dir assignment-id "merge_blocked" detail commit now)
+  (print-merge-blocked! assignment-id commit detail))
+
+(defn merge-detail! [root dir assignment-id commit now]
+  (let [ancestor (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD")]
+    (if (zero? (:exit ancestor))
+      "commit already reachable from HEAD"
+      (let [merge (sh-at root "git" "merge" "--no-ff" "-m" (str "Merge squad assignment " assignment-id) commit)]
+        (when-not (zero? (:exit merge))
+          (abort-merge! root)
+          (block-merge! root dir assignment-id "accept-merge" "accepted merge failed" commit now merge))
+        "merged result commit"))))
+
+(defn print-merge-accepted! [assignment-id commit merge-commit detail]
+  (println "SQUAD_ASSIGNMENT:" assignment-id)
+  (println "STATE: merged")
+  (println "COMMIT:" commit)
+  (println "MERGE_COMMIT:" merge-commit)
+  (println "DETAIL:" detail))
+
 (defn accept-merge! [assignment-id]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
@@ -653,41 +795,14 @@
     (ensure-assignment-dir! dir assignment-id)
     (ensure-file! "Assignment result not found" result-file)
     (ensure-file! "Assignment merge readiness not found" merge-file)
-    (when-not (= "merge_ready" (read-value merge-file "state"))
-      (exit! 3 "Assignment is not merge_ready."))
-    (let [commit (read-value result-file "commit")]
-      (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
-        (exit! 2 "Assignment result must contain a 10-character commit."))
+    (ensure-merge-ready! merge-file)
+    (let [commit (result-commit! result-file)]
       (try
         (when (tracked-dirty? root)
-          (write-merge-state! root dir assignment-id "merge_blocked" "tracked checkout dirty" commit now)
-          (binding [*out* *err*]
-            (println "SQUAD_ASSIGNMENT:" assignment-id)
-            (println "STATE: merge_blocked")
-            (println "COMMIT:" commit)
-            (println "DETAIL: tracked checkout dirty"))
-          (System/exit 4))
-        (let [ancestor (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD")
-              detail (if (zero? (:exit ancestor))
-                       "commit already reachable from HEAD"
-                       (let [merge (sh-at root "git" "merge" "--no-ff" "-m" (str "Merge squad assignment " assignment-id) commit)]
-                         (when-not (zero? (:exit merge))
-                           (abort-merge! root)
-                           (write-merge-error! dir "accept-merge" merge)
-                           (write-merge-state! root dir assignment-id "merge_blocked" "accepted merge failed" commit now)
-                           (binding [*out* *err*]
-                             (println "SQUAD_ASSIGNMENT:" assignment-id)
-                             (println "STATE: merge_blocked")
-                             (println "COMMIT:" commit)
-                             (println "DETAIL: accepted merge failed"))
-                           (System/exit 4))
-                         "merged result commit"))]
-          (let [merge-commit (record-accepted-merge! root dir assignment-id commit detail now)]
-            (println "SQUAD_ASSIGNMENT:" assignment-id)
-            (println "STATE: merged")
-            (println "COMMIT:" commit)
-            (println "MERGE_COMMIT:" merge-commit)
-            (println "DETAIL:" detail)))
+          (block-merge! root dir assignment-id nil "tracked checkout dirty" commit now nil))
+        (let [detail (merge-detail! root dir assignment-id commit now)
+              merge-commit (record-accepted-merge! root dir assignment-id commit detail now)]
+          (print-merge-accepted! assignment-id commit merge-commit detail))
         (finally
           (abort-merge! root))))))
 
@@ -761,33 +876,28 @@
       (println "REPLACES:" old-assignment-id)
       (println "STATE: replacement_created"))))
 
+(defn exact-count! [args expected]
+  (when-not (= expected (count args))
+    (exit! 1 usage-text)))
+
+(defn run-counted-command! [args expected f]
+  (exact-count! args expected)
+  (f args))
+
+(def assignment-commands
+  {"create" (fn [args] (create-assignment! (parse-create-args! args)))
+   "result" (fn [args] (run-counted-command! args 3 #(record-result! (second %) (nth % 2))))
+   "merge-ready" (fn [args] (run-counted-command! args 2 #(mark-merge-ready! (second %))))
+   "review" (fn [args] (run-counted-command! args 4 #(record-review! (second %) (nth % 2) (nth % 3))))
+   "accept-merge" (fn [args] (run-counted-command! args 2 #(accept-merge! (second %))))
+   "block" (fn [args] (run-counted-command! args 3 #(block-assignment! (second %) (nth % 2))))
+   "reject" (fn [args] (run-counted-command! args 3 #(reject-assignment! (second %) (nth % 2))))
+   "replace" (fn [args] (run-counted-command! args 5 #(replace-assignment! (second %) (nth % 2) (nth % 3) (nth % 4))))
+   "status" (fn [args] (run-counted-command! args 2 #(print-status! (second %))))})
+
 (defn -main [& args]
-  (case (first args)
-    "create" (create-assignment! (parse-create-args! args))
-    "result" (if (= 3 (count args))
-               (record-result! (second args) (nth args 2))
-               (exit! 1 usage-text))
-    "merge-ready" (if (= 2 (count args))
-                    (mark-merge-ready! (second args))
-                    (exit! 1 usage-text))
-    "review" (if (= 4 (count args))
-               (record-review! (second args) (nth args 2) (nth args 3))
-               (exit! 1 usage-text))
-    "accept-merge" (if (= 2 (count args))
-                     (accept-merge! (second args))
-                     (exit! 1 usage-text))
-    "block" (if (= 3 (count args))
-              (block-assignment! (second args) (nth args 2))
-              (exit! 1 usage-text))
-    "reject" (if (= 3 (count args))
-               (reject-assignment! (second args) (nth args 2))
-               (exit! 1 usage-text))
-    "replace" (if (= 5 (count args))
-                (replace-assignment! (second args) (nth args 2) (nth args 3) (nth args 4))
-                (exit! 1 usage-text))
-    "status" (if (= 2 (count args))
-               (print-status! (second args))
-               (exit! 1 usage-text))
+  (if-let [command (assignment-commands (first args))]
+    (command args)
     (exit! 1 usage-text)))
 
 (when (= *file* (System/getProperty "babashka.file"))

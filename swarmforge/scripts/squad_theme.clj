@@ -3,6 +3,7 @@
 (ns squad-theme
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [clojure.string :as str]))
 
 (def usage-text
@@ -25,19 +26,8 @@
   (apply process/sh (concat [{:continue true}] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (and configured (fs/exists? configured-roles))
-      (fs/path configured)
-      (if (fs/exists? direct)
-      cwd
-      (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-        (if (and (not (str/blank? git-root))
-                 (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-          (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root")))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
@@ -244,23 +234,34 @@
     (println "ACCEPTANCE:" (str/join "," (acceptance-ids dir)))
     (println "APPROVALS:" (count (approval-lines dir)))))
 
+(defn exact-count! [args n]
+  (when-not (= n (count args))
+    (exit! 1 usage-text)))
+
+(defn minimum-count! [args n]
+  (when-not (>= (count args) n)
+    (exit! 1 usage-text)))
+
+(def theme-commands
+  {"create" (fn [args]
+              (exact-count! args 3)
+              (create-theme! (second args) (nth args 2)))
+   "story" (fn [args]
+             (exact-count! args 4)
+             (add-story! (second args) (nth args 2) (nth args 3)))
+   "acceptance" (fn [args]
+                  (exact-count! args 4)
+                  (add-acceptance! (second args) (nth args 2) (nth args 3)))
+   "approve" (fn [args]
+               (minimum-count! args 3)
+               (approve! (second args) (nth args 2) (drop 3 args)))
+   "status" (fn [args]
+              (exact-count! args 2)
+              (print-status! (second args)))})
+
 (defn -main [& args]
-  (case (first args)
-    "create" (if (= 3 (count args))
-               (create-theme! (second args) (nth args 2))
-               (exit! 1 usage-text))
-    "story" (if (= 4 (count args))
-              (add-story! (second args) (nth args 2) (nth args 3))
-              (exit! 1 usage-text))
-    "acceptance" (if (= 4 (count args))
-                   (add-acceptance! (second args) (nth args 2) (nth args 3))
-                   (exit! 1 usage-text))
-    "approve" (if (>= (count args) 3)
-                (approve! (second args) (nth args 2) (drop 3 args))
-                (exit! 1 usage-text))
-    "status" (if (= 2 (count args))
-               (print-status! (second args))
-               (exit! 1 usage-text))
+  (if-let [command (theme-commands (first args))]
+    (command args)
     (exit! 1 usage-text)))
 
 (when (= *file* (System/getProperty "babashka.file"))

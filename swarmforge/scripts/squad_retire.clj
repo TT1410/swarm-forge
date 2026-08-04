@@ -3,6 +3,7 @@
 (ns squad-retire
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [clojure.string :as str]))
 
 (def usage-text
@@ -21,19 +22,8 @@
   (apply run-continue (concat ["git" "-C" (str root)] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (and configured (fs/exists? configured-roles))
-      (fs/path configured)
-      (if (fs/exists? direct)
-      cwd
-      (let [git-root (str/trim (:out (run-continue "git" "rev-parse" "--show-toplevel")))]
-        (if (and (not (str/blank? git-root))
-                 (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-          (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root")))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn validate-agent-id! [agent-id]
   (when-not (re-matches #"[a-z][a-z0-9-]*-[0-9][0-9][0-9]" agent-id)
@@ -56,6 +46,22 @@
     (spit (str tmp) content)
     (fs/move tmp file {:replace-existing true})))
 
+(defn cleanup-empty-lock! [lock-dir]
+  (when (and (fs/directory? lock-dir)
+             (not (fs/exists? (fs/path lock-dir "owner")))
+             (empty? (fs/list-dir lock-dir)))
+    (fs/delete-tree lock-dir)))
+
+(defn try-acquire-lock! [lock-dir]
+  (try
+    (fs/create-dir lock-dir)
+    (spit (str (fs/path lock-dir "owner"))
+          (str "pid: " (.pid (java.lang.ProcessHandle/current)) "\n"))
+    true
+    (catch java.nio.file.FileAlreadyExistsException _
+      (cleanup-empty-lock! lock-dir)
+      false)))
+
 (defn acquire-lock! [lock-dir]
   (let [deadline (+ (System/currentTimeMillis) 10000)]
     (loop []
@@ -63,17 +69,7 @@
         (exit! 2
                (str "Timed out waiting for squad registry lock: " lock-dir)
                "If no squad_spawn.sh or squad_retire.sh process is running, remove the stale lock directory and retry."))
-    (if (try
-          (fs/create-dir lock-dir)
-          (spit (str (fs/path lock-dir "owner"))
-                (str "pid: " (.pid (java.lang.ProcessHandle/current)) "\n"))
-          true
-          (catch java.nio.file.FileAlreadyExistsException _
-            (when (and (fs/directory? lock-dir)
-                       (not (fs/exists? (fs/path lock-dir "owner")))
-                       (empty? (fs/list-dir lock-dir)))
-              (fs/delete-tree lock-dir))
-            false))
+    (if (try-acquire-lock! lock-dir)
       nil
       (do
         (Thread/sleep 50)
@@ -127,24 +123,32 @@
         actual (fs/absolutize worktree)]
     (= (str expected) (str actual))))
 
-(defn remove-worktree! [root agent-id worktree]
+(defn worktree-removable? [root agent-id worktree]
   (cond
-    (str/blank? (str worktree))
-    {:removed? false :detail "worktree metadata missing"}
+    (str/blank? (str worktree)) {:ok? false :detail "worktree metadata missing"}
+    (not (managed-worktree? root agent-id worktree)) {:ok? false :detail "worktree path is outside managed transient worktrees"}
+    :else {:ok? true}))
 
-    (not (managed-worktree? root agent-id worktree))
-    {:removed? false :detail "worktree path is outside managed transient worktrees"}
+(defn force-remove-worktree! [root worktree]
+  (let [result (git-continue root "worktree" "remove" "--force" (str worktree))]
+    (when-not (zero? (:exit result))
+      (when (fs/exists? worktree)
+        (fs/delete-tree worktree))
+      (git-continue root "worktree" "prune"))))
 
-    :else
-    (let [result (git-continue root "worktree" "remove" "--force" (str worktree))]
-      (when-not (zero? (:exit result))
-        (when (fs/exists? worktree)
-          (fs/delete-tree worktree))
-        (git-continue root "worktree" "prune"))
-      {:removed? (not (fs/exists? worktree))
-       :detail (if (fs/exists? worktree)
-                 "worktree removal failed"
-                 "worktree removed")})))
+(defn worktree-remove-result [worktree]
+  {:removed? (not (fs/exists? worktree))
+   :detail (if (fs/exists? worktree)
+             "worktree removal failed"
+             "worktree removed")})
+
+(defn remove-worktree! [root agent-id worktree]
+  (let [{:keys [ok? detail]} (worktree-removable? root agent-id worktree)]
+    (if-not ok?
+      {:removed? false :detail detail}
+      (do
+        (force-remove-worktree! root worktree)
+        (worktree-remove-result worktree)))))
 
 (defn delete-branch! [root agent-id]
   (let [branch (transient-branch agent-id)
@@ -156,25 +160,39 @@
   (and (not (str/blank? socket))
        (zero? (:exit (run-continue "tmux" "-S" socket "has-session" "-t" session)))))
 
+(defn stopped-session-result []
+  {:stopped? true :detail "tmux session stopped"})
+
+(defn lingering-session-result []
+  {:stopped? false :detail "tmux session still exists after kill-session"})
+
+(defn wait-session-step [socket session remaining]
+  (cond
+    (not (session-exists? socket session)) :stopped
+    (zero? remaining) :timed-out
+    :else :retry))
+
+(defn wait-session-stopped [socket session]
+  (loop [remaining 20]
+    (case (wait-session-step socket session remaining)
+      :stopped (stopped-session-result)
+      :timed-out (lingering-session-result)
+      :retry (do
+               (Thread/sleep 100)
+               (recur (dec remaining))))))
+
+(defn stop-running-session! [socket session]
+  (run-continue "tmux" "-S" socket "kill-session" "-t" session)
+  (wait-session-stopped socket session))
+
 (defn stop-session! [socket session]
-  (if (or (str/blank? socket) (str/blank? session))
+  (cond
+    (or (str/blank? socket) (str/blank? session))
     {:stopped? false :detail "tmux socket or session metadata missing"}
-    (if-not (session-exists? socket session)
-      {:stopped? false :detail "tmux session was not running"}
-      (do
-        (run-continue "tmux" "-S" socket "kill-session" "-t" session)
-        (loop [remaining 20]
-          (cond
-            (not (session-exists? socket session))
-            {:stopped? true :detail "tmux session stopped"}
-
-            (zero? remaining)
-            {:stopped? false :detail "tmux session still exists after kill-session"}
-
-            :else
-            (do
-              (Thread/sleep 100)
-              (recur (dec remaining)))))))))
+    (not (session-exists? socket session))
+    {:stopped? false :detail "tmux session was not running"}
+    :else
+    (stop-running-session! socket session)))
 
 (defn retire! [agent-id]
   (validate-agent-id! agent-id)

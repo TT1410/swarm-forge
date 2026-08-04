@@ -3,6 +3,7 @@
 (ns handoff-lib
   (:require [babashka.fs :as fs]
             [babashka.process]
+            [squad-config :as cfg]
             [clojure.string :as str]))
 
 (defn role []
@@ -16,26 +17,8 @@
   (fs/path (state-dir) "inbox"))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (and configured (fs/exists? configured-roles))
-      (fs/path configured)
-      (if (fs/exists? direct)
-      cwd
-      (let [git-root (:out (babashka.process/sh {:continue true} "git" "rev-parse" "--show-toplevel"))
-            root (when-not (str/blank? git-root) (fs/path (str/trim git-root)))]
-        (if (and root (fs/exists? (fs/path root ".swarmforge" "roles.tsv")))
-          root
-          (let [common (:out (babashka.process/sh {:continue true} "git" "rev-parse" "--git-common-dir"))
-                common-path (when-not (str/blank? common)
-                              (let [path (fs/path (str/trim common))]
-                                (if (fs/absolute? path) path (fs/absolutize path))))
-                common-parent (some-> common-path fs/parent)]
-            (if (and common-parent (fs/exists? (fs/path common-parent ".swarmforge" "roles.tsv")))
-              common-parent
-              (throw (ex-info "Cannot find SwarmForge project root" {:exit 1}))))))))))
+  (or (cfg/project-root)
+      (throw (ex-info "Cannot find SwarmForge project root" {:exit 1}))))
 
 (defn roles-file []
   (fs/path (project-root) ".swarmforge" "roles.tsv"))
@@ -81,43 +64,81 @@
   (let [[_ body] (str/split (slurp (str file)) #"\n\n" 2)]
     (or body "")))
 
+(defn insert-before-body [out replaced? header-line blank-line]
+  (conj (cond-> out (not replaced?) (conj header-line)) blank-line))
+
+(defn finish-header-lines [out inserted? replaced? header-line]
+  (cond-> out
+    (and (not inserted?) (not replaced?)) (conj header-line)))
+
+(defn insert-header? [inserted? line]
+  (and (not inserted?) (str/blank? line)))
+
+(defn replace-header? [inserted? prefix line]
+  (and (not inserted?) (str/starts-with? line prefix)))
+
+(defn header-line-action [inserted? prefix line]
+  (cond
+    (insert-header? inserted? line) :insert
+    (replace-header? inserted? prefix line) :replace
+    :else :copy))
+
+(defn insert-header-line [header-line {:keys [out replaced?]} line]
+  {:out (insert-before-body out replaced? header-line line)
+   :inserted? true
+   :replaced? replaced?})
+
+(defn replace-header-line [header-line {:keys [out inserted?]}]
+  {:out (conj out header-line)
+   :inserted? inserted?
+   :replaced? true})
+
+(defn copy-header-line [{:keys [out inserted? replaced?]} line]
+  {:out (conj out line)
+   :inserted? inserted?
+   :replaced? replaced?})
+
+(defn update-header-line [prefix header-line {:keys [out inserted? replaced?]} line]
+  (case (header-line-action inserted? prefix line)
+    :insert (insert-header-line header-line {:out out :inserted? inserted? :replaced? replaced?} line)
+    :replace (replace-header-line header-line {:out out :inserted? inserted? :replaced? replaced?})
+    :copy (copy-header-line {:out out :inserted? inserted? :replaced? replaced?} line)))
+
+(defn update-header-lines [lines field value]
+  (let [prefix (str field ": ")
+        header-line (str prefix value)
+        state (reduce (partial update-header-line prefix header-line)
+                      {:out [] :inserted? false :replaced? false}
+                      lines)]
+    (finish-header-lines (:out state) (:inserted? state) (:replaced? state) header-line)))
+
 (defn set-header! [file field value]
   (let [file (fs/path file)
         lines (str/split-lines (slurp (str file)))
-        prefix (str field ": ")
         tmp (fs/create-temp-file {:dir (fs/parent file) :prefix ".headers."})
-        result (loop [remaining lines
-                      out []
-                      inserted? false
-                      replaced? false]
-                 (if-let [line (first remaining)]
-                   (cond
-                     (and (not inserted?) (str/blank? line))
-                     (recur (next remaining)
-                            (conj (cond-> out (not replaced?) (conj (str prefix value))) line)
-                            true
-                            replaced?)
-
-                     (and (not inserted?) (str/starts-with? line prefix))
-                     (recur (next remaining) (conj out (str prefix value)) inserted? true)
-
-                     :else
-                     (recur (next remaining) (conj out line) inserted? replaced?))
-                   (cond-> out
-                     (and (not inserted?) (not replaced?)) (conj (str prefix value)))))]
+        result (update-header-lines lines field value)]
     (spit (str tmp) (str (str/join "\n" result) "\n"))
     (fs/move tmp file {:replace-existing true})))
 
+(defn header-value [file field default]
+  (or (header-field file field) default))
+
+(defn task-fields [file]
+  [["TASK" (str file)]
+   ["FROM" (header-value file "from" "unknown")]
+   ["TYPE" (header-value file "type" "unknown")]
+   ["PRIORITY" (header-value file "priority" "50")]])
+
+(defn print-task-name! [file]
+  (when-let [task-name (header-field file "task")]
+    (println "TASK_NAME:" task-name)))
+
 (defn print-task [file]
-  (let [task-name (header-field file "task")]
-    (println "TASK:" (str file))
-    (println "FROM:" (or (header-field file "from") "unknown"))
-    (println "TYPE:" (or (header-field file "type") "unknown"))
-    (println "PRIORITY:" (or (header-field file "priority") "50"))
-    (when task-name
-      (println "TASK_NAME:" task-name))
-    (println "PAYLOAD:")
-    (print (body file))))
+  (doseq [[label value] (task-fields file)]
+    (println (str label ":") value))
+  (print-task-name! file)
+  (println "PAYLOAD:")
+  (print (body file)))
 
 (defn handoff-files [dir]
   (if (fs/exists? dir)
@@ -139,53 +160,75 @@
       (println "BATCH_ITEM:" (inc index))
       (print-task file))))
 
+(defn acquire-sequence-lock! [lock-dir]
+  (loop []
+    (when-not (try (fs/create-dir lock-dir) true (catch Exception _ false))
+      (Thread/sleep 50)
+      (recur))))
+
+(defn read-sequence-value [seq-file]
+  (let [last-value (if (fs/exists? seq-file)
+                     (str/trim (slurp (str seq-file)))
+                     "0")]
+    (if (re-matches #"[0-9]+" last-value)
+      (Long/parseLong last-value)
+      0)))
+
+(defn write-next-sequence! [seq-file]
+  (let [next-number (inc (read-sequence-value seq-file))]
+    (spit (str seq-file) (format "%06d\n" next-number))
+    (format "%06d" next-number)))
+
 (defn next-sequence []
   (let [dir (state-dir)
         seq-file (fs/path dir "sequence")
         lock-dir (fs/path dir "sequence.lock")]
     (fs/create-dirs dir)
-    (loop []
-      (when-not (try (fs/create-dir lock-dir) true (catch Exception _ false))
-        (Thread/sleep 50)
-        (recur)))
+    (acquire-sequence-lock! lock-dir)
     (try
-      (let [last-value (if (fs/exists? seq-file)
-                         (str/trim (slurp (str seq-file)))
-                         "0")
-            last-number (if (re-matches #"[0-9]+" last-value)
-                          (Long/parseLong last-value)
-                          0)
-            next-number (inc last-number)]
-        (spit (str seq-file) (format "%06d\n" next-number))
-        (format "%06d" next-number))
+      (write-next-sequence! seq-file)
       (finally
         (fs/delete-tree lock-dir)))))
 
+(defn exit-for-bool! [value]
+  (System/exit (if value 0 1)))
+
+(defn print-header-field! [file field]
+  (if-let [value (header-field file field)]
+    (println value)
+    (System/exit 1)))
+
+(def commands
+  {"role" (fn [_] (println (role)))
+   "state-dir" (fn [_] (println (state-dir)))
+   "inbox-dir" (fn [_] (println (inbox-dir)))
+   "project-root" (fn [_] (println (project-root)))
+   "role-known" #(exit-for-bool! (role-known? (first %)))
+   "role-worktree-name" #(println (role-worktree-name (first %)))
+   "role-receive-mode" #(println (role-receive-mode (first %)))
+   "timestamp" (fn [_] (println (timestamp)))
+   "id-timestamp" (fn [_] (println (id-timestamp)))
+   "valid-priority" #(exit-for-bool! (valid-priority? (first %)))
+   "header-field" #(print-header-field! (first %) (second %))
+   "body" #(print (body (first %)))
+   "set-header" #(set-header! (first %) (second %) (nth % 2))
+   "print-task" #(print-task (first %))
+   "print-batch" #(print-batch (first %))
+   "next-sequence" (fn [_] (println (next-sequence)))})
+
+(defn usage! []
+  (binding [*out* *err*]
+    (println "Usage: handoff_lib.clj <command> [args...]"))
+  (System/exit 2))
+
+(defn run-command! [args]
+  (if-let [command (commands (first args))]
+    (command (rest args))
+    (usage!)))
+
 (defn -main [& args]
   (try
-    (case (first args)
-      "role" (println (role))
-      "state-dir" (println (state-dir))
-      "inbox-dir" (println (inbox-dir))
-      "project-root" (println (project-root))
-      "role-known" (System/exit (if (role-known? (second args)) 0 1))
-      "role-worktree-name" (println (role-worktree-name (second args)))
-      "role-receive-mode" (println (role-receive-mode (second args)))
-      "timestamp" (println (timestamp))
-      "id-timestamp" (println (id-timestamp))
-      "valid-priority" (System/exit (if (valid-priority? (second args)) 0 1))
-      "header-field" (if-let [value (header-field (second args) (nth args 2))]
-                       (println value)
-                       (System/exit 1))
-      "body" (print (body (second args)))
-      "set-header" (set-header! (second args) (nth args 2) (nth args 3))
-      "print-task" (print-task (second args))
-      "print-batch" (print-batch (second args))
-      "next-sequence" (println (next-sequence))
-      (do
-        (binding [*out* *err*]
-          (println "Usage: handoff_lib.clj <command> [args...]"))
-        (System/exit 2)))
+    (run-command! args)
     (catch clojure.lang.ExceptionInfo e
       (binding [*out* *err*]
         (println (ex-message e)))

@@ -114,79 +114,109 @@
 (defn value-or [value fallback]
   (if (str/blank? value) fallback value))
 
+(defn implementation-ready? [packet]
+  (and (approved? packet "story_approval")
+       (approved? packet "gherkin_approval")
+       (approved? packet "qa_procedure_approval")
+       (current-accepted? packet "gherkin_review")
+       (current-accepted? packet "qa_procedure_review")))
+
+(defn specification-in-progress? [packet]
+  (and (approved? packet "story_approval")
+       (or (present? packet "gherkin_assignment")
+           (present? packet "qa_procedure_assignment"))))
+
+(def state-transitions
+  [["final_approved" #(approved? % "final_approval")]
+   ["architecture_approved" #(approved? % "architecture_approval")]
+   ["architecture_reviewed" #(current-accepted? % "architecture_review")]
+   ["architecture_revision_returned" #(present? % "senior_implementor_sha")]
+   ["architecture_returned" #(present? % "architecture_sha")]
+   ["qa_approved" #(approved? % "qa_approval")]
+   ["qa_returned" #(present? % "qa_sha")]
+   ["hardening_approved" #(approved? % "hardening_approval")]
+   ["hardener_returned" #(present? % "hardener_sha")]
+   ["code_review_approved" #(approved? % "code_review_approval")]
+   ["code_reviewed" #(and (current-accepted? % "code_review")
+                          (present? % "cleaner_sha"))]
+   ["cleaned" #(present? % "cleaner_sha")]
+   ["implemented" #(present? % "implementation_sha")]
+   ["implementation_approved" #(approved? % "implementation_approval")]
+   ["implementation_approval_ready" implementation-ready?]
+   ["specification_in_progress" specification-in-progress?]
+   ["story_approved" #(approved? % "story_approval")]])
+
 (defn recompute-state [packet]
+  (or (some (fn [[state matches?]]
+              (when (matches? packet)
+                state))
+            state-transitions)
+      "story_recorded"))
+
+(defn assignment-state [packet path-field assignment-field]
   (cond
-    (approved? packet "final_approval") "final_approved"
-    (approved? packet "architecture_approval") "architecture_approved"
-    (current-accepted? packet "architecture_review") "architecture_reviewed"
-    (present? packet "senior_implementor_sha") "architecture_revision_returned"
-    (present? packet "architecture_sha") "architecture_returned"
-    (approved? packet "qa_approval") "qa_approved"
-    (present? packet "qa_sha") "qa_returned"
-    (approved? packet "hardening_approval") "hardening_approved"
-    (present? packet "hardener_sha") "hardener_returned"
-    (approved? packet "code_review_approval") "code_review_approved"
-    (and (current-accepted? packet "code_review")
-         (present? packet "cleaner_sha")) "code_reviewed"
-    (present? packet "cleaner_sha") "cleaned"
-    (present? packet "implementation_sha") "implemented"
-    (approved? packet "implementation_approval") "implementation_approved"
-    (and (approved? packet "story_approval")
-         (approved? packet "gherkin_approval")
-         (approved? packet "qa_procedure_approval")
-         (current-accepted? packet "gherkin_review")
-         (current-accepted? packet "qa_procedure_review")) "implementation_approval_ready"
-    (and (approved? packet "story_approval")
-         (or (present? packet "gherkin_assignment")
-             (present? packet "qa_procedure_assignment"))) "specification_in_progress"
-    (approved? packet "story_approval") "story_approved"
-    :else "story_recorded"))
+    (present? packet path-field) "complete"
+    (present? packet assignment-field) "assigned"
+    :else "pending"))
+
+(defn review-state [packet review-field path-field]
+  (value-or (current-review packet review-field)
+            (if (present? packet path-field) "pending" "blocked")))
+
+(defn approval-state [packet approval-field review-field]
+  (value-or (get packet approval-field)
+            (if (current-accepted? packet review-field) "pending" "blocked")))
+
+(def implementation-assignment-rules
+  [["complete" #(present? % "implementation_sha")]
+   ["assigned" #(present? % "implementation_assignment")]
+   ["ready" #(approved? % "implementation_approval")]])
+
+(defn state-from-rules [rules packet default-state]
+  (or (some (fn [[state predicate]]
+              (when (predicate packet)
+                state))
+            rules)
+      default-state))
+
+(defn implementation-assignment-state [packet]
+  (state-from-rules implementation-assignment-rules packet "blocked"))
+
+(defn cleaner-review-state [packet]
+  (or (current-review packet "code_review")
+      (when (present? packet "cleaner_sha") "pending")
+      "blocked"))
+
+(defn batched-result-rules [approval-field result-field batch-field]
+  [["approved" #(approved? % approval-field)]
+   ["pending" #(present? % result-field)]
+   ["batched" #(present? % batch-field)]])
+
+(defn batched-result-state [packet approval-field result-field batch-field]
+  (state-from-rules (batched-result-rules approval-field result-field batch-field) packet "blocked"))
+
+(defn architecture-result-state [packet]
+  (or (when (approved? packet "architecture_approval") "approved")
+      (current-review packet "architecture_review")
+      (when (present? packet "architecture_sha") "pending_review")
+      (when (present? packet "architecture_batch") "batched")
+      "blocked"))
 
 (defn derived-stage-fields [packet state]
   {"story_approval_state" (value-or (get packet "story_approval") "pending")
-   "gherkin_assignment_state" (cond
-                                (present? packet "gherkin_path") "complete"
-                                (present? packet "gherkin_assignment") "assigned"
-                                :else "pending")
-   "gherkin_review_state" (value-or (current-review packet "gherkin_review")
-                                    (if (present? packet "gherkin_path") "pending" "blocked"))
-   "gherkin_approval_state" (value-or (get packet "gherkin_approval")
-                                      (if (current-accepted? packet "gherkin_review") "pending" "blocked"))
-   "qa_procedure_assignment_state" (cond
-                                     (present? packet "qa_procedure_path") "complete"
-                                     (present? packet "qa_procedure_assignment") "assigned"
-                                     :else "pending")
-   "qa_procedure_review_state" (value-or (current-review packet "qa_procedure_review")
-                                         (if (present? packet "qa_procedure_path") "pending" "blocked"))
-   "qa_procedure_approval_state" (value-or (get packet "qa_procedure_approval")
-                                           (if (current-accepted? packet "qa_procedure_review") "pending" "blocked"))
+   "gherkin_assignment_state" (assignment-state packet "gherkin_path" "gherkin_assignment")
+   "gherkin_review_state" (review-state packet "gherkin_review" "gherkin_path")
+   "gherkin_approval_state" (approval-state packet "gherkin_approval" "gherkin_review")
+   "qa_procedure_assignment_state" (assignment-state packet "qa_procedure_path" "qa_procedure_assignment")
+   "qa_procedure_review_state" (review-state packet "qa_procedure_review" "qa_procedure_path")
+   "qa_procedure_approval_state" (approval-state packet "qa_procedure_approval" "qa_procedure_review")
    "implementation_approval_state" (value-or (get packet "implementation_approval")
                                              (if (= "implementation_approval_ready" state) "pending" "blocked"))
-   "implementation_assignment_state" (cond
-                                       (present? packet "implementation_sha") "complete"
-                                       (present? packet "implementation_assignment") "assigned"
-                                       (approved? packet "implementation_approval") "ready"
-                                       :else "blocked")
-   "cleaner_review_state" (cond
-                            (current-review packet "code_review") (current-review packet "code_review")
-                            (present? packet "cleaner_sha") "pending"
-                            :else "blocked")
-   "hardener_review_state" (cond
-                             (approved? packet "hardening_approval") "approved"
-                             (present? packet "hardener_sha") "pending"
-                             (present? packet "hardener_batch") "batched"
-                             :else "blocked")
-   "qa_result_state" (cond
-                       (approved? packet "qa_approval") "approved"
-                       (present? packet "qa_sha") "pending"
-                       (present? packet "qa_batch") "batched"
-                       :else "blocked")
-   "architecture_result_state" (cond
-                                 (approved? packet "architecture_approval") "approved"
-                                 (current-review packet "architecture_review") (current-review packet "architecture_review")
-                                 (present? packet "architecture_sha") "pending_review"
-                                 (present? packet "architecture_batch") "batched"
-                                 :else "blocked")
+   "implementation_assignment_state" (implementation-assignment-state packet)
+   "cleaner_review_state" (cleaner-review-state packet)
+   "hardener_review_state" (batched-result-state packet "hardening_approval" "hardener_sha" "hardener_batch")
+   "qa_result_state" (batched-result-state packet "qa_approval" "qa_sha" "qa_batch")
+   "architecture_result_state" (architecture-result-state packet)
    "final_state" state})
 
 (defn clear-downstream [packet kind]

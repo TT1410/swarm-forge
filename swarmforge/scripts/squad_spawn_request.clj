@@ -3,6 +3,7 @@
 (ns squad-spawn-request
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [clojure.string :as str]))
 
 (def usage-text
@@ -21,31 +22,26 @@
   (apply process/sh (concat [{:continue true}] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (and configured (fs/exists? configured-roles))
-      (fs/path configured)
-      (if (fs/exists? direct)
-      cwd
-      (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-        (if (and (not (str/blank? git-root))
-                 (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-          (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root")))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
            (java.time.Instant/now)))
 
-(defn validate! [template task-id]
+(defn validate-template! [template]
   (when-not (re-matches valid-template template)
-    (exit! 2 "Template names must use lowercase letters, digits, and hyphens."))
+    (exit! 2 "Template names must use lowercase letters, digits, and hyphens.")))
+
+(defn validate-task-id! [task-id]
   (when-not (re-matches valid-id task-id)
     (exit! 2 "Task ids must use letters, digits, dots, underscores, and hyphens."))
   (when (or (str/includes? task-id "/") (str/includes? task-id "\\"))
     (exit! 2 "Task ids may not contain path separators.")))
+
+(defn validate! [template task-id]
+  (validate-template! template)
+  (validate-task-id! task-id))
 
 (defn source-file! [path]
   (let [file (fs/path path)

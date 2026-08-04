@@ -3,6 +3,7 @@
 (ns squad-batch-story
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [clojure.string :as str]))
 
 (def usage-text
@@ -26,18 +27,8 @@
   (apply process/sh (concat [{:continue true}] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (cond
-      (and configured (fs/exists? configured-roles)) (fs/path configured)
-      (fs/exists? direct) cwd
-      :else (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-              (if (and (not (str/blank? git-root))
-                       (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-                (fs/path git-root)
-                (exit! 1 "Cannot find SwarmForge project root"))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn script [name]
   (str (fs/path script-dir name)))

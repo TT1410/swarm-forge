@@ -31,18 +31,8 @@
   (apply process/sh (concat [{:continue true}] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (cond
-      (and configured (fs/exists? configured-roles)) (fs/path configured)
-      (fs/exists? direct) cwd
-      :else (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-              (if (and (not (str/blank? git-root))
-                       (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-                (fs/path git-root)
-                (exit! 1 "Cannot find SwarmForge project root"))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
@@ -126,6 +116,10 @@
     (println "REQUIRED:" (cfg/squad-approval-required? root gate))
     (println "FILE:" (str file))))
 
+(defn normalized-detail [parts default-value]
+  (let [detail (str/replace (str/join " " parts) #"\R+" " ")]
+    (if (str/blank? detail) default-value detail)))
+
 (defn packet-file [root story-id]
   (fs/path root ".squad" "stories" story-id "packet"))
 
@@ -146,6 +140,28 @@
     "theme" [(str (fs/path script-dir "squad_theme.sh")) "approve" target-id gate detail]
     "story" [(str (fs/path script-dir "squad_packet.sh")) "approve" target-id (packet-gate gate) detail]))
 
+(defn ensure-target-exists! [root target-kind target-id]
+  (when-not (target-exists? root target-kind target-id)
+    (exit! 1 (str "Approval target not found: " target-kind " " target-id))))
+
+(defn ensure-new-approval! [root approval-id]
+  (when (approval-file root approval-id)
+    (exit! 2 (str "Approval already exists: " approval-id))))
+
+(defn request-content [approval-id target-kind target-id gate title reason now]
+  (str "approval_id: " approval-id "\n"
+       "target_kind: " target-kind "\n"
+       "target_id: " target-id "\n"
+       "gate: " gate "\n"
+       "state: pending\n"
+       "title: " title "\n"
+       "reason: " reason "\n"
+       "created_at: " now "\n"
+       "approve_command: " (str/join " " (command-for target-kind target-id gate "approved-by-user")) "\n"))
+
+(defn write-request! [file approval-id target-kind target-id gate title reason now]
+  (write-atomic! file (request-content approval-id target-kind target-id gate title reason now)))
+
 (defn required! [gate]
   (validate-gate! gate)
   (let [root (fs/absolutize (project-root))
@@ -161,26 +177,14 @@
   (validate-gate! gate)
   (let [root (fs/absolutize (project-root))
         file (pending-file root approval-id)
-        reason (str/replace (str/join " " reason-parts) #"\R+" " ")
-        reason (if (str/blank? reason) "approval requested" reason)
+        reason (normalized-detail reason-parts "approval requested")
         now (timestamp)]
-    (when-not (target-exists? root target-kind target-id)
-      (exit! 1 (str "Approval target not found: " target-kind " " target-id)))
-    (when (approval-file root approval-id)
-      (exit! 2 (str "Approval already exists: " approval-id)))
+    (ensure-target-exists! root target-kind target-id)
+    (ensure-new-approval! root approval-id)
     (if-let [existing (equivalent-approval-file root target-kind target-id gate)]
       (print-request-result! root existing)
       (do
-        (write-atomic! file
-                       (str "approval_id: " approval-id "\n"
-                            "target_kind: " target-kind "\n"
-                            "target_id: " target-id "\n"
-                            "gate: " gate "\n"
-                            "state: pending\n"
-                            "title: " title "\n"
-                            "reason: " reason "\n"
-                            "created_at: " now "\n"
-                            "approve_command: " (str/join " " (command-for target-kind target-id gate "approved-by-user")) "\n"))
+        (write-request! file approval-id target-kind target-id gate title reason now)
         (print-request-result! root file)))))
 
 (defn move-with-state! [source target state detail]
@@ -202,8 +206,7 @@
           target-kind (get approval "target_kind")
           target-id (get approval "target_id")
           gate (get approval "gate")
-          detail (str/replace (str/join " " detail-parts) #"\R+" " ")
-          detail (if (str/blank? detail) "approved-by-user" detail)
+          detail (normalized-detail detail-parts "approved-by-user")
           command (command-for target-kind target-id gate detail)
           result (apply process/sh (concat [{:dir (str root) :continue true}] command))]
       (when-not (zero? (:exit result))
@@ -220,8 +223,7 @@
   (validate-id! "Approval id" approval-id)
   (let [root (fs/absolutize (project-root))
         source (pending-file root approval-id)
-        reason (str/replace (str/join " " reason-parts) #"\R+" " ")
-        reason (if (str/blank? reason) "rejected-by-user" reason)]
+        reason (normalized-detail reason-parts "rejected-by-user")]
     (when-not (fs/regular-file? source)
       (exit! 1 (str "Pending approval not found: " approval-id)))
     (move-with-state! source (rejected-file root approval-id) "rejected" reason)
@@ -257,23 +259,35 @@
       (print-one-status! root maybe-approval-id)
       (print-all-status! root))))
 
+(defn exact-count! [args n]
+  (when-not (= n (count args))
+    (exit! 1 usage-text)))
+
+(defn minimum-count! [args n]
+  (when-not (>= (count args) n)
+    (exit! 1 usage-text)))
+
+(def approval-commands
+  {"required" (fn [args]
+                (exact-count! args 2)
+                (required! (second args)))
+   "request" (fn [args]
+               (minimum-count! args 7)
+               (request! (second args) (nth args 2) (nth args 3) (nth args 4) (nth args 5) (drop 6 args)))
+   "approve" (fn [args]
+               (minimum-count! args 2)
+               (approve! (second args) (drop 2 args)))
+   "reject" (fn [args]
+              (minimum-count! args 2)
+              (reject! (second args) (drop 2 args)))
+   "status" (fn [args]
+              (when-not (<= 1 (count args) 2)
+                (exit! 1 usage-text))
+              (status! (second args)))})
+
 (defn -main [& args]
-  (case (first args)
-    "required" (if (= 2 (count args))
-                 (required! (second args))
-                 (exit! 1 usage-text))
-    "request" (if (>= (count args) 7)
-                (request! (second args) (nth args 2) (nth args 3) (nth args 4) (nth args 5) (drop 6 args))
-                (exit! 1 usage-text))
-    "approve" (if (>= (count args) 2)
-                (approve! (second args) (drop 2 args))
-                (exit! 1 usage-text))
-    "reject" (if (>= (count args) 2)
-               (reject! (second args) (drop 2 args))
-               (exit! 1 usage-text))
-    "status" (if (<= 1 (count args) 2)
-               (status! (second args))
-               (exit! 1 usage-text))
+  (if-let [command (approval-commands (first args))]
+    (command args)
     (exit! 1 usage-text)))
 
 (when (= *file* (System/getProperty "babashka.file"))

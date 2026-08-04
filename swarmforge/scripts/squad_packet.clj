@@ -3,6 +3,7 @@
 (ns squad-packet
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [squad-state :as squad-state]
             [clojure.string :as str]))
 
@@ -37,18 +38,8 @@
   (apply process/sh (concat [{:continue true}] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (cond
-      (and configured (fs/exists? configured-roles)) (fs/path configured)
-      (fs/exists? direct) cwd
-      :else (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-              (if (and (not (str/blank? git-root))
-                       (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-                (fs/path git-root)
-                (exit! 1 "Cannot find SwarmForge project root"))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
@@ -256,9 +247,46 @@
       (println "STORY:" story-path)
       (println "PACKET:" (str (packet-file root story-id))))))
 
-(defn attach-artifact! [story-id kind assignment-id branch sha artifact-path]
+(def artifact-path-rules
+  {"gherkin" {:prefixes ["features/"]
+              :message "Gherkin artifacts must live under features/."}
+   "qa-procedure" {:prefixes ["qa/"]
+                   :message "QA procedure artifacts must live under qa/."}})
+
+(defn validate-artifact-kind! [kind]
   (when-not (contains? artifact-kinds kind)
-    (exit! 2 "Artifact kind must be gherkin or qa-procedure."))
+    (exit! 2 "Artifact kind must be gherkin or qa-procedure.")))
+
+(defn relative-artifact-file! [root kind file]
+  (let [{:keys [prefixes message]} (artifact-path-rules kind)]
+    (relative-project-file! root file prefixes message)))
+
+(defn artifact-reset-fields [prefix]
+  [(str prefix "_review")
+   (str prefix "_review_assignment")
+   (str prefix "_review_branch")
+   (str prefix "_review_sha")
+   (str prefix "_approval")
+   (str prefix "_approval_detail")])
+
+(defn packet-with-artifact [packet prefix relative assignment-id branch sha]
+  (append-iteration
+   (assoc (apply dissoc packet (artifact-reset-fields prefix))
+          (str prefix "_path") relative
+          (str prefix "_assignment") assignment-id
+          (str prefix "_branch") branch
+          (str prefix "_sha") sha)
+   prefix assignment-id "attached"))
+
+(defn print-artifact-attached! [story-id packet kind relative packet-file]
+  (println "SQUAD_PACKET:" story-id)
+  (println "STATE:" (get packet "state"))
+  (println "ARTIFACT:" kind)
+  (println "PATH:" relative)
+  (println "PACKET:" (str packet-file)))
+
+(defn attach-artifact! [story-id kind assignment-id branch sha artifact-path]
+  (validate-artifact-kind! kind)
   (doseq [[label value] [["Story id" story-id]
                          ["Assignment id" assignment-id]
                          ["Branch" branch]]]
@@ -266,34 +294,13 @@
   (validate-sha! sha)
   (let [root (fs/absolutize (project-root))
         file (source-file! artifact-path)
-        relative (case kind
-                   "gherkin" (relative-project-file! root file ["features/"]
-                                                     "Gherkin artifacts must live under features/.")
-                   "qa-procedure" (relative-project-file! root file ["qa/"]
-                                                          "QA procedure artifacts must live under qa/."))
+        relative (relative-artifact-file! root kind file)
         packet-file (ensure-packet! root story-id)
         packet (packet-map root story-id)
         prefix (str/replace kind "-" "_")
-        packet (write-packet! root story-id
-                              (append-iteration
-                               (assoc (apply dissoc packet
-                                             [(str prefix "_review")
-                                              (str prefix "_review_assignment")
-                                              (str prefix "_review_branch")
-                                              (str prefix "_review_sha")
-                                              (str prefix "_approval")
-                                              (str prefix "_approval_detail")])
-                                      (str prefix "_path") relative
-                                      (str prefix "_assignment") assignment-id
-                                      (str prefix "_branch") branch
-                                      (str prefix "_sha") sha)
-                               prefix assignment-id "attached"))]
+        packet (write-packet! root story-id (packet-with-artifact packet prefix relative assignment-id branch sha))]
     (event! root story-id (str prefix "_attached") assignment-id branch sha relative)
-    (println "SQUAD_PACKET:" story-id)
-    (println "STATE:" (get packet "state"))
-    (println "ARTIFACT:" kind)
-    (println "PATH:" relative)
-    (println "PACKET:" (str packet-file))))
+    (print-artifact-attached! story-id packet kind relative packet-file)))
 
 (defn review-artifact! [story-id kind decision assignment-id branch sha]
   (when-not (contains? review-kinds kind)
@@ -466,32 +473,27 @@
         (System/exit 3))
       (println "CONSISTENCY: ok"))))
 
+(defn exact-count! [args expected]
+  (when-not (= expected (count args))
+    (exit! 1 usage-text)))
+
+(defn minimum-count! [args expected]
+  (when-not (>= (count args) expected)
+    (exit! 1 usage-text)))
+
+(def packet-commands
+  {"create" (fn [args] (exact-count! args 6) (apply create-packet! (rest args)))
+   "attach" (fn [args] (exact-count! args 7) (apply attach-artifact! (rest args)))
+   "review" (fn [args] (exact-count! args 7) (apply review-artifact! (rest args)))
+   "approve" (fn [args] (minimum-count! args 4) (approve! (second args) (nth args 2) (drop 3 args)))
+   "record" (fn [args] (exact-count! args 6) (apply record-result! (rest args)))
+   "batch" (fn [args] (exact-count! args 8) (apply batch-story! (rest args)))
+   "status" (fn [args] (exact-count! args 2) (print-status! (second args)))
+   "validate" (fn [args] (exact-count! args 2) (validate-packet! (second args)))})
+
 (defn -main [& args]
-  (case (first args)
-    "create" (if (= 6 (count args))
-               (apply create-packet! (rest args))
-               (exit! 1 usage-text))
-    "attach" (if (= 7 (count args))
-               (apply attach-artifact! (rest args))
-               (exit! 1 usage-text))
-    "review" (if (= 7 (count args))
-               (apply review-artifact! (rest args))
-               (exit! 1 usage-text))
-    "approve" (if (>= (count args) 4)
-                (approve! (second args) (nth args 2) (drop 3 args))
-                (exit! 1 usage-text))
-    "record" (if (= 6 (count args))
-               (apply record-result! (rest args))
-               (exit! 1 usage-text))
-    "batch" (if (= 8 (count args))
-              (apply batch-story! (rest args))
-              (exit! 1 usage-text))
-    "status" (if (= 2 (count args))
-               (print-status! (second args))
-               (exit! 1 usage-text))
-    "validate" (if (= 2 (count args))
-                 (validate-packet! (second args))
-                 (exit! 1 usage-text))
+  (if-let [command (packet-commands (first args))]
+    (command args)
     (exit! 1 usage-text)))
 
 (when (= *file* (System/getProperty "babashka.file"))

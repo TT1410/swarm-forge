@@ -39,19 +39,8 @@
   (str "'" (str/replace (str value) #"'" "'\"'\"'") "'"))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (and configured (fs/exists? configured-roles))
-      (fs/path configured)
-      (if (fs/exists? direct)
-      cwd
-      (let [git-root (str/trim (:out (sh {:continue true} "git" "rev-parse" "--show-toplevel")))]
-        (if (and (not (str/blank? git-root))
-                 (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-          (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root")))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn validate-template! [template]
   (when-not (re-matches #"[a-z][a-z0-9-]*" template)
@@ -129,13 +118,16 @@
             (nth row 5 nil)))
         rows))
 
+(defn configured-transient-agent [root rows]
+  (let [configured (cfg/squad-transient-agent-config root)]
+    (cond
+      (str/blank? configured) nil
+      (#{"leader" "squad-leader"} configured) (leader-agent rows)
+      :else configured)))
+
 (defn transient-agent [root rows]
   (or (not-empty (System/getenv "SWARMFORGE_SQUAD_AGENT"))
-      (let [configured (cfg/squad-transient-agent-config root)]
-        (cond
-          (str/blank? configured) nil
-          (#{"leader" "squad-leader"} configured) (leader-agent rows)
-          :else configured))
+      (configured-transient-agent root rows)
       (leader-agent rows)
       "codex"))
 
@@ -159,25 +151,36 @@
                     (contains? templates (role-template root role)))]
      role)))
 
+(defn template-capacity-error-line [template active limit]
+  [3
+   "SQUAD_SPAWN_TEMPLATE_CAPACITY_FULL"
+   (str "TEMPLATE: " template)
+   (str "ACTIVE_TEMPLATE_TRANSIENTS: " active)
+   (str "MAX_TEMPLATE_TRANSIENTS: " limit)])
+
+(defn group-capacity-error-line [template group active limit]
+  [3
+   "SQUAD_SPAWN_GROUP_CAPACITY_FULL"
+   (str "GROUP: " group)
+   (str "TEMPLATE: " template)
+   (str "ACTIVE_GROUP_TRANSIENTS: " active)
+   (str "MAX_GROUP_TRANSIENTS: " limit)])
+
+(defn template-limit-error [root rows template]
+  (when-let [limit (cfg/squad-template-limit root template)]
+    (let [active (active-template-count root rows template)]
+      (when (>= active limit)
+        (template-capacity-error-line template active limit)))))
+
+(defn group-limit-error [root rows template {:keys [group limit templates]}]
+  (let [active (active-group-count root rows templates)]
+    (when (>= active limit)
+      (group-capacity-error-line template group active limit))))
+
 (defn template-capacity-error [root rows template]
   (or
-   (when-let [limit (cfg/squad-template-limit root template)]
-     (let [active (active-template-count root rows template)]
-       (when (>= active limit)
-         [3
-          "SQUAD_SPAWN_TEMPLATE_CAPACITY_FULL"
-          (str "TEMPLATE: " template)
-          (str "ACTIVE_TEMPLATE_TRANSIENTS: " active)
-          (str "MAX_TEMPLATE_TRANSIENTS: " limit)])))
-   (some (fn [{:keys [group limit templates]}]
-           (let [active (active-group-count root rows templates)]
-             (when (>= active limit)
-               [3
-                "SQUAD_SPAWN_GROUP_CAPACITY_FULL"
-                (str "GROUP: " group)
-                (str "TEMPLATE: " template)
-                (str "ACTIVE_GROUP_TRANSIENTS: " active)
-                (str "MAX_GROUP_TRANSIENTS: " limit)])))
+   (template-limit-error root rows template)
+   (some #(group-limit-error root rows template %)
          (cfg/squad-template-group-limits root template))))
 
 (defn next-agent-id [root rows template]
@@ -241,15 +244,35 @@
        "Source file: " assignment "\n\n"
        assignment-text))
 
+(defn claude-command [prompt-file _ _ display]
+  (str "claude --append-system-prompt-file " (sq (str prompt-file))
+       " --permission-mode acceptEdits -n " (sq (str "SwarmForge " display))
+       " \"$(cat " (sq (str prompt-file)) ")\""))
+
+(defn codex-command [prompt-file _ _ _]
+  (str "codex --dangerously-bypass-approvals-and-sandbox \"$(cat " (sq (str prompt-file)) ")\""))
+
+(defn copilot-command [prompt-file worktree _ display]
+  (str "copilot -C " (sq (str worktree))
+       " --name " (sq (str "SwarmForge " display))
+       " -i \"$(cat " (sq (str prompt-file)) ")\""))
+
+(defn grok-command [prompt-file worktree _ _]
+  (str "grok --cwd " (sq (str worktree))
+       " --permission-mode acceptEdits --rules \"$(cat " (sq (str prompt-file))
+       ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\""))
+
+(def backend-commands
+  {"claude" claude-command
+   "codex" codex-command
+   "copilot" copilot-command
+   "grok" grok-command})
+
 (defn agent-exec-command [agent prompt-file worktree root display]
   (let [override (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND")]
     (if (not (str/blank? override))
       override
-      (case agent
-        "claude" (str "claude --append-system-prompt-file " (sq (str prompt-file)) " --permission-mode acceptEdits -n " (sq (str "SwarmForge " display)) " \"$(cat " (sq (str prompt-file)) ")\"")
-        "codex" (str "codex --dangerously-bypass-approvals-and-sandbox \"$(cat " (sq (str prompt-file)) ")\"")
-        "copilot" (str "copilot -C " (sq (str worktree)) " --name " (sq (str "SwarmForge " display)) " -i \"$(cat " (sq (str prompt-file)) ")\"")
-        "grok" (str "grok --cwd " (sq (str worktree)) " --permission-mode acceptEdits --rules \"$(cat " (sq (str prompt-file)) ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\"")))))
+      ((backend-commands agent) prompt-file worktree root display))))
 
 (defn render-launch-script [{:keys [agent-id root worktree prompt-file script-dir tool-cache-dir agent display]}]
   (str "#!/usr/bin/env zsh\n"
@@ -271,6 +294,22 @@
   (run! "tmux" "-S" socket "new-session" "-d" "-s" session "-n" display (str launch-script))
   (run! "tmux" "-S" socket "set-window-option" "-t" session "allow-rename" "off"))
 
+(defn cleanup-empty-lock! [lock-dir]
+  (when (and (fs/directory? lock-dir)
+             (not (fs/exists? (fs/path lock-dir "owner")))
+             (empty? (fs/list-dir lock-dir)))
+    (fs/delete-tree lock-dir)))
+
+(defn try-acquire-lock! [lock-dir]
+  (try
+    (fs/create-dir lock-dir)
+    (spit (str (fs/path lock-dir "owner"))
+          (str "pid: " (.pid (java.lang.ProcessHandle/current)) "\n"))
+    true
+    (catch java.nio.file.FileAlreadyExistsException _
+      (cleanup-empty-lock! lock-dir)
+      false)))
+
 (defn acquire-lock! [lock-dir]
   (let [deadline (+ (System/currentTimeMillis) 10000)]
     (loop []
@@ -278,17 +317,7 @@
         (exit! 2
                (str "Timed out waiting for squad registry lock: " lock-dir)
                "If no squad_spawn.sh or squad_retire.sh process is running, remove the stale lock directory and retry."))
-    (if (try
-          (fs/create-dir lock-dir)
-          (spit (str (fs/path lock-dir "owner"))
-                (str "pid: " (.pid (java.lang.ProcessHandle/current)) "\n"))
-          true
-          (catch java.nio.file.FileAlreadyExistsException _
-            (when (and (fs/directory? lock-dir)
-                       (not (fs/exists? (fs/path lock-dir "owner")))
-                       (empty? (fs/list-dir lock-dir)))
-              (fs/delete-tree lock-dir))
-            false))
+    (if (try-acquire-lock! lock-dir)
       nil
       (do
         (Thread/sleep 50)
@@ -350,117 +379,166 @@
                             "detail: assigned to " agent-id "\n"
                             "updated_at: " (timestamp) "\n"))))))
 
+(defn absolute-input-file [path]
+  (let [file (fs/path path)]
+    (if (fs/absolute? file) file (fs/path (fs/cwd) file))))
+
+(defn ensure-spawn-inputs! [root template assignment]
+  (when-not (fs/regular-file? assignment)
+    (exit! 1 (str "Assignment file not found: " assignment)))
+  (let [template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))]
+    (when-not (fs/regular-file? template-file)
+      (exit! 1 (str "Role template not found: " template-file)))
+    template-file))
+
+(defn ensure-roles-file! [roles-file]
+  (when-not (fs/regular-file? roles-file)
+    (exit! 1 "Run ./swarm before spawning transient agents; .swarmforge/roles.tsv is missing.")))
+
+(defn global-capacity-error [root rows]
+  (let [active (active-transient-count root rows)
+        limit (cfg/squad-max-transient-agents root)]
+    (when (>= active limit)
+      [3
+       "SQUAD_SPAWN_CAPACITY_FULL"
+       (str "ACTIVE_TRANSIENTS: " active)
+       (str "MAX_TRANSIENTS: " limit)])))
+
+(defn capacity-error [root rows template]
+  (or (global-capacity-error root rows)
+      (template-capacity-error root rows template)))
+
+(defn ensure-agent-available! [rows agent-id worktree agent-dir]
+  (when (some #(= agent-id (first %)) rows)
+    (exit! 2 (str "Role already registered: " agent-id)))
+  (when (fs/exists? worktree)
+    (exit! 2 (str "Worktree already exists: " worktree)))
+  (when (fs/exists? agent-dir)
+    (exit! 2 (str "Agent state already exists: " agent-dir))))
+
+(defn ensure-backend-supported! [agent]
+  (when-not (#{"claude" "codex" "copilot" "grok"} agent)
+    (exit! 2 (str "Unsupported transient agent backend: " agent))))
+
+(defn spawn-context [root rows template task-id assignment template-file]
+  (let [agent-id (next-agent-id root rows template)
+        worktree (fs/path root ".worktrees" agent-id)
+        agent (transient-agent root rows)
+        squad-dir (fs/path root ".squad")
+        agent-dir (fs/path squad-dir "agents" agent-id)]
+    {:root root
+     :rows rows
+     :template template
+     :task-id task-id
+     :assignment assignment
+     :template-file template-file
+     :agent-id agent-id
+     :worktree worktree
+     :branch (str "swarmforge-" agent-id)
+     :session (str "swarmforge-" agent-id)
+     :display (display-name-for-role agent-id)
+     :agent agent
+     :squad-dir squad-dir
+     :agent-dir agent-dir
+     :task-dir (fs/path squad-dir "tasks" task-id)
+     :prompt-file (fs/path agent-dir "prompt.md")
+     :launch-script (fs/path agent-dir "launch.sh")
+     :script-dir (fs/path worktree "swarmforge" "scripts")
+     :tool-cache-dir (fs/path root ".swarmforge" "tools")}))
+
+(defn spawn-row [{:keys [agent-id worktree session display agent]}]
+  [agent-id agent-id (str worktree) session display agent "task"])
+
+(defn create-worktree! [{:keys [root branch worktree]}]
+  (run! "git" "-C" (str root) "worktree" "add" "--force" "-B" branch (str worktree) "HEAD"))
+
+(defn create-spawn-dirs! [{:keys [task-dir agent-dir worktree]}]
+  (create-dirs! (concat [(fs/path task-dir "assignments")
+                         agent-dir
+                         (fs/path worktree ".swarmforge" "tools" "bin")
+                         (fs/path worktree ".swarmforge" "tools" "manifests")]
+                        (handoff-dirs worktree))))
+
+(defn write-spawn-files! [{:keys [agent-id template task-id assignment root worktree tool-cache-dir template-file
+                                  prompt-file launch-script script-dir agent display]}]
+  (copy-scripts! worktree)
+  (write-atomic! prompt-file
+                 (render-prompt {:agent-id agent-id
+                                 :template template
+                                 :task-id task-id
+                                 :assignment (str assignment)
+                                 :root (str root)
+                                 :worktree (str worktree)
+                                 :tool-cache-dir (str tool-cache-dir)
+                                 :template-text (slurp (str template-file))
+                                 :assignment-text (slurp (str assignment))}))
+  (write-atomic! launch-script
+                 (render-launch-script {:agent-id agent-id
+                                        :root root
+                                        :worktree worktree
+                                        :prompt-file prompt-file
+                                        :script-dir script-dir
+                                        :tool-cache-dir tool-cache-dir
+                                        :agent agent
+                                        :display display}))
+  (fs/set-posix-file-permissions launch-script "rwxr-xr-x"))
+
+(defn launch-transient-if-needed! [state-dir {:keys [session display launch-script agent-dir agent-id task-id]}]
+  (when-not (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
+    (let [socket (str/trim (slurp (str (fs/path state-dir "tmux-socket"))))]
+      (launch-session! {:socket socket
+                        :session session
+                        :display display
+                        :launch-script launch-script})
+      (write-status-and-heartbeat! agent-dir agent-id task-id "running" "detached tmux session started"))))
+
+(defn print-spawn-result! [{:keys [agent-id template task-id worktree session prompt-file]}]
+  (println "SQUAD_AGENT:" agent-id)
+  (println "TEMPLATE:" template)
+  (println "TASK_ID:" task-id)
+  (println "WORKTREE:" (str worktree))
+  (println "SESSION:" session)
+  (println "PROMPT:" (str prompt-file)))
+
+(defn register-spawn! [state-dir roles-file context]
+  (let [{:keys [root assignment agent-id task-id task-dir agent-dir session]} context]
+    (create-worktree! context)
+    (create-spawn-dirs! context)
+    (write-spawn-files! context)
+    (fs/copy assignment (fs/path task-dir "assignments" (str agent-id ".md")) {:replace-existing true})
+    (append-role-atomic! roles-file (spawn-row context))
+    (sync-runtime-files! root (:worktree context))
+    (write-metadata! agent-dir context)
+    (mark-assignment-in-progress! root assignment agent-id session)
+    (write-status-and-heartbeat! agent-dir agent-id task-id "starting" "registered transient agent")
+    (launch-transient-if-needed! state-dir context)
+    (print-spawn-result! context)))
+
 (defn spawn! [template task-id assignment-file]
   (validate-template! template)
   (validate-task-id! task-id)
   (let [root (fs/absolutize (project-root))
-        assignment (fs/path assignment-file)
-        assignment (if (fs/absolute? assignment) assignment (fs/path (fs/cwd) assignment))]
-    (when-not (fs/regular-file? assignment)
-      (exit! 1 (str "Assignment file not found: " assignment)))
-    (let [template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))]
-      (when-not (fs/regular-file? template-file)
-        (exit! 1 (str "Role template not found: " template-file)))
-      (let [state-dir (fs/path root ".swarmforge")
-            roles-file (fs/path state-dir "roles.tsv")
-            lock-dir (fs/path state-dir "squad" "spawn.lock")]
-        (when-not (fs/regular-file? roles-file)
-          (exit! 1 "Run ./swarm before spawning transient agents; .swarmforge/roles.tsv is missing."))
-        (fs/create-dirs (fs/parent lock-dir))
-        (acquire-lock! lock-dir)
-        (let [capacity-error (atom nil)]
-          (try
-            (let [rows (role-rows roles-file)
-                  global-capacity-error (when (>= (active-transient-count root rows)
-                                                  (cfg/squad-max-transient-agents root))
-                                          [3
-                                           "SQUAD_SPAWN_CAPACITY_FULL"
-                                           (str "ACTIVE_TRANSIENTS: " (active-transient-count root rows))
-                                           (str "MAX_TRANSIENTS: " (cfg/squad-max-transient-agents root))])
-                  specific-capacity-error (template-capacity-error root rows template)]
-              (if-let [error (or global-capacity-error specific-capacity-error)]
-                (reset! capacity-error error)
-                (let [agent-id (next-agent-id root rows template)
-                      worktree (fs/path root ".worktrees" agent-id)
-                      branch (str "swarmforge-" agent-id)
-                      session (str "swarmforge-" agent-id)
-                      display (display-name-for-role agent-id)
-                      agent (transient-agent root rows)
-                      squad-dir (fs/path root ".squad")
-                      agent-dir (fs/path squad-dir "agents" agent-id)
-                      task-dir (fs/path squad-dir "tasks" task-id)
-                      prompt-file (fs/path agent-dir "prompt.md")
-                      launch-script (fs/path agent-dir "launch.sh")
-                      script-dir (fs/path worktree "swarmforge" "scripts")
-                      tool-cache-dir (fs/path root ".swarmforge" "tools")
-                      row [agent-id agent-id (str worktree) session display agent "task"]]
-                  (when-not (#{"claude" "codex" "copilot" "grok"} agent)
-                    (exit! 2 (str "Unsupported transient agent backend: " agent)))
-                  (when (some #(= agent-id (first %)) rows)
-                    (exit! 2 (str "Role already registered: " agent-id)))
-                  (when (fs/exists? worktree)
-                    (exit! 2 (str "Worktree already exists: " worktree)))
-                  (when (fs/exists? agent-dir)
-                    (exit! 2 (str "Agent state already exists: " agent-dir)))
-                  (run! "git" "-C" (str root) "worktree" "add" "--force" "-B" branch (str worktree) "HEAD")
-                  (create-dirs! (concat [(fs/path task-dir "assignments")
-                                         agent-dir
-                                         (fs/path worktree ".swarmforge" "tools" "bin")
-                                         (fs/path worktree ".swarmforge" "tools" "manifests")]
-                                        (handoff-dirs worktree)))
-                  (copy-scripts! worktree)
-                  (write-atomic! prompt-file
-                                 (render-prompt {:agent-id agent-id
-                                                 :template template
-                                                 :task-id task-id
-                                                 :assignment (str assignment)
-                                                 :root (str root)
-                                                 :worktree (str worktree)
-                                                 :tool-cache-dir (str tool-cache-dir)
-                                                 :template-text (slurp (str template-file))
-                                                 :assignment-text (slurp (str assignment))}))
-                  (write-atomic! launch-script
-                                 (render-launch-script {:agent-id agent-id
-                                                        :root root
-                                                        :worktree worktree
-                                                        :prompt-file prompt-file
-                                                        :script-dir script-dir
-                                                        :tool-cache-dir tool-cache-dir
-                                                        :agent agent
-                                                        :display display}))
-                  (fs/set-posix-file-permissions launch-script "rwxr-xr-x")
-                  (fs/copy assignment (fs/path task-dir "assignments" (str agent-id ".md")) {:replace-existing true})
-                  (append-role-atomic! roles-file row)
-                  (sync-runtime-files! root worktree)
-                  (write-metadata! agent-dir {:agent-id agent-id
-                                              :template template
-                                              :task-id task-id
-                                              :root (str root)
-                                              :worktree (str worktree)
-                                              :session session
-                                              :display display
-                                              :agent agent
-                                              :tool-cache-dir (str tool-cache-dir)
-                                              :launch-script (str launch-script)})
-                  (mark-assignment-in-progress! root assignment agent-id session)
-                  (write-status-and-heartbeat! agent-dir agent-id task-id "starting" "registered transient agent")
-                  (when-not (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
-                    (let [socket (str/trim (slurp (str (fs/path state-dir "tmux-socket"))))]
-                      (launch-session! {:socket socket
-                                        :session session
-                                        :display display
-                                        :launch-script launch-script})
-                      (write-status-and-heartbeat! agent-dir agent-id task-id "running" "detached tmux session started")))
-                  (println "SQUAD_AGENT:" agent-id)
-                  (println "TEMPLATE:" template)
-                  (println "TASK_ID:" task-id)
-                  (println "WORKTREE:" (str worktree))
-                  (println "SESSION:" session)
-                  (println "PROMPT:" (str prompt-file)))))
-            (finally
-              (fs/delete-tree lock-dir)))
-          (when-let [error @capacity-error]
-            (apply exit! error)))))))
+        assignment (absolute-input-file assignment-file)
+        template-file (ensure-spawn-inputs! root template assignment)
+        state-dir (fs/path root ".swarmforge")
+        roles-file (fs/path state-dir "roles.tsv")
+        lock-dir (fs/path state-dir "squad" "spawn.lock")
+        pending-error (atom nil)]
+    (ensure-roles-file! roles-file)
+    (fs/create-dirs (fs/parent lock-dir))
+    (acquire-lock! lock-dir)
+    (try
+      (let [rows (role-rows roles-file)]
+        (if-let [error (capacity-error root rows template)]
+          (reset! pending-error error)
+          (let [context (spawn-context root rows template task-id assignment template-file)]
+            (ensure-backend-supported! (:agent context))
+            (ensure-agent-available! rows (:agent-id context) (:worktree context) (:agent-dir context))
+            (register-spawn! state-dir roles-file context))))
+      (finally
+        (fs/delete-tree lock-dir)))
+    (when-let [error @pending-error]
+      (apply exit! error))))
 
 (defn -main [& args]
   (when-not (= 3 (count args))

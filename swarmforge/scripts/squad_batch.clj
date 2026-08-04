@@ -3,6 +3,7 @@
 (ns squad-batch
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-config :as cfg]
             [squad-state :as squad-state]
             [clojure.string :as str]))
 
@@ -29,18 +30,8 @@
   (apply process/sh (concat [{:continue true}] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (cond
-      (and configured (fs/exists? configured-roles)) (fs/path configured)
-      (fs/exists? direct) cwd
-      :else (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-              (if (and (not (str/blank? git-root))
-                       (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-                (fs/path git-root)
-                (exit! 1 "Cannot find SwarmForge project root"))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
@@ -123,7 +114,7 @@
 (defn active-batch-file [root story-id kind]
   (fs/path root ".squad" "stories" story-id "active-batches" kind))
 
-(defn add-story! [batch-id story-id stage assignment-id branch sha]
+(defn validate-add-story-args! [batch-id story-id stage assignment-id branch sha]
   (doseq [[kind value] [["Batch id" batch-id]
                         ["Story id" story-id]
                         ["Stage" stage]
@@ -131,7 +122,44 @@
     (validate-id! kind value))
   (when (str/blank? branch)
     (exit! 2 "Branch may not be blank."))
-  (validate-sha! sha)
+  (validate-sha! sha))
+
+(defn active-batch-id [active]
+  (when (fs/exists? active)
+    (str/trim (slurp (str active)))))
+
+(defn conflicting-active-batch? [root batch-id active-batch-id]
+  (and active-batch-id
+       (not= batch-id active-batch-id)
+       (squad-state/active-batch? root active-batch-id)))
+
+(defn ensure-no-active-batch-conflict! [root batch-id story-id kind]
+  (let [active-id (active-batch-id (active-batch-file root story-id kind))]
+    (when (conflicting-active-batch? root batch-id active-id)
+      (exit! 3
+             (str "Story " story-id " is already in active " kind " batch " active-id)))))
+
+(defn append-batch-story! [root dir batch-id story-id stage assignment-id branch sha kind now]
+  (append-line! (fs/path dir "manifest.tsv")
+                (str/join "\t" [story-id stage assignment-id branch sha now]))
+  (append-line! (fs/path dir "manifest")
+                (str/join "\t" [story-id stage assignment-id branch sha now]))
+  (append-line! (fs/path dir "events.log")
+                (str now "\tstory_added\t" story-id "\t" stage "\t" assignment-id "\t" branch "\t" sha))
+  (let [sdir (story-dir root story-id)]
+    (fs/create-dirs (fs/path sdir "active-batches"))
+    (write-atomic! (active-batch-file root story-id kind) batch-id)
+    (append-line! (fs/path sdir "batches.tsv")
+                  (str/join "\t" [now kind batch-id stage assignment-id branch sha]))))
+
+(defn print-story-added! [batch-id kind story-id]
+  (println "SQUAD_BATCH:" batch-id)
+  (println "KIND:" kind)
+  (println "STORY:" story-id)
+  (println "STATE: story_added"))
+
+(defn add-story! [batch-id story-id stage assignment-id branch sha]
+  (validate-add-story-args! batch-id story-id stage assignment-id branch sha)
   (let [root (fs/absolutize (project-root))
         dir (batch-dir root batch-id)
         metadata (fs/path dir "metadata")
@@ -139,28 +167,9 @@
         now (timestamp)]
     (ensure-batch! dir batch-id)
     (validate-kind! kind)
-    (let [active (active-batch-file root story-id kind)]
-      (when (and (fs/exists? active)
-                 (not= batch-id (str/trim (slurp (str active))))
-                 (squad-state/active-batch? root (str/trim (slurp (str active)))))
-        (exit! 3
-               (str "Story " story-id " is already in active " kind " batch "
-                    (str/trim (slurp (str active)))))))
-    (append-line! (fs/path dir "manifest.tsv")
-                  (str/join "\t" [story-id stage assignment-id branch sha now]))
-    (append-line! (fs/path dir "manifest")
-                  (str/join "\t" [story-id stage assignment-id branch sha now]))
-    (append-line! (fs/path dir "events.log")
-                  (str now "\tstory_added\t" story-id "\t" stage "\t" assignment-id "\t" branch "\t" sha))
-    (let [sdir (story-dir root story-id)]
-      (fs/create-dirs (fs/path sdir "active-batches"))
-      (write-atomic! (active-batch-file root story-id kind) batch-id)
-      (append-line! (fs/path sdir "batches.tsv")
-                    (str/join "\t" [now kind batch-id stage assignment-id branch sha])))
-    (println "SQUAD_BATCH:" batch-id)
-    (println "KIND:" kind)
-    (println "STORY:" story-id)
-    (println "STATE: story_added")))
+    (ensure-no-active-batch-conflict! root batch-id story-id kind)
+    (append-batch-story! root dir batch-id story-id stage assignment-id branch sha kind now)
+    (print-story-added! batch-id kind story-id)))
 
 (defn result! [batch-id assignment-id branch sha]
   (doseq [[kind value] [["Batch id" batch-id]
@@ -191,21 +200,35 @@
     (println "BRANCH:" branch)
     (println "SHA:" sha)))
 
+(defn batch-status-file [dir]
+  (let [status-file (fs/path dir "status")]
+    (if (fs/exists? status-file) status-file (fs/path dir "state"))))
+
+(defn manifest-story-count [manifest]
+  (max 0 (dec (count (str/split-lines (slurp (str manifest)))))))
+
+(defn batch-result-path [dir]
+  (let [result (fs/path dir "result")]
+    (if (fs/exists? result) (str result) "none")))
+
+(defn batch-status-fields [batch-id metadata state-file manifest dir]
+  [["BATCH" batch-id]
+   ["KIND" (or (read-value metadata "kind") "unknown")]
+   ["STATE" (or (read-value state-file "state") "unknown")]
+   ["STORIES" (manifest-story-count manifest)]
+   ["MANIFEST" (str manifest)]
+   ["RESULT" (batch-result-path dir)]])
+
 (defn status! [batch-id]
   (validate-id! "Batch id" batch-id)
   (let [root (fs/absolutize (project-root))
         dir (batch-dir root batch-id)
         metadata (fs/path dir "metadata")
-        status-file (fs/path dir "status")
-        state-file (if (fs/exists? status-file) status-file (fs/path dir "state"))
+        state-file (batch-status-file dir)
         manifest (fs/path dir "manifest.tsv")]
     (ensure-batch! dir batch-id)
-    (println "BATCH:" batch-id)
-    (println "KIND:" (or (read-value metadata "kind") "unknown"))
-    (println "STATE:" (or (read-value state-file "state") "unknown"))
-    (println "STORIES:" (max 0 (dec (count (str/split-lines (slurp (str manifest)))))))
-    (println "MANIFEST:" (str manifest))
-    (println "RESULT:" (if (fs/exists? (fs/path dir "result")) (str (fs/path dir "result")) "none"))))
+    (doseq [[label value] (batch-status-fields batch-id metadata state-file manifest dir)]
+      (println (str label ":") value))))
 
 (defn ready! [kind]
   (validate-kind! kind)
@@ -219,23 +242,30 @@
       (println "BATCH:" (fs/file-name dir))
       (println "MANIFEST:" (str (fs/path dir "manifest.tsv"))))))
 
+(defn exact-count! [args n]
+  (when-not (= n (count args))
+    (exit! 1 usage-text)))
+
+(def batch-commands
+  {"create" (fn [args]
+              (exact-count! args 3)
+              (create-batch! (second args) (nth args 2)))
+   "add" (fn [args]
+           (exact-count! args 7)
+           (add-story! (second args) (nth args 2) (nth args 3) (nth args 4) (nth args 5) (nth args 6)))
+   "result" (fn [args]
+              (exact-count! args 5)
+              (result! (second args) (nth args 2) (nth args 3) (nth args 4)))
+   "status" (fn [args]
+              (exact-count! args 2)
+              (status! (second args)))
+   "ready" (fn [args]
+             (exact-count! args 2)
+             (ready! (second args)))})
+
 (defn -main [& args]
-  (case (first args)
-    "create" (if (= 3 (count args))
-               (create-batch! (second args) (nth args 2))
-               (exit! 1 usage-text))
-    "add" (if (= 7 (count args))
-            (add-story! (second args) (nth args 2) (nth args 3) (nth args 4) (nth args 5) (nth args 6))
-            (exit! 1 usage-text))
-    "result" (if (= 5 (count args))
-               (result! (second args) (nth args 2) (nth args 3) (nth args 4))
-               (exit! 1 usage-text))
-    "status" (if (= 2 (count args))
-               (status! (second args))
-               (exit! 1 usage-text))
-    "ready" (if (= 2 (count args))
-              (ready! (second args))
-              (exit! 1 usage-text))
+  (if-let [command (batch-commands (first args))]
+    (command args)
     (exit! 1 usage-text)))
 
 (when (= *file* (System/getProperty "babashka.file"))

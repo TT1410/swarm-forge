@@ -99,50 +99,101 @@
     (when-not (str/blank? window-id)
       (terminal-ok? script-dir working-dir tmux-socket backend "terminal_close_window" window-id))))
 
+(defn rewrite-command? [args]
+  (= "--rewrite-window-id" (first args)))
+
+(defn run-rewrite-command! [args]
+  (let [[_ state ids target replacement] args]
+    (rewrite-window-id! (fs/path state) (fs/path ids) target replacement)
+    (System/exit 0)))
+
+(defn cleanup-window-present? [script-dir working-dir tmux-socket backend cleanup-window-id]
+  (terminal-ok? script-dir working-dir tmux-socket backend "terminal_window_exists" cleanup-window-id))
+
+(defn watch-row? [tmux-socket cleanup-owner-index {:keys [index session]}]
+  (and (not= index cleanup-owner-index)
+       (tmux-session? tmux-socket session)))
+
+(defn row-window-present? [script-dir working-dir tmux-socket backend window-id]
+  (terminal-ok? script-dir working-dir tmux-socket backend "terminal_window_exists" window-id))
+
+(defn reopen-row-window! [script-dir window-state-file window-ids-file working-dir tmux-socket backend cleanup-window-id counts
+                          {:keys [index session title]}]
+  (let [new-window-id (terminal-out script-dir working-dir tmux-socket backend
+                                    "terminal_open_session" session title cleanup-window-id)]
+    (when-not (str/blank? new-window-id)
+      (rewrite-window-id! window-state-file window-ids-file index new-window-id))
+    (assoc counts index 0)))
+
+(defn record-missing-window! [script-dir window-state-file window-ids-file working-dir tmux-socket backend cleanup-window-id counts row]
+  (let [count (inc (get counts (:index row) 0))]
+    (if (< count missing-threshold)
+      (assoc counts (:index row) count)
+      (reopen-row-window! script-dir window-state-file window-ids-file working-dir tmux-socket backend cleanup-window-id counts row))))
+
+(defn maybe-reopen-window! [script-dir window-state-file window-ids-file working-dir tmux-socket backend cleanup-owner-index cleanup-window-id counts
+                            {:keys [index window-id] :as row}]
+  (cond
+    (not (watch-row? tmux-socket cleanup-owner-index row))
+    counts
+
+    (row-window-present? script-dir working-dir tmux-socket backend window-id)
+    (assoc counts index 0)
+
+    :else
+    (record-missing-window! script-dir window-state-file window-ids-file working-dir tmux-socket backend cleanup-window-id counts row)))
+
+(defn reconcile-agent-windows! [script-dir window-state-file window-ids-file working-dir tmux-socket backend cleanup-owner-index cleanup-window-id counts current-rows]
+  (reduce
+   (fn [counts row]
+     (if (= (:index row) cleanup-owner-index)
+       counts
+       (maybe-reopen-window! script-dir window-state-file window-ids-file working-dir tmux-socket backend
+                             cleanup-owner-index cleanup-window-id counts row)))
+   (assoc counts cleanup-owner-index 0)
+   current-rows))
+
+(defn cleanup-row [cleanup-owner-index current-rows]
+  (some #(when (= cleanup-owner-index (:index %)) %) current-rows))
+
+(defn cleanup-session-live? [tmux-socket cleanup-row]
+  (and cleanup-row
+       (tmux-session? tmux-socket (:session cleanup-row))))
+
+(defn handle-missing-cleanup-window! [script-dir window-state-file working-dir tmux-socket backend cleanup-owner-index counts]
+  (let [count (inc (get counts cleanup-owner-index 0))]
+    (if (>= count missing-threshold)
+      (kill-all-sessions! script-dir window-state-file working-dir tmux-socket backend)
+      (assoc counts cleanup-owner-index count))))
+
+(defn next-missing-counts [script-dir window-state-file window-ids-file working-dir tmux-socket backend cleanup-owner-index counts]
+  (let [current-rows (rows window-state-file)
+        cleanup-row (cleanup-row cleanup-owner-index current-rows)]
+    (when (cleanup-session-live? tmux-socket cleanup-row)
+      (let [cleanup-window-id (:window-id cleanup-row)]
+        (if (cleanup-window-present? script-dir working-dir tmux-socket backend cleanup-window-id)
+          (reconcile-agent-windows! script-dir window-state-file window-ids-file working-dir tmux-socket backend
+                                    cleanup-owner-index cleanup-window-id counts current-rows)
+          (handle-missing-cleanup-window! script-dir window-state-file working-dir tmux-socket backend
+                                          cleanup-owner-index counts))))))
+
+(defn watch-loop! [script-dir window-state-file window-ids-file working-dir tmux-socket backend cleanup-owner-index]
+  (loop [missing-counts {}]
+    (when (fs/exists? window-state-file)
+      (when-let [next-counts (next-missing-counts script-dir window-state-file window-ids-file working-dir tmux-socket backend
+                                                  cleanup-owner-index missing-counts)]
+        (Thread/sleep 2000)
+        (recur next-counts)))))
+
 (defn -main [& args]
   (let [[window-state-file window-ids-file cleanup-owner-index tmux-socket working-dir backend] args
         window-state-file (fs/path window-state-file)
         window-ids-file (fs/path window-ids-file)
         backend (or backend "terminal-app")
         script-dir (fs/parent *file*)]
-    (when (= "--rewrite-window-id" (first args))
-      (let [[_ state ids target replacement] args]
-        (rewrite-window-id! (fs/path state) (fs/path ids) target replacement)
-        (System/exit 0)))
-    (loop [missing-counts {}]
-      (when (fs/exists? window-state-file)
-        (let [current-rows (rows window-state-file)
-              cleanup-row (some #(when (= cleanup-owner-index (:index %)) %) current-rows)]
-          (when (and cleanup-row (tmux-session? tmux-socket (:session cleanup-row)))
-            (let [cleanup-window-id (:window-id cleanup-row)]
-              (if (terminal-ok? script-dir working-dir tmux-socket backend "terminal_window_exists" cleanup-window-id)
-                (let [missing-counts (assoc missing-counts cleanup-owner-index 0)
-                      missing-counts
-                      (reduce
-                       (fn [counts {:keys [index window-id session title]}]
-                         (if (or (= index cleanup-owner-index)
-                                 (not (tmux-session? tmux-socket session)))
-                           counts
-                           (if (terminal-ok? script-dir working-dir tmux-socket backend "terminal_window_exists" window-id)
-                             (assoc counts index 0)
-                             (let [count (inc (get counts index 0))]
-                               (if (< count missing-threshold)
-                                 (assoc counts index count)
-                                 (let [new-window-id (terminal-out script-dir working-dir tmux-socket backend
-                                                                   "terminal_open_session" session title cleanup-window-id)]
-                                   (when-not (str/blank? new-window-id)
-                                     (rewrite-window-id! window-state-file window-ids-file index new-window-id))
-                                   (assoc counts index 0)))))))
-                       missing-counts
-                       current-rows)]
-                  (Thread/sleep 2000)
-                  (recur missing-counts))
-                (let [count (inc (get missing-counts cleanup-owner-index 0))]
-                  (if (>= count missing-threshold)
-                    (kill-all-sessions! script-dir window-state-file working-dir tmux-socket backend)
-                    (do
-                      (Thread/sleep 2000)
-                      (recur (assoc missing-counts cleanup-owner-index count)))))))))))))
+    (when (rewrite-command? args)
+      (run-rewrite-command! args))
+    (watch-loop! script-dir window-state-file window-ids-file working-dir tmux-socket backend cleanup-owner-index)))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))

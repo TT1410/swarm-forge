@@ -20,18 +20,8 @@
   (apply process/sh (concat [{:continue true}] args)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (cond
-      (and configured (fs/exists? configured-roles)) (fs/path configured)
-      (fs/exists? direct) cwd
-      :else (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-              (if (and (not (str/blank? git-root))
-                       (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-                (fs/path git-root)
-                (exit! 1 "Cannot find SwarmForge project root"))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn files-with-extension [dir extension]
   (if (fs/exists? dir)
@@ -222,34 +212,55 @@
 
 (declare agent-state transient-row? next-batch-id)
 
+(defn agent-files [root agent]
+  (let [agent-dir (fs/path root ".squad" "agents" agent)]
+    {:metadata (file-map (fs/path agent-dir "metadata"))
+     :status (file-map (fs/path agent-dir "status"))
+     :heartbeat (file-map (fs/path agent-dir "heartbeat"))
+     :liveness (file-map (fs/path agent-dir "liveness"))}))
+
+(defn liveness-active? [liveness]
+  (= "true" (get liveness "pane_changed")))
+
+(defn activity-instants [{:keys [status heartbeat liveness]}]
+  (keep parse-instant
+        [(get status "updated_at")
+         (get heartbeat "updated_at")
+         (when (liveness-active? liveness)
+           (get liveness "observed_at"))]))
+
+(defn last-activity [files]
+  (let [instants (activity-instants files)]
+    (when (seq instants)
+      (apply max-key #(.toEpochMilli %) instants))))
+
+(def activity-source-rules
+  [["pane" #(liveness-active? (:liveness %))]
+   ["heartbeat" #(get-in % [:heartbeat "updated_at"])]
+   ["status" #(get-in % [:status "updated_at"])]])
+
+(defn activity-source [files]
+  (or (some (fn [[source predicate]]
+              (when (predicate files)
+                source))
+            activity-source-rules)
+      "none"))
+
+(defn agent-record [root row]
+  (let [agent (first row)
+        row-task (second row)
+        {:keys [metadata status] :as files} (agent-files root agent)]
+    {:agent agent
+     :template (get metadata "template")
+     :task-id (or (get metadata "task_id") row-task)
+     :state (get status "state" "unknown")
+     :last-activity-at (last-activity files)
+     :activity-source (activity-source files)}))
+
 (defn agent-records [root rows]
   (->> rows
        (filter transient-row?)
-	      (map (fn [row]
-	              (let [agent (first row)
-                      row-task (second row)
-	                    agent-dir (fs/path root ".squad" "agents" agent)
-	                    metadata (file-map (fs/path agent-dir "metadata"))
-                    status (file-map (fs/path agent-dir "status"))
-                    heartbeat (file-map (fs/path agent-dir "heartbeat"))
-                    liveness (file-map (fs/path agent-dir "liveness"))
-                    instants (keep parse-instant
-                                   [(get status "updated_at")
-                                    (get heartbeat "updated_at")
-                                    (when (= "true" (get liveness "pane_changed"))
-                                      (get liveness "observed_at"))])
-                    last-activity (when (seq instants)
-                                    (apply max-key #(.toEpochMilli %) instants))]
-	                {:agent agent
-	                 :template (get metadata "template")
-	                 :task-id (or (get metadata "task_id") row-task)
-                 :state (get status "state" "unknown")
-                 :last-activity-at last-activity
-                 :activity-source (cond
-                                    (= "true" (get liveness "pane_changed")) "pane"
-                                    (get heartbeat "updated_at") "heartbeat"
-                                    (get status "updated_at") "status"
-                                    :else "none")})))
+       (map #(agent-record root %))
        vec))
 
 (defn active-agent? [agent]
@@ -323,41 +334,48 @@
          :reason (str gate " approval is not required by configuration")
          :command (str "squad_packet.sh approve " story-id " " gate " auto-approved-by-config")}))))
 
+(declare assignment-create-candidate assignment-spawn-candidate spawnable-assignment?)
+
 (defn assignment-candidate [root assignments agents packet template assignment-suffix reason priority stage-order requirement]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         theme-id (get packet "theme_id")
         assignment-id (next-assignment-id assignments story-id assignment-suffix)
         assignment (assignment-for assignments story-id template)]
-    (cond
-      (nil? assignment)
-      {:priority priority
-       :stage-order stage-order
-       :next-action "create_assignment"
-       :theme-id theme-id
-       :story-id story-id
-       :template template
-       :assignment-id assignment-id
-       :reason reason
-       :command (str "squad_assign.sh create " theme-id " " story-id " " template " "
-                     assignment-id " <instructions-file>"
-                     (when requirement
-                       (str " --requires approval:" requirement)))}
+    (if assignment
+      (when (spawnable-assignment? root agents template assignment)
+        (assignment-spawn-candidate assignment theme-id story-id template reason priority stage-order))
+      (assignment-create-candidate theme-id story-id template assignment-id reason priority stage-order requirement))))
 
-      (and (= "assignment_created" (:state assignment))
-           (not (active-assignment? agents (:assignment-id assignment)))
-           (spawn-capacity? root agents template))
-      {:priority priority
-       :stage-order stage-order
-       :next-action "request_spawn"
-       :theme-id theme-id
-       :story-id story-id
-       :template template
-       :assignment-id (:assignment-id assignment)
-       :reason reason
-       :command (str "squad_spawn_request.sh " template " " (:assignment-id assignment)
-                     " " (:assignment-file assignment))}
+(defn assignment-create-candidate [theme-id story-id template assignment-id reason priority stage-order requirement]
+  {:priority priority
+   :stage-order stage-order
+   :next-action "create_assignment"
+   :theme-id theme-id
+   :story-id story-id
+   :template template
+   :assignment-id assignment-id
+   :reason reason
+   :command (str "squad_assign.sh create " theme-id " " story-id " " template " "
+                 assignment-id " <instructions-file>"
+                 (when requirement
+                   (str " --requires approval:" requirement)))})
 
-	      :else nil)))
+(defn assignment-spawn-candidate [assignment theme-id story-id template reason priority stage-order]
+  {:priority priority
+   :stage-order stage-order
+   :next-action "request_spawn"
+   :theme-id theme-id
+   :story-id story-id
+   :template template
+   :assignment-id (:assignment-id assignment)
+   :reason reason
+   :command (str "squad_spawn_request.sh " template " " (:assignment-id assignment)
+                 " " (:assignment-file assignment))})
+
+(defn spawnable-assignment? [root agents template assignment]
+  (and (= "assignment_created" (:state assignment))
+       (not (active-assignment? agents (:assignment-id assignment)))
+       (spawn-capacity? root agents template)))
 
 (defn batch-candidate [root assignments packet kind batch-suffix stage reason priority stage-order prerequisite-assignment-field]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
@@ -391,69 +409,19 @@
 (defn batch-assignment-candidate [root assignments agents theme-id template assignment-base reason priority stage-order]
   (let [assignment-id (next-id-with-base assignments assignment-base)
         assignment (assignment-for assignments "batch" template)]
-    (cond
-      (nil? assignment)
-      {:priority priority
-       :stage-order stage-order
-       :next-action "create_assignment"
-       :theme-id theme-id
-       :story-id "batch"
-       :template template
-       :assignment-id assignment-id
-       :reason reason
-       :command (str "squad_assign.sh create " theme-id " batch " template " "
-                     assignment-id " <instructions-file>")}
-
-      (and (= "assignment_created" (:state assignment))
-           (not (active-assignment? agents (:assignment-id assignment)))
-           (spawn-capacity? root agents template))
-      {:priority priority
-       :stage-order stage-order
-       :next-action "request_spawn"
-       :theme-id theme-id
-       :story-id "batch"
-       :template template
-       :assignment-id (:assignment-id assignment)
-       :reason reason
-       :command (str "squad_spawn_request.sh " template " " (:assignment-id assignment)
-                     " " (:assignment-file assignment))}
-
-      :else nil)))
+    (if assignment
+      (when (spawnable-assignment? root agents template assignment)
+        (assignment-spawn-candidate assignment theme-id "batch" template reason priority stage-order))
+      (assignment-create-candidate theme-id "batch" template assignment-id reason priority stage-order nil))))
 
 (defn theme-assignment-candidate [root assignments agents theme template assignment-suffix reason priority stage-order requirement]
   (let [theme-id (:theme-id theme)
         assignment-id (next-assignment-id assignments theme-id assignment-suffix)
         assignment (assignment-for assignments "theme" template)]
-    (cond
-      (nil? assignment)
-      {:priority priority
-       :stage-order stage-order
-       :next-action "create_assignment"
-       :theme-id theme-id
-       :story-id "theme"
-       :template template
-       :assignment-id assignment-id
-       :reason reason
-       :command (str "squad_assign.sh create " theme-id " theme " template " "
-                     assignment-id " <instructions-file>"
-                     (when requirement
-                       (str " --requires approval:" requirement)))}
-
-      (and (= "assignment_created" (:state assignment))
-           (not (active-assignment? agents (:assignment-id assignment)))
-           (spawn-capacity? root agents template))
-      {:priority priority
-       :stage-order stage-order
-       :next-action "request_spawn"
-       :theme-id theme-id
-       :story-id "theme"
-       :template template
-       :assignment-id (:assignment-id assignment)
-       :reason reason
-       :command (str "squad_spawn_request.sh " template " " (:assignment-id assignment)
-                     " " (:assignment-file assignment))}
-
-      :else nil)))
+    (if assignment
+      (when (spawnable-assignment? root agents template assignment)
+        (assignment-spawn-candidate assignment theme-id "theme" template reason priority stage-order))
+      (assignment-create-candidate theme-id "theme" template assignment-id reason priority stage-order requirement))))
 
 (defn theme-candidates [root rows]
   (let [assignments (assignment-records root)
@@ -494,47 +462,61 @@
   (if (str/blank? requirement)
     true
     (let [[kind gate] (str/split requirement #":" 2)]
-      (cond
-        (not= "approval" kind) false
-        (nil? gate) false
-        packet (approval-satisfied? root packet gate)
-        :else (boolean
-               (some #(and (= gate "theme")
-                           (= (:theme-id %) (get (meta themes) :theme-id))
-                           (:approved-theme? %))
-                     themes))))))
+      (and (= "approval" kind)
+           (some? gate)
+           (if packet
+             (approval-satisfied? root packet gate)
+             (boolean
+              (some #(and (= gate "theme")
+                          (= (:theme-id %) (get (meta themes) :theme-id))
+                          (:approved-theme? %))
+                    themes)))))))
+
+(defn assignment-file-ok? [assignment-file]
+  (and (not (str/blank? assignment-file))
+       (fs/regular-file? (fs/path assignment-file))))
+
+(defn theme-requirement-satisfied? [themes theme-id requires]
+  (and (= requires "approval:theme")
+       (some #(and (= theme-id (:theme-id %))
+                   (:approved-theme? %))
+             themes)))
+
+(defn ready-assignment-requirement-ok? [root packet themes story-id theme-id requires]
+  (or (str/blank? requires)
+      (if (= story-id "theme")
+        (theme-requirement-satisfied? themes theme-id requires)
+        (requirement-satisfied? root packet themes requires))))
+
+(defn generic-ready-assignment? [root packet themes agents
+                                 {:keys [assignment-id template story-id assignment-file state requires theme-id]}]
+  (and (= "assignment_created" state)
+       (assignment-file-ok? assignment-file)
+       (ready-assignment-requirement-ok? root packet themes story-id theme-id requires)
+       (not (active-assignment? agents assignment-id))
+       (spawn-capacity? root agents template)))
+
+(defn generic-ready-candidate [{:keys [assignment-id template story-id assignment-file theme-id created-at]}]
+  {:priority 55
+   :stage-order 0
+   :next-action "request_spawn"
+   :theme-id theme-id
+   :story-id story-id
+   :template template
+   :assignment-id assignment-id
+   :created-at created-at
+   :reason "existing ready assignment can be spawned"
+   :command (str "squad_spawn_request.sh " template " " assignment-id " " assignment-file)})
 
 (defn generic-ready-assignment-candidates [root rows]
   (let [assignments (assignment-records root)
         agents (agent-records root rows)
         packet-map (packet-by-story (packets root))
         themes (theme-records root)]
-    (->> (for [{:keys [assignment-id template story-id assignment-file state requires theme-id created-at] :as assignment} assignments
-               :let [packet (get packet-map story-id)
-                     assignment-file-ok? (and (not (str/blank? assignment-file))
-                                              (fs/regular-file? (fs/path assignment-file)))
-                     requirement-ok? (or (str/blank? requires)
-                                         (if (= story-id "theme")
-                                           (and (= requires "approval:theme")
-                                                (some #(and (= theme-id (:theme-id %))
-                                                            (:approved-theme? %))
-                                                      themes))
-                                           (requirement-satisfied? root packet themes requires)))]
-               :when (and (= "assignment_created" state)
-                          assignment-file-ok?
-                          requirement-ok?
-                          (not (active-assignment? agents assignment-id))
-                          (spawn-capacity? root agents template))]
-           {:priority 55
-            :stage-order 0
-            :next-action "request_spawn"
-            :theme-id theme-id
-            :story-id story-id
-            :template template
-            :assignment-id assignment-id
-            :created-at created-at
-            :reason "existing ready assignment can be spawned"
-            :command (str "squad_spawn_request.sh " template " " assignment-id " " assignment-file)})
+    (->> (for [assignment assignments
+               :let [packet (get packet-map (:story-id assignment))]
+               :when (generic-ready-assignment? root packet themes agents assignment)]
+           (generic-ready-candidate assignment))
          (sort-by (juxt :priority :theme-id :story-id :created-at :assignment-id))
          vec)))
 
@@ -831,125 +813,157 @@
            vec)
       [])))
 
+(defn reusable-batch-id [batches assignments requested-kind base]
+  (some (fn [{:keys [batch-id kind state]}]
+          (when (and (= requested-kind kind)
+                     (str/starts-with? batch-id base)
+                     (= "open" state)
+                     (not (assignment-exists? assignments batch-id)))
+            batch-id))
+        (sort-by :batch-id batches)))
+
+(defn unique-batch-id [assignments batch-ids base]
+  (loop [iteration 1]
+    (let [candidate (if (= 1 iteration)
+                      base
+                      (str base "-r" iteration))]
+      (if (or (contains? batch-ids candidate)
+              (assignment-exists? assignments candidate))
+        (recur (inc iteration))
+        candidate))))
+
 (defn next-batch-id [root assignments theme-id requested-kind suffix]
   (let [base (str theme-id "-" suffix)
         batches (batch-records root)
-        reusable (some (fn [{:keys [batch-id kind state]}]
-                         (when (and (= requested-kind kind)
-                                    (str/starts-with? batch-id base)
-                                    (= "open" state)
-                                    (not (assignment-exists? assignments batch-id)))
-                           batch-id))
-                       (sort-by :batch-id batches))
         batch-ids (set (map :batch-id batches))]
-    (or reusable
-        (loop [iteration 1]
-          (let [candidate (if (= 1 iteration)
-                            base
-                            (str base "-r" iteration))]
-            (if (or (contains? batch-ids candidate)
-                    (assignment-exists? assignments candidate))
-              (recur (inc iteration))
-              candidate))))))
+    (or (reusable-batch-id batches assignments requested-kind base)
+        (unique-batch-id assignments batch-ids base))))
+
+(def batch-action-rules
+  [{:ready? :hardener-ready?
+    :template "hardener"
+    :suffix "-hardener"
+    :reason "hardener batch is ready"
+    :stage-order 130}
+   {:ready? :qa-ready?
+    :template "qa"
+    :suffix "-qa"
+    :reason "QA batch is ready"
+    :stage-order 150}
+   {:ready? :senior-ready?
+    :template "senior-implementor"
+    :suffix "-architecture-fix"
+    :reason "architecture critique needs senior implementation"
+    :stage-order 166}
+   {:ready? :architecture-ready?
+    :template "architect"
+    :suffix "-architecture"
+    :reason "architecture batch is ready after QA"
+    :stage-order 170}])
+
+(defn batch-readiness [theme-packets]
+  {:hardener-ready? (and (seq theme-packets)
+                         (any-batch-member-needs-result? theme-packets "hardener_batch" "hardener_sha"))
+   :qa-ready? (and (seq theme-packets)
+                   (any-batch-member-needs-result? theme-packets "qa_batch" "qa_sha"))
+   :architecture-ready? (and (seq theme-packets)
+                             (any-architecture-batch-needs-review? theme-packets))
+   :senior-ready? (and (seq theme-packets)
+                       (any-architecture-needs-senior? theme-packets))})
+
+(defn batch-candidate-for-rule [root assignments agents theme-id readiness
+                                {:keys [ready? template suffix reason stage-order]}]
+  (when (get readiness ready?)
+    (batch-assignment-candidate root assignments agents theme-id
+                                template (str theme-id suffix)
+                                reason 60 stage-order)))
+
+(defn batch-candidate-for-theme [root assignments agents all-packets theme-id]
+  (let [readiness (batch-readiness (vec (same-theme-packets all-packets theme-id)))]
+    (some #(batch-candidate-for-rule root assignments agents theme-id readiness %)
+          batch-action-rules)))
 
 (defn batch-candidates [root rows]
   (let [all-packets (packets root)
         assignments (assignment-records root)
         agents (agent-records root rows)
         theme-ids (sort (set (keep #(get % "theme_id") all-packets)))]
-    (->> (for [theme-id theme-ids
-               :let [theme-packets (vec (same-theme-packets all-packets theme-id))
-                     hardener-ready? (and (seq theme-packets)
-                                          (any-batch-member-needs-result? theme-packets "hardener_batch" "hardener_sha"))
-                     qa-ready? (and (seq theme-packets)
-                                    (any-batch-member-needs-result? theme-packets "qa_batch" "qa_sha"))
-                     architecture-ready? (and (seq theme-packets)
-                                              (any-architecture-batch-needs-review? theme-packets))
-                     senior-ready? (and (seq theme-packets)
-                                        (any-architecture-needs-senior? theme-packets))
-                     candidate (cond
-                                 hardener-ready?
-                                 (batch-assignment-candidate root assignments agents theme-id
-                                                             "hardener" (str theme-id "-hardener")
-                                                             "hardener batch is ready" 60 130)
-
-                                 qa-ready?
-                                 (batch-assignment-candidate root assignments agents theme-id
-                                                             "qa" (str theme-id "-qa")
-                                                             "QA batch is ready" 60 150)
-
-                                 senior-ready?
-                                 (batch-assignment-candidate root assignments agents theme-id
-                                                             "senior-implementor" (str theme-id "-architecture-fix")
-                                                             "architecture critique needs senior implementation" 60 166)
-
-                                 architecture-ready?
-                                 (batch-assignment-candidate root assignments agents theme-id
-                                                             "architect" (str theme-id "-architecture")
-                                                             "architecture batch is ready after QA" 60 170))]
-               :when candidate]
-           candidate)
+    (->> (keep #(batch-candidate-for-theme root assignments agents all-packets %) theme-ids)
          (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
          vec)))
+
+(defn existing-merger-assignment [assignments base]
+  (some (fn [assignment]
+          (when (and (= "merger" (:template assignment))
+                     (str/starts-with? (:assignment-id assignment) base))
+            assignment))
+        assignments))
+
+(defn merger-spawn-candidate [root agents existing]
+  (when (and (= "assignment_created" (:state existing))
+             (spawn-capacity? root agents "merger"))
+    {:priority 50
+     :stage-order 5
+     :next-action "request_spawn"
+     :theme-id (:theme-id existing)
+     :story-id (:story-id existing)
+     :template "merger"
+     :assignment-id (:assignment-id existing)
+     :reason "merge-blocked assignment needs merger"
+     :command (str "squad_spawn_request.sh merger " (:assignment-id existing)
+                   " " (:assignment-file existing))}))
+
+(defn merger-create-candidate [theme-id story-id merger-id]
+  {:priority 50
+   :stage-order 5
+   :next-action "create_assignment"
+   :theme-id theme-id
+   :story-id story-id
+   :template "merger"
+   :assignment-id merger-id
+   :reason "merge-blocked assignment needs merger"
+   :command (str "squad_assign.sh create " theme-id " " story-id " merger "
+                 merger-id " <instructions-file>")})
+
+(defn merger-candidate [root assignments agents {:keys [assignment-id theme-id story-id]}]
+  (let [base (str assignment-id "-merge")
+        existing (existing-merger-assignment assignments base)]
+    (if existing
+      (when-not (active-assignment? agents (:assignment-id existing))
+        (merger-spawn-candidate root agents existing))
+      (merger-create-candidate theme-id story-id (next-id-with-base assignments base)))))
 
 (defn merger-candidates [root rows]
   (let [assignments (assignment-records root)
         agents (agent-records root rows)]
-    (->> (for [{:keys [assignment-id theme-id story-id state]} assignments
+    (->> (for [{:keys [state] :as assignment} assignments
                :when (= "merge_blocked" state)
-               :let [base (str assignment-id "-merge")
-                     merger-id (next-id-with-base assignments base)
-                     existing (some (fn [assignment]
-                                      (when (and (= "merger" (:template assignment))
-                                                 (str/starts-with? (:assignment-id assignment) base))
-                                        assignment))
-                                    assignments)
-                     active-existing? (when existing
-                                        (active-assignment? agents (:assignment-id existing)))]
-               :when (not active-existing?)]
-           (if existing
-             (when (and (= "assignment_created" (:state existing))
-                        (spawn-capacity? root agents "merger"))
-               {:priority 50
-                :stage-order 5
-                :next-action "request_spawn"
-                :theme-id (:theme-id existing)
-                :story-id (:story-id existing)
-                :template "merger"
-                :assignment-id (:assignment-id existing)
-                :reason "merge-blocked assignment needs merger"
-                :command (str "squad_spawn_request.sh merger " (:assignment-id existing)
-                              " " (:assignment-file existing))})
-             {:priority 50
-              :stage-order 5
-              :next-action "create_assignment"
-              :theme-id theme-id
-              :story-id story-id
-              :template "merger"
-              :assignment-id merger-id
-              :reason "merge-blocked assignment needs merger"
-              :command (str "squad_assign.sh create " theme-id " " story-id " merger "
-                            merger-id " <instructions-file>")}))
+               :let [candidate (merger-candidate root assignments agents assignment)]
+               :when candidate]
+           candidate)
          (remove nil?)
          (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
          vec)))
 
+(def story-candidate-fields
+  [["NEXT_ACTION" :next-action true]
+   ["THEME" :theme-id true]
+   ["STORY" :story-id false]
+   ["GATE" :gate false]
+   ["TEMPLATE" :template false]
+   ["ASSIGNMENT" :assignment-id false]
+   ["BATCH_KIND" :batch-kind false]
+   ["BATCH" :batch-id false]
+   ["REASON" :reason true]])
+
+(defn print-candidate-field! [candidate [label key required?]]
+  (when-let [value (or (get candidate key)
+                       (when required? ""))]
+    (println (str label ":") value)))
+
 (defn print-story-candidate! [candidate total]
-  (println "NEXT_ACTION:" (:next-action candidate))
-  (println "THEME:" (:theme-id candidate))
-  (when-let [story-id (:story-id candidate)]
-    (println "STORY:" story-id))
-  (when-let [gate (:gate candidate)]
-    (println "GATE:" gate))
-  (when-let [template (:template candidate)]
-    (println "TEMPLATE:" template))
-	  (when-let [assignment-id (:assignment-id candidate)]
-	    (println "ASSIGNMENT:" assignment-id))
-	  (when-let [batch-kind (:batch-kind candidate)]
-	    (println "BATCH_KIND:" batch-kind))
-	  (when-let [batch-id (:batch-id candidate)]
-	    (println "BATCH:" batch-id))
-	  (println "REASON:" (:reason candidate))
+  (doseq [field story-candidate-fields]
+    (print-candidate-field! candidate field))
   (println "CANDIDATES:" total)
   (println "COMMAND:" (:command candidate)))
 
@@ -1030,27 +1044,48 @@
   (println "REASON: completed handoff has been processed and role is still registered")
   (println "COMMAND:" (str "squad_retire.sh " agent)))
 
+(defn recovery-checked-age [root now agent]
+  (let [recovery (file-map (fs/path root ".squad" "agents" agent "recovery"))
+        checked-at (parse-instant (get recovery "checked_at"))]
+    (seconds-between checked-at now)))
+
+(defn recovery-retry-due? [checked-age retry-threshold]
+  (or (nil? checked-age)
+      (>= checked-age retry-threshold)))
+
+(defn quiet-recovery-due? [quiet-for threshold]
+  (>= quiet-for threshold))
+
+(defn recovery-quiet-for [last-activity-at now]
+  (or (seconds-between last-activity-at now) Long/MAX_VALUE))
+
+(defn recovery-agent-due? [root now threshold retry-threshold agent quiet-for]
+  (and (quiet-recovery-due? quiet-for threshold)
+       (recovery-retry-due? (recovery-checked-age root now agent) retry-threshold)))
+
+(defn recovery-candidate-record [threshold retry-threshold quiet-for
+                                 {:keys [agent task-id state last-activity-at activity-source]}]
+  {:agent agent
+   :task-id task-id
+   :state state
+   :last-activity-at last-activity-at
+   :activity-source activity-source
+   :quiet-for quiet-for
+   :threshold threshold
+   :retry-threshold retry-threshold})
+
+(defn recovery-candidate-for-agent [root now threshold retry-threshold
+                                    {:keys [agent task-id state last-activity-at activity-source] :as record}]
+  (when (active-agent? record)
+    (let [quiet-for (recovery-quiet-for last-activity-at now)]
+      (when (recovery-agent-due? root now threshold retry-threshold agent quiet-for)
+        (recovery-candidate-record threshold retry-threshold quiet-for record)))))
+
 (defn recovery-candidate [root rows]
   (let [now (now-instant)
         threshold (cfg/squad-recovery-quiet-seconds root)
         retry-threshold (cfg/squad-recovery-retry-seconds root)]
-    (some (fn [{:keys [agent task-id state last-activity-at activity-source] :as record}]
-            (when (active-agent? record)
-              (let [quiet-for (or (seconds-between last-activity-at now) Long/MAX_VALUE)
-                    recovery (file-map (fs/path root ".squad" "agents" agent "recovery"))
-                    checked-at (parse-instant (get recovery "checked_at"))
-                    checked-age (seconds-between checked-at now)]
-                (when (and (>= quiet-for threshold)
-                           (or (nil? checked-age)
-                               (>= checked-age retry-threshold)))
-                  {:agent agent
-                   :task-id task-id
-                   :state state
-                   :last-activity-at last-activity-at
-                   :activity-source activity-source
-                   :quiet-for quiet-for
-                   :threshold threshold
-                   :retry-threshold retry-threshold}))))
+    (some #(recovery-candidate-for-agent root now threshold retry-threshold %)
           (agent-records root rows))))
 
 (defn print-recovery-action! [{:keys [agent task-id state last-activity-at activity-source quiet-for threshold retry-threshold]}]
@@ -1086,57 +1121,74 @@
   (println "CHECK_AFTER_SECONDS: 30")
   (println "COMMAND: sleep 30 && squad_next.sh"))
 
-(defn next-action! []
+(defn ready-actions [root rows]
+  (sort-by (juxt :theme-id :story-id :stage-order :priority :assignment-id)
+           (concat (theme-candidates root rows)
+                   (story-candidates root rows)
+                   (batch-candidates root rows)
+                   (merger-candidates root rows)
+                   (generic-ready-assignment-candidates root rows))))
+
+(defn next-action-context []
   (let [root (fs/absolutize (project-root))
         inbox (fs/path root ".swarmforge" "handoffs" "inbox")
-        in-process (first (files-with-extension (fs/path inbox "in_process") ".handoff"))
-        new-handoff (first (files-with-extension (fs/path inbox "new") ".handoff"))
-        rows (role-rows root)
-        pending-approval-file (pending-approval root)
-	        stale-lock-info (stale-lock root)
-        pending-spawn-file (pending-spawn-request root)
-		        retire-candidate (retirement-candidate root rows)
-            recover-candidate (recovery-candidate root rows)
-		        theme-actions (theme-candidates root rows)
-	        story-actions (story-candidates root rows)
-	        batch-actions (batch-candidates root rows)
-          merger-actions (merger-candidates root rows)
-          generic-actions (generic-ready-assignment-candidates root rows)
-          ready-actions (sort-by (juxt :theme-id :story-id :stage-order :priority :assignment-id)
-                                 (concat theme-actions story-actions batch-actions merger-actions generic-actions))]
-    (cond
-      in-process
-      (print-handoff-action! "finish_in_process_handoff"
-                             in-process
-                             "handoff is already claimed and must be completed before new mail"
-                             "continue processing current handoff; run done_with_current.sh when complete")
+        rows (role-rows root)]
+    {:root root
+     :rows rows
+     :in-process (first (files-with-extension (fs/path inbox "in_process") ".handoff"))
+     :new-handoff (first (files-with-extension (fs/path inbox "new") ".handoff"))
+     :stale-lock-info (stale-lock root)
+     :pending-spawn-file (pending-spawn-request root)
+     :retire-candidate (retirement-candidate root rows)
+     :recover-candidate (recovery-candidate root rows)
+     :ready-actions (ready-actions root rows)
+     :pending-approval-file (pending-approval root)}))
 
-      new-handoff
-      (print-handoff-action! "process_handoff"
-                             new-handoff
-                             "new handoff mail is waiting"
-                             "ready_for_next.sh")
+(def action-rules
+  [[:finish-in-process :in-process]
+   [:process-handoff :new-handoff]
+   [:stale-lock :stale-lock-info]
+   [:pending-spawn :pending-spawn-file]
+   [:retire :retire-candidate]
+   [:recover :recover-candidate]
+   [:ready-action #(seq (:ready-actions %))]
+   [:pending-approval :pending-approval-file]])
 
-      stale-lock-info
-      (print-stale-lock-action! stale-lock-info)
+(defn action-rule-matches? [ctx [_ predicate]]
+  (if (keyword? predicate)
+    (get ctx predicate)
+    (predicate ctx)))
 
-      pending-spawn-file
-      (print-spawn-wait-action! pending-spawn-file)
+(defn action-printer [ctx]
+  (or (some (fn [[action :as rule]]
+              (when (action-rule-matches? ctx rule)
+                action))
+            action-rules)
+      :wait))
 
-	      retire-candidate
-	      (print-retirement-action! retire-candidate)
+(def action-print-handlers
+  {:finish-in-process
+   (fn [{:keys [in-process]}]
+     (print-handoff-action! "finish_in_process_handoff"
+                            in-process
+                            "handoff is already claimed and must be completed before new mail"
+                            "continue processing current handoff; run done_with_current.sh when complete"))
+   :process-handoff
+   (fn [{:keys [new-handoff]}]
+     (print-handoff-action! "process_handoff" new-handoff "new handoff mail is waiting" "ready_for_next.sh"))
+   :stale-lock (fn [{:keys [stale-lock-info]}] (print-stale-lock-action! stale-lock-info))
+   :pending-spawn (fn [{:keys [pending-spawn-file]}] (print-spawn-wait-action! pending-spawn-file))
+   :retire (fn [{:keys [retire-candidate]}] (print-retirement-action! retire-candidate))
+   :recover (fn [{:keys [recover-candidate]}] (print-recovery-action! recover-candidate))
+   :ready-action (fn [{:keys [ready-actions]}] (print-story-candidate! (first ready-actions) (count ready-actions)))
+   :pending-approval (fn [{:keys [pending-approval-file]}] (print-approval-action! pending-approval-file))
+   :wait (fn [{:keys [root rows]}] (print-wait-action! (active-transients root rows)))})
 
-        recover-candidate
-        (print-recovery-action! recover-candidate)
-	
-	      (seq ready-actions)
-	      (print-story-candidate! (first ready-actions) (count ready-actions))
+(defn print-selected-action! [ctx]
+  ((action-print-handlers (action-printer ctx)) ctx))
 
-      pending-approval-file
-      (print-approval-action! pending-approval-file)
-
-      :else
-      (print-wait-action! (active-transients root rows)))))
+(defn next-action! []
+  (print-selected-action! (next-action-context)))
 
 (defn -main [& args]
   (when (seq args)

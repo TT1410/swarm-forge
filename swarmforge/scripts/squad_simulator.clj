@@ -72,62 +72,88 @@
     (catch Exception _
       (exit! 2 (str label " must be an integer.")))))
 
+(defn range-match! [label value]
+  (or (re-matches #"([0-9]+)(?:\.\.([0-9]+))?" value)
+      (exit! 2 (str label " must be an integer or min..max range."))))
+
+(defn range-end [label start b]
+  (if b (parse-long! label b) start))
+
+(defn ensure-valid-range! [label start end]
+  (when (> start end)
+    (exit! 2 (str label " range minimum must be <= maximum."))))
+
 (defn parse-int-range! [label value]
-  (let [[_ a b] (re-matches #"([0-9]+)(?:\.\.([0-9]+))?" value)
+  (let [[_ a b] (range-match! label value)
         start (when a (parse-long! label a))
-        end (if b (parse-long! label b) start)]
-    (when-not start
-      (exit! 2 (str label " must be an integer or min..max range.")))
-    (when (> start end)
-      (exit! 2 (str label " range minimum must be <= maximum.")))
+        end (range-end label start b)]
+    (ensure-valid-range! label start end)
     [start end]))
 
 (defn choose-int [^java.util.Random rng [low high]]
   (+ low (.nextInt rng (inc (- high low)))))
 
+(def default-options
+  {:keep? false
+   :seed nil
+   :runs 1
+   :stories-range [2 2]
+   :handoff-ticks-range [3 3]
+   :approval-ticks-range [5 5]
+   :stall-percent 0
+   :stall-mode "dark"
+   :stall-active-ticks-range [5 5]
+   :max-ticks 1000})
+
+(defn positive-long! [label value]
+  (let [n (parse-long! label value)]
+    (when-not (pos? n)
+      (exit! 2 (str label " must be greater than zero.")))
+    n))
+
+(defn positive-range! [label value]
+  (let [value (parse-int-range! label value)]
+    (when-not (pos? (first value))
+      (exit! 2 (str label " must be greater than zero.")))
+    value))
+
+(defn stall-percent! [value]
+  (let [percent (parse-long! "Stall percent" value)]
+    (when-not (<= 0 percent 100)
+      (exit! 2 "Stall percent must be between 0 and 100."))
+    percent))
+
+(defn stall-mode! [value]
+  (when-not (#{"dark" "active-then-handoff" "active-then-dark" "mixed"} value)
+    (exit! 2 "Stall mode must be dark, active-then-handoff, active-then-dark, or mixed."))
+  value)
+
+(def option-parsers
+  {"--seed" [:seed #(parse-long! "Seed" %)]
+   "--runs" [:runs #(positive-long! "Runs" %)]
+   "--stories" [:stories-range #(positive-range! "Stories" %)]
+   "--handoff-ticks" [:handoff-ticks-range #(parse-int-range! "Handoff ticks" %)]
+   "--approval-ticks" [:approval-ticks-range #(parse-int-range! "Approval ticks" %)]
+   "--stall-percent" [:stall-percent stall-percent!]
+   "--stall-mode" [:stall-mode stall-mode!]
+   "--stall-active-ticks" [:stall-active-ticks-range #(parse-int-range! "Stall active ticks" %)]
+   "--max-ticks" [:max-ticks #(positive-long! "Max ticks" %)]})
+
+(defn apply-option! [opts flag value]
+  (if (= "--keep" flag)
+    (assoc opts :keep? true)
+    (if-let [[key parse] (option-parsers flag)]
+      (assoc opts key (parse value))
+      (exit! 1 usage-text))))
+
 (defn parse-options [args]
   (loop [remaining args
-         opts {:keep? false
-               :seed nil
-               :runs 1
-               :stories-range [2 2]
-	               :handoff-ticks-range [3 3]
-	               :approval-ticks-range [5 5]
-	               :stall-percent 0
-	               :stall-mode "dark"
-	               :stall-active-ticks-range [5 5]
-	               :max-ticks 1000}]
+         opts default-options]
     (if (empty? remaining)
       opts
-      (let [[flag value & more] remaining]
-        (case flag
-          "--keep" (recur (rest remaining) (assoc opts :keep? true))
-          "--seed" (recur more (assoc opts :seed (parse-long! "Seed" value)))
-          "--runs" (let [runs (parse-long! "Runs" value)]
-                     (when-not (pos? runs)
-                       (exit! 2 "Runs must be greater than zero."))
-                     (recur more (assoc opts :runs runs)))
-          "--stories" (let [story-range (parse-int-range! "Stories" value)]
-                        (when-not (pos? (first story-range))
-                          (exit! 2 "Stories must be greater than zero."))
-                        (recur more (assoc opts :stories-range story-range)))
-          "--handoff-ticks" (recur more (assoc opts :handoff-ticks-range (parse-int-range! "Handoff ticks" value)))
-          "--approval-ticks" (recur more (assoc opts :approval-ticks-range (parse-int-range! "Approval ticks" value)))
-	          "--stall-percent" (let [percent (parse-long! "Stall percent" value)]
-	                              (when-not (<= 0 percent 100)
-	                                (exit! 2 "Stall percent must be between 0 and 100."))
-	                              (recur more (assoc opts :stall-percent percent)))
-	          "--stall-mode" (do
-	                           (when-not (#{"dark" "active-then-handoff" "active-then-dark" "mixed"} value)
-	                             (exit! 2 "Stall mode must be dark, active-then-handoff, active-then-dark, or mixed."))
-	                           (recur more (assoc opts :stall-mode value)))
-	          "--stall-active-ticks" (recur more (assoc opts :stall-active-ticks-range
-	                                                     (parse-int-range! "Stall active ticks" value)))
-          "--max-ticks" (let [max-ticks (parse-long! "Max ticks" value)]
-                          (when-not (pos? max-ticks)
-                            (exit! 2 "Max ticks must be greater than zero."))
-                          (recur more (assoc opts :max-ticks max-ticks)))
-          (exit! 1 usage-text))))))
+      (let [[flag value & more] remaining
+            rest-args (if (= "--keep" flag) (rest remaining) more)]
+        (recur rest-args (apply-option! opts flag value))))))
 
 (defn run-script! [root script & args]
   (apply sh! root (path-str (fs/path script-dir script)) args))
@@ -258,6 +284,46 @@
                            :due activity-tick
                            :agent agent})))
 
+(defn write-sim-agent! [root rows agent template assignment session worktree tick]
+  (write-roles! root (conj rows [agent agent worktree session (str/replace agent "-" " ") "codex" "task"]))
+  (write-file! (fs/path root ".squad" "agents" agent "metadata")
+               (str "agent: " agent "\n"
+                    "template: " template "\n"
+                    "task_id: " assignment "\n"
+                    "session: " session "\n"))
+  (write-agent-status! root agent "running" "simulated" tick))
+
+(defn schedule-handoff! [scheduled due agent assignment]
+  (swap! scheduled conj {:type :handoff :due due :agent agent :assignment assignment}))
+
+(defn stalled-agent-result [agent stall-mode]
+  {:agent agent :stalled? true :stall-mode stall-mode})
+
+(defn active-handoff-stall! [scheduled tick latency agent assignment stall-mode active-ticks]
+  (let [handoff-due (+ tick active-ticks latency)]
+    (schedule-liveness! scheduled agent tick (+ tick active-ticks))
+    (schedule-handoff! scheduled handoff-due agent assignment)
+    (assoc (stalled-agent-result agent stall-mode) :due handoff-due)))
+
+(defn active-dark-stall! [scheduled tick agent stall-mode active-ticks]
+  (schedule-liveness! scheduled agent tick (+ tick active-ticks))
+  (stalled-agent-result agent stall-mode))
+
+(def stalled-agent-schedulers
+  {"dark" (fn [_ _ _ agent _ stall-mode _]
+            (stalled-agent-result agent stall-mode))
+   "active-then-handoff" active-handoff-stall!
+   "active-then-dark" (fn [scheduled tick _ agent _ stall-mode active-ticks]
+                        (active-dark-stall! scheduled tick agent stall-mode active-ticks))})
+
+(defn schedule-stalled-agent! [scheduled tick latency agent assignment stall-mode active-ticks]
+  ((stalled-agent-schedulers stall-mode)
+   scheduled tick latency agent assignment stall-mode active-ticks))
+
+(defn schedule-normal-agent! [scheduled due agent assignment]
+  (schedule-handoff! scheduled due agent assignment)
+  {:agent agent :due due :stalled? false})
+
 (defn spawn-agent! [root counters scheduled tick options rng {:strs [template assignment]}]
   (let [agent (next-agent-id counters template)
         session (str "swarmforge-" agent)
@@ -267,33 +333,11 @@
         due (+ tick latency)
         stalled? (< (.nextInt rng 100) (:stall-percent options))
         stall-mode (when stalled? (choose-stall-mode options rng))
-        active-ticks (when stalled? (choose-int rng (:stall-active-ticks-range options)))
-        agent-dir (fs/path root ".squad" "agents" agent)]
-    (write-roles! root (conj rows [agent agent worktree session (str/replace agent "-" " ") "codex" "task"]))
-    (write-file! (fs/path agent-dir "metadata")
-                 (str "agent: " agent "\n"
-                      "template: " template "\n"
-                      "task_id: " assignment "\n"
-                      "session: " session "\n"))
-    (write-agent-status! root agent "running" "simulated" tick)
+        active-ticks (when stalled? (choose-int rng (:stall-active-ticks-range options)))]
+    (write-sim-agent! root rows agent template assignment session worktree tick)
     (if stalled?
-      (case stall-mode
-        "dark"
-        {:agent agent :stalled? true :stall-mode stall-mode}
-
-        "active-then-handoff"
-        (let [handoff-due (+ tick active-ticks latency)]
-          (schedule-liveness! scheduled agent tick (+ tick active-ticks))
-          (swap! scheduled conj {:type :handoff :due handoff-due :agent agent :assignment assignment})
-          {:agent agent :due handoff-due :stalled? true :stall-mode stall-mode})
-
-        "active-then-dark"
-        (do
-          (schedule-liveness! scheduled agent tick (+ tick active-ticks))
-          {:agent agent :stalled? true :stall-mode stall-mode}))
-      (do
-        (swap! scheduled conj {:type :handoff :due due :agent agent :assignment assignment})
-        {:agent agent :due due :stalled? false}))))
+      (schedule-stalled-agent! scheduled tick latency agent assignment stall-mode active-ticks)
+      (schedule-normal-agent! scheduled due agent assignment))))
 
 (defn create-handoff! [root tick {:keys [agent assignment]}]
   (let [sha (str/trim (:out (sh! root "git" "rev-parse" "--short=10" "HEAD")))
@@ -463,37 +507,73 @@
       (doseq [story stories]
         (run-script! root "squad_packet.sh" "record" story "senior-implementor" assignment agent sha)))))
 
+(defn batch-story? [story]
+  (= "batch" story))
+
+(def simple-template-processors
+  {"analyst" (fn [root _ stories task from _ _]
+               (process-analyst! root task from stories))
+   "gherkin-writer" (fn [root _ _ task from template story]
+                      (process-writer! root task from template story))
+   "qa-procedure-writer" (fn [root _ _ task from template story]
+                           (process-writer! root task from template story))
+   "gherkin-reviewer" (fn [root review-counts _ task from template story]
+                        (process-reviewer! root review-counts task from template story))
+   "qa-procedure-reviewer" (fn [root review-counts _ task from template story]
+                             (process-reviewer! root review-counts task from template story))
+   "implementer" (fn [root _ _ task from _ story]
+                   (process-implementer! root task from story))
+   "cleaner" (fn [root _ _ task from _ story]
+               (process-cleaner! root task from story))
+   "code-reviewer" (fn [root _ _ task from _ story]
+                     (process-code-reviewer! root task from story))
+   "senior-implementor" (fn [root _ _ task from _ _]
+                          (process-senior-batch! root task from))})
+
+(defn process-result-template! [root task from story kind]
+  (if (batch-story? story)
+    (process-result-batch! root task from kind)
+    (process-result-agent! root task from story kind)))
+
+(defn process-architect-template! [root review-counts task from story]
+  (if (batch-story? story)
+    (process-architecture-batch! root review-counts task from)
+    (process-architect! root task from story)))
+
+(def batch-aware-template-processors
+  {"hardener" (fn [root _ _ task from _ story]
+                (process-result-template! root task from story "hardener"))
+   "qa" (fn [root _ _ task from _ story]
+          (process-result-template! root task from story "qa"))
+   "architect" (fn [root review-counts _ task from _ story]
+                 (process-architect-template! root review-counts task from story))})
+
+(defn template-processor [template]
+  (or (simple-template-processors template)
+      (batch-aware-template-processors template)))
+
+(defn process-template! [root review-counts stories task from template story]
+  (when-let [processor (template-processor template)]
+    (processor root review-counts stories task from template story)))
+
+(defn print-review-decision! [story template result]
+  (when (#{"accepted" "changes-requested"} result)
+    (println "REVIEW_DECISION:" story template (str "decision=" result))))
+
+(defn complete-handoff! [root handoff]
+  (let [target (fs/path root ".swarmforge" "handoffs" "inbox" "completed" (fs/file-name handoff))]
+    (fs/create-dirs (fs/parent target))
+    (fs/move handoff target {:replace-existing true})))
+
 (defn process-handoff! [root review-counts stories {:strs [handoff task from]}]
   (let [metadata (file-map (fs/path root ".squad" "assignments" task "metadata"))
         template (get metadata "template")
         story (get metadata "story_id")]
     (println (str "AGENT_HANDOFF: " from " assignment=" task))
-	    (let [result (case template
-		                   "analyst" (process-analyst! root task from stories)
-	                   "gherkin-writer" (process-writer! root task from template story)
-	                   "qa-procedure-writer" (process-writer! root task from template story)
-	                   "gherkin-reviewer" (process-reviewer! root review-counts task from template story)
-	                   "qa-procedure-reviewer" (process-reviewer! root review-counts task from template story)
-		                   "implementer" (process-implementer! root task from story)
-		                   "cleaner" (process-cleaner! root task from story)
-		                   "code-reviewer" (process-code-reviewer! root task from story)
-		                   "hardener" (if (= "batch" story)
-		                                (process-result-batch! root task from "hardener")
-		                                (process-result-agent! root task from story "hardener"))
-		                   "qa" (if (= "batch" story)
-		                          (process-result-batch! root task from "qa")
-		                          (process-result-agent! root task from story "qa"))
-		                   "architect" (if (= "batch" story)
-		                                 (process-architecture-batch! root review-counts task from)
-		                                 (process-architect! root task from story))
-		                   "senior-implementor" (process-senior-batch! root task from)
-		                   nil)]
-      (when (#{"accepted" "changes-requested"} result)
-        (println "REVIEW_DECISION:" story template (str "decision=" result))))
+    (print-review-decision! story template
+                            (process-template! root review-counts stories task from template story))
     (mark-assignment! root task "merged")
-    (let [target (fs/path root ".swarmforge" "handoffs" "inbox" "completed" (fs/file-name handoff))]
-      (fs/create-dirs (fs/parent target))
-      (fs/move handoff target {:replace-existing true}))))
+    (complete-handoff! root handoff)))
 
 (defn retire-agent! [root agent]
   (write-roles! root (remove #(= agent (first %)) (role-rows root)))
@@ -570,128 +650,182 @@
       (println))
     (reset! pending-wait nil)))
 
+(defn print-max-ticks-and-exit! [root pending-wait tick story-count story-ids scheduled keep?]
+  (flush-wait! pending-wait)
+  (println)
+  (println (format "SIM_END tick=%03d state=max_ticks_exceeded stories=%d unfinished=%s active_agents=%s scheduled=%d %s"
+                   tick
+                   story-count
+                   (str/join "," (unfinished-stories root story-ids))
+                   (if (active-agents? root) "true" "false")
+                   (count @scheduled)
+                   (story-summary root story-ids)))
+  (when-not keep?
+    (fs/delete-tree root))
+  (exit! 2 "SIM_FAILED: exceeded max ticks"))
+
+(defn create-approval-request! [root approval-due rng options tick command]
+  (let [approval-id (nth (str/split command #"\s+") 2)]
+    (run-command! root command)
+    (let [latency (choose-int rng (:approval-ticks-range options))
+          due (+ tick latency)]
+      (swap! approval-due assoc approval-id due)
+      (println "APPROVAL_DUE_TICK:" (format "%03d" due)))))
+
+(defn process-user-approval! [root approval-due approval-id tick]
+  (if (approve-due? approval-due approval-id tick)
+    (do
+      (run-script! root "squad_approval.sh" "approve" approval-id "approved-by-simulator")
+      (println "USER_APPROVES:" approval-id))
+    (println "SIM_WAIT: user approval pending")))
+
+(defn process-spawn! [root counters scheduled tick options rng command-map]
+  (let [{:keys [agent due stalled? stall-mode]} (spawn-agent! root counters scheduled tick options rng command-map)]
+    (println "AGENT:" agent)
+    (if stalled?
+      (do
+        (println "SIM_STALL:" agent stall-mode)
+        (when due
+          (println "DUE_TICK:" (format "%03d" due))))
+      (println "DUE_TICK:" (format "%03d" due)))))
+
+(defn process-recovery! [root command]
+  (let [recovery (:out (run-command! root command))]
+    (println "SIM_RECOVERY_RESULT:")
+    (print recovery)
+    (when-not (str/ends-with? recovery "\n")
+      (println))))
+
+(def sim-action-handlers
+  {"create_approval_request"
+   (fn [ctx tick command-map]
+     (create-approval-request! (:root ctx) (:approval-due ctx) (:rng ctx) (:options ctx) tick (get command-map "command")))
+
+   "request_user_approval"
+   (fn [ctx tick command-map]
+     (process-user-approval! (:root ctx) (:approval-due ctx) (get command-map "approval") tick))
+
+   "record_auto_approval"
+   (fn [ctx _ command-map]
+     (run-command! (:root ctx) (get command-map "command"))
+     (println "SIM_APPLIED: auto approval recorded"))
+
+   "record_batch_membership"
+   (fn [ctx _ command-map]
+     (run-command! (:root ctx) (get command-map "command"))
+     (println "SIM_APPLIED: batch membership recorded"))
+
+   "create_assignment"
+   (fn [ctx _ command-map]
+     (create-assignment! (:root ctx) command-map)
+     (println "SIM_APPLIED: assignment created"))
+
+   "request_spawn"
+   (fn [ctx tick command-map]
+     (process-spawn! (:root ctx) (:counters ctx) (:scheduled ctx) tick (:options ctx) (:rng ctx) command-map))
+
+   "process_handoff"
+   (fn [ctx _ command-map]
+     (process-handoff! (:root ctx) (:review-counts ctx) (:stories ctx) command-map)
+     (println "SIM_APPLIED: handoff processed"))
+
+   "retire_agent"
+   (fn [ctx _ command-map]
+     (retire-agent! (:root ctx) (get command-map "agent"))
+     (println "SIM_APPLIED: agent retired"))
+
+   "recover_agent"
+   (fn [ctx _ command-map]
+     (process-recovery! (:root ctx) (get command-map "command")))
+
+   "wait_for_spawn"
+   (fn [_ _ _]
+     (println "SIM_WAIT: spawn daemon not used by simulator"))})
+
+(defn apply-sim-action! [ctx tick action command-map]
+  (if-let [handler (sim-action-handlers action)]
+    (handler ctx tick command-map)
+    (exit! 2 (str "SIM_FAILED: unsupported action " action))))
+
+(defn workflow-idle? [root scheduled story-ids action]
+  (and (= "wait" action)
+       (every? #(final-approved? root %) story-ids)
+       (empty? @scheduled)
+       (not (active-agents? root))))
+
+(defn print-workflow-idle! [root pending-wait tick story-count story-ids keep?]
+  (flush-wait! pending-wait)
+  (println)
+  (println (format "SIM_END tick=%03d state=workflow_idle stories=%d %s max_transient_slots=3"
+                   tick story-count (story-summary root story-ids)))
+  (when-not keep?
+    (fs/delete-tree root)))
+
+(defn print-sim-start! [run-index story-count options root]
+  (println "SIM_START theme=hunt-the-wumpus"
+           (str "run=" run-index)
+           (str "stories=" story-count)
+           "reviewer_policy=reject-once"
+           "architect_policy=reject-once"
+           "user_policy=approve"
+           "max_transient_slots=3"
+           (str "handoff_ticks=" (str/join ".." (:handoff-ticks-range options)))
+           (str "approval_ticks=" (str/join ".." (:approval-ticks-range options)))
+           (str "stall_percent=" (:stall-percent options))
+           (str "stall_mode=" (:stall-mode options))
+	          (str "stall_active_ticks=" (str/join ".." (:stall-active-ticks-range options))))
+  (println "SIM_ROOT:" (path-str root)))
+
+(defn simulation-context [root stories options rng]
+  {:root root
+   :approval-due (atom {})
+   :rng rng
+   :options options
+   :counters (atom {})
+   :scheduled (atom [])
+   :review-counts (atom {})
+   :stories stories
+   :pending-wait (atom nil)})
+
+(defn print-and-apply-action! [ctx tick out action m]
+  (flush-wait! (:pending-wait ctx))
+  (print-block! tick out)
+  (apply-sim-action! ctx tick action m))
+
+(defn run-sim-tick! [ctx tick]
+  (set-sim-now! tick)
+  (due-events! (:root ctx) (:scheduled ctx) tick)
+  (let [out (:out (run-script! (:root ctx) "squad_next.sh"))
+        m (command-map out)
+        action (get m "next_action")]
+    (if (= "wait" action)
+      (record-wait! (:pending-wait ctx) tick out)
+      (print-and-apply-action! ctx tick out action m))
+    action))
+
+(defn ensure-sim-within-limit! [ctx tick story-count story-ids]
+  (when (> tick (get-in ctx [:options :max-ticks]))
+    (print-max-ticks-and-exit! (:root ctx) (:pending-wait ctx) tick story-count story-ids
+                               (:scheduled ctx) (get-in ctx [:options :keep?]))))
+
+(defn finish-or-continue-sim! [ctx tick story-count story-ids action]
+  (if (workflow-idle? (:root ctx) (:scheduled ctx) story-ids action)
+    (print-workflow-idle! (:root ctx) (:pending-wait ctx) tick story-count story-ids
+                          (get-in ctx [:options :keep?]))
+    :continue))
+
 (defn simulate-htw-run! [run-index options rng]
   (let [root (setup-root!)
         story-count (choose-int rng (:stories-range options))
         stories (story-specs story-count)
         story-ids (mapv first stories)
-        scheduled (atom [])
-        approval-due (atom {})
-        counters (atom {})
-        review-counts (atom {})
-        pending-wait (atom nil)]
-    (println "SIM_START theme=hunt-the-wumpus"
-             (str "run=" run-index)
-             (str "stories=" story-count)
-             "reviewer_policy=reject-once"
-             "architect_policy=reject-once"
-             "user_policy=approve"
-             "max_transient_slots=3"
-	             (str "handoff_ticks=" (str/join ".." (:handoff-ticks-range options)))
-	             (str "approval_ticks=" (str/join ".." (:approval-ticks-range options)))
-	             (str "stall_percent=" (:stall-percent options))
-	             (str "stall_mode=" (:stall-mode options))
-	             (str "stall_active_ticks=" (str/join ".." (:stall-active-ticks-range options))))
-    (println "SIM_ROOT:" (path-str root))
+        ctx (simulation-context root stories options rng)]
+    (print-sim-start! run-index story-count options root)
     (loop [tick 0]
-      (when (> tick (:max-ticks options))
-        (flush-wait! pending-wait)
-        (println)
-        (println (format "SIM_END tick=%03d state=max_ticks_exceeded stories=%d unfinished=%s active_agents=%s scheduled=%d %s"
-                         tick
-                         story-count
-                         (str/join "," (unfinished-stories root story-ids))
-                         (if (active-agents? root) "true" "false")
-                         (count @scheduled)
-                         (story-summary root story-ids)))
-        (when-not (:keep? options)
-          (fs/delete-tree root))
-        (exit! 2 "SIM_FAILED: exceeded max ticks"))
-        (set-sim-now! tick)
-	      (due-events! root scheduled tick)
-      (let [out (:out (run-script! root "squad_next.sh"))
-            m (command-map out)
-            action (get m "next_action")]
-        (if (= "wait" action)
-          (record-wait! pending-wait tick out)
-          (do
-            (flush-wait! pending-wait)
-            (print-block! tick out)
-            (case action
-	          "create_approval_request"
-	          (let [approval-id (nth (str/split (get m "command") #"\s+") 2)]
-	            (run-command! root (get m "command"))
-              (let [latency (choose-int rng (:approval-ticks-range options))
-                    due (+ tick latency)]
-                (swap! approval-due assoc approval-id due)
-                (println "APPROVAL_DUE_TICK:" (format "%03d" due))))
-
-          "request_user_approval"
-          (let [approval-id (get m "approval")]
-            (if (approve-due? approval-due approval-id tick)
-              (do
-                (run-script! root "squad_approval.sh" "approve" approval-id "approved-by-simulator")
-                (println "USER_APPROVES:" approval-id))
-              (println "SIM_WAIT: user approval pending")))
-
-	          "record_auto_approval"
-	          (do
-	            (run-command! root (get m "command"))
-	            (println "SIM_APPLIED: auto approval recorded"))
-
-	          "record_batch_membership"
-	          (do
-	            (run-command! root (get m "command"))
-	            (println "SIM_APPLIED: batch membership recorded"))
-	
-	          "create_assignment"
-          (do
-            (create-assignment! root m)
-            (println "SIM_APPLIED: assignment created"))
-
-	          "request_spawn"
-	          (let [{:keys [agent due stalled? stall-mode]} (spawn-agent! root counters scheduled tick options rng m)]
-              (println "AGENT:" agent)
-              (if stalled?
-                (do
-                  (println "SIM_STALL:" agent stall-mode)
-                  (when due
-                    (println "DUE_TICK:" (format "%03d" due))))
-                (println "DUE_TICK:" (format "%03d" due))))
-
-	          "process_handoff"
-	          (do
-	            (process-handoff! root review-counts stories m)
-	            (println "SIM_APPLIED: handoff processed"))
-
-	          "retire_agent"
-	          (do
-	            (retire-agent! root (get m "agent"))
-	            (println "SIM_APPLIED: agent retired"))
-
-            "recover_agent"
-            (let [recovery (:out (run-command! root (get m "command")))]
-              (println "SIM_RECOVERY_RESULT:")
-              (print recovery)
-              (when-not (str/ends-with? recovery "\n")
-                (println)))
-
-	          "wait_for_spawn"
-	          (println "SIM_WAIT: spawn daemon not used by simulator")
-	
-	          (exit! 2 (str "SIM_FAILED: unsupported action " action)))))
-		        (if (and (= "wait" action)
-		                 (every? #(final-approved? root %) story-ids)
-		                 (empty? @scheduled)
-		                 (not (active-agents? root)))
-	          (do
-              (flush-wait! pending-wait)
-	            (println)
-	            (println (format "SIM_END tick=%03d state=workflow_idle stories=%d %s max_transient_slots=3"
-	                             tick story-count (story-summary root story-ids)))
-	            (when-not (:keep? options)
-	              (fs/delete-tree root)))
-	          (recur (inc tick)))))))
+      (ensure-sim-within-limit! ctx tick story-count story-ids)
+      (let [action (run-sim-tick! ctx tick)]
+        (if (= :continue (finish-or-continue-sim! ctx tick story-count story-ids action))
+          (recur (inc tick)))))))
 
 (defn simulate-htw! [options]
   (let [base-seed (or (:seed options) (System/currentTimeMillis))]

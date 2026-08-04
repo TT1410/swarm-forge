@@ -45,29 +45,54 @@
   (let [[_ body] (str/split (slurp (str file)) #"\n\n" 2)]
     (or body "")))
 
+(defn finish-header-lines [out inserted? replaced? header-line]
+  (cond-> out
+    (and (not inserted?) (not replaced?)) (conj header-line)))
+
+(defn insert-header? [inserted? line]
+  (and (not inserted?) (str/blank? line)))
+
+(defn replace-header? [inserted? prefix line]
+  (and (not inserted?) (str/starts-with? line prefix)))
+
+(defn header-line-action [inserted? prefix line]
+  (cond
+    (insert-header? inserted? line) :insert
+    (replace-header? inserted? prefix line) :replace
+    :else :copy))
+
+(defn insert-header-line [header-line {:keys [out replaced?]} line]
+  {:out (conj (cond-> out (not replaced?) (conj header-line)) line)
+   :inserted? true
+   :replaced? replaced?})
+
+(defn replace-header-line [header-line {:keys [out inserted?]}]
+  {:out (conj out header-line)
+   :inserted? inserted?
+   :replaced? true})
+
+(defn copy-header-line [{:keys [out inserted? replaced?]} line]
+  {:out (conj out line)
+   :inserted? inserted?
+   :replaced? replaced?})
+
+(defn update-header-line [prefix header-line {:keys [out inserted? replaced?]} line]
+  (case (header-line-action inserted? prefix line)
+    :insert (insert-header-line header-line {:out out :inserted? inserted? :replaced? replaced?} line)
+    :replace (replace-header-line header-line {:out out :inserted? inserted? :replaced? replaced?})
+    :copy (copy-header-line {:out out :inserted? inserted? :replaced? replaced?} line)))
+
+(defn header-lines-with [lines field value]
+  (let [prefix (str field ": ")
+        header-line (str prefix value)
+        state (reduce (partial update-header-line prefix header-line)
+                      {:out [] :inserted? false :replaced? false}
+                      lines)]
+    (finish-header-lines (:out state) (:inserted? state) (:replaced? state) header-line)))
+
 (defn set-header! [file field value]
-  (let [lines (str/split-lines (slurp (str file)))
-        prefix (str field ": ")
-        tmp (fs/create-temp-file {:dir (fs/parent file) :prefix ".headers."})
-        result (loop [remaining lines
-                      out []
-                      inserted? false
-                      replaced? false]
-                 (if-let [line (first remaining)]
-                   (cond
-                     (and (not inserted?) (str/blank? line))
-                     (recur (next remaining)
-                            (conj (cond-> out (not replaced?) (conj (str prefix value))) line)
-                            true
-                            replaced?)
-
-                     (and (not inserted?) (str/starts-with? line prefix))
-                     (recur (next remaining) (conj out (str prefix value)) inserted? true)
-
-                     :else
-                     (recur (next remaining) (conj out line) inserted? replaced?))
-                   (cond-> out
-                     (and (not inserted?) (not replaced?)) (conj (str prefix value)))))]
+  (let [tmp (fs/create-temp-file {:dir (fs/parent file) :prefix ".headers."})
+        result (header-lines-with (str/split-lines (slurp (str file))) field value)]
     (spit (str tmp) (str (str/join "\n" result) "\n"))
     (fs/move tmp file {:replace-existing true})))
 
@@ -109,6 +134,37 @@
         (recur (inc suffix))
         dir))))
 
+(defn ensure-ready-batch-state! [in-process-files in-process-batches]
+  (when (seq in-process-files)
+    (fail! 2
+           "TASK_IN_PROCESS_IS_SINGLE: use ready_for_next.sh or done_with_current.sh."
+           (str/join "\n" (map #(str "- " %) in-process-files))))
+  (when (> (count in-process-batches) 1)
+    (fail! 2
+           "AMBIGUOUS_TASK_STATE: multiple batches are already in process."
+           (str/join "\n" (map #(str "- " %) in-process-batches)))))
+
+(defn move-into-batch! [batch-dir source-file]
+  (let [target-file (fs/path batch-dir (fs/file-name source-file))]
+    (when (fs/exists? target-file)
+      (fail! 2 (str "AMBIGUOUS_TASK_STATE: target batch file already exists: " target-file)))
+    (fs/move source-file target-file)
+    (set-header! target-file "dequeued_at" (timestamp))))
+
+(defn claim-new-batch! [new-dir in-process-dir]
+  (let [new-files (handoff-files new-dir)]
+    (if (empty? new-files)
+      (println "NO_TASK")
+      (let [batch-priority (header-value (first new-files) "priority" "50")
+            batch-dir (new-batch-dir in-process-dir)
+            selected-files (filter #(= batch-priority (header-value % "priority" "50")) new-files)]
+        (fs/create-dir batch-dir)
+        (doseq [source-file selected-files]
+          (move-into-batch! batch-dir source-file))
+        (when (empty? selected-files)
+          (fail! 2 (str "AMBIGUOUS_TASK_STATE: no tasks selected for batch priority " batch-priority ".")))
+        (print-batch batch-dir)))))
+
 (defn -main []
   (let [inbox (inbox-dir)
         new-dir (fs/path inbox "new")
@@ -118,32 +174,10 @@
       (fs/create-dirs dir))
     (let [in-process-batches (batch-dirs in-process-dir)
           in-process-files (handoff-files in-process-dir)]
-      (when (seq in-process-files)
-        (fail! 2
-               "TASK_IN_PROCESS_IS_SINGLE: use ready_for_next.sh or done_with_current.sh."
-               (str/join "\n" (map #(str "- " %) in-process-files))))
-      (when (> (count in-process-batches) 1)
-        (fail! 2
-               "AMBIGUOUS_TASK_STATE: multiple batches are already in process."
-               (str/join "\n" (map #(str "- " %) in-process-batches))))
+      (ensure-ready-batch-state! in-process-files in-process-batches)
       (if (= 1 (count in-process-batches))
         (print-batch (first in-process-batches))
-        (let [new-files (handoff-files new-dir)]
-          (if (empty? new-files)
-            (println "NO_TASK")
-            (let [batch-priority (header-value (first new-files) "priority" "50")
-                  batch-dir (new-batch-dir in-process-dir)
-                  selected-files (filter #(= batch-priority (header-value % "priority" "50")) new-files)]
-              (fs/create-dir batch-dir)
-              (doseq [source-file selected-files]
-                (let [target-file (fs/path batch-dir (fs/file-name source-file))]
-                  (when (fs/exists? target-file)
-                    (fail! 2 (str "AMBIGUOUS_TASK_STATE: target batch file already exists: " target-file)))
-                  (fs/move source-file target-file)
-                  (set-header! target-file "dequeued_at" (timestamp))))
-              (when (empty? selected-files)
-                (fail! 2 (str "AMBIGUOUS_TASK_STATE: no tasks selected for batch priority " batch-priority ".")))
-              (print-batch batch-dir))))))))
+        (claim-new-batch! new-dir in-process-dir)))))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (-main))

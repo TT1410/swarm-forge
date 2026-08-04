@@ -166,19 +166,8 @@
     (catch Exception _ nil)))
 
 (defn project-root []
-  (let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))
-        configured-roles (when configured (fs/path configured ".swarmforge" "roles.tsv"))
-        cwd (fs/cwd)
-        direct (fs/path cwd ".swarmforge" "roles.tsv")]
-    (if (and configured (fs/exists? configured-roles))
-      (fs/path configured)
-      (if (fs/exists? direct)
-      cwd
-      (let [git-root (str/trim (:out (sh-continue "git" "rev-parse" "--show-toplevel")))]
-        (if (and (not (str/blank? git-root))
-                 (fs/exists? (fs/path git-root ".swarmforge" "roles.tsv")))
-          (fs/path git-root)
-          (exit! 1 "Cannot find SwarmForge project root")))))))
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
 
 (defn read-lines [path]
   (when (fs/exists? path)
@@ -283,19 +272,27 @@
                     (contains? templates (role-template root role)))]
      role)))
 
+(defn total-capacity-full? [root]
+  (>= (active-transient-role-count root) (cfg/squad-max-transient-agents root)))
+
+(defn template-capacity-full? [root template]
+  (when-let [limit (cfg/squad-template-limit root template)]
+    (>= (active-template-count root template) limit)))
+
+(defn group-capacity-blocker [root {:keys [group limit templates]}]
+  (when (>= (active-group-count root templates) limit)
+    (str "group-capacity-full:" group)))
+
 (defn spawn-capacity-blocker [root template]
   (cond
-    (>= (active-transient-role-count root) (cfg/squad-max-transient-agents root))
+    (total-capacity-full? root)
     "capacity-full"
 
-    (and (cfg/squad-template-limit root template)
-         (>= (active-template-count root template) (cfg/squad-template-limit root template)))
+    (template-capacity-full? root template)
     (str "template-capacity-full:" template)
 
     :else
-    (some (fn [{:keys [group limit templates]}]
-            (when (>= (active-group-count root templates) limit)
-              (str "group-capacity-full:" group)))
+    (some #(group-capacity-blocker root %)
           (cfg/squad-template-group-limits root template))))
 
 (defn reconcile-roles! [root]
@@ -378,29 +375,47 @@
     (spit (str path ".error") (str reason "\n"))
     (move-with-collision path failed-dir)))
 
+(defn handoff-recipients [message]
+  (some-> (get-in message [:headers "to"]) (str/split #",") seq))
+
+(defn ensure-recipient-role! [roles recipient]
+  (or (get roles recipient)
+      (throw (ex-info (str "unknown recipient " recipient) {:recipient recipient}))))
+
+(defn recipient-target [role-info filename]
+  (fs/path (:worktree-path role-info)
+           ".swarmforge" "handoffs" "inbox" "new" filename))
+
+(defn delivered-handoff [message recipient]
+  (-> message
+      (assoc-in [:headers "recipient"] recipient)
+      (assoc-in [:headers "enqueued_at"] (now))))
+
+(defn write-recipient-handoff! [role-info filename message]
+  (let [target (recipient-target role-info filename)]
+    (fs/create-dirs (fs/parent target))
+    (when-not (fs/exists? target)
+      (spit (str target) (render-message (:headers message) (:body message))))))
+
+(defn deliver-recipient-handoff! [roles socket filename message recipient]
+  (let [role-info (ensure-recipient-role! roles recipient)]
+    (write-recipient-handoff! role-info filename (delivered-handoff message recipient))
+    (tmux-notify! socket (:session role-info) handoff-wake-message)))
+
+(defn sender-sent-dir [roles sender-role]
+  (fs/path (get-in roles [sender-role :worktree-path])
+           ".swarmforge" "handoffs" "sent"))
+
 (defn deliver-handoff! [root roles socket sender-role path]
   (let [filename (fs/file-name path)
         message (parse-message path)
-        headers (:headers message)
-        recipients (some-> (get headers "to") (str/split #",") seq)]
+        recipients (handoff-recipients message)]
     (if-not recipients
       (fail-handoff! root path "missing to header")
       (do
         (doseq [recipient recipients]
-          (let [role-info (get roles recipient)]
-            (when-not role-info
-              (throw (ex-info (str "unknown recipient " recipient) {:recipient recipient})))
-            (let [target (fs/path (:worktree-path role-info)
-                                  ".swarmforge" "handoffs" "inbox" "new" filename)
-                  delivered (assoc-in message [:headers "recipient"] recipient)
-                  delivered (assoc-in delivered [:headers "enqueued_at"] (now))]
-              (fs/create-dirs (fs/parent target))
-              (when-not (fs/exists? target)
-                (spit (str target) (render-message (:headers delivered) (:body delivered))))
-              (tmux-notify! socket (:session role-info) handoff-wake-message))))
-        (move-with-collision path
-                             (fs/path (get-in roles [sender-role :worktree-path])
-                                      ".swarmforge" "handoffs" "sent"))
+          (deliver-recipient-handoff! roles socket filename message recipient))
+        (move-with-collision path (sender-sent-dir roles sender-role))
         (log! root "handoff-delivered" (str path))))))
 
 (defn outbox-files [role-info]
@@ -411,22 +426,36 @@
                          (str/ends-with? (fs/file-name %) ".handoff")))
            (sort-by #(fs/file-name %))))))
 
+(defn tmux-socket [root]
+  (let [socket-file (fs/path root ".swarmforge" "tmux-socket")]
+    (when (fs/exists? socket-file)
+      (str/trim (slurp (str socket-file))))))
+
+(defn archive-failed-handoff! [root path error]
+  (try
+    (fail-handoff! root path (.getMessage error))
+    (catch Exception nested
+      (log! root "handoff-failed-to-archive" (str path) (.getMessage nested)))))
+
+(defn deliver-outbox-file! [root roles socket role path]
+  (try
+    (deliver-handoff! root roles socket role path)
+    (catch Exception e
+      (log! root "handoff-error" (str path) (.getMessage e))
+      (archive-failed-handoff! root path e))))
+
+(defn poll-role-outbox! [root roles socket role role-info]
+  (doseq [path (or (outbox-files role-info) [])
+          :while (not @stopping?)]
+    (deliver-outbox-file! root roles socket role path)))
+
 (defn poll-handoffs! [root]
   (let [roles (reconcile-roles! root)
-        socket-file (fs/path root ".swarmforge" "tmux-socket")
-        socket (when (fs/exists? socket-file) (str/trim (slurp (str socket-file))))]
+        socket (tmux-socket root)]
     (when-not (str/blank? socket)
       (doseq [[role role-info] roles
-              path (or (outbox-files role-info) [])
               :while (not @stopping?)]
-        (try
-          (deliver-handoff! root roles socket role path)
-          (catch Exception e
-            (log! root "handoff-error" (str path) (.getMessage e))
-            (try
-              (fail-handoff! root path (.getMessage e))
-              (catch Exception nested
-                (log! root "handoff-failed-to-archive" (str path) (.getMessage nested))))))))))
+        (poll-role-outbox! root roles socket role role-info)))))
 
 (defn agent-dirs [root]
   (let [agents-dir (fs/path root ".squad" "agents")]
@@ -483,54 +512,98 @@
 (defn missing-session-grace-seconds []
   (env-long "SWARMFORGE_SQUAD_MISSING_SESSION_GRACE_SECONDS" 30))
 
-(defn missing-session-alert [root agent session]
+(defn missing-session-context [root agent session]
   (let [file (missing-session-file root agent)
         first-seen (read-value file "first_seen")
         recorded-session (read-value file "session")
-        now-instant (instant-now)
         same-session? (= session recorded-session)
         baseline (if same-session? first-seen (now))
-        first-instant (when same-session?
-                        (parse-instant first-seen))
-        age (when first-instant
-              (.getSeconds (java.time.Duration/between first-instant now-instant)))
+        first-instant (when same-session? (parse-instant first-seen))]
+    {:file file
+     :agent agent
+     :session session
+     :baseline baseline
+     :first-instant first-instant}))
+
+(defn missing-session-age [first-instant]
+  (when first-instant
+    (.getSeconds (java.time.Duration/between first-instant (instant-now)))))
+
+(defn write-missing-session! [{:keys [file session baseline]}]
+  (fs/create-dirs (fs/parent file))
+  (spit (str file)
+        (str "session: " session "\n"
+             "first_seen: " baseline "\n"
+             "observed_at: " (now) "\n")))
+
+(defn missing-session-message [agent session age grace]
+  (when (and age (>= age grace))
+    (str "agent " agent " tmux session missing for " age " seconds: " session)))
+
+(defn missing-session-alert [root agent session]
+  (let [{:keys [first-instant] :as context} (missing-session-context root agent session)
+        age (missing-session-age first-instant)
         grace (missing-session-grace-seconds)]
-    (fs/create-dirs (fs/parent file))
-    (spit (str file)
-          (str "session: " session "\n"
-               "first_seen: " baseline "\n"
-               "observed_at: " (now) "\n"))
-    (when (and age (>= age grace))
-      (str "agent " agent " tmux session missing for " age " seconds: " session))))
+    (write-missing-session! context)
+    (missing-session-message agent session age grace)))
+
+(defn observe-pane-liveness! [root socket agent session]
+  (let [liveness (fs/path root ".squad" "agents" agent "liveness")
+        previous-hash (read-value liveness "pane_hash")
+        tail (or (capture-pane-tail socket session) "")
+        current-hash (sha256 tail)
+        changed? (not= previous-hash current-hash)
+        state (if changed? "running_pane_active" "running_pane_idle")]
+    (clear-missing-session! root agent)
+    (write-liveness! root agent state changed? tail)
+    changed?))
+
+(defn live-pane-alert [root socket agent session age]
+  (when-not (observe-pane-liveness! root socket agent session)
+    (str "agent " agent " heartbeat stale for " age " seconds; tmux pane alive but unchanged")))
+
+(defn pane-liveness-kind [socket session]
+  (cond
+    (str/blank? session) :missing-session-metadata
+    (not (tmux-session-exists? socket session)) :missing-session
+    (pane-dead? socket session) :dead-pane
+    :else :live-pane))
+
+(defn pane-liveness-message [root socket agent session age kind]
+  (case kind
+    :missing-session-metadata (str "agent " agent " has no tmux session metadata")
+    :missing-session (missing-session-alert root agent session)
+    :dead-pane (str "agent " agent " tmux pane is dead: " session)
+    :live-pane (live-pane-alert root socket agent session age)))
 
 (defn pane-liveness-alert [root socket agent session age]
+  (pane-liveness-message root socket agent session age
+                         (pane-liveness-kind socket session)))
+
+(defn killable-session? [socket session]
+  (and (not (str/blank? socket))
+       (not (str/blank? session))
+       (tmux-session-exists? socket session)))
+
+(defn wait-session-gone-step [socket session remaining]
   (cond
-    (str/blank? session) (str "agent " agent " has no tmux session metadata")
-    (not (tmux-session-exists? socket session)) (missing-session-alert root agent session)
-    (pane-dead? socket session) (str "agent " agent " tmux pane is dead: " session)
-    :else (let [liveness (fs/path root ".squad" "agents" agent "liveness")
-                previous-hash (read-value liveness "pane_hash")
-                tail (or (capture-pane-tail socket session) "")
-                current-hash (sha256 tail)
-                changed? (not= previous-hash current-hash)
-                state (if changed? "running_pane_active" "running_pane_idle")]
-            (clear-missing-session! root agent)
-            (write-liveness! root agent state changed? tail)
-            (when-not changed?
-              (str "agent " agent " heartbeat stale for " age " seconds; tmux pane alive but unchanged")))))
+    (not (tmux-session-exists? socket session)) :gone
+    (zero? remaining) :timed-out
+    :else :retry))
+
+(defn wait-session-gone [socket session]
+  (loop [remaining 20]
+    (case (wait-session-gone-step socket session remaining)
+      :gone true
+      :timed-out false
+      :retry (do
+               (Thread/sleep 100)
+               (recur (dec remaining))))))
 
 (defn kill-tmux-session! [socket session]
-  (when (and (not (str/blank? socket))
-             (not (str/blank? session))
-             (tmux-session-exists? socket session))
+  (when (killable-session? socket session)
     (sh-continue "tmux" "-S" socket "kill-session" "-t" session)
-    (loop [remaining 20]
-      (cond
-        (not (tmux-session-exists? socket session)) true
-        (zero? remaining) false
-        :else (do
-                (Thread/sleep 100)
-                (recur (dec remaining)))))))
+    (wait-session-gone socket session)))
 
 (defn maybe-tmux-alert [root socket skip-tmux? agent session]
   (cond
@@ -557,7 +630,7 @@
         actual (fs/absolutize worktree)]
     (= (str expected) (str actual))))
 
-(defn cleanup-transient-git! [root agent worktree]
+(defn cleanup-worktree! [root agent worktree]
   (if (or (str/blank? (str worktree))
           (not (managed-worktree? root agent worktree)))
     (log! root "git-cleanup-skipped" agent "unmanaged-worktree" (str worktree))
@@ -568,56 +641,176 @@
         (git-continue root "worktree" "prune"))
       (if (fs/exists? worktree)
         (log! root "git-worktree-remove-failed" agent (str worktree))
-        (log! root "git-worktree-removed" agent (str worktree)))))
+        (log! root "git-worktree-removed" agent (str worktree))))))
+
+(defn cleanup-branch! [root agent]
   (let [branch (transient-branch agent)
         branch-result (git-continue root "branch" "-D" branch)]
     (if (zero? (:exit branch-result))
       (log! root "git-branch-deleted" agent branch)
       (log! root "git-branch-absent" agent branch))))
 
-(defn reconcile-retired-agent! [root socket roles agent dir]
-  (let [cleanup-marker (fs/path dir "retired-cleanup")]
-    (when-not (fs/regular-file? cleanup-marker)
-      (let [metadata (fs/path dir "metadata")
-            session (or (read-value metadata "session")
-                        (get-in roles [agent :session]))
-            worktree (or (read-value metadata "worktree")
-                         (get-in roles [agent :worktree-path]))]
-        (when (kill-tmux-session! socket session)
-          (log! root "retired-session-killed" agent session))
-        (cleanup-transient-git! root agent worktree)
-        (retire-role-row! root agent)
-        (write-atomic! cleanup-marker (str "cleaned_at: " (now) "\n"))))))
+(defn cleanup-transient-git! [root agent worktree]
+  (cleanup-worktree! root agent worktree)
+  (cleanup-branch! root agent))
 
-(defn alerts-for-agent [root roles socket skip-tmux? stale-seconds now-instant dir]
+(defn retired-cleanup-marker [dir]
+  (fs/path dir "retired-cleanup"))
+
+(defn retired-cleanup-context [roles agent dir]
+  (let [metadata (fs/path dir "metadata")]
+    {:session (or (read-value metadata "session")
+                  (get-in roles [agent :session]))
+     :worktree (or (read-value metadata "worktree")
+                   (get-in roles [agent :worktree-path]))}))
+
+(defn kill-retired-session! [root socket agent session]
+  (when (kill-tmux-session! socket session)
+    (log! root "retired-session-killed" agent session)))
+
+(defn mark-retired-cleanup! [marker]
+  (write-atomic! marker (str "cleaned_at: " (now) "\n")))
+
+(defn cleanup-retired-agent! [root socket agent worktree session marker]
+  (kill-retired-session! root socket agent session)
+  (cleanup-transient-git! root agent worktree)
+  (retire-role-row! root agent)
+  (mark-retired-cleanup! marker))
+
+(defn reconcile-retired-agent! [root socket roles agent dir]
+  (let [cleanup-marker (retired-cleanup-marker dir)]
+    (when-not (fs/regular-file? cleanup-marker)
+      (let [{:keys [worktree session]} (retired-cleanup-context roles agent dir)]
+        (cleanup-retired-agent! root socket agent worktree session cleanup-marker)))))
+
+(defn agent-alert-context [root roles now-instant dir]
   (let [agent (fs/file-name dir)
         metadata (fs/path dir "metadata")
         status (fs/path dir "status")
-        heartbeat (fs/path dir "heartbeat")
-        state (read-value status "state")
-        session (or (read-value metadata "session")
-                    (get-in roles [agent :session]))
-        age (heartbeat-age-seconds heartbeat now-instant)]
-    (cond
-      (= "retired" state) (do
-                            (reconcile-retired-agent! root
-                                                      (when-not skip-tmux? socket)
-                                                      roles
-                                                      agent
-                                                      dir)
-                            [])
-      (and state (not (active-state? state))) []
-      (nil? (get roles agent)) [(str "agent " agent " is not registered in roles.tsv")]
-      (not (fs/exists? heartbeat)) [(str "agent " agent " has no heartbeat")]
-      (nil? age) [(str "agent " agent " heartbeat timestamp is invalid")]
-      (> age stale-seconds) (if skip-tmux?
-                              [(str "agent " agent " heartbeat stale for " age " seconds")]
-                              (if-let [alert (pane-liveness-alert root socket agent session age)]
-                                [alert]
-                                []))
-      :else (if-let [alert (maybe-tmux-alert root socket skip-tmux? agent session)]
-              [alert]
-              []))))
+        heartbeat (fs/path dir "heartbeat")]
+    {:agent agent
+     :metadata metadata
+     :status status
+     :heartbeat heartbeat
+     :state (read-value status "state")
+     :session (or (read-value metadata "session")
+                  (get-in roles [agent :session]))
+     :age (heartbeat-age-seconds heartbeat now-instant)}))
+
+(defn stale-heartbeat-alert [root socket skip-tmux? agent session age]
+  (if skip-tmux?
+    (str "agent " agent " heartbeat stale for " age " seconds")
+    (pane-liveness-alert root socket agent session age)))
+
+(defn current-heartbeat-alert [root socket skip-tmux? agent session]
+  (maybe-tmux-alert root socket skip-tmux? agent session))
+
+(def agent-alert-rules
+  [[:retired (fn [_ {:keys [state]}] (= "retired" state))]
+   [:inactive (fn [_ {:keys [state]}] (and state (not (active-state? state))))]
+   [:unregistered (fn [roles {:keys [agent]}] (nil? (get roles agent)))]
+   [:missing-heartbeat (fn [_ {:keys [heartbeat]}] (not (fs/exists? heartbeat)))]
+   [:invalid-heartbeat (fn [_ {:keys [age]}] (nil? age))]
+   [:stale-heartbeat (fn [_ {:keys [age stale-seconds]}] (> age stale-seconds))]])
+
+(defn alert-context-with-threshold [stale-seconds context]
+  (assoc context :stale-seconds stale-seconds))
+
+(defn agent-alert-kind [roles stale-seconds context]
+  (let [context (alert-context-with-threshold stale-seconds context)]
+    (or (some (fn [[kind predicate]]
+                (when (predicate roles context)
+                  kind))
+              agent-alert-rules)
+        :tmux-health)))
+
+(defn retired-agent-alert! [root roles socket skip-tmux? dir {:keys [agent]}]
+  (reconcile-retired-agent! root
+                            (when-not skip-tmux? socket)
+                            roles
+                            agent
+                            dir)
+  nil)
+
+(defn unregistered-agent-alert [{:keys [agent]}]
+  (str "agent " agent " is not registered in roles.tsv"))
+
+(defn missing-heartbeat-alert [{:keys [agent]}]
+  (str "agent " agent " has no heartbeat"))
+
+(defn invalid-heartbeat-alert [{:keys [agent]}]
+  (str "agent " agent " heartbeat timestamp is invalid"))
+
+(def alert-handlers
+  {:retired (fn [root roles socket skip-tmux? dir context]
+              (retired-agent-alert! root roles socket skip-tmux? dir context))
+   :inactive (fn [_ _ _ _ _ _] nil)
+   :unregistered (fn [_ _ _ _ _ context] (unregistered-agent-alert context))
+   :missing-heartbeat (fn [_ _ _ _ _ context] (missing-heartbeat-alert context))
+   :invalid-heartbeat (fn [_ _ _ _ _ context] (invalid-heartbeat-alert context))
+   :stale-heartbeat (fn [root _ socket skip-tmux? _ context]
+                      (stale-heartbeat-alert root socket skip-tmux? (:agent context) (:session context) (:age context)))
+   :tmux-health (fn [root _ socket skip-tmux? _ context]
+                  (current-heartbeat-alert root socket skip-tmux? (:agent context) (:session context)))})
+
+(defn alert-for-kind [root roles socket skip-tmux? dir context kind]
+  ((alert-handlers kind) root roles socket skip-tmux? dir context))
+
+(defn alert-for-context [root roles socket skip-tmux? stale-seconds dir
+                         context]
+  (alert-for-kind root roles socket skip-tmux? dir context
+                  (agent-alert-kind roles stale-seconds context)))
+
+(defn alerts-for-agent [root roles socket skip-tmux? stale-seconds now-instant dir]
+  (if-let [alert (alert-for-context root roles socket skip-tmux? stale-seconds dir
+                                    (agent-alert-context root roles now-instant dir))]
+    [alert]
+    []))
+
+(defn log-status-alerts! [root alerts alert-key-set]
+  (when (seq alerts)
+    (let [state-key [:alerts alert-key-set]]
+      (when (not= state-key @last-status-log-state)
+        (reset! last-status-log-state state-key)
+        (doseq [alert alerts]
+          (log! root "status-alert" alert))))))
+
+(defn status-notify-due? [previous-alerts notified-at alert-key-set now-instant cooldown]
+  (or (nil? notified-at)
+      (not= alert-key-set previous-alerts)
+      (>= (.getSeconds (java.time.Duration/between notified-at now-instant))
+	          cooldown)))
+
+(defn status-notify-success! [root alert-key-set now-instant alert-count]
+  (reset! last-status-notification {:alerts alert-key-set :notified-at now-instant})
+  (log! root "status-notified" "squad-leader" (str alert-count)))
+
+(defn send-status-notification! [root socket alert-key-set now-instant alert-count]
+  (if (tmux-notify! socket "swarmforge-squad-leader" status-wake-message)
+    (status-notify-success! root alert-key-set now-instant alert-count)
+    (log! root "status-notify-failed" "squad-leader" (str alert-count))))
+
+(defn notify-status-active! [root socket alerts alert-key-set now-instant]
+  (let [{previous-alerts :alerts notified-at :notified-at} @last-status-notification
+        cooldown (notify-cooldown-seconds)
+        alert-count (count alerts)]
+    (if-not (status-notify-due? previous-alerts notified-at alert-key-set now-instant cooldown)
+      (log! root "status-notify-throttled" (str alert-count))
+      (send-status-notification! root socket alert-key-set now-instant alert-count))))
+
+(defn notify-status-alerts! [root socket no-notify? alerts alert-key-set now-instant]
+  (when (seq alerts)
+    (if no-notify?
+      (log! root "status-notify-skipped" (str (count alerts)))
+      (notify-status-active! root socket alerts alert-key-set now-instant))))
+
+(defn log-status-ok! [root alerts]
+  (when (empty? alerts)
+    (reset! last-status-notification {:alerts #{} :notified-at nil})
+    (println "SQUAD_STATUS_OK")
+    (when (not= :ok @last-status-log-state)
+      (reset! last-status-log-state :ok)
+      (log! root "status-ok"))))
 
 (defn poll-status! [{:keys [root no-notify? skip-tmux?]}]
   (let [roles (reconcile-roles! root)
@@ -630,34 +823,9 @@
         now-instant (instant-now)]
     (doseq [alert alerts]
       (println "SQUAD_STATUS_ALERT:" alert))
-    (when (seq alerts)
-      (let [state-key [:alerts alert-key-set]]
-        (when (not= state-key @last-status-log-state)
-          (reset! last-status-log-state state-key)
-          (doseq [alert alerts]
-            (log! root "status-alert" alert)))))
-    (when (seq alerts)
-      (if no-notify?
-        (log! root "status-notify-skipped" (str (count alerts)))
-        (let [{previous-alerts :alerts notified-at :notified-at} @last-status-notification
-              cooldown (notify-cooldown-seconds)
-              due? (or (nil? notified-at)
-                       (not= alert-key-set previous-alerts)
-                       (>= (.getSeconds (java.time.Duration/between notified-at now-instant))
-                           cooldown))]
-          (if-not due?
-            (log! root "status-notify-throttled" (str (count alerts)))
-            (if (tmux-notify! socket "swarmforge-squad-leader" status-wake-message)
-              (do
-                (reset! last-status-notification {:alerts alert-key-set :notified-at now-instant})
-                (log! root "status-notified" "squad-leader" (str (count alerts))))
-              (log! root "status-notify-failed" "squad-leader" (str (count alerts))))))))
-    (when (empty? alerts)
-      (reset! last-status-notification {:alerts #{} :notified-at nil})
-      (println "SQUAD_STATUS_OK")
-      (when (not= :ok @last-status-log-state)
-        (reset! last-status-log-state :ok)
-        (log! root "status-ok")))
+    (log-status-alerts! root alerts alert-key-set)
+    (notify-status-alerts! root socket no-notify? alerts alert-key-set now-instant)
+    (log-status-ok! root alerts)
     alerts))
 
 (defn pending-approval? [root]
@@ -682,48 +850,95 @@
   (when instant
     (.getSeconds (java.time.Duration/between instant (instant-now)))))
 
+(defn sl-watchdog-enabled? [{:keys [root no-notify? skip-tmux?]}]
+  (not (or skip-tmux? no-notify? (pending-approval? root))))
+
+(defn sl-session-available? [socket session]
+  (and (not (str/blank? socket))
+       (tmux-session-exists? socket session)
+       (not (pane-dead? socket session))))
+
+(declare watchdog-unchanged-since seconds-since-or-zero)
+
+(defn sl-watchdog-observation [root socket session]
+  (let [state-file (sl-watchdog-file root)
+        previous (parse-kv-file state-file)
+        tail (or (capture-pane-tail socket session) "")
+        current-hash (sha256 tail)
+        previous-hash (get previous "pane_hash")
+        changed? (not= current-hash previous-hash)
+        unchanged-since (watchdog-unchanged-since previous changed?)]
+    {:state-file state-file
+     :tail tail
+     :current-hash current-hash
+     :changed? changed?
+     :unchanged-since unchanged-since
+     :idle-for (seconds-since-or-zero unchanged-since)
+     :notified-age (seconds-since (parse-instant (get previous "notified_at")))
+     :prompt? (idle-prompt-tail? tail)}))
+
+(defn watchdog-unchanged-since [previous changed?]
+  (if changed?
+    (now)
+    (or (get previous "unchanged_since") (now))))
+
+(defn seconds-since-or-zero [value]
+  (or (seconds-since (parse-instant value)) 0))
+
+(defn sl-watchdog-due? [{:keys [notified-age]} cooldown]
+  (or (nil? notified-age) (>= notified-age cooldown)))
+
+(defn write-sl-watchdog-state! [{:keys [state-file current-hash unchanged-since idle-for prompt? changed? tail]} threshold due?]
+  (write-atomic! state-file
+                 (str "pane_hash: " current-hash "\n"
+                      "observed_at: " (now) "\n"
+                      "unchanged_since: " unchanged-since "\n"
+                      "idle_for_seconds: " idle-for "\n"
+                      "prompt: " prompt? "\n"
+                      (when (and (not changed?) prompt? (>= idle-for threshold) due?)
+                        (str "notified_at: " (now) "\n"))
+                      "last_10_lines:\n"
+                      tail)))
+
+(defn sl-watchdog-log-state [{:keys [changed? prompt? idle-for]} threshold due?]
+  (cond
+    changed? :active
+    (not prompt?) :not-idle
+    (< idle-for threshold) :below-threshold
+    (not due?) :throttled
+    :else :notify))
+
+(defn log-sl-watchdog-notify! [root socket session idle-for]
+  (if (tmux-notify! socket session sl-watchdog-message)
+    (log! root "sl-watchdog-notified" (str idle-for))
+    (log! root "sl-watchdog-notify-failed" (str idle-for))))
+
+(def sl-watchdog-log-handlers
+  {:active (fn [root _ _ _] (log! root "sl-watchdog-active"))
+   :not-idle (fn [root _ _ _] (log! root "sl-watchdog-not-idle-prompt"))
+   :below-threshold (fn [_ _ _ _] nil)
+   :throttled (fn [root _ _ idle-for] (log! root "sl-watchdog-throttled" (str idle-for)))
+   :notify log-sl-watchdog-notify!})
+
+(defn log-sl-watchdog-state! [root socket session idle-for state]
+  ((sl-watchdog-log-handlers state) root socket session idle-for))
+
+(defn log-sl-watchdog! [root socket session {:keys [idle-for] :as observation} threshold due?]
+  (log-sl-watchdog-state! root socket session idle-for
+                          (sl-watchdog-log-state observation threshold due?)))
+
 (defn poll-sl-watchdog! [{:keys [root no-notify? skip-tmux?]}]
-  (when-not (or skip-tmux? no-notify? (pending-approval? root))
+  (when (sl-watchdog-enabled? {:root root :no-notify? no-notify? :skip-tmux? skip-tmux?})
     (let [socket-file (fs/path root ".swarmforge" "tmux-socket")
           socket (when (fs/regular-file? socket-file) (str/trim (slurp (str socket-file))))
           session "swarmforge-squad-leader"
           threshold (env-long "SWARMFORGE_SL_IDLE_SECONDS" 60)
           cooldown (env-long "SWARMFORGE_SL_WATCHDOG_COOLDOWN_SECONDS" 300)]
-      (when (and (not (str/blank? socket))
-                 (tmux-session-exists? socket session)
-                 (not (pane-dead? socket session)))
-        (let [state-file (sl-watchdog-file root)
-              previous (parse-kv-file state-file)
-              tail (or (capture-pane-tail socket session) "")
-              current-hash (sha256 tail)
-              previous-hash (get previous "pane_hash")
-              changed? (not= current-hash previous-hash)
-              unchanged-since (if changed?
-                                (now)
-                                (or (get previous "unchanged_since") (now)))
-              idle-for (or (seconds-since (parse-instant unchanged-since)) 0)
-              notified-age (seconds-since (parse-instant (get previous "notified_at")))
-              due? (or (nil? notified-age) (>= notified-age cooldown))
-              prompt? (idle-prompt-tail? tail)]
-          (write-atomic! state-file
-                         (str "pane_hash: " current-hash "\n"
-                              "observed_at: " (now) "\n"
-                              "unchanged_since: " unchanged-since "\n"
-                              "idle_for_seconds: " idle-for "\n"
-                              "prompt: " prompt? "\n"
-                              (when (and (not changed?) prompt? (>= idle-for threshold) due?)
-                                (str "notified_at: " (now) "\n"))
-                              "last_10_lines:\n"
-                              tail))
-          (cond
-            changed? (log! root "sl-watchdog-active")
-            (not prompt?) (log! root "sl-watchdog-not-idle-prompt")
-            (< idle-for threshold) nil
-            (not due?) (log! root "sl-watchdog-throttled" (str idle-for))
-            (tmux-notify! socket session sl-watchdog-message)
-            (log! root "sl-watchdog-notified" (str idle-for))
-            :else
-            (log! root "sl-watchdog-notify-failed" (str idle-for))))))))
+      (when (sl-session-available? socket session)
+        (let [observation (sl-watchdog-observation root socket session)
+              due? (sl-watchdog-due? observation cooldown)]
+          (write-sl-watchdog-state! observation threshold due?)
+          (log-sl-watchdog! root socket session observation threshold due?))))))
 
 (defn parse-kv-file [file]
   (into {}
@@ -747,17 +962,39 @@
 (defn map-entry-json [[k v]]
   (str "\"" (json-escape (name k)) "\":" (to-json v)))
 
+(def json-kind-rules
+  [[nil? :nil]
+   [string? :string]
+   [keyword? :keyword]
+   [number? :number]
+   [true? :true]
+   [false? :false]
+   [map? :map]
+   [sequential? :sequential]])
+
+(defn json-kind [value]
+  (or (some (fn [[predicate kind]]
+              (when (predicate value)
+                kind))
+            json-kind-rules)
+      :other))
+
+(defn quoted-json [value]
+  (str "\"" (json-escape value) "\""))
+
+(def json-renderers
+  {:nil (fn [_] "null")
+   :string quoted-json
+   :keyword (fn [value] (quoted-json (name value)))
+   :number str
+   :true (fn [_] "true")
+   :false (fn [_] "false")
+   :map (fn [value] (str "{" (str/join "," (map map-entry-json value)) "}"))
+   :sequential (fn [value] (str "[" (str/join "," (map to-json value)) "]"))
+   :other quoted-json})
+
 (defn to-json [value]
-  (cond
-    (nil? value) "null"
-    (string? value) (str "\"" (json-escape value) "\"")
-    (keyword? value) (str "\"" (json-escape (name value)) "\"")
-    (number? value) (str value)
-    (true? value) "true"
-    (false? value) "false"
-    (map? value) (str "{" (str/join "," (map map-entry-json value)) "}")
-    (sequential? value) (str "[" (str/join "," (map to-json value)) "]")
-    :else (str "\"" (json-escape value) "\"")))
+  ((json-renderers (json-kind value)) value))
 
 (defn state-files [dir name]
   (if (fs/exists? dir)
@@ -880,50 +1117,84 @@
         {:ok true :output (:out result)})
       {:ok false :status 409 :error (str (:err result) (:out result))})))
 
+(defn web-error [message]
+  {:ok false :status 409 :error message})
+
+(defn socket-value [root]
+  (let [socket-file (fs/path root ".swarmforge" "tmux-socket")]
+    (when (fs/regular-file? socket-file)
+      (str/trim (slurp (str socket-file))))))
+
+(defn sl-dashboard-message [message]
+  (str sl-message-prefix "\n\n" message))
+
+(defn send-sl-dashboard-message! [socket message]
+  (tmux-notify! socket "swarmforge-squad-leader" (sl-dashboard-message message)))
+
+(defn sl-message-result! [root socket message]
+  (if (send-sl-dashboard-message! socket message)
+    (do
+      (log! root "web-sl-message-sent")
+      {:ok true})
+    (web-error "Could not send message to squad leader\n")))
+
 (defn sl-message-web-action! [root text]
   (let [message (str/trim (or text ""))]
-    (if (str/blank? message)
-      {:ok false :status 409 :error "Message is empty\n"}
-      (let [socket-file (fs/path root ".swarmforge" "tmux-socket")]
-        (if-not (fs/regular-file? socket-file)
-          {:ok false :status 409 :error "Missing tmux socket\n"}
-          (let [socket (str/trim (slurp (str socket-file)))
-                sent? (tmux-notify! socket
-                                    "swarmforge-squad-leader"
-                                    (str sl-message-prefix "\n\n" message))]
-            (if sent?
-              (do
-                (log! root "web-sl-message-sent")
-                {:ok true})
-              {:ok false :status 409 :error "Could not send message to squad leader\n"})))))))
+    (cond
+      (str/blank? message) (web-error "Message is empty\n")
+      (nil? (socket-value root)) (web-error "Missing tmux socket\n")
+      :else (sl-message-result! root (socket-value root) message))))
+
+(defn state-response [root]
+  (response 200 "application/json; charset=utf-8" (to-json (web-state root))))
+
+(defn approval-response [root path]
+  (let [[_ encoded-id action] (re-matches #"/api/approvals/([^/]+)/(approve|reject)" path)
+        result (approval-web-action! root (url-decode encoded-id) action)]
+    (if (:ok result)
+      (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
+      (response (:status result) "text/plain; charset=utf-8" (:error result)))))
+
+(defn sl-message-response [root body]
+  (let [result (sl-message-web-action! root body)]
+    (if (:ok result)
+      (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
+      (response (:status result) "text/plain; charset=utf-8" (:error result)))))
+
+(def web-routes
+  [{:method "GET"
+    :path "/"
+    :handler (fn [_ _ _] (response 200 "text/html; charset=utf-8" dashboard-html))}
+   {:method "GET"
+    :path "/api/state"
+    :handler (fn [root _ _] (state-response root))}
+   {:method "POST"
+    :pattern #"/api/approvals/[^/]+/(approve|reject)"
+    :handler (fn [root path _] (approval-response root path))}
+   {:method "POST"
+    :path "/api/sl-message"
+    :handler (fn [root _ body] (sl-message-response root body))}])
+
+(defn route-matches? [{:keys [method path pattern]} request-method request-path]
+  (and (= method request-method)
+       (or (= path request-path)
+           (and pattern (re-matches pattern request-path)))))
+
+(defn route-response [root method path body]
+  (some (fn [{:keys [handler] :as route}]
+          (when (route-matches? route method path)
+            (handler root path body)))
+        web-routes))
+
+(defn route-web-request [root method path body]
+  (or (route-response root method path body)
+      (if (contains? #{"GET" "POST"} method)
+        (response 404 "text/plain; charset=utf-8" "Not found\n")
+        (response 405 "text/plain; charset=utf-8" "Method not allowed\n"))))
 
 (defn handle-web-request [root method path body]
   (try
-    (cond
-      (and (= method "GET") (= path "/"))
-      (response 200 "text/html; charset=utf-8" dashboard-html)
-
-      (and (= method "GET") (= path "/api/state"))
-      (response 200 "application/json; charset=utf-8" (to-json (web-state root)))
-
-      (and (= method "POST") (re-matches #"/api/approvals/[^/]+/(approve|reject)" path))
-      (let [[_ encoded-id action] (re-matches #"/api/approvals/([^/]+)/(approve|reject)" path)
-            result (approval-web-action! root (url-decode encoded-id) action)]
-        (if (:ok result)
-          (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
-          (response (:status result) "text/plain; charset=utf-8" (:error result))))
-
-      (and (= method "POST") (= path "/api/sl-message"))
-      (let [result (sl-message-web-action! root body)]
-        (if (:ok result)
-          (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
-          (response (:status result) "text/plain; charset=utf-8" (:error result))))
-
-      (contains? #{"GET" "POST"} method)
-      (response 404 "text/plain; charset=utf-8" "Not found\n")
-
-      :else
-      (response 405 "text/plain; charset=utf-8" "Method not allowed\n"))
+    (route-web-request root method path body)
     (catch Exception e
       (response 500 "text/plain; charset=utf-8" (str (.getMessage e) "\n")))))
 
@@ -942,67 +1213,107 @@
     (.write out bytes)
     (.flush out)))
 
+(defn header-entry [line]
+  (let [[k v] (str/split line #":\s*" 2)]
+    (when (and k v)
+      [(str/lower-case k) v])))
+
+(defn read-header-line [reader]
+  (let [line (.readLine reader)]
+    (when-not (or (nil? line) (str/blank? line))
+      line)))
+
+(defn read-headers [reader]
+  (loop [headers {}]
+    (if-let [line (read-header-line reader)]
+      (recur (if-let [[k v] (header-entry line)]
+               (assoc headers k v)
+               headers))
+      headers)))
+
+(defn content-length [headers]
+  (try
+    (Long/parseLong (get headers "content-length" "0"))
+    (catch Exception _ 0)))
+
+(defn read-body [reader length]
+  (if (pos? length)
+    (let [buffer (char-array length)
+          read-count (.read reader buffer 0 length)]
+      (String. buffer 0 (max 0 read-count)))
+    ""))
+
+(defn parse-request-line [request-line]
+  (when request-line
+    (let [[_ method target] (re-matches #"([A-Z]+)\s+(\S+)\s+HTTP/.*" request-line)]
+      {:method method :target target})))
+
+(defn target-path [target]
+  (first (str/split target #"\?" 2)))
+
+(defn request-response [root {:keys [method target]} body]
+  (if (and method target)
+    (handle-web-request root method (target-path target) body)
+    (response 400 "text/plain; charset=utf-8" "Bad request\n")))
+
 (defn handle-client! [root socket]
   (with-open [socket socket
               reader (java.io.BufferedReader.
                       (java.io.InputStreamReader. (.getInputStream socket) "UTF-8"))]
-    (let [request-line (.readLine reader)
-          [_ method target] (when request-line
-                              (re-matches #"([A-Z]+)\s+(\S+)\s+HTTP/.*" request-line))
-          headers (loop [headers {}]
-                    (let [line (.readLine reader)]
-                      (if (or (nil? line) (str/blank? line))
-                        headers
-                        (let [[k v] (str/split line #":\s*" 2)]
-                          (recur (if (and k v)
-                                   (assoc headers (str/lower-case k) v)
-                                   headers))))))
-          content-length (try
-                           (Long/parseLong (get headers "content-length" "0"))
-                           (catch Exception _ 0))
-          body (if (pos? content-length)
-                 (let [buffer (char-array content-length)
-                       read-count (.read reader buffer 0 content-length)]
-                   (String. buffer 0 (max 0 read-count)))
-                 "")]
-      (send-socket-response! socket
-                             (if (and method target)
-                               (handle-web-request root method (first (str/split target #"\?" 2)) body)
-                               (response 400 "text/plain; charset=utf-8" "Bad request\n"))))))
+    (let [request (parse-request-line (.readLine reader))
+          headers (read-headers reader)
+          body (read-body reader (content-length headers))]
+      (send-socket-response! socket (request-response root request body)))))
+
+(defn web-enabled? []
+  (not= "0" (System/getenv "SWARMFORGE_SQUADD_WEB")))
+
+(defn web-open-command []
+  (cond
+    (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN_COMMAND")
+    (str/split (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN_COMMAND") #"\s+")
+    (= "Mac OS X" (System/getProperty "os.name"))
+    ["open"]
+    :else
+    ["xdg-open"]))
+
+(defn should-open-web? []
+  (and (not= "0" (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN"))
+       (not= "1" (System/getenv "SWARMFORGE_SQUADD_SKIP_TMUX"))))
+
+(defn maybe-open-web! [root url]
+  (when (should-open-web?)
+    (let [result (apply sh-continue (concat (web-open-command) [url]))]
+      (if (zero? (:exit result))
+        (log! root "web-opened" url)
+        (log! root "web-open-failed" url (str "exit " (:exit result)))))))
+
+(defn web-accept-loop! [root server-socket]
+  (try
+    (while (not (.isClosed server-socket))
+      (try
+        (handle-client! root (.accept server-socket))
+        (catch java.net.SocketException _ nil)
+        (catch Exception e
+          (log! root "web-error" (.getMessage e)))))
+    (catch java.net.SocketException _ nil)))
+
+(defn start-web-thread! [root server-socket]
+  (let [thread (Thread. #(web-accept-loop! root server-socket))]
+    (.setDaemon thread true)
+    (.start thread)
+    thread))
 
 (defn start-web-server! [root]
-  (when-not (= "0" (System/getenv "SWARMFORGE_SQUADD_WEB"))
+  (when (web-enabled?)
     (let [port (env-long "SWARMFORGE_SQUADD_WEB_PORT" 0)
           server-socket (ServerSocket. port 50 (InetAddress/getByName "127.0.0.1"))
           actual-port (.getLocalPort server-socket)
           url (str "http://127.0.0.1:" actual-port "/")
-          thread (Thread.
-                  (fn []
-                    (try
-                      (while (not (.isClosed server-socket))
-                        (try
-                          (handle-client! root (.accept server-socket))
-                          (catch java.net.SocketException _ nil)
-                          (catch Exception e
-                            (log! root "web-error" (.getMessage e)))))
-                      (catch java.net.SocketException _ nil))))]
-      (.setDaemon thread true)
-      (.start thread)
+          thread (start-web-thread! root server-socket)]
       (write-atomic! (fs/path (daemon-dir root) "squad-web-url") (str url "\n"))
       (log! root "web-started" url)
-      (when (and (not= "0" (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN"))
-                 (not= "1" (System/getenv "SWARMFORGE_SQUADD_SKIP_TMUX")))
-        (let [command (cond
-                        (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN_COMMAND")
-                        (str/split (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN_COMMAND") #"\s+")
-                        (= "Mac OS X" (System/getProperty "os.name"))
-                        ["open"]
-                        :else
-                        ["xdg-open"])
-              result (apply sh-continue (concat command [url]))]
-          (if (zero? (:exit result))
-            (log! root "web-opened" url)
-            (log! root "web-open-failed" url (str "exit " (:exit result))))))
+      (maybe-open-web! root url)
       {:socket server-socket :thread thread})))
 
 (defn stop-web-server! [web-server]
@@ -1025,53 +1336,68 @@
                          (str/ends-with? (fs/file-name %) ".request")))
            (sort-by #(fs/file-name %))))))
 
+(defn valid-spawn-request? [{:strs [template task_id assignment]}]
+  (not (or (str/blank? template)
+           (str/blank? task_id)
+           (str/blank? assignment))))
+
+(defn spawn-env []
+  (cond-> {"PATH" (System/getenv "PATH")
+           "GIT_CONFIG_NOSYSTEM" "1"}
+    (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
+    (assoc "SWARMFORGE_SQUAD_NO_LAUNCH" "1")
+    (not (str/blank? (System/getenv "SWARMFORGE_SQUAD_AGENT")))
+    (assoc "SWARMFORGE_SQUAD_AGENT" (System/getenv "SWARMFORGE_SQUAD_AGENT"))
+    (not (str/blank? (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND")))
+    (assoc "SWARMFORGE_SQUAD_AGENT_COMMAND" (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND"))))
+
+(defn run-spawn-request! [root {:strs [template task_id assignment]}]
+  (process/sh {:continue true
+               :dir (str root)
+               :env (spawn-env)}
+              (str (fs/path script-dir "squad_spawn.sh"))
+              template
+              task_id
+              assignment))
+
+(defn fail-spawn-request! [root active failed message]
+  (fs/create-dirs failed)
+  (spit (str active ".error") message)
+  (move-with-collision active failed)
+  (log! root "spawn-request-failed" (str active) "invalid request"))
+
+(defn archive-spawn-result! [root active base completed failed result]
+  (let [target-dir (if (zero? (:exit result)) completed failed)]
+    (fs/create-dirs target-dir)
+    (spit (str (fs/path target-dir (str base ".out"))) (:out result))
+    (spit (str (fs/path target-dir (str base ".err"))) (:err result))
+    (when-not (zero? (:exit result))
+      (spit (str (fs/path target-dir (str base ".error"))) (str "exit " (:exit result) "\n")))
+    (move-with-collision active target-dir)
+    (if (zero? (:exit result))
+      (log! root "spawn-request-completed" (str active))
+      (log! root "spawn-request-failed" (str active) (str "exit " (:exit result))))))
+
+(defn handle-active-spawn-request! [root active base completed failed request-data]
+  (if-not (valid-spawn-request? request-data)
+    (fail-spawn-request! root active failed "spawn request missing template, task_id, or assignment\n")
+    (archive-spawn-result! root active base completed failed
+                           (run-spawn-request! root request-data))))
+
 (defn process-spawn-request! [root request]
   (let [{:keys [in-process completed failed]} (spawn-request-dirs root)
         base (fs/file-name request)
-        active (fs/path in-process base)]
-    (let [{:strs [template task_id assignment]} (parse-kv-file request)
-          blocker (when-not (str/blank? template)
-                    (spawn-capacity-blocker root template))]
-      (if blocker
-        (log! root "spawn-request-deferred" (str request) blocker)
-        (do
-          (fs/create-dirs in-process)
-          (fs/move request active {:replace-existing false})
-          (if (or (str/blank? template) (str/blank? task_id) (str/blank? assignment))
-            (do
-              (fs/create-dirs failed)
-              (spit (str active ".error") "spawn request missing template, task_id, or assignment\n")
-              (move-with-collision active failed)
-              (log! root "spawn-request-failed" (str active) "invalid request"))
-            (let [env (cond-> {"PATH" (System/getenv "PATH")
-                               "GIT_CONFIG_NOSYSTEM" "1"}
-                        (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
-                        (assoc "SWARMFORGE_SQUAD_NO_LAUNCH" "1")
-                        (not (str/blank? (System/getenv "SWARMFORGE_SQUAD_AGENT")))
-                        (assoc "SWARMFORGE_SQUAD_AGENT" (System/getenv "SWARMFORGE_SQUAD_AGENT"))
-                        (not (str/blank? (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND")))
-                        (assoc "SWARMFORGE_SQUAD_AGENT_COMMAND" (System/getenv "SWARMFORGE_SQUAD_AGENT_COMMAND")))
-                  result (process/sh {:continue true
-                                      :dir (str root)
-                                      :env env}
-                                     (str (fs/path script-dir "squad_spawn.sh"))
-                                     template
-                                     task_id
-                                     assignment)]
-              (if (zero? (:exit result))
-                (do
-                  (fs/create-dirs completed)
-                  (spit (str (fs/path completed (str base ".out"))) (:out result))
-                  (spit (str (fs/path completed (str base ".err"))) (:err result))
-                  (move-with-collision active completed)
-                  (log! root "spawn-request-completed" (str active)))
-                (do
-                  (fs/create-dirs failed)
-                  (spit (str (fs/path failed (str base ".out"))) (:out result))
-                  (spit (str (fs/path failed (str base ".err"))) (:err result))
-                  (spit (str (fs/path failed (str base ".error"))) (str "exit " (:exit result) "\n"))
-                  (move-with-collision active failed)
-                  (log! root "spawn-request-failed" (str active) (str "exit " (:exit result))))))))))))
+        active (fs/path in-process base)
+        request-data (parse-kv-file request)
+        template (get request-data "template")
+        blocker (when-not (str/blank? template)
+                  (spawn-capacity-blocker root template))]
+    (if blocker
+      (log! root "spawn-request-deferred" (str request) blocker)
+      (do
+        (fs/create-dirs in-process)
+        (fs/move request active {:replace-existing false})
+        (handle-active-spawn-request! root active base completed failed request-data)))))
 
 (defn poll-spawn-requests! [root]
   (doseq [request (or (spawn-request-files root) [])
@@ -1118,19 +1444,23 @@
         (Thread/sleep step)
         (recur (- remaining step))))))
 
+(def arg-handlers
+  {"--once" (fn [opts _] (assoc opts :once? true))
+   "--no-notify" (fn [opts _] (assoc opts :no-notify? true))})
+
+(defn apply-arg! [opts arg]
+  (if-let [handler (arg-handlers arg)]
+    (handler opts arg)
+    (do
+      (when (or (:root opts) (str/starts-with? arg "--"))
+        (exit! 1 usage-text))
+      (assoc opts :root arg))))
+
 (defn parse-args [args]
   (loop [remaining args
          opts {:once? false :no-notify? false :root nil}]
     (if-let [arg (first remaining)]
-      (case arg
-        "--once" (recur (rest remaining) (assoc opts :once? true))
-        "--no-notify" (recur (rest remaining) (assoc opts :no-notify? true))
-        (if (:root opts)
-          (exit! 1 usage-text)
-          (do
-            (when (str/starts-with? arg "--")
-              (exit! 1 usage-text))
-            (recur (rest remaining) (assoc opts :root arg)))))
+      (recur (rest remaining) (apply-arg! opts arg))
       (update opts :root #(or % (project-root))))))
 
 (defn shutdown! [root]

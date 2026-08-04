@@ -1,5 +1,6 @@
 (ns squad-config
   (:require [babashka.fs :as fs]
+            [clojure.java.shell :as shell]
             [clojure.string :as str]))
 
 (def squad-default-max-transient-agents 5)
@@ -48,6 +49,38 @@
            vec)
       [])))
 
+(defn configured-project-root []
+  (when-let [configured (not-empty (System/getenv "SWARMFORGE_PROJECT_ROOT"))]
+    (when (fs/exists? (fs/path configured ".swarmforge" "roles.tsv"))
+      (fs/path configured))))
+
+(defn cwd-project-root []
+  (let [cwd (fs/cwd)]
+    (when (fs/exists? (fs/path cwd ".swarmforge" "roles.tsv"))
+      cwd)))
+
+(defn git-project-root []
+  (let [result (shell/sh "git" "rev-parse" "--show-toplevel")]
+    (when (zero? (:exit result))
+      (let [root (str/trim (:out result))]
+        (when (fs/exists? (fs/path root ".swarmforge" "roles.tsv"))
+          (fs/path root))))))
+
+(defn git-common-project-root []
+  (let [result (shell/sh "git" "rev-parse" "--git-common-dir")]
+    (when (zero? (:exit result))
+      (let [common (fs/path (str/trim (:out result)))
+            common (if (fs/absolute? common) common (fs/absolutize common))
+            root (fs/parent common)]
+        (when (fs/exists? (fs/path root ".swarmforge" "roles.tsv"))
+          root)))))
+
+(defn project-root []
+  (or (configured-project-root)
+      (cwd-project-root)
+      (git-project-root)
+      (git-common-project-root)))
+
 (defn squad-config-long [root key default-value]
   (let [value (squad-config-value root key)]
     (if (and value (re-matches #"[0-9]+" value))
@@ -61,22 +94,28 @@
       (#{"false" "no" "0" "off" "not-required"} value) false
       :else default-value)))
 
+(defn parse-config-bool [value default-value]
+  (let [value (some-> value str/lower-case str/trim)]
+    (cond
+      (#{"true" "yes" "1" "on" "required"} value) true
+      (#{"false" "no" "0" "off" "not-required"} value) false
+      :else default-value)))
+
+(defn approval-required-config [root gate-key]
+  (some (fn [[configured-gate value]]
+          (when (= (str/replace configured-gate "-" "_") gate-key)
+            value))
+        (squad-config-entries root "approval_required")))
+
+(defn default-approval-required [gate gate-key]
+  (or (get squad-default-approval-required gate)
+      (get squad-default-approval-required gate-key)
+      false))
+
 (defn squad-approval-required? [root gate]
   (let [gate-key (str/replace gate "-" "_")
-        configured (some (fn [[configured-gate value]]
-                           (when (= (str/replace configured-gate "-" "_") gate-key)
-                             value))
-                         (squad-config-entries root "approval_required"))
-        default (or (get squad-default-approval-required gate)
-                    (get squad-default-approval-required gate-key)
-                    false)]
-    (if configured
-      (let [value (str/lower-case (str/trim configured))]
-        (cond
-          (#{"true" "yes" "1" "on" "required"} value) true
-          (#{"false" "no" "0" "off" "not-required"} value) false
-          :else default))
-      default)))
+        default (default-approval-required gate gate-key)]
+    (parse-config-bool (approval-required-config root gate-key) default)))
 
 (defn squad-transient-agent-config [root]
   (squad-config-value root "transient_agent"))

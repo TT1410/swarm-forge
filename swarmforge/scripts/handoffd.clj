@@ -120,27 +120,41 @@
     (spit (str path ".error") (str reason "\n"))
     (move-with-collision path failed-dir)))
 
+(defn message-recipients [message]
+  (some-> (get-in message [:headers "to"]) (str/split #",") seq))
+
+(defn ensure-role-info! [roles recipient]
+  (or (get roles recipient)
+      (throw (ex-info (str "unknown recipient " recipient) {:recipient recipient}))))
+
+(defn delivered-message [message recipient]
+  (add-delivery-headers message recipient))
+
+(defn write-delivered-message! [role-info filename message]
+  (let [target (target-path role-info filename)]
+    (fs/create-dirs (fs/parent target))
+    (when-not (fs/exists? target)
+      (spit (str target) (render-message (:headers message) (:body message))))))
+
+(defn deliver-recipient! [roles socket filename message recipient]
+  (let [role-info (ensure-role-info! roles recipient)]
+    (write-delivered-message! role-info filename (delivered-message message recipient))
+    (notify! socket (:session role-info))))
+
+(defn sent-dir [roles sender-role]
+  (fs/path (get-in roles [sender-role :worktree-path])
+           ".swarmforge" "handoffs" "sent"))
+
 (defn deliver! [roles socket sender-role path]
   (let [filename (fs/file-name path)
         message (parse-message path)
-        headers (:headers message)
-        recipients (some-> (get headers "to") (str/split #",") seq)]
+        recipients (message-recipients message)]
     (if-not recipients
       (fail! path "missing to header")
       (do
         (doseq [recipient recipients]
-          (let [role-info (get roles recipient)]
-            (when-not role-info
-              (throw (ex-info (str "unknown recipient " recipient) {:recipient recipient})))
-            (let [target (target-path role-info filename)
-                  delivered (add-delivery-headers message recipient)]
-              (fs/create-dirs (fs/parent target))
-              (when-not (fs/exists? target)
-                (spit (str target) (render-message (:headers delivered) (:body delivered))))
-              (notify! socket (:session role-info)))))
-        (move-with-collision path
-                             (fs/path (get-in roles [sender-role :worktree-path])
-                                      ".swarmforge" "handoffs" "sent"))
+          (deliver-recipient! roles socket filename message recipient))
+        (move-with-collision path (sent-dir roles sender-role))
         (log! "delivered" (str path))))))
 
 (defn outbox-files [role-info]
@@ -161,21 +175,31 @@
         (Thread/sleep step)
         (recur (- remaining step))))))
 
+(defn archive-failed! [path error]
+  (try
+    (fail! path (.getMessage error))
+    (catch Exception nested
+      (log! "failed-to-archive" (str path) (.getMessage nested)))))
+
+(defn deliver-outbox-file! [roles socket role path]
+  (try
+    (deliver! roles socket role path)
+    (catch Exception e
+      (log! "error" (str path) (.getMessage e))
+      (archive-failed! path e))))
+
+(defn poll-role! [roles socket role role-info]
+  (doseq [path (or (outbox-files role-info) [])
+          :while (not (should-stop?))]
+    (deliver-outbox-file! roles socket role path)))
+
 (defn poll-once! []
   (when-not (should-stop?)
     (let [roles (load-roles)
           socket (str/trim (slurp (str socket-file)))]
       (doseq [[role role-info] roles
-              path (or (outbox-files role-info) [])
               :while (not (should-stop?))]
-        (try
-          (deliver! roles socket role path)
-          (catch Exception e
-            (log! "error" (str path) (.getMessage e))
-            (try
-              (fail! path (.getMessage e))
-              (catch Exception nested
-                (log! "failed-to-archive" (str path) (.getMessage nested))))))))))
+        (poll-role! roles socket role role-info)))))
 
 (defn shutdown! []
   (reset! stopping-flag true)

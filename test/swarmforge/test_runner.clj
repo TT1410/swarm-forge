@@ -1,7 +1,37 @@
 (ns swarmforge.test-runner
   (:require [clojure.test :as test]
+            [swarmforge.artifact-workflow-test]
+            [swarmforge.assign-merge-test]
+            [swarmforge.crap-coverage-test]
             [swarmforge.handoff-test]
-            [swarmforge.script-test]))
+            [swarmforge.handoff-lib-test]
+            [swarmforge.launcher-test]
+            [swarmforge.recover-test]
+            [swarmforge.role-contract-test]
+            [swarmforge.simulator-test]
+            [swarmforge.spawn-test]
+            [swarmforge.squad-next-test]
+            [swarmforge.squadd-test]
+            [swarmforge.squadd-web-test]
+            [swarmforge.tool-test]
+            [swarmforge.window-cleanup-test]))
+
+(def script-test-namespaces
+  '[swarmforge.artifact-workflow-test
+    swarmforge.assign-merge-test
+    swarmforge.handoff-lib-test
+    swarmforge.launcher-test
+    swarmforge.recover-test
+    swarmforge.role-contract-test
+    swarmforge.spawn-test
+    swarmforge.squad-next-test
+    swarmforge.squadd-test
+    swarmforge.squadd-web-test
+    swarmforge.tool-test
+    swarmforge.window-cleanup-test])
+
+(def simulation-test-namespaces
+  '[swarmforge.simulator-test])
 
 (defn test-vars [ns-sym pred]
   (->> (ns-publics ns-sym)
@@ -24,10 +54,14 @@
   (run-vars! "non-simulation"
              (concat (test-vars 'swarmforge.handoff-test
                                 (fn [v] (not (:simulation (meta v)))))
-                     (test-vars 'swarmforge.script-test
-                                (fn [v] (not (:simulation (meta v))))))))
+                     (test-vars 'swarmforge.crap-coverage-test
+                                (fn [v] (not (:simulation (meta v)))))
+                     (mapcat #(test-vars %
+                                          (fn [v] (not (:simulation (meta v)))))
+                             script-test-namespaces))))
 
 (defn run-simulation! []
   (run-vars! "simulation"
-             (test-vars 'swarmforge.script-test
-                        (fn [v] (:simulation (meta v))))))
+             (mapcat #(test-vars %
+                                  (fn [v] (:simulation (meta v))))
+                     simulation-test-namespaces)))
