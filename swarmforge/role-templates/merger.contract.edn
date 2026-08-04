@@ -1,0 +1,11 @@
+{:role "merger"
+ :handoff-targets ["squad-leader"]
+ :may-web-search false
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :may-run-broad-tests true
+ :writes ["merge-conflict-resolution" "integration-notes"]
+ :artifact-roots ["src/" "test/" "features/" "qa/" ".squad/"]
+ :workflow-readiness-source "squad_next.sh"
+ :conflict-resolution true}

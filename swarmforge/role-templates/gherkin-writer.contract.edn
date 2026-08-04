@@ -5,6 +5,8 @@
  :may-spawn false
  :may-talk-to-user false
  :may-run-broad-tests false
+ :optional-tools [{:name "gherkin-parser" :source "github.com/unclebob/Acceptance-Pipeline-Specification" :version "latest" :purpose "APS parsing"}
+                  {:name "ir-dry-checker" :source "github.com/unclebob/Acceptance-Pipeline-Specification" :version "latest" :purpose "IR DRY"}]
  :writes ["gherkin"]
  :artifact-roots ["features/"]
  :forbidden-artifact-roots ["stories/" "qa/" "src/" "test/" ".squad/reviews/"]}

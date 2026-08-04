@@ -27,9 +27,6 @@ if has_command bb; then
   if [[ -f "$SCRIPT_DIR/stop_squadd.bb" ]]; then
     bb "$SCRIPT_DIR/stop_squadd.bb" "$WORKING_DIR" 2>/dev/null || true
   fi
-  if [[ -f "$SCRIPT_DIR/stop_squad_status_daemon.bb" ]]; then
-    bb "$SCRIPT_DIR/stop_squad_status_daemon.bb" "$WORKING_DIR" 2>/dev/null || true
-  fi
   bb "$SCRIPT_DIR/stop_handoff_daemon.bb" "$WORKING_DIR" 2>/dev/null || true
 else
   squadd_pid_file="$WORKING_DIR/.swarmforge/daemon/squadd.pid"
@@ -39,14 +36,6 @@ else
       kill -TERM "$squadd_pid" 2>/dev/null || true
     fi
     rm -f "$squadd_pid_file"
-  fi
-  squad_status_pid_file="$WORKING_DIR/.swarmforge/daemon/squad-statusd.pid"
-  if [[ -f "$squad_status_pid_file" ]]; then
-    squad_status_pid="$(< "$squad_status_pid_file")"
-    if [[ "$squad_status_pid" == <-> ]]; then
-      kill -TERM "$squad_status_pid" 2>/dev/null || true
-    fi
-    rm -f "$squad_status_pid_file"
   fi
   DAEMON_PID_FILE="$WORKING_DIR/.swarmforge/daemon/handoffd.pid"
   if [[ -f "$DAEMON_PID_FILE" ]]; then
@@ -73,6 +62,26 @@ tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
 
 sleep 1
 
+agents_dir="$WORKING_DIR/.squad/agents"
+if [[ -d "$agents_dir" ]]; then
+  for agent_dir in "$agents_dir"/*; do
+    [[ -d "$agent_dir" ]] || continue
+    agent_id="${agent_dir:t}"
+    [[ "$agent_id" == "squad-leader" ]] && continue
+    status_file="$agent_dir/status"
+    heartbeat_file="$agent_dir/heartbeat"
+    old_state="$(awk -F': ' '$1 == "state" { print $2; exit }' "$status_file" 2>/dev/null || true)"
+    if [[ "$old_state" == "handoff_sent" ]]; then
+      detail="swarm terminated after handoff_sent; inspect handoff inbox/outbox for recovery"
+    else
+      detail="swarm terminated by cleanup"
+    fi
+    timestamp="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+    printf "state: retired\ndetail: %s\nupdated_at: %s\n" "$detail" "$timestamp" > "$status_file"
+    printf "agent: %s\nstate: retired\ndetail: %s\nupdated_at: %s\n" "$agent_id" "$detail" "$timestamp" > "$heartbeat_file"
+  done
+fi
+
 if has_command git && [[ -d "$WORKING_DIR/.git" ]]; then
   typeset -U managed_worktrees
   managed_worktrees=()
@@ -82,8 +91,7 @@ if has_command git && [[ -d "$WORKING_DIR/.git" ]]; then
   done < <(git -C "$WORKING_DIR" worktree list --porcelain 2>/dev/null | awk '/^worktree / {print substr($0, 10)}')
 
   if [[ -d "$WORKING_DIR/.worktrees" ]]; then
-    for worktree_path in "$WORKING_DIR"/.worktrees/*; do
-      [[ -e "$worktree_path" ]] || continue
+    for worktree_path in "$WORKING_DIR"/.worktrees/*(N); do
       [[ -d "$worktree_path" ]] || continue
       managed_worktrees+=("$worktree_path")
     done

@@ -100,6 +100,32 @@
          (approved-file root approval-id)
          (rejected-file root approval-id)]))
 
+(defn approval-files [root]
+  (for [state ["pending" "approved" "rejected"]
+        :let [dir (approvals-dir root state)]
+        :when (fs/exists? dir)
+        file (fs/list-dir dir)
+        :when (fs/regular-file? file)]
+    file))
+
+(defn equivalent-approval-file [root target-kind target-id gate]
+  (some (fn [file]
+          (let [approval (file-map file)]
+            (when (and (= target-kind (get approval "target_kind"))
+                       (= target-id (get approval "target_id"))
+                       (= gate (get approval "gate")))
+              file)))
+        (approval-files root)))
+
+(defn print-request-result! [root file]
+  (let [approval (file-map file)
+        approval-id (get approval "approval_id" (str/replace (fs/file-name file) #"\.approval$" ""))
+        gate (get approval "gate" "unknown")]
+    (println "SQUAD_APPROVAL:" approval-id)
+    (println "STATE:" (get approval "state" "unknown"))
+    (println "REQUIRED:" (squad-approval-required? root gate))
+    (println "FILE:" (str file))))
+
 (defn packet-file [root story-id]
   (fs/path root ".squad" "stories" story-id "packet"))
 
@@ -142,20 +168,20 @@
       (exit! 1 (str "Approval target not found: " target-kind " " target-id)))
     (when (approval-file root approval-id)
       (exit! 2 (str "Approval already exists: " approval-id)))
-    (write-atomic! file
-                   (str "approval_id: " approval-id "\n"
-                        "target_kind: " target-kind "\n"
-                        "target_id: " target-id "\n"
-                        "gate: " gate "\n"
-                        "state: pending\n"
-                        "title: " title "\n"
-                        "reason: " reason "\n"
-                        "created_at: " now "\n"
-                        "approve_command: " (str/join " " (command-for target-kind target-id gate "approved-by-user")) "\n"))
-    (println "SQUAD_APPROVAL:" approval-id)
-    (println "STATE: pending")
-    (println "REQUIRED:" (squad-approval-required? root gate))
-    (println "FILE:" (str file))))
+    (if-let [existing (equivalent-approval-file root target-kind target-id gate)]
+      (print-request-result! root existing)
+      (do
+        (write-atomic! file
+                       (str "approval_id: " approval-id "\n"
+                            "target_kind: " target-kind "\n"
+                            "target_id: " target-id "\n"
+                            "gate: " gate "\n"
+                            "state: pending\n"
+                            "title: " title "\n"
+                            "reason: " reason "\n"
+                            "created_at: " now "\n"
+                            "approve_command: " (str/join " " (command-for target-kind target-id gate "approved-by-user")) "\n"))
+        (print-request-result! root file)))))
 
 (defn move-with-state! [source target state detail]
   (let [content (slurp (str source))

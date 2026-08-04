@@ -428,7 +428,7 @@ The kill path killed tmux and `squadd` but left worktrees, branches, and roles.
 Add final reconciliation to cleanup:
 
 - kill tmux sessions
-- stop `squadd` and status daemons
+- stop `squadd`
 - remove every transient role from `.swarmforge/roles.tsv`
 - remove every managed `.worktrees/<agent>`
 - delete every matching `swarmforge-<agent>` branch

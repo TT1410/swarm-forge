@@ -4,6 +4,8 @@
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
+ :required-tools [{:name "crap4clj" :source "github.com/unclebob/crap4clj" :version "latest" :purpose "CRAP"}
+                  {:name "dry4clj" :source "github.com/unclebob/dry4clj" :version "latest" :purpose "DRY"}]
  :writes ["qa-scripts" "qa-fixes" "qa-report"]
  :artifact-roots ["qa/" "src/" "test/"]
  :singleton true

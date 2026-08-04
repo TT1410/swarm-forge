@@ -3,6 +3,7 @@
 (ns squad-assign
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 (def usage-text
@@ -224,7 +225,22 @@
   (and (= "analyst" template)
        (= "theme" story-id)))
 
-(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text story-text instructions-text requirement packet-text]}]
+(defn tool-lines [label tools]
+  (when (seq tools)
+    (str "## " label "\n\n"
+         (apply str
+                (for [{:keys [name source version purpose]} tools]
+                  (str "- " name
+                       (when purpose (str " (" purpose ")"))
+                       ": `squad_tool.sh require " name " " source " " version "`\n")))
+         "\n")))
+
+(defn role-contract [root template]
+  (let [file (fs/path root "swarmforge" "role-templates" (str template ".contract.edn"))]
+    (when (fs/regular-file? file)
+      (edn/read-string (slurp (str file))))))
+
+(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text story-text instructions-text requirement packet-text required-tools optional-tools]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
@@ -244,6 +260,8 @@
               "```text\n"
               packet-text
               "```\n\n"))
+       (tool-lines "Required Tools" required-tools)
+       (tool-lines "Optional Tools" optional-tools)
        "## Leader Instructions\n\n"
        instructions-text "\n\n"
        "## Required Transient Protocol\n\n"
@@ -274,6 +292,7 @@
         template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
         instructions (source-file! instructions-file)
         dir (assignment-dir root assignment-id)
+        contract (role-contract root template)
         now (timestamp)]
     (ensure-file! "Theme file not found" theme-file)
     (when-not theme-scoped?
@@ -299,7 +318,9 @@
                                               :instructions-text (slurp (str instructions))
                                               :requirement requirement
                                               :packet-text (when packet
-                                                             (slurp (str packet)))})
+                                                             (slurp (str packet)))
+                                              :required-tools (:required-tools contract)
+                                              :optional-tools (:optional-tools contract)})
           assignment-file (fs/path dir "assignment.md")]
       (write-atomic! assignment-file assignment-text)
       (write-atomic! (fs/path dir "result-handoff.draft")
@@ -438,6 +459,28 @@
   (not (str/blank?
         (str/trim (:out (sh-at root "git" "status" "--porcelain" "--untracked-files=no"))))))
 
+(defn remove-merge-check-worktree! [root worktree]
+  (when (fs/exists? worktree)
+    (let [removed (sh-at root "git" "worktree" "remove" "--force" (str worktree))]
+      (when-not (zero? (:exit removed))
+        (fs/delete-tree worktree)
+        (sh-at root "git" "worktree" "prune")))))
+
+(defn with-merge-check-worktree [root f]
+  (let [parent (fs/path root ".squad" "tmp" "merge-checks")
+        _ (fs/create-dirs parent)
+        worktree (fs/create-temp-dir {:dir parent :prefix "merge-ready-"})]
+    (fs/delete-tree worktree)
+    (try
+      (let [added (sh-at root "git" "worktree" "add" "--detach" (str worktree) "HEAD")]
+        (when-not (zero? (:exit added))
+          (exit! (:exit added)
+                 "Could not create isolated merge-check worktree."
+                 (:err added)))
+        (f worktree))
+      (finally
+        (remove-merge-check-worktree! root worktree)))))
+
 (defn write-merge-error! [dir phase result]
   (write-atomic! (fs/path dir "merge-error")
                  (str "phase: " phase "\n"
@@ -486,14 +529,6 @@
         (let [known (sh-at root "git" "rev-parse" "--verify" (str commit "^{commit}"))]
           (when-not (zero? (:exit known))
             (exit! 2 (str "Unknown result commit: " commit))))
-        (when (tracked-dirty? root)
-          (write-merge-state! root dir assignment-id "merge_blocked" "tracked checkout dirty" commit now)
-          (binding [*out* *err*]
-            (println "SQUAD_ASSIGNMENT:" assignment-id)
-            (println "STATE: merge_blocked")
-            (println "COMMIT:" commit)
-            (println "DETAIL: tracked checkout dirty"))
-          (System/exit 4))
         (let [ancestor (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD")]
           (if (zero? (:exit ancestor))
             (do
@@ -502,17 +537,18 @@
               (println "STATE: merge_ready")
               (println "COMMIT:" commit)
               (println "DETAIL: commit already reachable from HEAD"))
-            (let [merge (sh-at root "git" "merge" "--no-commit" "--no-ff" commit)]
+            (let [merge (with-merge-check-worktree
+                          root
+                          (fn [worktree]
+                            (sh-at worktree "git" "merge" "--no-commit" "--no-ff" commit)))]
               (if (zero? (:exit merge))
                 (do
-                  (abort-merge! root)
                   (write-merge-state! root dir assignment-id "merge_ready" "dry-run merge passed" commit now)
                   (println "SQUAD_ASSIGNMENT:" assignment-id)
                   (println "STATE: merge_ready")
                   (println "COMMIT:" commit)
                   (println "DETAIL: dry-run merge passed"))
                 (do
-                  (abort-merge! root)
                   (write-merge-error! dir "merge-ready" merge)
                   (write-merge-state! root dir assignment-id "merge_blocked" "dry-run merge failed" commit now)
                   (binding [*out* *err*]

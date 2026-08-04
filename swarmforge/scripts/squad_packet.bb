@@ -5,6 +5,9 @@
             [babashka.process :as process]
             [clojure.string :as str]))
 
+(def script-dir (fs/parent *file*))
+(load-file (str (fs/path script-dir "squad_state.bb")))
+
 (def usage-text
   (str "Usage:\n"
        "  squad_packet.sh create <theme-id> <story-id> <story-assignment-id> <branch> <sha>\n"
@@ -13,7 +16,8 @@
        "  squad_packet.sh approve <story-id> <story|gherkin|qa-procedure|implementation|code-review|hardening|qa|architecture|final> <detail...>\n"
        "  squad_packet.sh record <story-id> <implementation|cleaner|hardener|qa|architecture|senior-implementor> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh batch <story-id> <hardener|qa|architecture> <batch-id> <stage> <assignment-id> <branch> <sha>\n"
-       "  squad_packet.sh status <story-id>"))
+       "  squad_packet.sh status <story-id>\n"
+       "  squad_packet.sh validate <story-id>"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
 (def artifact-kinds #{"gherkin" "qa-procedure"})
@@ -136,81 +140,6 @@
 (defn value-or [value fallback]
   (if (str/blank? value) fallback value))
 
-(defn recompute-state [packet]
-  (cond
-    (approved? packet "final_approval") "final_approved"
-    (approved? packet "architecture_approval") "architecture_approved"
-    (accepted? packet "architecture_review") "architecture_reviewed"
-    (contains? packet "senior_implementor_sha") "architecture_revision_returned"
-    (contains? packet "architecture_sha") "architecture_returned"
-    (approved? packet "qa_approval") "qa_approved"
-    (contains? packet "qa_sha") "qa_returned"
-    (approved? packet "hardening_approval") "hardening_approved"
-    (contains? packet "hardener_sha") "hardener_returned"
-    (approved? packet "code_review_approval") "code_review_approved"
-    (and (= "accepted" (get packet "code_review"))
-         (contains? packet "cleaner_sha")) "code_reviewed"
-    (contains? packet "cleaner_sha") "cleaned"
-    (contains? packet "implementation_sha") "implemented"
-    (approved? packet "implementation_approval") "implementation_approved"
-    (and (approved? packet "story_approval")
-         (approved? packet "gherkin_approval")
-         (approved? packet "qa_procedure_approval")
-         (accepted? packet "gherkin_review")
-         (accepted? packet "qa_procedure_review")) "implementation_approval_ready"
-    (and (approved? packet "story_approval")
-         (or (contains? packet "gherkin_assignment")
-             (contains? packet "qa_procedure_assignment"))) "specification_in_progress"
-    (approved? packet "story_approval") "story_approved"
-    :else "story_recorded"))
-
-(defn derived-stage-fields [packet state]
-  {"story_approval_state" (value-or (get packet "story_approval") "pending")
-   "gherkin_assignment_state" (cond
-                                (contains? packet "gherkin_path") "complete"
-                                (contains? packet "gherkin_assignment") "assigned"
-                                :else "pending")
-   "gherkin_review_state" (value-or (get packet "gherkin_review")
-                                    (if (contains? packet "gherkin_path") "pending" "blocked"))
-   "gherkin_approval_state" (value-or (get packet "gherkin_approval")
-                                      (if (accepted? packet "gherkin_review") "pending" "blocked"))
-   "qa_procedure_assignment_state" (cond
-                                     (contains? packet "qa_procedure_path") "complete"
-                                     (contains? packet "qa_procedure_assignment") "assigned"
-                                     :else "pending")
-   "qa_procedure_review_state" (value-or (get packet "qa_procedure_review")
-                                         (if (contains? packet "qa_procedure_path") "pending" "blocked"))
-   "qa_procedure_approval_state" (value-or (get packet "qa_procedure_approval")
-                                           (if (accepted? packet "qa_procedure_review") "pending" "blocked"))
-   "implementation_approval_state" (value-or (get packet "implementation_approval")
-                                             (if (= "implementation_approval_ready" state) "pending" "blocked"))
-   "implementation_assignment_state" (cond
-                                       (contains? packet "implementation_sha") "complete"
-                                       (contains? packet "implementation_assignment") "assigned"
-                                       (approved? packet "implementation_approval") "ready"
-                                       :else "blocked")
-   "cleaner_review_state" (cond
-                            (contains? packet "code_review") (get packet "code_review")
-                            (contains? packet "cleaner_sha") "pending"
-                            :else "blocked")
-   "hardener_review_state" (cond
-                             (approved? packet "hardening_approval") "approved"
-                             (contains? packet "hardener_sha") "pending"
-                             (contains? packet "hardener_batch") "batched"
-                             :else "blocked")
-   "qa_result_state" (cond
-                       (approved? packet "qa_approval") "approved"
-                       (contains? packet "qa_sha") "pending"
-                       (contains? packet "qa_batch") "batched"
-                       :else "blocked")
-   "architecture_result_state" (cond
-                                 (approved? packet "architecture_approval") "approved"
-                                 (contains? packet "architecture_review") (get packet "architecture_review")
-                                 (contains? packet "architecture_sha") "pending_review"
-                                 (contains? packet "architecture_batch") "batched"
-                                 :else "blocked")
-   "final_state" state})
-
 (defn append-iteration [packet stage assignment-id state]
   (let [field (str stage "_iterations")
         entry (str assignment-id "=" state)
@@ -228,13 +157,15 @@
                  "gherkin_path" "gherkin_assignment" "gherkin_branch" "gherkin_sha"
                  "gherkin_assignment_state" "gherkin_iterations"
                  "gherkin_review" "gherkin_review_state" "gherkin_review_assignment"
-                 "gherkin_review_branch" "gherkin_review_sha" "gherkin_review_iterations"
+                 "gherkin_review_branch" "gherkin_review_sha" "gherkin_review_target_sha"
+                 "gherkin_review_iterations"
                  "gherkin_approval" "gherkin_approval_state" "gherkin_approval_detail"
                  "gherkin_approval_iterations"
                  "qa_procedure_path" "qa_procedure_assignment" "qa_procedure_branch" "qa_procedure_sha"
                  "qa_procedure_assignment_state" "qa_procedure_iterations"
                  "qa_procedure_review" "qa_procedure_review_state" "qa_procedure_review_assignment"
-                 "qa_procedure_review_branch" "qa_procedure_review_sha" "qa_procedure_review_iterations"
+                 "qa_procedure_review_branch" "qa_procedure_review_sha" "qa_procedure_review_target_sha"
+                 "qa_procedure_review_iterations"
                  "qa_procedure_approval" "qa_procedure_approval_state" "qa_procedure_approval_detail"
                  "qa_procedure_approval_iterations"
                  "implementation_approval" "implementation_approval_state" "implementation_approval_detail"
@@ -244,7 +175,7 @@
                  "cleaner_assignment" "cleaner_branch" "cleaner_sha"
                  "cleaner_review_state" "cleaner_iterations"
                  "code_review" "code_review_assignment" "code_review_branch" "code_review_sha"
-                 "code_review_iterations" "code_review_approval" "code_review_approval_detail"
+                 "code_review_target_sha" "code_review_iterations" "code_review_approval" "code_review_approval_detail"
                  "code_review_approval_iterations"
                  "hardener_batch" "hardener_batch_stage" "hardener_batch_assignment"
                  "hardener_batch_branch" "hardener_batch_sha" "hardener_batch_iterations"
@@ -260,7 +191,8 @@
                  "architecture_assignment" "architecture_branch" "architecture_sha"
                  "architecture_result_state" "architecture_iterations"
                  "architecture_review" "architecture_review_assignment"
-                 "architecture_review_branch" "architecture_review_sha" "architecture_review_iterations"
+                 "architecture_review_branch" "architecture_review_sha" "architecture_review_target_sha"
+                 "architecture_review_iterations"
                  "architecture_approval" "architecture_approval_detail" "architecture_approval_iterations"
                  "senior_implementor_assignment" "senior_implementor_branch"
                  "senior_implementor_sha" "senior_implementor_iterations"
@@ -277,8 +209,8 @@
 
 (defn write-packet! [root story-id packet]
   (let [now (timestamp)
-        state (recompute-state packet)
-        packet (merge packet (derived-stage-fields packet state))
+        state (squad-state/recompute-state packet)
+        packet (merge packet (squad-state/derived-stage-fields packet state))
         packet (assoc packet
                       "state" state
                       "updated_at" now)]
@@ -379,11 +311,13 @@
         prefix (str/replace kind "-" "_")
         packet (write-packet! root story-id
                               (append-iteration
-                               (assoc packet
-                                      (str prefix "_review") decision
-                                      (str prefix "_review_assignment") assignment-id
-                                      (str prefix "_review_branch") branch
-                                      (str prefix "_review_sha") sha)
+                               (squad-state/with-review-target
+                                (assoc packet
+                                       (str prefix "_review") decision
+                                       (str prefix "_review_assignment") assignment-id
+                                       (str prefix "_review_branch") branch
+                                       (str prefix "_review_sha") sha)
+                                (str prefix "_review"))
                                (str prefix "_review") assignment-id decision))]
     (event! root story-id (str prefix "_review_" decision) assignment-id branch sha)
     (println "SQUAD_PACKET:" story-id)
@@ -424,13 +358,7 @@
         _ (ensure-packet! root story-id)
         packet (packet-map root story-id)
         prefix (str/replace kind "-" "_")
-        packet (if (= "senior-implementor" kind)
-                 (apply dissoc packet
-                        ["architecture_review" "architecture_review_assignment"
-                         "architecture_review_branch" "architecture_review_sha"
-                         "architecture_approval" "architecture_approval_detail"
-                         "final_approval" "final_approval_detail"])
-                 packet)
+        packet (squad-state/clear-downstream packet kind)
         packet (write-packet! root story-id
                               (append-iteration
                                (assoc packet
@@ -478,7 +406,8 @@
   (validate-id! "Story id" story-id)
   (let [root (fs/absolutize (project-root))
         file (ensure-packet! root story-id)
-        packet (packet-map root story-id)]
+        packet (packet-map root story-id)
+        issues (squad-state/consistency-issues root packet)]
     (println "STORY:" story-id)
     (println "THEME:" (get packet "theme_id" "unknown"))
     (println "STATE:" (get packet "state" "unknown"))
@@ -517,7 +446,25 @@
 	    (println "ARCHITECTURE_RESULT_STATE:" (get packet "architecture_result_state" "none"))
 	    (println "SENIOR_IMPLEMENTOR:" (get packet "senior_implementor_sha" "none"))
 	    (println "FINAL_APPROVAL:" (get packet "final_approval" "none"))
+	    (println "CONSISTENCY:" (if (seq issues) "issues" "ok"))
 	    (println "PACKET:" (str file))))
+
+(defn validate-packet! [story-id]
+  (validate-id! "Story id" story-id)
+  (let [root (fs/absolutize (project-root))
+        _ (ensure-packet! root story-id)
+        packet (packet-map root story-id)
+        issues (squad-state/consistency-issues root packet)]
+    (println "STORY:" story-id)
+    (if (seq issues)
+      (do
+        (println "CONSISTENCY: issues")
+        (doseq [{:keys [code field detail]} issues]
+          (println "ISSUE:" code)
+          (println "FIELD:" field)
+          (println "DETAIL:" detail))
+        (System/exit 3))
+      (println "CONSISTENCY: ok"))))
 
 (defn -main [& args]
   (case (first args)
@@ -542,6 +489,9 @@
     "status" (if (= 2 (count args))
                (print-status! (second args))
                (exit! 1 usage-text))
+    "validate" (if (= 2 (count args))
+                 (validate-packet! (second args))
+                 (exit! 1 usage-text))
     (exit! 1 usage-text)))
 
 (apply -main *command-line-args*)

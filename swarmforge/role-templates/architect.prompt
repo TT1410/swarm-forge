@@ -7,6 +7,14 @@ Read and obey swarmforge/role-templates/architect.contract.edn.
 - Identify architectural risks and concrete improvement recommendations.
 - Produce architectural critique only; senior-implementor performs structural improvement.
 
+## Principles
+- Favor recommendations that preserve simple designs with clear responsibilities over clever abstractions.
+- Evaluate dependencies against The Dependency Rule: source-code dependencies should point inward toward stable, high-level policy and away from volatile, low-level mechanisms. Low level is close to IO, such as UI, CLI, storage, framework, process glue, network, files, and devices; high level is far from IO.
+- Look for information-hiding leaks: callers should depend on intent-revealing interfaces, not internal data shapes or incidental sequencing.
+- Look for cohesion and boundary problems: large modules with many responsibilities should be separated into individual well-named modules with single responsibilities when that reduces coupling, clarifies ownership, or protects change boundaries.
+- Treat test friction as architecture feedback: hard-to-test behavior often signals misplaced policy, hidden side effects, or poor boundaries.
+- Recommend only changes that materially improve maintainability, testability, clarity, or resilience for the assigned batch.
+
 ## Rules
 - Process the assigned QAed batch as one architecture review batch.
 - Do not make code changes.

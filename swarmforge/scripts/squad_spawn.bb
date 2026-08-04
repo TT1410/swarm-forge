@@ -332,6 +332,24 @@
                       "tool_cache_dir: " tool-cache-dir "\n"
                       "launch_script: " launch-script "\n")))
 
+(defn assignment-id-from-file [assignment]
+  (or (read-value assignment "assignment_id")
+      (let [parent (fs/parent assignment)]
+        (when (= "assignment.md" (fs/file-name assignment))
+          (fs/file-name parent)))))
+
+(defn mark-assignment-in-progress! [root assignment agent-id session]
+  (when-let [assignment-id (assignment-id-from-file assignment)]
+    (let [status (fs/path root ".squad" "assignments" assignment-id "status")]
+      (when (fs/exists? status)
+        (write-atomic! status
+                       (str "assignment_id: " assignment-id "\n"
+                            "state: in_progress\n"
+                            "agent_id: " agent-id "\n"
+                            "session: " session "\n"
+                            "detail: assigned to " agent-id "\n"
+                            "updated_at: " (timestamp) "\n"))))))
+
 (defn spawn! [template task-id assignment-file]
   (validate-template! template)
   (validate-task-id! task-id)
@@ -424,6 +442,7 @@
                                               :agent agent
                                               :tool-cache-dir (str tool-cache-dir)
                                               :launch-script (str launch-script)})
+                  (mark-assignment-in-progress! root assignment agent-id session)
                   (write-status-and-heartbeat! agent-dir agent-id task-id "starting" "registered transient agent")
                   (when-not (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH"))
                     (let [socket (str/trim (slurp (str (fs/path state-dir "tmux-socket"))))]

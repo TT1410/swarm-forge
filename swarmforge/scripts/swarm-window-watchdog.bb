@@ -86,16 +86,8 @@
                   "bb" (str script)
                   (str working-dir)))))
 
-(defn stop-squad-status-daemon! [script-dir working-dir]
-  (let [script (fs/path script-dir "stop_squad_status_daemon.bb")]
-    (when (fs/exists? script)
-      (process/sh {:continue true}
-                  "bb" (str script)
-                  (str working-dir)))))
-
 (defn kill-all-sessions! [script-dir window-state-file working-dir tmux-socket backend]
   (stop-squadd! script-dir working-dir)
-  (stop-squad-status-daemon! script-dir working-dir)
   (stop-handoff-daemon! script-dir working-dir)
   (doseq [session (distinct (concat (map :session (rows window-state-file))
                                     (role-sessions working-dir)

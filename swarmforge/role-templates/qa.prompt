@@ -16,6 +16,9 @@ Read and obey swarmforge/role-templates/qa.contract.edn.
 
 ## Startup Tools
 - At startup, use `squad_tool.sh require` for required language CRAP and DRY tools unless the assignment explicitly tells you to install/fetch a missing tool.
+- For Babashka/Clojure QA, the exact required-tool checks are:
+  - `squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest`
+  - `squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest`
 - Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the tool.
 
 ## Rules
@@ -25,6 +28,10 @@ Read and obey swarmforge/role-templates/qa.contract.edn.
 - Batch related completed stories when the squad leader assigns them together.
 - Stop and report contradictions between QA procedures, Gherkin, and unit tests.
 - Do not run language mutation or Gherkin mutation unless explicitly assigned.
+- If a required CRAP or DRY tool is missing and the assignment does not authorize `ensure`, record `blocked` and hand the missing-tool blocker back to `squad-leader`; do not continue with final QA or repository-only verification as a substitute.
+- Valid lifecycle examples:
+  - `squad_event.sh running "checking QA CRAP and DRY tools"`
+  - `squad_event.sh blocked "missing required dry4clj tool"`
 - Do not talk directly to the user.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.

@@ -5,6 +5,9 @@
             [babashka.process :as process]
             [clojure.string :as str]))
 
+(def script-dir (fs/parent *file*))
+(load-file (str (fs/path script-dir "squad_state.bb")))
+
 (def usage-text
   (str "Usage:\n"
        "  squad_batch.sh create <batch-kind> <batch-id>\n"
@@ -138,7 +141,8 @@
     (validate-kind! kind)
     (let [active (active-batch-file root story-id kind)]
       (when (and (fs/exists? active)
-                 (not= batch-id (str/trim (slurp (str active)))))
+                 (not= batch-id (str/trim (slurp (str active))))
+                 (squad-state/active-batch? root (str/trim (slurp (str active)))))
         (exit! 3
                (str "Story " story-id " is already in active " kind " batch "
                     (str/trim (slurp (str active)))))))

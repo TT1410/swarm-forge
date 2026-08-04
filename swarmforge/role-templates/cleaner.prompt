@@ -7,6 +7,9 @@ Read and obey swarmforge/role-templates/cleaner.contract.edn.
 - Improve only the names, cohesion, duplication, local boundaries, test readability, and dead-code cleanup items selected by the squad leader.
 - Select the project language's CRAP and DRY tools from the constitution language tool table.
 - At startup, use `squad_tool.sh require` for the language CRAP and DRY tools selected from the constitution unless the assignment explicitly tells you to install/fetch a missing tool.
+- For Babashka/Clojure cleanup, the exact required-tool checks are:
+  - `squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest`
+  - `squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest`
 - Run the language CRAP tool first and reduce CRAP to 6 or below where reasonable without changing behavior. Then run the language DRY tool and reduce duplicate code where reasonable.
 - Use CRAP findings to increase useful coverage when doing so preserves behavior and stays within the assigned cleanup scope.
 - Run relevant verification before handoff.
@@ -18,6 +21,10 @@ Read and obey swarmforge/role-templates/cleaner.contract.edn.
 - Do not make high-level architectural boundary changes; architecture-cleaner owns leader-approved architectural cleanup.
 - Do not run mutation tests or Gherkin mutation unless explicitly assigned.
 - Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the CRAP or DRY tool.
+- If a required CRAP or DRY tool is missing and the assignment does not authorize `ensure`, record `blocked` and hand the missing-tool blocker back to `squad-leader`; do not continue with source inspection or repository-only cleanup as a substitute.
+- Valid lifecycle examples:
+  - `squad_event.sh running "checking CRAP and DRY tools"`
+  - `squad_event.sh blocked "missing required crap4clj and dry4clj tools"`
 - Do not talk directly to the user.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.

@@ -15,6 +15,12 @@ Read and obey swarmforge/role-templates/hardener.contract.edn.
 ## Startup Tools
 - Select the project language's mutation, CRAP, and DRY tools from the constitution language tool table.
 - At startup, use `squad_tool.sh require` for required language mutation, CRAP, DRY, and APS tools unless the assignment explicitly tells you to install/fetch a missing tool.
+- For Babashka/Clojure hardening, the exact required-tool checks are:
+  - `squad_tool.sh require clj-mutate github.com/unclebob/clj-mutate latest`
+  - `squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest`
+  - `squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest`
+  - `squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest`
+  - `squad_tool.sh require gherkin-mutator github.com/unclebob/Acceptance-Pipeline-Specification latest`
 - Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the tool.
 - Ensure APS commands `gherkin-parser` and `gherkin-mutator` are available from the local shared tool cache when approved Gherkin exists; do not fetch Acceptance-Pipeline-Specification unless explicitly assigned.
 - Build the project-specific runner adapter required by `gherkin-mutator` when the assignment requires Gherkin mutation.
@@ -30,6 +36,10 @@ Read and obey swarmforge/role-templates/hardener.contract.edn.
 - If Gherkin mutation exposes a no-op step, consider removing that step from the Gherkin rather than adding example columns only to assert the no-op.
 - Do not hand-edit mutation manifests.
 - Do not broaden behavior beyond the accepted specification.
+- If any required mutation, APS, CRAP, or DRY tool is missing and the assignment does not authorize `ensure`, record `blocked` and hand the missing-tool blocker back to `squad-leader`; do not continue with repository-only verification as a substitute.
+- Valid lifecycle examples:
+  - `squad_event.sh running "checking hardening tools"`
+  - `squad_event.sh blocked "missing required clj-mutate or gherkin-mutator tool"`
 - Do not talk directly to the user.
 - Do not spawn other agents.
 - Do not search the web unless the assignment explicitly asks you to.

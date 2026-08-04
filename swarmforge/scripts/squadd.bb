@@ -18,6 +18,10 @@
   "Squad status needs attention. If idle, run squad_next.sh.")
 (def approval-wake-message
   "A web approval changed state. If idle, run squad_next.sh.")
+(def sl-watchdog-message
+  "Run squad_next.sh.")
+(def sl-message-prefix
+  "User message from dashboard:")
 (def dashboard-html
   "<!doctype html>
 <html lang=\"en\">
@@ -36,6 +40,7 @@
     table { width: 100%; border-collapse: collapse; background: white; border: 1px solid #d9d9d2; }
     th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #ecece6; font-size: 13px; vertical-align: top; }
     th { background: #f0f0ea; color: #3b413d; }
+    textarea { width: 100%; min-height: 90px; resize: vertical; box-sizing: border-box; border: 1px solid #c6cbc5; padding: 8px; font: inherit; }
     button { border: 1px solid #9aa59e; background: #fff; color: #202124; padding: 5px 9px; border-radius: 6px; cursor: pointer; }
     button + button { margin-left: 6px; }
     .muted { color: #68726c; }
@@ -50,8 +55,11 @@
     const app = document.getElementById('app');
     const meta = document.getElementById('meta');
     const esc = value => String(value ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-    async function post(path) {
-      const response = await fetch(path, { method: 'POST' });
+    async function post(path, body = null, contentType = null) {
+      const options = { method: 'POST' };
+      if (body !== null) options.body = body;
+      if (contentType) options.headers = { 'Content-Type': contentType };
+      const response = await fetch(path, options);
       if (!response.ok) throw new Error(await response.text());
       await render();
     }
@@ -67,11 +75,12 @@
         `<button onclick=\"post('/api/approvals/${encodeURIComponent(a.approval_id)}/reject')\">Reject</button>`
       ])));
     }
-    function approvalHistory(items) {
-      if (!items.length) return '<p class=\"muted\">None.</p>';
-      return table(['Approval', 'Target', 'Gate', 'State', 'Resolved', 'Detail'], items.map(a => row([
-        esc(a.approval_id), esc(a.target_kind + ' ' + a.target_id), esc(a.gate), esc(a.state), esc(a.resolved_at), esc(a.resolution_detail)
-      ])));
+    async function sendMessage() {
+      const input = document.getElementById('sl-message');
+      const text = input.value.trim();
+      if (!text) return;
+      await post('/api/sl-message', text, 'text/plain; charset=utf-8');
+      input.value = '';
     }
     async function render() {
       try {
@@ -79,7 +88,7 @@
         meta.textContent = data.project_root + ' | ' + data.generated_at;
         app.innerHTML =
           `<section><h2>Pending Approvals</h2>${approvals(data.approvals.pending)}</section>` +
-          `<section><h2>Approval History</h2>${approvalHistory([...(data.approvals.approved || []), ...(data.approvals.rejected || [])])}</section>` +
+          `<section><h2>Message Squad Leader</h2><textarea id=\"sl-message\"></textarea><div><button onclick=\"sendMessage()\">Submit</button></div></section>` +
           `<section><h2>Stories</h2>${table(['Story','State','Gherkin','QA Procedure','Implementation','Final'], data.stories.map(s => row([
             esc(s.story_id), '<span class=\"pill\">' + esc(s.state) + '</span>', esc(s.gherkin_review_state), esc(s.qa_procedure_review_state), esc(s.implementation_assignment_state), esc(s.final_state)
           ])))}</section>` +
@@ -100,6 +109,8 @@
 </html>")
 (def script-dir (fs/parent *file*))
 (load-file (str (fs/path script-dir "squad_config.bb")))
+(load-file (str (fs/path script-dir "squad_state.bb")))
+(in-ns 'squadd)
 (def stopping? (atom false))
 (def last-status-poll (atom 0))
 (def last-status-notification (atom {:alerts #{} :notified-at nil}))
@@ -182,7 +193,7 @@
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
 
-(declare agent-dirs log! append-compat-log!)
+(declare agent-dirs log! parse-kv-file)
 
 (defn load-roles [root]
   (into {}
@@ -299,8 +310,7 @@
       (let [updated (merge roles recovered)]
         (write-roles! root updated)
         (doseq [agent (sort (keys recovered))]
-          (log! root "role-recovered" agent)
-          (append-compat-log! root "squad-statusd.log" "role-recovered" agent))
+          (log! root "role-recovered" agent))
         updated))
     (if (seq recovered)
       (load-roles root)
@@ -311,13 +321,6 @@
 
 (defn log! [root & parts]
   (let [log-file (fs/path (daemon-dir root) "squadd.log")]
-    (fs/create-dirs (fs/parent log-file))
-    (spit (str log-file)
-          (str (now) " " (str/join " " parts) "\n")
-          :append true)))
-
-(defn append-compat-log! [root log-name & parts]
-  (let [log-file (fs/path (daemon-dir root) log-name)]
     (fs/create-dirs (fs/parent log-file))
     (spit (str log-file)
           (str (now) " " (str/join " " parts) "\n")
@@ -363,14 +366,16 @@
 (defn tmux-notify! [socket session message]
   (let [send-text (sh "tmux" "-S" socket "send-keys" "-t" session "-l" message)
         _ (Thread/sleep 100)
-        send-return (sh "tmux" "-S" socket "send-keys" "-t" session "C-m")]
+        send-return (sh "tmux" "-S" socket "send-keys" "-t" session "C-m")
+        _ (Thread/sleep 100)
+        send-second-return (sh "tmux" "-S" socket "send-keys" "-t" session "C-m")]
     (and (zero? (:exit send-text))
-         (zero? (:exit send-return)))))
+         (zero? (:exit send-return))
+         (zero? (:exit send-second-return)))))
 
 (defn fail-handoff! [root path reason]
   (let [failed-dir (fs/path (fs/parent (fs/parent path)) "failed")]
     (log! root "handoff-failed" (str path) reason)
-    (append-compat-log! root "handoffd.log" "failed" (str path) reason)
     (spit (str path ".error") (str reason "\n"))
     (move-with-collision path failed-dir)))
 
@@ -397,8 +402,7 @@
         (move-with-collision path
                              (fs/path (get-in roles [sender-role :worktree-path])
                                       ".swarmforge" "handoffs" "sent"))
-        (log! root "handoff-delivered" (str path))
-        (append-compat-log! root "handoffd.log" "delivered" (str path))))))
+        (log! root "handoff-delivered" (str path))))))
 
 (defn outbox-files [role-info]
   (let [outbox (fs/path (:worktree-path role-info) ".swarmforge" "handoffs" "outbox")]
@@ -543,8 +547,7 @@
   (let [roles (load-roles root)]
     (when (contains? roles agent)
       (write-roles! root (dissoc roles agent))
-      (log! root "role-retired-reconciled" agent)
-      (append-compat-log! root "squad-statusd.log" "role-retired-reconciled" agent))))
+      (log! root "role-retired-reconciled" agent))))
 
 (defn transient-branch [agent]
   (str "swarmforge-" agent))
@@ -582,8 +585,7 @@
             worktree (or (read-value metadata "worktree")
                          (get-in roles [agent :worktree-path]))]
         (when (kill-tmux-session! socket session)
-          (log! root "retired-session-killed" agent session)
-          (append-compat-log! root "squad-statusd.log" "retired-session-killed" agent session))
+          (log! root "retired-session-killed" agent session))
         (cleanup-transient-git! root agent worktree)
         (retire-role-row! root agent)
         (write-atomic! cleanup-marker (str "cleaned_at: " (now) "\n"))))))
@@ -634,11 +636,10 @@
         (when (not= state-key @last-status-log-state)
           (reset! last-status-log-state state-key)
           (doseq [alert alerts]
-            (log! root "status-alert" alert)
-            (append-compat-log! root "squad-statusd.log" "alert" alert)))))
+            (log! root "status-alert" alert)))))
     (when (seq alerts)
       (if no-notify?
-        (append-compat-log! root "squad-statusd.log" "notify-skipped" (count alerts))
+        (log! root "status-notify-skipped" (str (count alerts)))
         (let [{previous-alerts :alerts notified-at :notified-at} @last-status-notification
               cooldown (notify-cooldown-seconds)
               due? (or (nil? notified-at)
@@ -646,20 +647,84 @@
                        (>= (.getSeconds (java.time.Duration/between notified-at now-instant))
                            cooldown))]
           (if-not due?
-            (append-compat-log! root "squad-statusd.log" "notify-throttled" (count alerts))
+            (log! root "status-notify-throttled" (str (count alerts)))
             (if (tmux-notify! socket "swarmforge-squad-leader" status-wake-message)
               (do
                 (reset! last-status-notification {:alerts alert-key-set :notified-at now-instant})
-                (append-compat-log! root "squad-statusd.log" "notified" "squad-leader" (count alerts)))
-              (append-compat-log! root "squad-statusd.log" "notify-failed" "squad-leader" (count alerts)))))))
+                (log! root "status-notified" "squad-leader" (str (count alerts))))
+              (log! root "status-notify-failed" "squad-leader" (str (count alerts))))))))
     (when (empty? alerts)
       (reset! last-status-notification {:alerts #{} :notified-at nil})
       (println "SQUAD_STATUS_OK")
       (when (not= :ok @last-status-log-state)
         (reset! last-status-log-state :ok)
-        (log! root "status-ok")
-        (append-compat-log! root "squad-statusd.log" "ok")))
+        (log! root "status-ok")))
     alerts))
+
+(defn pending-approval? [root]
+  (let [dir (fs/path root ".squad" "approvals" "pending")]
+    (and (fs/exists? dir)
+         (boolean
+          (seq
+           (filter #(and (fs/regular-file? %)
+                         (str/ends-with? (fs/file-name %) ".approval"))
+                   (fs/list-dir dir)))))))
+
+(defn sl-watchdog-file [root]
+  (fs/path (daemon-dir root) "sl-watchdog"))
+
+(defn idle-prompt-tail? [tail]
+  (let [text (str/trim (or tail ""))]
+    (boolean
+     (or (some #(str/ends-with? text %) [">" "$" "%" "#"])
+         (re-find #"(?i)(waiting for|ready for|run|enter|prompt)" text)))))
+
+(defn seconds-since [instant]
+  (when instant
+    (.getSeconds (java.time.Duration/between instant (instant-now)))))
+
+(defn poll-sl-watchdog! [{:keys [root no-notify? skip-tmux?]}]
+  (when-not (or skip-tmux? no-notify? (pending-approval? root))
+    (let [socket-file (fs/path root ".swarmforge" "tmux-socket")
+          socket (when (fs/regular-file? socket-file) (str/trim (slurp (str socket-file))))
+          session "swarmforge-squad-leader"
+          threshold (env-long "SWARMFORGE_SL_IDLE_SECONDS" 60)
+          cooldown (env-long "SWARMFORGE_SL_WATCHDOG_COOLDOWN_SECONDS" 300)]
+      (when (and (not (str/blank? socket))
+                 (tmux-session-exists? socket session)
+                 (not (pane-dead? socket session)))
+        (let [state-file (sl-watchdog-file root)
+              previous (parse-kv-file state-file)
+              tail (or (capture-pane-tail socket session) "")
+              current-hash (sha256 tail)
+              previous-hash (get previous "pane_hash")
+              changed? (not= current-hash previous-hash)
+              unchanged-since (if changed?
+                                (now)
+                                (or (get previous "unchanged_since") (now)))
+              idle-for (or (seconds-since (parse-instant unchanged-since)) 0)
+              notified-age (seconds-since (parse-instant (get previous "notified_at")))
+              due? (or (nil? notified-age) (>= notified-age cooldown))
+              prompt? (idle-prompt-tail? tail)]
+          (write-atomic! state-file
+                         (str "pane_hash: " current-hash "\n"
+                              "observed_at: " (now) "\n"
+                              "unchanged_since: " unchanged-since "\n"
+                              "idle_for_seconds: " idle-for "\n"
+                              "prompt: " prompt? "\n"
+                              (when (and (not changed?) prompt? (>= idle-for threshold) due?)
+                                (str "notified_at: " (now) "\n"))
+                              "last_10_lines:\n"
+                              tail))
+          (cond
+            changed? (log! root "sl-watchdog-active")
+            (not prompt?) (log! root "sl-watchdog-not-idle-prompt")
+            (< idle-for threshold) nil
+            (not due?) (log! root "sl-watchdog-throttled" (str idle-for))
+            (tmux-notify! socket session sl-watchdog-message)
+            (log! root "sl-watchdog-notified" (str idle-for))
+            :else
+            (log! root "sl-watchdog-notify-failed" (str idle-for))))))))
 
 (defn parse-kv-file [file]
   (into {}
@@ -706,6 +771,13 @@
 (defn map-with-id [id-key id file]
   (assoc (parse-kv-file file) id-key id))
 
+(defn canonical-story-row [story-id packet-file]
+  (let [packet (assoc (squad-state/read-kv-file packet-file) "story_id" story-id)
+        state (squad-state/recompute-state packet)]
+    (merge packet
+           (squad-state/derived-stage-fields packet state)
+           {"state" state})))
+
 (defn story-state [root]
   (let [dir (fs/path root ".squad" "stories")]
     (if (fs/exists? dir)
@@ -713,20 +785,27 @@
            (filter fs/directory?)
            (sort-by fs/file-name)
            (mapv (fn [story-dir]
-                   (map-with-id "story_id" (fs/file-name story-dir) (fs/path story-dir "packet")))))
+                   (canonical-story-row (fs/file-name story-dir)
+                                        (fs/path story-dir "packet")))))
       [])))
+
+(defn descending-value [row]
+  (or (get row "updated_at")
+      (get row "created_at")
+      (get row "assignment_id")
+      ""))
 
 (defn assignment-state [root]
   (let [dir (fs/path root ".squad" "assignments")]
     (if (fs/exists? dir)
       (->> (fs/list-dir dir)
            (filter fs/directory?)
-           (sort-by fs/file-name)
            (map (fn [assignment-dir]
                   (merge (map-with-id "assignment_id" (fs/file-name assignment-dir)
                                       (fs/path assignment-dir "metadata"))
                          (parse-kv-file (fs/path assignment-dir "status")))))
            (filter #(contains? web-active-assignment-states (get % "state")))
+           (sort-by descending-value #(compare %2 %1))
            vec)
       [])))
 
@@ -770,9 +849,7 @@
    "assignments" (assignment-state root)
    "agents" (agent-state root)
    "batches" (batch-state root)
-   "approvals" {"pending" (approval-state-for root "pending")
-                "approved" (approval-state-for root "approved")
-                "rejected" (approval-state-for root "rejected")}})
+   "approvals" {"pending" (approval-state-for root "pending")}})
 
 (def status-reasons
   {200 "OK"
@@ -804,7 +881,24 @@
         {:ok true :output (:out result)})
       {:ok false :status 409 :error (str (:err result) (:out result))})))
 
-(defn handle-web-request [root method path]
+(defn sl-message-web-action! [root text]
+  (let [message (str/trim (or text ""))]
+    (if (str/blank? message)
+      {:ok false :status 409 :error "Message is empty\n"}
+      (let [socket-file (fs/path root ".swarmforge" "tmux-socket")]
+        (if-not (fs/regular-file? socket-file)
+          {:ok false :status 409 :error "Missing tmux socket\n"}
+          (let [socket (str/trim (slurp (str socket-file)))
+                sent? (tmux-notify! socket
+                                    "swarmforge-squad-leader"
+                                    (str sl-message-prefix "\n\n" message))]
+            (if sent?
+              (do
+                (log! root "web-sl-message-sent")
+                {:ok true})
+              {:ok false :status 409 :error "Could not send message to squad leader\n"})))))))
+
+(defn handle-web-request [root method path body]
   (try
     (cond
       (and (= method "GET") (= path "/"))
@@ -816,6 +910,12 @@
       (and (= method "POST") (re-matches #"/api/approvals/[^/]+/(approve|reject)" path))
       (let [[_ encoded-id action] (re-matches #"/api/approvals/([^/]+)/(approve|reject)" path)
             result (approval-web-action! root (url-decode encoded-id) action)]
+        (if (:ok result)
+          (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
+          (response (:status result) "text/plain; charset=utf-8" (:error result))))
+
+      (and (= method "POST") (= path "/api/sl-message"))
+      (let [result (sl-message-web-action! root body)]
         (if (:ok result)
           (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
           (response (:status result) "text/plain; charset=utf-8" (:error result))))
@@ -849,14 +949,26 @@
                       (java.io.InputStreamReader. (.getInputStream socket) "UTF-8"))]
     (let [request-line (.readLine reader)
           [_ method target] (when request-line
-                              (re-matches #"([A-Z]+)\s+(\S+)\s+HTTP/.*" request-line))]
-      (loop []
-        (let [line (.readLine reader)]
-          (when (and line (not (str/blank? line)))
-            (recur))))
+                              (re-matches #"([A-Z]+)\s+(\S+)\s+HTTP/.*" request-line))
+          headers (loop [headers {}]
+                    (let [line (.readLine reader)]
+                      (if (or (nil? line) (str/blank? line))
+                        headers
+                        (let [[k v] (str/split line #":\s*" 2)]
+                          (recur (if (and k v)
+                                   (assoc headers (str/lower-case k) v)
+                                   headers))))))
+          content-length (try
+                           (Long/parseLong (get headers "content-length" "0"))
+                           (catch Exception _ 0))
+          body (if (pos? content-length)
+                 (let [buffer (char-array content-length)
+                       read-count (.read reader buffer 0 content-length)]
+                   (String. buffer 0 (max 0 read-count)))
+                 "")]
       (send-socket-response! socket
                              (if (and method target)
-                               (handle-web-request root method (first (str/split target #"\?" 2)))
+                               (handle-web-request root method (first (str/split target #"\?" 2)) body)
                                (response 400 "text/plain; charset=utf-8" "Bad request\n"))))))
 
 (defn start-web-server! [root]
@@ -880,7 +992,7 @@
       (write-atomic! (fs/path (daemon-dir root) "squad-web-url") (str url "\n"))
       (log! root "web-started" url)
       (when (and (not= "0" (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN"))
-                 (not= "1" (System/getenv "SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX")))
+                 (not= "1" (System/getenv "SWARMFORGE_SQUADD_SKIP_TMUX")))
         (let [command (cond
                         (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN_COMMAND")
                         (str/split (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN_COMMAND") #"\s+")
@@ -983,7 +1095,8 @@
   (let [root (:root opts)]
     (poll-spawn-requests! root)
     (poll-handoffs! root)
-    (poll-status! opts)))
+    (poll-status! opts)
+    (poll-sl-watchdog! opts)))
 
 (defn due-status? []
   (let [now-ms (System/currentTimeMillis)]
@@ -996,7 +1109,8 @@
     (poll-spawn-requests! root)
     (poll-handoffs! root)
     (when (due-status?)
-      (poll-status! opts))))
+      (poll-status! opts)
+      (poll-sl-watchdog! opts))))
 
 (defn sleep-poll! [root ms]
   (loop [remaining ms]
@@ -1031,7 +1145,7 @@
 (defn -main [& args]
   (let [{:keys [once? no-notify? root]} (parse-args args)
         root (fs/absolutize root)
-        skip-tmux? (= "1" (System/getenv "SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX"))
+        skip-tmux? (= "1" (System/getenv "SWARMFORGE_SQUADD_SKIP_TMUX"))
         opts {:root root :no-notify? no-notify? :skip-tmux? skip-tmux?}]
     (if once?
       (poll-once! opts)
