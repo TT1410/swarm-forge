@@ -83,6 +83,11 @@
 (defn pending-approval [root]
   (first (files-with-extension (fs/path root ".squad" "approvals" "pending") ".approval")))
 
+(defn approval-record-exists? [root approval-id]
+  (boolean
+   (some #(fs/exists? (fs/path root ".squad" "approvals" % (str approval-id ".approval")))
+         ["pending" "approved" "rejected"])))
+
 (defn dashboard-url [root]
   (let [file (fs/path root ".swarmforge" "daemon" "squad-web-url")]
     (when (fs/regular-file? file)
@@ -170,6 +175,9 @@
                      (not (contains? terminal-assignment-states (:state assignment))))
             assignment))
         assignments))
+
+(defn active-or-created-assignment-for? [assignments story-id template]
+  (boolean (assignment-for assignments story-id template)))
 
 (defn assignment-exists? [assignments assignment-id]
   (boolean (some #(= assignment-id (:assignment-id %)) assignments)))
@@ -264,8 +272,10 @@
 
 (defn approval-candidate [root packet gate title reason priority stage-order]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
-        field (str (gate-key gate) "_approval")]
-    (when-not (field-approved? packet field)
+        field (str (gate-key gate) "_approval")
+        id (approval-id gate story-id)]
+    (when (and (not (field-approved? packet field))
+               (not (approval-record-exists? root id)))
       (if (squad-approval-required? root gate)
         {:priority priority
          :stage-order stage-order
@@ -274,7 +284,7 @@
          :story-id story-id
          :gate gate
          :reason reason
-         :command (str "squad_approval.sh request " (approval-id gate story-id)
+         :command (str "squad_approval.sh request " id
                        " story " story-id " " gate " " title " " reason)}
         {:priority priority
          :stage-order stage-order
@@ -423,16 +433,18 @@
         packet-themes (set (map #(get % "theme_id") (packets root)))]
     (->> (for [theme (theme-records root)
                :when (not (contains? packet-themes (:theme-id theme)))
-               :let [approval {:priority 20
-                                :stage-order 1
-                                :next-action "create_approval_request"
-                                :theme-id (:theme-id theme)
-                                :story-id "theme"
-                                :gate "theme"
-                                :reason "theme-ready"
-                                :command (str "squad_approval.sh request theme__" (:theme-id theme)
-                                              " theme " (:theme-id theme)
-                                              " theme Approve_theme theme-ready")}
+               :let [approval-id (str "theme__" (:theme-id theme))
+                     approval (when-not (approval-record-exists? root approval-id)
+                                {:priority 20
+                                 :stage-order 1
+                                 :next-action "create_approval_request"
+                                 :theme-id (:theme-id theme)
+                                 :story-id "theme"
+                                 :gate "theme"
+                                 :reason "theme-ready"
+                                 :command (str "squad_approval.sh request " approval-id
+                                               " theme " (:theme-id theme)
+                                               " theme Approve_theme theme-ready")})
                      analyst (when (:approved-theme? theme)
                                (theme-assignment-candidate root assignments agents theme
                                                            "analyst" "analysis"
@@ -463,7 +475,10 @@
     :priority 60
     :stage-order 21
     :candidate (fn [ctx packet]
-                 (when (= "changes-requested" (get packet "gherkin_review"))
+                 (when (and (= "changes-requested" (get packet "gherkin_review"))
+                            (not (active-or-created-assignment-for? (:assignments ctx)
+                                                                    (get packet "story_id" (get packet "_story_id"))
+                                                                    "gherkin-reviewer")))
                    (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
                                          "gherkin-writer" "gherkin"
                                          "Gherkin review requested changes" 60 21 nil)))}
@@ -480,7 +495,10 @@
     :priority 60
     :stage-order 31
     :candidate (fn [ctx packet]
-                 (when (= "changes-requested" (get packet "qa_procedure_review"))
+                 (when (and (= "changes-requested" (get packet "qa_procedure_review"))
+                            (not (active-or-created-assignment-for? (:assignments ctx)
+                                                                    (get packet "story_id" (get packet "_story_id"))
+                                                                    "qa-procedure-reviewer")))
                    (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
                                          "qa-procedure-writer" "qa-procedure"
                                          "QA procedure review requested changes" 60 31 nil)))}
@@ -490,7 +508,10 @@
     :candidate (fn [ctx packet]
                  (when (and (field-present? packet "gherkin_path")
                             (not (field-accepted? packet "gherkin_review"))
-                            (not (= "changes-requested" (get packet "gherkin_review"))))
+                            (or (not (= "changes-requested" (get packet "gherkin_review")))
+                                (active-or-created-assignment-for? (:assignments ctx)
+                                                                   (get packet "story_id" (get packet "_story_id"))
+                                                                   "gherkin-reviewer")))
                    (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
                                          "gherkin-reviewer" "gherkin-review"
                                          "Gherkin artifact needs review" 60 40 nil)))}
@@ -500,7 +521,10 @@
     :candidate (fn [ctx packet]
                  (when (and (field-present? packet "qa_procedure_path")
                             (not (field-accepted? packet "qa_procedure_review"))
-                            (not (= "changes-requested" (get packet "qa_procedure_review"))))
+                            (or (not (= "changes-requested" (get packet "qa_procedure_review")))
+                                (active-or-created-assignment-for? (:assignments ctx)
+                                                                   (get packet "story_id" (get packet "_story_id"))
+                                                                   "qa-procedure-reviewer")))
                    (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
                                          "qa-procedure-reviewer" "qa-procedure-review"
                                          "QA procedure artifact needs review" 60 50 nil)))}
@@ -640,7 +664,7 @@
                :let [candidate ((:candidate transition) ctx packet)]
                :when candidate]
            candidate)
-	         (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
+	         (sort-by (juxt :theme-id :story-id :stage-order :priority :assignment-id))
 	         vec)))
 
 (defn same-theme-packets [all-packets theme-id]
@@ -904,12 +928,14 @@
         rows (role-rows root)
         pending-approval-file (pending-approval root)
 	        stale-lock-info (stale-lock root)
-	        pending-spawn-file (pending-spawn-request root)
+        pending-spawn-file (pending-spawn-request root)
 		        retire-candidate (retirement-candidate root rows)
             recover-candidate (recovery-candidate root rows)
 		        theme-actions (theme-candidates root rows)
 	        story-actions (story-candidates root rows)
-	        batch-actions (batch-candidates root rows)]
+	        batch-actions (batch-candidates root rows)
+          ready-actions (sort-by (juxt :theme-id :story-id :stage-order :priority :assignment-id)
+                                 (concat theme-actions story-actions batch-actions))]
     (cond
       in-process
       (print-handoff-action! "finish_in_process_handoff"
@@ -923,9 +949,6 @@
                              "new handoff mail is waiting"
                              "ready_for_next.sh")
 
-      pending-approval-file
-      (print-approval-action! pending-approval-file)
-
       stale-lock-info
       (print-stale-lock-action! stale-lock-info)
 
@@ -938,10 +961,11 @@
         recover-candidate
         (print-recovery-action! recover-candidate)
 	
-	      (seq (concat theme-actions story-actions batch-actions))
-	      (let [actions (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id)
-	                             (concat theme-actions story-actions batch-actions))]
-	        (print-story-candidate! (first actions) (count actions)))
+	      (seq ready-actions)
+	      (print-story-candidate! (first ready-actions) (count ready-actions))
+
+      pending-approval-file
+      (print-approval-action! pending-approval-file)
 
       :else
       (print-wait-action! (active-transients root rows)))))

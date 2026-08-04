@@ -879,6 +879,19 @@
       (.start thread)
       (write-atomic! (fs/path (daemon-dir root) "squad-web-url") (str url "\n"))
       (log! root "web-started" url)
+      (when (and (not= "0" (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN"))
+                 (not= "1" (System/getenv "SWARMFORGE_SQUAD_STATUSD_SKIP_TMUX")))
+        (let [command (cond
+                        (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN_COMMAND")
+                        (str/split (System/getenv "SWARMFORGE_SQUADD_WEB_OPEN_COMMAND") #"\s+")
+                        (= "Mac OS X" (System/getProperty "os.name"))
+                        ["open"]
+                        :else
+                        ["xdg-open"])
+              result (apply sh-continue (concat command [url]))]
+          (if (zero? (:exit result))
+            (log! root "web-opened" url)
+            (log! root "web-open-failed" url (str "exit " (:exit result))))))
       {:socket server-socket :thread thread})))
 
 (defn stop-web-server! [web-server]

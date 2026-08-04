@@ -62,19 +62,41 @@ for session in "$@"; do
   tmux -S "$TMUX_SOCKET" kill-session -t "$session" 2>/dev/null || true
 done
 
+if [[ -S "$TMUX_SOCKET" ]]; then
+  while IFS= read -r session; do
+    [[ -n "$session" ]] || continue
+    tmux -S "$TMUX_SOCKET" kill-session -t "$session" 2>/dev/null || true
+  done < <(tmux -S "$TMUX_SOCKET" list-sessions -F '#{session_name}' 2>/dev/null || true)
+fi
+
 tmux -S "$TMUX_SOCKET" kill-server 2>/dev/null || true
 
 sleep 1
 
 if has_command git && [[ -d "$WORKING_DIR/.git" ]]; then
+  typeset -U managed_worktrees
+  managed_worktrees=()
   while IFS= read -r worktree_path; do
     [[ "$worktree_path" == "$WORKING_DIR/.worktrees/"* || "$worktree_path" == */.worktrees/* ]] || continue
+    managed_worktrees+=("$worktree_path")
+  done < <(git -C "$WORKING_DIR" worktree list --porcelain 2>/dev/null | awk '/^worktree / {print substr($0, 10)}')
+
+  if [[ -d "$WORKING_DIR/.worktrees" ]]; then
+    for worktree_path in "$WORKING_DIR"/.worktrees/*; do
+      [[ -e "$worktree_path" ]] || continue
+      [[ -d "$worktree_path" ]] || continue
+      managed_worktrees+=("$worktree_path")
+    done
+  fi
+
+  for worktree_path in "${managed_worktrees[@]}"; do
+    [[ "$worktree_path" == "$WORKING_DIR/.worktrees/"* ]] || continue
     agent_id="${worktree_path:t}"
     branch="swarmforge-$agent_id"
     git -C "$WORKING_DIR" worktree remove --force "$worktree_path" 2>/dev/null || rm -rf "$worktree_path"
-    git -C "$WORKING_DIR" worktree prune 2>/dev/null || true
     git -C "$WORKING_DIR" branch -D "$branch" 2>/dev/null || true
-  done < <(git -C "$WORKING_DIR" worktree list --porcelain 2>/dev/null | awk '/^worktree / {print substr($0, 10)}')
+  done
+  git -C "$WORKING_DIR" worktree prune 2>/dev/null || true
 fi
 
 roles_file="$WORKING_DIR/.swarmforge/roles.tsv"

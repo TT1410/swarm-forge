@@ -227,7 +227,8 @@
       (is (false? (:may-run-broad-tests (by-role artifact-role))) artifact-role))
     (doseq [review-role ["gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"]]
       (is (= [".squad/reviews/"] (:artifact-roots (by-role review-role))) review-role))
-    (is (= "implementation_approved" (:requires-packet-state (by-role "implementer"))))
+    (is (= ["src/" "test/" "features/" "qa/"] (:artifact-roots (by-role "implementer"))))
+    (is (= "squad_next.sh" (:workflow-readiness-source (by-role "implementer"))))
     (doseq [singleton-role ["hardener" "qa" "architect"]]
       (is (true? (:singleton (by-role singleton-role))) singleton-role))
     (is (= "hardener" (:batch-kind (by-role "hardener"))))
@@ -246,7 +247,7 @@
     (is (true? (:requires-theme-negotiation-before-analyst c)))
     (is (true? (:theme-approval-before-analyst c)))
     (is (true? (:story-packet-source-of-truth c)))
-    (is (= "implementation_approved" (:implementation-packet-state c)))
+    (is (= "squad_next.sh" (:implementation-readiness-source c)))
     (is (= ["hardener" "qa" "architect"] (:singleton-roles c)))
     (is (some #{"stories"} (:forbidden-writes c)))
     (is (some #{"production-code"} (:forbidden-writes c)))))
@@ -1439,11 +1440,16 @@
         (is (str/includes? (:out first-approval) "NEXT_ACTION: create_approval_request"))
         (is (str/includes? (:out first-approval) "STORY: alpha"))
         (is (str/includes? (:out first-approval) "GATE: story")))
+      (run {:dir root}
+           (script "squad_approval.sh")
+           "request"
+           "story__beta"
+           "story"
+           "beta"
+           "story"
+           "Approve_story"
+           "story-ready-for-approval")
       (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved")
-      (let [second-approval (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out second-approval) "NEXT_ACTION: create_approval_request"))
-        (is (str/includes? (:out second-approval) "STORY: beta")))
-      (run {:dir root} (script "squad_packet.sh") "approve" "beta" "story" "approved")
       (let [create-assignment (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out create-assignment) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out create-assignment) "STORY: alpha"))
@@ -1468,6 +1474,46 @@
         (is (str/includes? (:out spawn) "STORY: alpha"))
         (is (str/includes? (:out spawn) "ASSIGNMENT: alpha-gherkin"))
         (is (str/includes? (:out spawn) "COMMAND: squad_spawn_request.sh gherkin-writer alpha-gherkin")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-spawns-existing-rereview-before-requesting-another-revision
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
+      (write-file (fs/path root "features/alpha.feature") "Feature: alpha\n")
+      (write-file (fs/path root "qa/alpha.md") "# QA: alpha\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
+      (run {:dir root} "git" "add" "stories" "features" "qa")
+      (run {:dir root} "git" "commit" "-q" "-m" "Prepare alpha artifacts")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "analysis-alpha" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved")
+        (run {:dir root} (script "squad_packet.sh") "attach" "alpha" "gherkin" "alpha-gherkin-r2" "master" sha "features/alpha.feature")
+        (run {:dir root} (script "squad_packet.sh") "attach" "alpha" "qa-procedure" "alpha-qa-procedure" "master" sha "qa/alpha.md")
+        (run {:dir root} (script "squad_packet.sh") "review" "alpha" "gherkin" "changes-requested" "alpha-gherkin-review" "master" sha))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review-r2/metadata")
+                  (str "assignment_id: alpha-gherkin-review-r2\n"
+                       "theme_id: wumpus\n"
+                       "story_id: alpha\n"
+                       "template: gherkin-reviewer\n"
+                       "assignment_file: " root "/instructions.md\n"
+                       "created_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review-r2/status")
+                  (str "assignment_id: alpha-gherkin-review-r2\n"
+                       "state: assignment_created\n"
+                       "detail: gherkin-reviewer for alpha\n"
+                       "updated_at: 2026-08-03T00:00:00Z\n"))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: request_spawn"))
+        (is (str/includes? (:out next) "TEMPLATE: gherkin-reviewer"))
+        (is (str/includes? (:out next) "ASSIGNMENT: alpha-gherkin-review-r2"))
+        (is (not (str/includes? (:out next) "TEMPLATE: gherkin-writer"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -1962,7 +2008,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-assign-enforces-required-approval-gates
+(deftest squad-assign-records-workflow-metadata-without-enforcing-readiness
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -1979,18 +2025,6 @@
                   "Write unit tests first, then production code.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
-      (let [missing-packet (run {:dir root :ok? false}
-                                (script "squad_assign.sh")
-                                "create"
-                                "wumpus"
-                                "cave-topology"
-                                "implementer"
-                                "wumpus-cave-impl"
-                                "instructions.md")]
-        (is (= 3 (:exit missing-packet)))
-        (is (str/includes? (:err missing-packet)
-                           "missing story packet for cave-topology")))
-      (prepare-implementation-packet! root "wumpus" "cave-topology")
       (let [created (run {:dir root}
                          (script "squad_assign.sh")
                          "create"
@@ -1998,12 +2032,14 @@
                          "cave-topology"
                          "implementer"
                          "wumpus-cave-impl"
-                         "instructions.md")
+                         "instructions.md"
+                         "--requires"
+                         "approval:implementation")
             assignment (fs/path root ".squad/assignments/wumpus-cave-impl/assignment.md")
             metadata (fs/path root ".squad/assignments/wumpus-cave-impl/metadata")]
         (is (str/includes? (:out created) "TEMPLATE: implementer"))
-        (is (not (str/includes? (slurp (str assignment)) "requires: approval:acceptance")))
-        (is (not (str/includes? (slurp (str metadata)) "requires: approval:acceptance"))))
+        (is (str/includes? (slurp (str assignment)) "requires: approval:implementation"))
+        (is (str/includes? (slurp (str metadata)) "requires: approval:implementation")))
       (finally
         (fs/delete-tree root)))))
 
@@ -3067,6 +3103,34 @@
         (run {:dir root :ok? false} (script "stop_squadd.bb") (str root))
         (fs/delete-tree root)))))
 
+(deftest squadd-opens-dashboard-on-startup-when-enabled
+  (let [root (tmp-dir)
+        opener (fs/path root "open-dashboard")
+        marker (fs/path root "opened-dashboard")]
+    (try
+      (init-repo! root)
+      (fs/create-dirs (fs/path root ".swarmforge/daemon"))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file opener
+                  (str "#!/usr/bin/env sh\n"
+                       "printf '%s\\n' \"$1\" > " marker "\n"))
+      (run {:dir root} "chmod" "+x" (str opener))
+      (run {:dir root :ok? false}
+           "sh" "-c"
+           (str "SWARMFORGE_SQUADD_WEB_PORT=0 "
+                "SWARMFORGE_SQUADD_WEB_OPEN=1 "
+                "SWARMFORGE_SQUADD_WEB_OPEN_COMMAND=" opener " "
+                "bb " (script "squadd.bb") " " root " >/dev/null 2>&1 &"))
+      (let [url-file (fs/path root ".swarmforge/daemon/squad-web-url")]
+        (is (wait-for-file url-file 3000))
+        (is (wait-for-file marker 3000))
+        (is (= (str/trim (slurp (str url-file)))
+               (str/trim (slurp (str marker))))))
+      (finally
+        (run {:dir root :ok? false} (script "stop_squadd.bb") (str root))
+        (fs/delete-tree root)))))
+
 (deftest grok-launch-command-passes-initial-prompt
   (let [root (tmp-dir)]
     (try
@@ -3259,7 +3323,9 @@
     (try
       (init-repo! root)
       (let [reviewer-worktree (fs/path root ".worktrees/reviewer-001")]
-        (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-reviewer-001" (str reviewer-worktree) "HEAD"))
+        (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-reviewer-001" (str reviewer-worktree) "HEAD")
+        (fs/create-dirs (fs/path root ".worktrees/orphan-001"))
+        (write-file (fs/path root ".worktrees/orphan-001/leftover.txt") "leftover\n"))
       (write-file (fs/path root ".swarmforge/tmux-socket") (str sock "\n"))
       (write-file (fs/path root ".swarmforge/sessions.tsv")
                   (str "1\tcoder\tswarmforge-coder\tCoder\tcodex\n"
@@ -3292,6 +3358,7 @@
         (is (not (fs/exists? squadd-pid-file)))
         (is (not (fs/exists? (fs/path root ".swarmforge/daemon/squad-web-url"))))
         (is (not (fs/exists? (fs/path root ".worktrees/reviewer-001"))))
+        (is (not (fs/exists? (fs/path root ".worktrees/orphan-001"))))
         (is (not (git-worktree-registered? root (fs/path root ".worktrees/reviewer-001"))))
         (is (not (git-branch-exists? root "swarmforge-reviewer-001")))
         (is (= [(str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask")]

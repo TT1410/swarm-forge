@@ -96,28 +96,10 @@
 (defn story-packet-file [root story-id]
   (fs/path root ".squad" "stories" story-id "packet"))
 
-(defn ensure-implementer-packet-ready! [root story-id assignment-id]
+(defn optional-story-packet [root story-id]
   (let [packet (story-packet-file root story-id)]
-    (when-not (fs/regular-file? packet)
-      (exit! 3
-             (str "SQUAD_ASSIGNMENT_BLOCKED: " assignment-id)
-             (str "REASON: missing story packet for " story-id)))
-    (when-not (= "implementation_approved" (read-value packet "state"))
-      (exit! 3
-             (str "SQUAD_ASSIGNMENT_BLOCKED: " assignment-id)
-             (str "REASON: story packet " story-id " is not implementation_approved")))
-    packet))
-
-(defn approval-gates [theme]
-  (let [file (fs/path theme "approvals.tsv")]
-    (if (fs/exists? file)
-      (->> (str/split-lines (slurp (str file)))
-           (keep (fn [line]
-                   (let [[_ gate] (str/split line #"\t" 3)]
-                     (when-not (str/blank? gate)
-                       gate))))
-           set)
-      #{})))
+    (when (fs/regular-file? packet)
+      packet)))
 
 (defn parse-requirement! [requirement]
   (when requirement
@@ -297,24 +279,15 @@
     (when-not theme-scoped?
       (ensure-file! "Story file not found" story-file))
     (ensure-file! "Role template not found" template-file)
-    (when (and requirement
-               (= "approval" (:kind requirement))
-               (not (contains? (approval-gates theme) (:value requirement))))
-      (exit! 3
-             (str "SQUAD_ASSIGNMENT_BLOCKED: " assignment-id)
-             (str "REASON: missing required approval gate " (:value requirement))))
-    (let [packet (when (= "implementer" template)
-                   (ensure-implementer-packet-ready! root story-id assignment-id))]
+    (let [packet (optional-story-packet root story-id)]
       (when (and packet
                  (not= theme-id (read-value packet "theme_id")))
-        (exit! 3
-               (str "SQUAD_ASSIGNMENT_BLOCKED: " assignment-id)
-               (str "REASON: story packet " story-id " belongs to a different theme"))))
+        (exit! 2
+               (str "Story packet " story-id " belongs to a different theme."))))
     (when (fs/exists? dir)
       (exit! 2 (str "Assignment already exists: " assignment-id)))
     (fs/create-dirs dir)
-    (let [packet (when (= "implementer" template)
-                   (story-packet-file root story-id))
+    (let [packet (optional-story-packet root story-id)
           assignment-text (render-assignment {:theme-id theme-id
                                               :story-id story-id
                                               :template template

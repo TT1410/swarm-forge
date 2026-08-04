@@ -23,6 +23,6 @@
  :requires-theme-negotiation-before-analyst true
  :theme-approval-before-analyst true
  :story-packet-source-of-truth true
- :implementation-packet-state "implementation_approved"
+ :implementation-readiness-source "squad_next.sh"
  :singleton-roles ["hardener" "qa" "architect"]
  :transient-slot-config "max_transient_agents"}

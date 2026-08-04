@@ -6,4 +6,4 @@
  :may-talk-to-user false
  :writes ["production-code" "unit-tests" "acceptance-tests"]
  :artifact-roots ["src/" "test/" "features/" "qa/"]
- :requires-packet-state "implementation_approved"}
+ :workflow-readiness-source "squad_next.sh"}
