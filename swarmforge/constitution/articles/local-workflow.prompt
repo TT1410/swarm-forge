@@ -26,7 +26,7 @@
 - The branch can generate a durable theme report with `squad_report.sh <theme-id>`.
 - The launcher starts `squadd.sh` automatically when the swarm starts; manual checks can still use `squadd.sh --once --no-notify`.
 - `squad_next.sh` is the single source of workflow truth and direction. Other squad helpers may validate command format, identifiers, paths, handoff shape, git safety, and durable state integrity, but they must not independently enforce workflow readiness or sequencing decisions.
-- Normal squad workflow must not require reading helper implementation source. Use documented command forms and helper output; do not inspect `swarmforge/scripts/*.bb` or `swarmforge/scripts/*.sh` unless the user explicitly asks for SwarmForge debugging.
+- Normal squad workflow must not require reading helper implementation source. Use documented command forms and helper output; do not inspect `swarmforge/scripts/*.clj` or `swarmforge/scripts/*.sh` unless the user explicitly asks for SwarmForge debugging.
 - Available transient role templates are `analyst`, `gherkin-writer`, `qa-procedure-writer`, `gherkin-reviewer`, `qa-procedure-reviewer`, `implementer`, `cleaner`, `code-reviewer`, `hardener`, `qa`, `architect`, and `senior-implementor`.
 - Legacy templates may exist for compatibility, but do not use them for this flow unless the user explicitly asks for a legacy role.
 - Transient squad agents are not intermediate pack-pipeline roles. They must not hand off to each other; every transient result handoff goes only back to `squad-leader`.

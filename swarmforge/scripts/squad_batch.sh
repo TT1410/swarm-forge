@@ -2,4 +2,4 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec bb "$SCRIPT_DIR/squad_batch.bb" "$@"
+exec bb "$SCRIPT_DIR/squad_batch.clj" "$@"

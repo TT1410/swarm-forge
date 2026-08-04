@@ -1,4 +1,4 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-exec bb "$SCRIPT_DIR/squad_recover.bb" "$@"
+exec bb "$SCRIPT_DIR/squad_recover.clj" "$@"

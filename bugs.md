@@ -790,7 +790,7 @@ They still did not record the verdict:
 architecture_review: changes-requested
 ```
 
-This blocks the senior-implementor path. `squad_next.bb` only recommends
+This blocks the senior-implementor path. `squad_next.clj` only recommends
 `senior-implementor` when it sees `architecture_review: changes-requested` in a
 story packet, so a merged architecture critique with an unrecorded verdict leaves
 the senior-implementor trigger invisible to the FSM.
@@ -817,7 +817,7 @@ Reliable fix:
 
 Observed in the FSM: an architecture critique with `changes-requested` can
 trigger a `senior-implementor` assignment, and `squad_packet.sh record` can
-record `senior_implementor_sha`. However, `squad_next.bb` has no follow-up
+record `senior_implementor_sha`. However, `squad_next.clj` has no follow-up
 transition that routes the senior-implementor result back to the architect for
 review.
 

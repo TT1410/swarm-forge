@@ -1,4 +1,4 @@
-{:paths ["test"]
+{:paths ["swarmforge/scripts" "test"]
  :tasks
  {test {:doc "Run helper tests except simulator tests"
         :task (do

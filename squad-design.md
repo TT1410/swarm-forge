@@ -120,7 +120,7 @@ been no meaningful change unless the quiet period itself is noteworthy.
 
 ## Unified Squad Daemon
 
-The squad should use one launcher-owned daemon, tentatively `squadd.bb`, rather
+The squad should use one launcher-owned daemon, tentatively `squadd.clj`, rather
 than accumulating separate long-running processes for handoffs, status, spawn
 requests, and recovery.
 
@@ -163,11 +163,11 @@ This consolidation reduces:
 
 Migration strategy:
 
-1. Add `squadd.bb` while keeping `handoffd.bb` and `squad_statusd.bb`.
-2. Move handoff delivery into `squadd.bb`.
-3. Move status polling into `squadd.bb`.
-4. Add spawn-request processing to `squadd.bb`.
-5. Start only `squadd.bb` from `./swarm`.
+1. Add `squadd.clj` while keeping `handoffd.clj` and `squad_statusd.clj`.
+2. Move handoff delivery into `squadd.clj`.
+3. Move status polling into `squadd.clj`.
+4. Add spawn-request processing to `squadd.clj`.
+5. Start only `squadd.clj` from `./swarm`.
 6. Keep old daemon scripts temporarily as compatibility wrappers or one-shot
    test helpers.
 7. Remove old daemon startup after the unified daemon passes the Hunt the
@@ -177,19 +177,19 @@ Migration strategy:
 
 Squad helper commands should follow the existing SwarmForge script convention.
 Agent-facing and user-facing commands should have stable `.sh` entrypoints,
-with nontrivial implementation in matching `.bb` files.
+with nontrivial implementation in matching `.clj` files.
 
 Examples:
 
 ```text
-squad_spawn.sh     -> squad_spawn.bb
-squad_event.sh     -> squad_event.bb
-squad_run.sh       -> squad_run.bb
-squad_retire.sh    -> squad_retire.bb
-squad_status.sh    -> squad_status.bb
-squad_statusd.sh   -> squad_statusd.bb
-squad_theme.sh     -> squad_theme.bb
-squad_tool.sh      -> squad_tool.bb
+squad_spawn.sh     -> squad_spawn.clj
+squad_event.sh     -> squad_event.clj
+squad_run.sh       -> squad_run.clj
+squad_retire.sh    -> squad_retire.clj
+squad_status.sh    -> squad_status.clj
+squad_statusd.sh   -> squad_statusd.clj
+squad_theme.sh     -> squad_theme.clj
+squad_tool.sh      -> squad_tool.clj
 ```
 
 The `.sh` wrapper is the command surface placed on `PATH` for agents. The
@@ -197,7 +197,7 @@ Babashka implementation should own structured parsing, state-file updates,
 atomic writes, time handling, process coordination, and tests.
 
 Not every script needs both files. Internal libraries and the unified daemon may
-be `.bb` only when agents do not call them directly. Terminal and OS integration
+be `.clj` only when agents do not call them directly. Terminal and OS integration
 glue may remain shell-only when shell is the natural boundary.
 
 ## Shared Tool Cache And Transient Launch Root
@@ -289,7 +289,7 @@ Adopt the same architectural pattern used for handoffs:
 - `squad_spawn_request.sh <template> <task-id> <assignment-file>` writes a
   request under `.squad/spawn-requests/new/`
 - the request helper performs only normal project-local file writes
-- `squad_spawnd.bb`, started by `./swarm`, watches the request directory
+- `squad_spawnd.clj`, started by `./swarm`, watches the request directory
 - the daemon validates the request and runs the existing spawn mechanics:
   worktree creation, prompt and launch script generation, `roles.tsv` update,
   handoff directory creation, helper synchronization, and tmux session launch
@@ -638,7 +638,7 @@ constitution articles, and `swarmforge/roles/squad-leader.prompt`.
 Implement the first transient spawn path:
 
 - `squad_spawn.sh` as the agent-facing command surface
-- `squad_spawn.bb` as the Babashka implementation
+- `squad_spawn.clj` as the Babashka implementation
 - one transient role template
 - generated runtime prompt for a concrete transient agent
 - transient worktree creation
@@ -649,7 +649,7 @@ Implement the first transient spawn path:
 Success condition: the squad leader can spawn a transient worker in an
 invisible tmux session without restarting the handoff daemon.
 
-Status: implemented. `squad_spawn.sh` delegates to `squad_spawn.bb`, creates a
+Status: implemented. `squad_spawn.sh` delegates to `squad_spawn.clj`, creates a
 transient worktree, generates a runtime prompt, creates handoff directories,
 atomically updates `.swarmforge/roles.tsv`, copies helper scripts into the
 transient worktree, and starts a detached tmux session.
@@ -661,7 +661,7 @@ Close the first dynamic loop:
 - transient agent receives a narrow assignment
 - transient agent sends a normal `git_handoff` back to `squad-leader`
 - squad leader receives and processes that handoff
-- `squad_retire.sh`/`.bb` stops the transient session and marks the agent
+- `squad_retire.sh`/`.clj` stops the transient session and marks the agent
   retired, then removes its transient git worktree and branch
 
 Success condition: a spawned transient can commit a small report, hand it
@@ -670,7 +670,7 @@ back to the squad leader, and be retired cleanly.
 Status: implemented. The first dynamic loop has been observed with a spawned
 transient committing work, sending a normal `git_handoff` back to
 `squad-leader`, and the squad leader completing the handoff. `squad_retire.sh`
-delegates to `squad_retire.bb`, removes the transient role from
+delegates to `squad_retire.clj`, removes the transient role from
 `.swarmforge/roles.tsv`, stops the detached tmux session when present, writes
 retired state under `.squad/agents/<agent-id>/status`, removes the transient
 git worktree registration, deletes the managed `.worktrees/<agent-id>`
@@ -680,9 +680,9 @@ directory, and force-deletes the `swarmforge-<agent-id>` branch.
 
 Add non-handoff telemetry:
 
-- `squad_event.sh`/`.bb`
-- `squad_run.sh`/`.bb`
-- `squad_status.sh`/`.bb`
+- `squad_event.sh`/`.clj`
+- `squad_run.sh`/`.clj`
+- `squad_status.sh`/`.clj`
 - `.squad/agents/<agent-id>/heartbeat`
 - `.squad/agents/<agent-id>/status`
 - `.squad/tasks/<task-id>/events.log`
@@ -701,7 +701,7 @@ one agent or all known squad agents.
 
 Add a narrow watchdog/reminder daemon:
 
-- `squad_statusd.sh`/`.bb` or `.bb` only if internal
+- `squad_statusd.sh`/`.clj` or `.clj` only if internal
 - stale heartbeat detection
 - tmux session and pane existence checks
 - pane-dead detection
@@ -756,7 +756,7 @@ theme-sized end-to-end workflow remains future work.
 Add a lightweight durable manifest for theme-sized work:
 
 - `squad_theme.sh` as the command surface
-- `squad_theme.bb` as the Babashka implementation
+- `squad_theme.clj` as the Babashka implementation
 - `.squad/themes/<theme-id>/theme.md`
 - project story files under `stories/<story-id>.md`
 - `.squad/themes/<theme-id>/stories/<story-id>.ref`
@@ -778,7 +778,7 @@ append-only, and writes a current status file.
 Connect theme/story state to concrete transient assignments:
 
 - `squad_assign.sh` as the command surface
-- `squad_assign.bb` as the Babashka implementation
+- `squad_assign.clj` as the Babashka implementation
 - `.squad/assignments/<assignment-id>/assignment.md`
 - `.squad/assignments/<assignment-id>/metadata`
 - `.squad/assignments/<assignment-id>/status`
@@ -1083,14 +1083,14 @@ template before artifacts can be recorded.
 
 Consolidate daemon responsibilities into one launcher-owned process:
 
-- add `squadd.bb`
+- add `squadd.clj`
 - use one daemon pid file and one stop file
 - move handoff delivery into the unified daemon
 - move status polling and stale-agent detection into the unified daemon
 - add spawn-request processing to the unified daemon
 - start only the unified daemon from `./swarm`
 - stop only the unified daemon from `close-swarm` and cleanup paths
-- keep `handoffd.bb` and `squad_statusd.bb` temporarily as compatibility
+- keep `handoffd.clj` and `squad_statusd.clj` temporarily as compatibility
   wrappers or one-shot test helpers
 
 Success condition: a squad leader can request transient spawns without direct
@@ -1445,7 +1445,7 @@ They are tracked here as resolved, partially resolved, or still open.
 - [ ] acceptance artifact schema and type policy beyond path references
 - [ ] helper-level enforcement that acceptance artifacts cite a producing
       assignment or transient agent
-- [ ] compatibility lifetime for old `handoffd.bb` and `squad_statusd.bb`
+- [ ] compatibility lifetime for old `handoffd.clj` and `squad_statusd.clj`
 
 ## Heartbeats
 
@@ -1497,9 +1497,9 @@ or report a blocker to the user.
 
 - Should direct `squad_spawn.sh` remain an unrestricted operator command, or
   should normal use move entirely to `squad_spawn_request.sh` plus
-  `squad_spawnd.bb`?
-- How long should `handoffd.bb` and `squad_statusd.bb` remain as standalone
-  scripts after `squadd.bb` owns normal daemon lifecycle?
+  `squad_spawnd.clj`?
+- How long should `handoffd.clj` and `squad_statusd.clj` remain as standalone
+  scripts after `squadd.clj` owns normal daemon lifecycle?
 - Should transient worktrees be created from role-specific branch names,
   task-specific branch names, or both?
 - What is the minimal set of squad helper scripts needed for the first

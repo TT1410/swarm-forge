@@ -312,9 +312,9 @@
                        "task: task-alpha\n"
                        "\n"
                        "merge_and_process coder abcdef1234\n"))
-      (let [header (run {:dir root} (script "handoff_lib.bb") "header-field" "task.handoff" "task")
-            body (run {:dir root} (script "handoff_lib.bb") "body" "task.handoff")
-            task (run {:dir root} (script "handoff_lib.bb") "print-task" "task.handoff")]
+      (let [header (run {:dir root} (script "handoff_lib.clj") "header-field" "task.handoff" "task")
+            body (run {:dir root} (script "handoff_lib.clj") "body" "task.handoff")
+            task (run {:dir root} (script "handoff_lib.clj") "print-task" "task.handoff")]
         (is (str/includes? (:out header) "task-alpha"))
         (is (str/includes? (:out body) "merge_and_process coder abcdef1234"))
         (is (str/includes? (:out task) "TASK: task.handoff"))
@@ -338,13 +338,13 @@
                        "type: note\n"
                        "\n"
                        "payload\n"))
-      (run {:dir root} (script "handoff_lib.bb") "role-known" "cleaner")
-      (run {:dir root} (script "handoff_lib.bb") "set-header" ".swarmforge/handoffs/inbox/new/item.handoff" "dequeued_at" "2026-06-16T00:00:00Z")
-      (let [mode (run {:dir root} (script "handoff_lib.bb") "role-receive-mode" "cleaner")
-            worktree (run {:dir root} (script "handoff_lib.bb") "role-worktree-name" "cleaner")
-            dequeued (run {:dir root} (script "handoff_lib.bb") "header-field" ".swarmforge/handoffs/inbox/new/item.handoff" "dequeued_at")
-            seq-1 (run {:dir root} (script "handoff_lib.bb") "next-sequence")
-            seq-2 (run {:dir root} (script "handoff_lib.bb") "next-sequence")]
+      (run {:dir root} (script "handoff_lib.clj") "role-known" "cleaner")
+      (run {:dir root} (script "handoff_lib.clj") "set-header" ".swarmforge/handoffs/inbox/new/item.handoff" "dequeued_at" "2026-06-16T00:00:00Z")
+      (let [mode (run {:dir root} (script "handoff_lib.clj") "role-receive-mode" "cleaner")
+            worktree (run {:dir root} (script "handoff_lib.clj") "role-worktree-name" "cleaner")
+            dequeued (run {:dir root} (script "handoff_lib.clj") "header-field" ".swarmforge/handoffs/inbox/new/item.handoff" "dequeued_at")
+            seq-1 (run {:dir root} (script "handoff_lib.clj") "next-sequence")
+            seq-2 (run {:dir root} (script "handoff_lib.clj") "next-sequence")]
         (is (str/includes? (:out mode) "batch"))
         (is (str/includes? (:out worktree) "cleaner"))
         (is (str/includes? (:out dequeued) "2026-06-16T00:00:00Z"))
@@ -364,7 +364,7 @@
                        "window cleaner codex cleaner batch\n"))
       (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
       (write-file (fs/path root "swarmforge/roles/cleaner.prompt") "cleaner\n")
-      (let [result (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))]
+      (let [result (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))]
         (is (str/includes? (:out result) "coder Coder"))
         (is (str/includes? (:out result) "cleaner Cleaner"))
         (is (str/includes? (:out result) "cleaner batch"))
@@ -382,7 +382,7 @@
       (write-file (fs/path root "swarmforge/swarmforge.conf")
                   "window coder codex master\n")
       (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
-      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
       (let [socket-path (str/trim (slurp (str (fs/path root ".swarmforge/tmux-socket"))))]
         (is (str/starts-with? socket-path "/tmp/swarmforge-"))
         (is (not (str/starts-with? socket-path "/private/tmp/"))))
@@ -398,7 +398,7 @@
                   (str "window coder codex master\n"
                        "window coder codex other\n"))
       (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
-      (let [result (run {:dir root :ok? false} (script "swarmforge.bb") "--test-parse" (str root))]
+      (let [result (run {:dir root :ok? false} (script "swarmforge.clj") "--test-parse" (str root))]
         (is (= 1 (:exit result)))
         (is (str/includes? (:err result) "Duplicate role 'coder'")))
       (finally
@@ -416,7 +416,7 @@
                        "  printf '%s\\n' \"$WORKING_DIR|$TMUX_SOCKET|$1|$2|$3\"\n"
                        "}\n"))
       (let [result (run {:dir root}
-                        (script "swarmforge.bb")
+                        (script "swarmforge.clj")
                         "--test-terminal-bridge"
                         (str root)
                         "probe")]
@@ -429,15 +429,15 @@
 
 (deftest swarmforge-agent-start-delay-is-configurable
   (let [default-result (run {:dir repo-root}
-                            (script "swarmforge.bb")
+                            (script "swarmforge.clj")
                             "--test-agent-start-delay")
         configured-result (run {:dir repo-root
                                 :env {"SWARMFORGE_AGENT_START_DELAY_MS" "2750"}}
-                               (script "swarmforge.bb")
+                               (script "swarmforge.clj")
                                "--test-agent-start-delay")
         invalid-result (run {:dir repo-root
                              :env {"SWARMFORGE_AGENT_START_DELAY_MS" "fast"}}
-                            (script "swarmforge.bb")
+                            (script "swarmforge.clj")
                             "--test-agent-start-delay")]
     (is (= "1500" (str/trim (:out default-result))))
     (is (= "2750" (str/trim (:out configured-result))))
@@ -446,7 +446,7 @@
 (deftest swarmforge-sleep-prevention-can-be-disabled
   (let [result (run {:dir repo-root
                      :env {"SWARMFORGE_PREVENT_SLEEP" "0"}}
-                    (script "swarmforge.bb")
+                    (script "swarmforge.clj")
                     "--test-sleep-inhibitor-prefix")]
     (is (= "" (str/trim (:out result))))))
 
@@ -460,7 +460,7 @@
                        "window cleaner copilot cleaner batch --allow-all-tools\n"))
       (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
       (write-file (fs/path root "swarmforge/roles/cleaner.prompt") "cleaner\n")
-      (let [result (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))]
+      (let [result (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))]
         (is (str/includes? (:out result) "coder Coder"))
         (is (str/includes? (:out result) "task --yolo"))
         (is (str/includes? (:out result) "batch --allow-all-tools")))
@@ -471,7 +471,7 @@
   (let [root (tmp-dir)]
     (try
       (let [result (run {:dir root}
-                        (script "swarmforge.bb")
+                        (script "swarmforge.clj")
                         "--test-launch-command"
                         (str root)
                         "copilot"
@@ -498,7 +498,7 @@
                   "specify\n")
       (write-file (fs/path root "assignment.md")
                   "Find the original rules.\n")
-      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
       (fs/create-dirs (fs/path root ".swarmforge/squad/spawn.lock"))
       (let [result (run {:dir root
                          :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
@@ -696,7 +696,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Implement cave topology.\n")
-      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
@@ -741,7 +741,7 @@
                   "implement\n")
       (write-file (fs/path root "assignment.md")
                   "Implement a tiny behavior slice.\n")
-      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
       (let [result (run {:dir root
                          :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                         (script "squad_spawn.sh")
@@ -789,7 +789,7 @@
                   "analyze\n")
       (write-file (fs/path root "assignment.md")
                   "Write stories.\n")
-      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
       (let [result (run {:dir root
                          :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                         (script "squad_spawn.sh")
@@ -823,7 +823,7 @@
                   "analyze\n")
       (write-file (fs/path root "assignment.md")
                   "Write stories.\n")
-      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
       (let [result (run {:dir root
                          :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                         (script "squad_spawn.sh")
@@ -2811,9 +2811,9 @@
 	                  "SWARMFORGE_SQUAD_STATUS_NOTIFY_COOLDOWN_SECONDS" "999999"
 	                  "SWARMFORGE_SQUADD_WEB" "0"}}
            "sh" "-c"
-           (str "bb " (script "squadd.bb") " " root " >/dev/null 2>&1 &"))
+           (str "bb " (script "squadd.clj") " " root " >/dev/null 2>&1 &"))
       (Thread/sleep 6500)
-      (let [stop (run {:dir root} (script "stop_squadd.bb") (str root))
+      (let [stop (run {:dir root} (script "stop_squadd.clj") (str root))
             daemon-log (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))
             notify-markers (if (fs/exists? fake-state)
                              (filter #(str/starts-with? (fs/file-name %) "notify-")
@@ -2824,7 +2824,7 @@
         (is (= 1 (count (filter #(str/includes? % " status-notified squad-leader ") (str/split-lines daemon-log)))))
         (is (str/includes? daemon-log "status-notify-throttled")))
       (finally
-        (run {:dir root :ok? false} (script "stop_squadd.bb") (str root))
+        (run {:dir root :ok? false} (script "stop_squadd.clj") (str root))
         (fs/delete-tree root)))))
 
 (deftest squadd-processes-status-and-daemon-owned-spawn-requests
@@ -2841,7 +2841,7 @@
                   "specify\n")
       (write-file (fs/path root "assignment.md")
                   "Find the original rules.\n")
-      (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))
+      (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
       (let [request (run {:dir root}
                          (script "squad_spawn_request.sh")
                          "specifier"
@@ -3258,12 +3258,12 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (run {:dir root :ok? false}
            "sh" "-c"
-           (str "SWARMFORGE_SQUADD_SKIP_TMUX=1 bb " (script "squadd.bb") " " root " >/dev/null 2>&1 &"))
+           (str "SWARMFORGE_SQUADD_SKIP_TMUX=1 bb " (script "squadd.clj") " " root " >/dev/null 2>&1 &"))
       (Thread/sleep 1000)
       (let [pid-file (fs/path root ".swarmforge/daemon/squadd.pid")]
         (is (fs/exists? pid-file))
         (let [pid (str/trim (slurp (str pid-file)))
-              stop (run {:dir root} (script "stop_squadd.bb") (str root))]
+              stop (run {:dir root} (script "stop_squadd.clj") (str root))]
           (is (= 0 (:exit stop)))
           (Thread/sleep 300)
           (is (not (fs/exists? pid-file)))
@@ -3407,7 +3407,7 @@
            (str "FAKE_TMUX_STATE=" fake-state
                 " PATH=" bin ":$PATH"
                 " SWARMFORGE_SQUADD_SKIP_TMUX=1 SWARMFORGE_SQUADD_WEB_PORT=0 bb "
-                (script "squadd.bb") " " root " >/dev/null 2>&1 &"))
+                (script "squadd.clj") " " root " >/dev/null 2>&1 &"))
       (let [url-file (fs/path root ".swarmforge/daemon/squad-web-url")]
 	        (is (wait-for-file url-file 3000))
 	        (let [base-url (str/trim (slurp (str url-file)))
@@ -3441,7 +3441,7 @@
           (is (fs/exists? (fs/path root ".squad/approvals/approved/story__cave-topology.approval")))
           (is (not (fs/exists? (fs/path root ".squad/approvals/pending/story__cave-topology.approval"))))))
       (finally
-        (run {:dir root :ok? false} (script "stop_squadd.bb") (str root))
+        (run {:dir root :ok? false} (script "stop_squadd.clj") (str root))
         (fs/delete-tree root)))))
 
 (deftest squadd-omits-approval-history
@@ -3471,7 +3471,7 @@
       (run {:dir root :ok? false}
            "sh" "-c"
            (str "SWARMFORGE_SQUADD_SKIP_TMUX=1 SWARMFORGE_SQUADD_WEB_PORT=0 bb "
-                (script "squadd.bb") " " root " >/dev/null 2>&1 &"))
+                (script "squadd.clj") " " root " >/dev/null 2>&1 &"))
 	      (let [url-file (fs/path root ".swarmforge/daemon/squad-web-url")]
 	        (is (wait-for-file url-file 3000))
 	        (let [base-url (str/trim (slurp (str url-file)))
@@ -3482,7 +3482,7 @@
 	          (is (not (str/includes? state "\"approval_id\":\"theme__wumpus\"")))
 	          (is (not (str/includes? state "\"resolution_detail\":\"approved by test\"")))))
       (finally
-        (run {:dir root :ok? false} (script "stop_squadd.bb") (str root))
+        (run {:dir root :ok? false} (script "stop_squadd.clj") (str root))
         (fs/delete-tree root)))))
 
 (deftest squadd-opens-dashboard-on-startup-when-enabled
@@ -3503,21 +3503,21 @@
            (str "SWARMFORGE_SQUADD_WEB_PORT=0 "
                 "SWARMFORGE_SQUADD_WEB_OPEN=1 "
                 "SWARMFORGE_SQUADD_WEB_OPEN_COMMAND=" opener " "
-                "bb " (script "squadd.bb") " " root " >/dev/null 2>&1 &"))
+                "bb " (script "squadd.clj") " " root " >/dev/null 2>&1 &"))
       (let [url-file (fs/path root ".swarmforge/daemon/squad-web-url")]
         (is (wait-for-file url-file 3000))
         (is (wait-for-file marker 3000))
         (is (= (str/trim (slurp (str url-file)))
                (str/trim (slurp (str marker))))))
       (finally
-        (run {:dir root :ok? false} (script "stop_squadd.bb") (str root))
+        (run {:dir root :ok? false} (script "stop_squadd.clj") (str root))
         (fs/delete-tree root)))))
 
 (deftest grok-launch-command-passes-initial-prompt
   (let [root (tmp-dir)]
     (try
       (let [result (run {:dir root}
-                        (script "swarmforge.bb")
+                        (script "swarmforge.clj")
                         "--test-launch-command"
                         (str root)
                         "grok")
@@ -3535,7 +3535,7 @@
   (let [root (tmp-dir)]
     (try
       (let [result (run {:dir root}
-                        (script "swarmforge.bb")
+                        (script "swarmforge.clj")
                         "--test-launch-command"
                         (str root)
                         "grok"
@@ -3556,7 +3556,7 @@
                   (str "1\told-a\tswarmforge-coder\tSwarmForge Coder\n"
                        "2\told-b\tswarmforge-cleaner\tSwarmForge Cleaner\n"))
       (write-file ids-file "old-a\nold-b\n")
-      (run {:dir root} (script "swarm-window-watchdog.bb") "--rewrite-window-id" "windows.tsv" "window-ids" "2" "new-b")
+      (run {:dir root} (script "swarm_window_watchdog.clj") "--rewrite-window-id" "windows.tsv" "window-ids" "2" "new-b")
       (let [state (slurp (str state-file))
             ids (slurp (str ids-file))]
         (is (str/includes? state "1\told-a\tswarmforge-coder\tSwarmForge Coder"))
@@ -3573,7 +3573,7 @@
       (write-file conf "set -g base-index 1\nset -g pane-base-index 1\n")
       (run {:dir root} "tmux" "-S" sock "-f" (str conf) "new-session" "-d" "-s" "probe" "sleep" "120")
       (let [result (run {:dir root}
-                        (script "swarmforge.bb")
+                        (script "swarmforge.clj")
                         "--test-tmux-base-indexes"
                         sock)]
         (is (= "1 1" (str/trim (:out result)))))
@@ -3596,7 +3596,7 @@
       (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-squad-leader" "sleep" "120")
       (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-analyst-001" "sleep" "120")
       (let [result (run {:dir root}
-                        (script "swarm-window-watchdog.bb")
+                        (script "swarm_window_watchdog.clj")
                         (str state-file)
                         (str ids-file)
                         "1"

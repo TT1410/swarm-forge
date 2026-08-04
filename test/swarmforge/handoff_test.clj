@@ -248,12 +248,12 @@
     (write-file (fs/path root ".swarmforge/tmux-socket") "/tmp/fake.sock\n")
     (run {:dir root :ok? false}
          "sh" "-c"
-         (str "bb " (script "handoffd.bb") " " root " >/dev/null 2>&1 &"))
+         (str "bb " (script "handoffd.clj") " " root " >/dev/null 2>&1 &"))
     (Thread/sleep 1500)
     (let [pid-file (fs/path root ".swarmforge/daemon/handoffd.pid")]
       (is (fs/exists? pid-file))
       (let [pid (str/trim (read-file pid-file))
-            stop (run {:dir root} (script "stop_handoff_daemon.bb") (str root))]
+            stop (run {:dir root} (script "stop_handoff_daemon.clj") (str root))]
         (is (= 0 (:exit stop)))
         (Thread/sleep 300)
         (is (not (fs/exists? pid-file)))
