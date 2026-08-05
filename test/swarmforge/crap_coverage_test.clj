@@ -27,6 +27,7 @@
             [squad-theme :as theme]
             [squad-tool :as tool]
             [squadd :as squadd]
+            [squadd.web :as squadd-web]
             [stop-handoff-daemon :as stop-handoff]
             [stop-squadd :as stop-squadd]
             [swarm-handoff :as handoff]
@@ -398,19 +399,19 @@
   (let [root (tmp-dir)]
     (write-file (fs/path root ".swarmforge/tmux-socket") "sock\n")
     (with-redefs [process/sh (fn [& _] {:exit 0 :out "approved\n" :err ""})
-                  squadd/tmux-notify! (fn [socket session message]
-                                        (= ["sock" "swarmforge-squad-leader" squadd/approval-wake-message]
+                  squadd-web/tmux-notify! (fn [socket session message]
+                                            (= ["sock" "swarmforge-squad-leader" squadd-web/approval-wake-message]
                                            [socket session message]))]
       (is (= {:ok true :output "approved\n"}
-             (squadd/approval-web-action! root "story__cave" "approve"))))
+             (squadd-web/approval-web-action! root "story__cave" "approve"))))
     (fs/delete-if-exists (fs/path root ".swarmforge/tmux-socket"))
     (with-redefs [process/sh (fn [& _] {:exit 0 :out "rejected\n" :err ""})
-                  squadd/tmux-notify! (fn [& _] (throw (ex-info "should not notify" {})))]
+                  squadd-web/tmux-notify! (fn [& _] (throw (ex-info "should not notify" {})))]
       (is (= {:ok true :output "rejected\n"}
-             (squadd/approval-web-action! root "story__cave" "reject"))))
+             (squadd-web/approval-web-action! root "story__cave" "reject"))))
     (with-redefs [process/sh (fn [& _] {:exit 1 :out "out" :err "err"})]
       (is (= {:ok false :status 409 :error "errout"}
-             (squadd/approval-web-action! root "story__cave" "approve")))))
+             (squadd-web/approval-web-action! root "story__cave" "approve")))))
   (let [root (tmp-dir)]
     (write-file (fs/path root ".swarmforge/roles.tsv")
                 (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
@@ -449,15 +450,15 @@
                 "Assignment review text\n")
     (write-file (fs/path root ".squad/assignments/blocker-001/blocker.md")
                 "Blocker text\n")
-    (is (= "Theme text\n" (squadd/artifact-content root "theme" "wumpus")))
-    (is (= "Story text\n" (squadd/artifact-content root "story" "cave")))
-    (is (= "Gherkin text\n" (squadd/artifact-content root "gherkin" "cave")))
-    (is (= "QA procedure text\n" (squadd/artifact-content root "qa-procedure" "cave")))
-    (is (= "story_id: fallback\n" (squadd/artifact-content root "story" "fallback")))
-    (is (= "Review text\n" (squadd/artifact-content root "review" "review-001")))
-    (is (= "Assignment review text\n" (squadd/artifact-content root "review" "review-002")))
-    (is (= "Blocker text\n" (squadd/artifact-content root "blocker" "blocker-001")))
-    (is (nil? (squadd/artifact-content root "unknown" "cave")))))
+    (is (= "Theme text\n" (squadd-web/artifact-content root "theme" "wumpus")))
+    (is (= "Story text\n" (squadd-web/artifact-content root "story" "cave")))
+    (is (= "Gherkin text\n" (squadd-web/artifact-content root "gherkin" "cave")))
+    (is (= "QA procedure text\n" (squadd-web/artifact-content root "qa-procedure" "cave")))
+    (is (= "story_id: fallback\n" (squadd-web/artifact-content root "story" "fallback")))
+    (is (= "Review text\n" (squadd-web/artifact-content root "review" "review-001")))
+    (is (= "Assignment review text\n" (squadd-web/artifact-content root "review" "review-002")))
+    (is (= "Blocker text\n" (squadd-web/artifact-content root "blocker" "blocker-001")))
+    (is (nil? (squadd-web/artifact-content root "unknown" "cave")))))
 
 (deftest stop-handoff-daemon-covers-pid-and-stop-file-branches
   (let [root (tmp-dir)
@@ -1186,16 +1187,16 @@
       (is (str/includes? (squadd/pane-liveness-message root "sock" "agent" "session" 10 :dead-pane)
                          "dead"))
       (is (= "agent:10" (squadd/pane-liveness-message root "sock" "agent" "session" 10 :live-pane))))
-    (with-redefs [squadd/socket-value (constantly nil)]
-      (is (= "Missing tmux socket\n" (:error (squadd/sl-message-web-action! root "hello")))))
-    (with-redefs [squadd/socket-value (constantly "sock")
-                  squadd/send-sl-dashboard-message! (constantly true)
-                  squadd/log! (fn [& _])]
-      (is (:ok (squadd/sl-message-web-action! root "hello"))))
-    (with-redefs [squadd/socket-value (constantly "sock")
-                  squadd/send-sl-dashboard-message! (constantly false)]
+    (with-redefs [squadd-web/socket-value (constantly nil)]
+      (is (= "Missing tmux socket\n" (:error (squadd-web/sl-message-web-action! root "hello")))))
+    (with-redefs [squadd-web/socket-value (constantly "sock")
+                  squadd-web/send-sl-dashboard-message! (constantly true)
+                  squadd-web/log! (fn [& _])]
+      (is (:ok (squadd-web/sl-message-web-action! root "hello"))))
+    (with-redefs [squadd-web/socket-value (constantly "sock")
+                  squadd-web/send-sl-dashboard-message! (constantly false)]
       (is (= "Could not send message to squad leader\n"
-             (:error (squadd/sl-message-web-action! root "hello")))))))
+             (:error (squadd-web/sl-message-web-action! root "hello")))))))
 
 (deftest launcher-config-and-terminal-helper-branches
   (let [root (tmp-dir)
@@ -1342,31 +1343,31 @@
 
 (deftest squadd-web-routing-and-request-helper-branches
   (let [root (tmp-dir)]
-    (is (true? (squadd/route-matches? {:method "GET" :path "/api/state"} "GET" "/api/state")))
-    (is (boolean (squadd/route-matches? {:method "POST" :pattern #"/items/[0-9]+"} "POST" "/items/42")))
-    (is (false? (squadd/route-matches? {:method "GET" :path "/api/state"} "POST" "/api/state")))
-    (is (= 404 (:status (squadd/route-web-request root "GET" "/missing" ""))))
-    (is (= 405 (:status (squadd/route-web-request root "DELETE" "/api/state" ""))))
-    (is (= 400 (:status (squadd/request-response root nil ""))))
-    (is (= "/api/state" (squadd/target-path "/api/state?cache=false")))
-    (is (= {:method "GET" :target "/api/state"} (squadd/parse-request-line "GET /api/state HTTP/1.1")))
+    (is (true? (squadd-web/route-matches? {:method "GET" :path "/api/state"} "GET" "/api/state")))
+    (is (boolean (squadd-web/route-matches? {:method "POST" :pattern #"/items/[0-9]+"} "POST" "/items/42")))
+    (is (false? (squadd-web/route-matches? {:method "GET" :path "/api/state"} "POST" "/api/state")))
+    (is (= 404 (:status (squadd-web/route-web-request root "GET" "/missing" ""))))
+    (is (= 405 (:status (squadd-web/route-web-request root "DELETE" "/api/state" ""))))
+    (is (= 400 (:status (squadd-web/request-response root nil ""))))
+    (is (= "/api/state" (squadd-web/target-path "/api/state?cache=false")))
+    (is (= {:method "GET" :target "/api/state"} (squadd-web/parse-request-line "GET /api/state HTTP/1.1")))
     (let [reader (java.io.BufferedReader.
                   (java.io.StringReader. "Content-Length: 5\r\nBadHeader\r\nX-Test: value\r\n\r\nhello"))]
-      (is (= {"content-length" "5" "x-test" "value"} (squadd/read-headers reader)))
-      (is (= "hello" (squadd/read-body reader 5))))
-    (is (= 0 (squadd/content-length {"content-length" "bad"})))
-    (is (= "" (squadd/read-body (java.io.BufferedReader. (java.io.StringReader. "")) 0)))
-    (with-redefs [squadd/web-state (fn [_] {"ok" true})]
-      (is (= 200 (:status (squadd/state-response root)))))
-    (with-redefs [squadd/approval-web-action! (fn [_ approval action]
+      (is (= {"content-length" "5" "x-test" "value"} (squadd-web/read-headers reader)))
+      (is (= "hello" (squadd-web/read-body reader 5))))
+    (is (= 0 (squadd-web/content-length {"content-length" "bad"})))
+    (is (= "" (squadd-web/read-body (java.io.BufferedReader. (java.io.StringReader. "")) 0)))
+    (with-redefs [squadd-web/web-state (fn [_] {"ok" true})]
+      (is (= 200 (:status (squadd-web/state-response root)))))
+    (with-redefs [squadd-web/approval-web-action! (fn [_ approval action]
                                                 {:ok true :approval approval :action action})]
-      (is (= 200 (:status (squadd/approval-response root "/api/approvals/a%201/approve")))))
-    (with-redefs [squadd/approval-web-action! (constantly {:ok false :status 409 :error "no\n"})]
-      (is (= 409 (:status (squadd/approval-response root "/api/approvals/a%201/reject")))))
-    (with-redefs [squadd/sl-message-web-action! (constantly {:ok true})]
-      (is (= 200 (:status (squadd/sl-message-response root "hello")))))
-    (with-redefs [squadd/sl-message-web-action! (constantly {:ok false :status 409 :error "empty\n"})]
-      (is (= 409 (:status (squadd/sl-message-response root "")))))))
+      (is (= 200 (:status (squadd-web/approval-response root "/api/approvals/a%201/approve")))))
+    (with-redefs [squadd-web/approval-web-action! (constantly {:ok false :status 409 :error "no\n"})]
+      (is (= 409 (:status (squadd-web/approval-response root "/api/approvals/a%201/reject")))))
+    (with-redefs [squadd-web/sl-message-web-action! (constantly {:ok true})]
+      (is (= 200 (:status (squadd-web/sl-message-response root "hello")))))
+    (with-redefs [squadd-web/sl-message-web-action! (constantly {:ok false :status 409 :error "empty\n"})]
+      (is (= 409 (:status (squadd-web/sl-message-response root "")))))))
 
 (deftest squadd-spawn-request-and-args-helper-branches
   (let [root (tmp-dir)
@@ -1736,9 +1737,9 @@
         old-os (System/getProperty "os.name")]
     (try
       (System/setProperty "os.name" "Mac OS X")
-      (is (= ["open"] (squadd/web-open-command)))
+      (is (= ["open"] (squadd-web/web-open-command)))
       (System/setProperty "os.name" "Linux")
-      (is (= ["xdg-open"] (squadd/web-open-command)))
+      (is (= ["xdg-open"] (squadd-web/web-open-command)))
       (finally
         (System/setProperty "os.name" old-os)))
     (with-redefs [squadd/should-stop? (constantly true)]
