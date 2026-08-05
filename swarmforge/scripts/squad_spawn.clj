@@ -24,6 +24,11 @@
 (defn sh-ok? [& args]
   (zero? (:exit (apply process/sh (concat [{:continue true}] args)))))
 
+(defn tmux-session-exists? [socket session]
+  (and (not (str/blank? socket))
+       (not (str/blank? session))
+       (sh-ok? "tmux" "-S" socket "has-session" "-t" session)))
+
 (defn run! [& args]
   (let [result (apply process/sh (concat [{:continue true}] args))]
     (when-not (zero? (:exit result))
@@ -96,14 +101,44 @@
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
 
+(defn skip-tmux-capacity? []
+  (= "1" (System/getenv "SWARMFORGE_SQUAD_NO_LAUNCH")))
+
+(defn tmux-socket [root]
+  (let [socket-file (fs/path root ".swarmforge" "tmux-socket")]
+    (when (fs/regular-file? socket-file)
+      (str/trim (slurp (str socket-file))))))
+
+(defn visible-handoff-agents [root]
+  (->> ["new" "in_process" "completed"]
+       (mapcat (fn [state]
+                 (let [dir (fs/path root ".swarmforge" "handoffs" "inbox" state)]
+                   (when (fs/exists? dir)
+                     (->> (fs/list-dir dir)
+                          (filter #(and (fs/regular-file? %)
+                                        (str/ends-with? (fs/file-name %) ".handoff")))
+                          (map #(read-value % "from"))
+                          (remove str/blank?))))))
+       set))
+
+(defn capacity-counted-row? [root socket row]
+  (let [role (first row)
+        session (nth row 3 nil)
+        state (read-value (fs/path root ".squad" "agents" role "status") "state")]
+    (and (not= "squad-leader" role)
+         (not (contains? #{"retired" "failed"} state))
+         (if (skip-tmux-capacity?)
+           (contains? active-agent-states state)
+           (tmux-session-exists? socket session))
+         (not (and (= "handoff_sent" state)
+                   (contains? (visible-handoff-agents root) role))))))
+
 (defn active-transient-count [root rows]
   (count
-   (for [row rows
-         :let [role (first row)
-               state (read-value (fs/path root ".squad" "agents" role "status") "state")]
-         :when (and (not= "squad-leader" role)
-                    (contains? active-agent-states state))]
-     role)))
+   (let [socket (tmux-socket root)]
+     (for [row rows
+           :when (capacity-counted-row? root socket row)]
+       (first row)))))
 
 (defn template-from-role [role]
   (str/replace role #"-\d{3}$" ""))
@@ -133,23 +168,21 @@
 
 (defn active-template-count [root rows template]
   (count
-   (for [row rows
-         :let [role (first row)
-               state (read-value (fs/path root ".squad" "agents" role "status") "state")]
-         :when (and (not= "squad-leader" role)
-                    (contains? active-agent-states state)
-                    (= template (role-template root role)))]
-     role)))
+   (let [socket (tmux-socket root)]
+     (for [row rows
+           :let [role (first row)]
+           :when (and (capacity-counted-row? root socket row)
+                      (= template (role-template root role)))]
+       role))))
 
 (defn active-group-count [root rows templates]
   (count
-   (for [row rows
-         :let [role (first row)
-               state (read-value (fs/path root ".squad" "agents" role "status") "state")]
-         :when (and (not= "squad-leader" role)
-                    (contains? active-agent-states state)
-                    (contains? templates (role-template root role)))]
-     role)))
+   (let [socket (tmux-socket root)]
+     (for [row rows
+           :let [role (first row)]
+           :when (and (capacity-counted-row? root socket row)
+                      (contains? templates (role-template root role)))]
+       role))))
 
 (defn template-capacity-error-line [template active limit]
   [3

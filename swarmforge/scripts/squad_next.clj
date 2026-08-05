@@ -218,7 +218,7 @@
           (recur (inc iteration))
           candidate)))))
 
-(declare agent-state transient-row? next-batch-id)
+(declare agent-state transient-row? next-batch-id visible-handoff-agents capacity-counted-agent?)
 
 (defn agent-files [root agent]
   (let [agent-dir (fs/path root ".squad" "agents" agent)]
@@ -228,7 +228,8 @@
      :liveness (file-map (fs/path agent-dir "liveness"))}))
 
 (defn liveness-active? [liveness]
-  (= "true" (get liveness "pane_changed")))
+  (or (= "true" (get liveness "pane_changed"))
+      (= "false" (get liveness "pane_idle_prompt"))))
 
 (defn activity-instants [{:keys [status heartbeat liveness]}]
   (keep parse-instant
@@ -272,7 +273,7 @@
        vec))
 
 (defn active-agent? [agent]
-  (not (contains? #{"retired" "failed" "handoff_sent"} (:state agent))))
+  (not (contains? #{"retired" "failed"} (:state agent))))
 
 (defn active-assignment? [agents assignment-id]
   (boolean (some #(and (= assignment-id (:task-id %)) (active-agent? %)) agents)))
@@ -280,14 +281,27 @@
 (defn active-template? [agents template]
   (boolean (some #(and (= template (:template %)) (active-agent? %)) agents)))
 
+(defn capacity-active-template? [root agents template]
+  (boolean (some #(and (= template (:template %))
+                       (capacity-counted-agent? root %))
+                 agents)))
+
 (def singleton-templates #{"hardener" "qa" "architect"})
 
+(defn handoff-visible-agent? [root agent]
+  (contains? (visible-handoff-agents root) agent))
+
+(defn capacity-counted-agent? [root agent]
+  (and (active-agent? agent)
+       (not (and (= "handoff_sent" (:state agent))
+                 (handoff-visible-agent? root (:agent agent))))))
+
 (defn spawn-capacity? [root agents template]
-  (let [active (filter active-agent? agents)
+  (let [active (filter #(capacity-counted-agent? root %) agents)
         max-agents (cfg/squad-max-transient-agents root)]
     (and (< (count active) max-agents)
          (or (not (contains? singleton-templates template))
-             (not (active-template? agents template))))))
+             (not (capacity-active-template? root agents template))))))
 
 (defn approval-id [gate story-id]
   (str gate "__" story-id))
@@ -802,19 +816,34 @@
       (field-present? packet "architecture_batch")
       (architecture-member-ready? root packet)))
 
-(defn any-batch-member-needs-result? [packets batch-field result-field]
-  (boolean (some #(and (field-present? % batch-field)
-                       (not (field-present? % result-field)))
-                 packets)))
+(defn batch-id-needing-result [packets batch-field result-field]
+  (first
+   (sort
+    (keep #(when (and (field-present? % batch-field)
+                      (not (field-present? % result-field)))
+             (get % batch-field))
+          packets))))
 
-(defn any-architecture-batch-needs-review? [packets]
-  (boolean (some #(and (field-present? % "architecture_batch")
-                       (not (or (field-accepted? % "architecture_review")
-                                (field-changes-requested? % "architecture_review"))))
-                 packets)))
+(defn architecture-batch-needing-review [packets]
+  (first
+   (sort
+    (keep #(when (and (field-present? % "architecture_batch")
+                      (not (or (field-accepted? % "architecture_review")
+                               (field-changes-requested? % "architecture_review"))))
+             (get % "architecture_batch"))
+          packets))))
 
 (defn any-architecture-needs-senior? [packets]
   (boolean (some #(field-changes-requested? % "architecture_review") packets)))
+
+(defn any-hardener-member-ready? [root packets]
+  (boolean (some #(hardener-member-ready? root %) packets)))
+
+(defn any-qa-member-ready? [root packets]
+  (boolean (some #(qa-member-ready? root %) packets)))
+
+(defn any-architecture-member-ready? [root packets]
+  (boolean (some #(architecture-member-ready? root %) packets)))
 
 (defn all-batched-or-done? [packets batch-field done?]
   (every? #(or (field-present? % batch-field)
@@ -883,25 +912,31 @@
     :reason "architecture batch is ready after QA"
     :stage-order 170}])
 
-(defn batch-readiness [theme-packets]
+(defn batch-readiness [root theme-packets]
   {:hardener-ready? (and (seq theme-packets)
-                         (any-batch-member-needs-result? theme-packets "hardener_batch" "hardener_sha"))
+                         (or (batch-id-needing-result theme-packets "hardener_batch" "hardener_sha")
+                             (any-hardener-member-ready? root theme-packets)))
    :qa-ready? (and (seq theme-packets)
-                   (any-batch-member-needs-result? theme-packets "qa_batch" "qa_sha"))
+                   (or (batch-id-needing-result theme-packets "qa_batch" "qa_sha")
+                       (any-qa-member-ready? root theme-packets)))
    :architecture-ready? (and (seq theme-packets)
-                             (any-architecture-batch-needs-review? theme-packets))
+                             (or (architecture-batch-needing-review theme-packets)
+                                 (any-architecture-member-ready? root theme-packets)))
    :senior-ready? (and (seq theme-packets)
                        (any-architecture-needs-senior? theme-packets))})
 
 (defn batch-candidate-for-rule [root assignments agents theme-id readiness
                                 {:keys [ready? template suffix reason stage-order]}]
-  (when (get readiness ready?)
-    (batch-assignment-candidate root assignments agents theme-id
-                                template (str theme-id suffix)
-                                reason 60 stage-order)))
+  (when-let [ready-value (get readiness ready?)]
+    (let [assignment-base (if (string? ready-value)
+                            ready-value
+                            (str theme-id suffix))]
+      (batch-assignment-candidate root assignments agents theme-id
+                                  template assignment-base
+                                  reason 60 stage-order))))
 
 (defn batch-candidate-for-theme [root assignments agents all-packets theme-id]
-  (let [readiness (batch-readiness (vec (same-theme-packets all-packets theme-id)))]
+  (let [readiness (batch-readiness root (vec (same-theme-packets all-packets theme-id)))]
     (some #(batch-candidate-for-rule root assignments agents theme-id readiness %)
           batch-action-rules)))
 
@@ -1044,6 +1079,13 @@
 
 (defn completed-handoff-agents [root]
   (->> (files-with-extension (fs/path root ".swarmforge" "handoffs" "inbox" "completed") ".handoff")
+       (map handoff-sender)
+       (remove #{"unknown"})
+       set))
+
+(defn visible-handoff-agents [root]
+  (->> ["new" "in_process" "completed"]
+       (mapcat #(files-with-extension (fs/path root ".swarmforge" "handoffs" "inbox" %) ".handoff"))
        (map handoff-sender)
        (remove #{"unknown"})
        set))

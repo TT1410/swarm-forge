@@ -15,13 +15,13 @@
 (def poll-ms 1000)
 (def status-poll-ms 5000)
 (def handoff-wake-message
-  "You have new handoff mail. If idle, run squad_next.sh.")
+  "You have new handoff mail. If idle, run squad_next.sh, execute its COMMAND, then repeat until waiting, blocked, or user-gated.")
 (def status-wake-message
-  "Squad status needs attention. If idle, run squad_next.sh.")
+  "Squad status needs attention. If idle, run squad_next.sh, execute its COMMAND, then repeat until waiting, blocked, or user-gated.")
 (def approval-wake-message
-  "A web approval changed state. If idle, run squad_next.sh.")
+  "A web approval changed state. If idle, run squad_next.sh, execute its COMMAND, then repeat until waiting, blocked, or user-gated.")
 (def sl-watchdog-message
-  "Run squad_next.sh.")
+  "Run squad_next.sh, execute its COMMAND, then repeat until waiting, blocked, or user-gated.")
 (def sl-message-prefix
   "User message from dashboard:")
 (def dashboard-html
@@ -173,6 +173,11 @@
   (when (fs/exists? path)
     (str/split-lines (slurp (str path)))))
 
+(defn slurp-if-exists [path]
+  (if (fs/regular-file? path)
+    (slurp (str path))
+    ""))
+
 (defn read-value [file field]
   (when (fs/exists? file)
     (let [prefix (str field ": ")]
@@ -181,7 +186,7 @@
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
 
-(declare agent-dirs log! parse-kv-file)
+(declare agent-dirs log! parse-kv-file tmux-session-exists? idle-prompt-tail?)
 
 (defn load-roles [root]
   (into {}
@@ -240,16 +245,48 @@
 (defn active-state? [state]
   (contains? active-agent-states state))
 
+(defn skip-tmux-env? []
+  (= "1" (System/getenv "SWARMFORGE_SQUADD_SKIP_TMUX")))
+
+(defn tmux-socket [root]
+  (let [socket-file (fs/path root ".swarmforge" "tmux-socket")]
+    (when (fs/regular-file? socket-file)
+      (str/trim (slurp (str socket-file))))))
+
+(defn visible-handoff-agents [root]
+  (->> ["new" "in_process" "completed"]
+       (mapcat (fn [state]
+                 (let [dir (fs/path root ".swarmforge" "handoffs" "inbox" state)]
+                   (when (fs/exists? dir)
+                     (->> (fs/list-dir dir)
+                          (filter #(and (fs/regular-file? %)
+                                        (str/ends-with? (fs/file-name %) ".handoff")))
+                          (map #(read-value % "from"))
+                          (remove str/blank?))))))
+       set))
+
+(defn capacity-counted-role? [root socket role role-data]
+  (let [state (read-value (fs/path root ".squad" "agents" role "status") "state")
+        session (:session role-data)]
+    (and (not= "squad-leader" role)
+         (not (contains? #{"retired" "failed"} state))
+         (if (skip-tmux-env?)
+           (active-state? state)
+           (tmux-session-exists? socket session))
+         (not (and (= "handoff_sent" state)
+                   (contains? (visible-handoff-agents root) role))))))
+
 (defn active-transient-role-count [root]
   (count
-   (for [[role _] (load-roles root)
-         :when (and (not= "squad-leader" role)
-                    (active-state? (read-value (fs/path root ".squad" "agents" role "status") "state")))]
-     role)))
+   (let [socket (tmux-socket root)]
+     (for [[role role-data] (load-roles root)
+           :when (capacity-counted-role? root socket role role-data)]
+       role))))
 
 (defn active-role? [root role]
-  (and (not= "squad-leader" role)
-       (active-state? (read-value (fs/path root ".squad" "agents" role "status") "state"))))
+  (let [roles (load-roles root)
+        socket (tmux-socket root)]
+    (capacity-counted-role? root socket role (get roles role))))
 
 (defn template-from-role [role]
   (str/replace role #"-\d{3}$" ""))
@@ -499,6 +536,7 @@
           (str "state: " state "\n"
                "observed_at: " (now) "\n"
                "pane_changed: " (if changed? "true" "false") "\n"
+               "pane_idle_prompt: " (if (idle-prompt-tail? tail) "true" "false") "\n"
                "pane_hash: " (sha256 tail) "\n"
                "last_10_lines:\n"
                (or tail "")))))
@@ -864,7 +902,8 @@
   (let [state-file (sl-watchdog-file root)
         previous (parse-kv-file state-file)
         tail (or (capture-pane-tail socket session) "")
-        current-hash (sha256 tail)
+        status-text (slurp-if-exists (fs/path root ".squad" "agents" "squad-leader" "status"))
+        current-hash (sha256 (str tail "\n--status--\n" status-text))
         previous-hash (get previous "pane_hash")
         changed? (not= current-hash previous-hash)
         unchanged-since (watchdog-unchanged-since previous changed?)]

@@ -456,8 +456,27 @@
            vec)
       [])))
 
-(defn base-batch-id [assignment]
-  (str/replace assignment #"-r[0-9]+$" ""))
+(defn packet-batch-stories [root kind batch-id]
+  (let [field (str (str/replace kind "-" "_") "_batch")
+        stories-dir (fs/path root ".squad" "stories")]
+    (if (fs/exists? stories-dir)
+      (->> (fs/list-dir stories-dir)
+           (filter fs/directory?)
+           (keep (fn [dir]
+                   (let [story (fs/file-name dir)
+                         packet (file-map (fs/path dir "packet"))]
+                     (when (= batch-id (get packet field))
+                       story))))
+           sort
+           vec)
+      [])))
+
+(defn ensure-sim-batch! [root kind batch-id]
+  (when-not (fs/exists? (fs/path root ".squad" "batches" batch-id))
+    (run-script! root "squad_batch.sh" "create" kind batch-id)
+    (doseq [story (packet-batch-stories root kind batch-id)]
+      (run-script! root "squad_batch.sh" "add" batch-id story
+                   "reconstructed" "simulator" "simulator" "0000000000"))))
 
 (defn packets-with-architecture-changes [root]
   (let [stories-dir (fs/path root ".squad" "stories")]
@@ -474,7 +493,8 @@
       [])))
 
 (defn process-result-batch! [root assignment agent kind]
-  (let [batch-id (base-batch-id assignment)
+  (let [batch-id assignment
+        _ (ensure-sim-batch! root kind batch-id)
         stories (batch-stories root batch-id)]
     (doseq [story stories]
       (append-file! (fs/path root "src" (str story ".txt"))
@@ -491,7 +511,8 @@
     (if (= 1 n) "changes-requested" "accepted")))
 
 (defn process-architecture-batch! [root review-counts assignment agent]
-  (let [batch-id (base-batch-id assignment)
+  (let [batch-id assignment
+        _ (ensure-sim-batch! root "architecture" batch-id)
         stories (batch-stories root batch-id)
         decision (architecture-decision! review-counts assignment)
         review-file (fs/path root ".squad" "reviews" (str assignment ".md"))]
@@ -698,7 +719,17 @@
     (println "SIM_RECOVERY_RESULT:")
     (print recovery)
     (when-not (str/ends-with? recovery "\n")
-      (println))))
+      (println))
+    (let [fields (command-map recovery)
+          agent (get fields "agent")
+          assignment (get fields "task_id")]
+      (when (and (= "failed_no_work" (get fields "recovery_state"))
+                 agent
+                 assignment
+                 (not= "unknown" assignment))
+        (mark-assignment! root assignment "created")
+        (retire-agent! root agent)
+        (println "SIM_APPLIED: failed assignment requeued for replacement")))))
 
 (def sim-action-handlers
   {"create_approval_request"

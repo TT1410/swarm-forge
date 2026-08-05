@@ -976,6 +976,20 @@
       (is (not (next/spawn-capacity? root agents "implementer")))
       (is (next/active-template? agents "implementer")))))
 
+(deftest squad-next-excludes-visible-handoff-sent-agents-from-capacity
+  (let [root (tmp-dir)
+        rows [["implementer-001" "story-1-implementation" "ignored"]]]
+    (write-file (fs/path root "swarmforge/squad.conf") "max_transient_agents 1\n")
+    (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                "template: implementer\ntask_id: story-1-implementation\n")
+    (write-file (fs/path root ".squad/agents/implementer-001/status")
+                "state: handoff_sent\nupdated_at: 2026-08-04T00:00:00Z\n")
+    (write-file (fs/path root ".swarmforge/handoffs/inbox/new/50_from_implementer-001_to_squad-leader.handoff")
+                "from: implementer-001\nto: squad-leader\ntype: git_handoff\n")
+    (let [agents (next/agent-records root rows)]
+      (is (next/active-assignment? agents "story-1-implementation"))
+      (is (next/spawn-capacity? root agents "implementer")))))
+
 (deftest config-and-forge-helper-branches
   (let [root (tmp-dir)]
     (is (= 10 (config/squad-max-transient-agents root)))
@@ -1242,10 +1256,23 @@
     (let [pid-file (fs/path root ".swarmforge" "daemon" "squadd.pid")]
       (write-file pid-file "42\n")
       (with-redefs [stop-squadd/terminate-pid! (fn [pid _] (swap! killed conj ["term" pid]))
-                    stop-squadd/matching-orphan-pids (constantly ["43"])]
+                    stop-squadd/matching-orphan-pids (constantly ["43"])
+                    stop-squadd/cleanup-transient-git! (fn [_])]
         (stop-squadd/stop! root :timeout-ms 1)
         (is (not (fs/exists? pid-file)))
-        (is (some #(= ["term" "43"] %) @killed))))))
+        (is (some #(= ["term" "43"] %) @killed))))
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (str "squad-leader\tmaster\t" root "\tsl\tSL\tcodex\ttask\n"
+                     "agent-001\tagent-001\t" root "/.worktrees/agent-001\ts1\tA1\tcodex\ttask\n"
+                     "agent-002\tagent-002\t" root "/.worktrees/agent-002\ts2\tA2\tcodex\ttask\n"))
+    (write-file (fs/path root ".squad/agents/agent-001/metadata") "task_id: assignment-1\n")
+    (write-file (fs/path root ".squad/agents/agent-002/metadata") "task_id: assignment-2\n")
+    (write-file (fs/path root ".squad/assignments/assignment-2/status") "state: merge_blocked\n")
+    (with-redefs [stop-squadd/remove-worktree! (fn [_ role worktree] (swap! killed conj ["worktree" role worktree]))
+                  stop-squadd/delete-branch! (fn [_ role] (swap! killed conj ["branch" role]))]
+      (stop-squadd/cleanup-transient-git! root)
+      (is (some #(= ["branch" "agent-001"] %) @killed))
+      (is (not (some #(= ["branch" "agent-002"] %) @killed))))))
 
 (deftest window-watchdog-helper-branches
   (let [root (tmp-dir)
@@ -1355,11 +1382,13 @@
     (write-file (fs/path root ".swarmforge" "roles.tsv")
                 (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
                      "implementer-001\timplementer-001\t" root "\tswarmforge-implementer-001\tImplementer\tcodex\ttask\n"))
-    (is (= [3 "SQUAD_SPAWN_CAPACITY_FULL" "ACTIVE_TRANSIENTS: 1" "MAX_TRANSIENTS: 1"]
-           (spawn/global-capacity-error root rows)))
-    (is (= [3 "SQUAD_SPAWN_TEMPLATE_CAPACITY_FULL" "TEMPLATE: implementer" "ACTIVE_TEMPLATE_TRANSIENTS: 1" "MAX_TEMPLATE_TRANSIENTS: 1"]
-           (spawn/template-limit-error root rows "implementer")))
-    (is (= "capacity-full" (squadd/spawn-capacity-blocker root "implementer")))
+    (with-redefs [spawn/tmux-session-exists? (constantly true)
+                  squadd/tmux-session-exists? (constantly true)]
+      (is (= [3 "SQUAD_SPAWN_CAPACITY_FULL" "ACTIVE_TRANSIENTS: 1" "MAX_TRANSIENTS: 1"]
+             (spawn/global-capacity-error root rows)))
+      (is (= [3 "SQUAD_SPAWN_TEMPLATE_CAPACITY_FULL" "TEMPLATE: implementer" "ACTIVE_TEMPLATE_TRANSIENTS: 1" "MAX_TEMPLATE_TRANSIENTS: 1"]
+             (spawn/template-limit-error root rows "implementer")))
+      (is (= "capacity-full" (squadd/spawn-capacity-blocker root "implementer"))))
     (with-redefs [spawn/exit! (fn [status & lines] (throw (exit-exception status lines)))]
       (is (= 2 (exit-status #(spawn/ensure-agent-available! [["agent-001"]] "agent-001" (fs/path root "missing") (fs/path root "missing-agent")))))
       (fs/create-dirs (fs/path root "exists-worktree"))
