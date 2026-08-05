@@ -41,10 +41,23 @@
 </head>
 <body>
   <header><h1>SwarmForge Squad</h1><span id=\"meta\" class=\"muted\"></span></header>
-  <main id=\"app\"></main>
+  <main>
+    <p id=\"error\" class=\"error\"></p>
+    <section><h2>Blockers</h2><div id=\"blockers\"></div></section>
+    <section><h2>Pending Approvals</h2><div id=\"approvals\"></div></section>
+    <section><h2>Message Squad Leader</h2><textarea id=\"sl-message\"></textarea><div><button onclick=\"sendMessage()\">Submit</button></div></section>
+    <section><h2>Stories</h2><div id=\"stories\"></div></section>
+    <section><h2>Agents</h2><div id=\"agents\"></div></section>
+    <section><h2>Assignments</h2><div id=\"assignments\"></div></section>
+  </main>
   <script>
-    const app = document.getElementById('app');
     const meta = document.getElementById('meta');
+    const error = document.getElementById('error');
+    const blockersPanel = document.getElementById('blockers');
+    const approvalsPanel = document.getElementById('approvals');
+    const storiesPanel = document.getElementById('stories');
+    const agentsPanel = document.getElementById('agents');
+    const assignmentsPanel = document.getElementById('assignments');
     const slDraftKey = 'swarmforge.slMessageDraft';
     let slDraft = localStorage.getItem(slDraftKey) || '';
     const esc = value => String(value ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
@@ -89,50 +102,39 @@
         artifactLink('blocker', b.assignment_id, b.assignment_id), esc(b.kind || 'blocked'), esc(b.detail || '')
       ])));
     }
-    function bindMessageBox() {
-      const input = document.getElementById('sl-message');
-      if (!input) return;
-      input.value = slDraft;
-      input.addEventListener('input', () => {
-        slDraft = input.value;
-        localStorage.setItem(slDraftKey, slDraft);
-      });
-    }
+    const messageInput = document.getElementById('sl-message');
+    messageInput.value = slDraft;
+    messageInput.addEventListener('input', () => {
+      slDraft = messageInput.value;
+      localStorage.setItem(slDraftKey, slDraft);
+    });
     async function sendMessage() {
-      const input = document.getElementById('sl-message');
-      const text = input.value.trim();
+      const text = messageInput.value.trim();
       if (!text) return;
       await post('/api/sl-message', text, 'text/plain; charset=utf-8', false);
       slDraft = '';
       localStorage.removeItem(slDraftKey);
-      input.value = '';
+      messageInput.value = '';
       await render();
     }
     async function render() {
       try {
-        const existingMessage = document.getElementById('sl-message');
-        if (existingMessage) {
-          slDraft = existingMessage.value;
-          localStorage.setItem(slDraftKey, slDraft);
-        }
         const data = await (await fetch('/api/state', { cache: 'no-store' })).json();
         meta.textContent = data.project_root + ' | ' + data.generated_at;
-        app.innerHTML =
-          `<section><h2>Blockers</h2>${blockers(data.blockers)}</section>` +
-          `<section><h2>Pending Approvals</h2>${approvals(data.approvals.pending)}</section>` +
-          `<section><h2>Message Squad Leader</h2><textarea id=\"sl-message\"></textarea><div><button onclick=\"sendMessage()\">Submit</button></div></section>` +
-          `<section><h2>Stories</h2>${table(['Story','State','Gherkin','QA Procedure','Implementation','Final'], data.stories.map(s => row([
-            artifactLink('story', s.story_id, s.story_id), '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.gherkin_review_state), esc(s.qa_procedure_review_state), esc(s.implementation_assignment_state), esc(s.final_state)
-          ])))}</section>` +
-          `<section><h2>Agents</h2>${table(['Agent','Template','Task','State','Detail'], data.agents.map(a => row([
-            `<a target=\"_blank\" href=\"/agent/${encodeURIComponent(a.agent_id)}\">${esc(a.agent_id)}</a>`, esc(a.template), esc(a.task_id), esc(a.state), esc(a.detail)
-          ])))}</section>` +
-          `<section><h2>Assignments</h2>${table(['Assignment','Template','Story','State'], data.assignments.map(a => row([
-            esc(a.assignment_id), esc(a.template), esc(a.story_id), esc(a.state)
-          ])))}</section>`;
-        bindMessageBox();
+        error.textContent = '';
+        blockersPanel.innerHTML = blockers(data.blockers);
+        approvalsPanel.innerHTML = approvals(data.approvals.pending);
+        storiesPanel.innerHTML = table(['Story','State','Gherkin','QA Procedure','Implementation','Final'], data.stories.map(s => row([
+          artifactLink('story', s.story_id, s.story_id), '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.gherkin_review_state), esc(s.qa_procedure_review_state), esc(s.implementation_assignment_state), esc(s.final_state)
+        ])));
+        agentsPanel.innerHTML = table(['Agent','Template','Task','State','Detail'], data.agents.map(a => row([
+          `<a target=\"_blank\" href=\"/agent/${encodeURIComponent(a.agent_id)}\">${esc(a.agent_id)}</a>`, esc(a.template), esc(a.task_id), esc(a.state), esc(a.detail)
+        ])));
+        assignmentsPanel.innerHTML = table(['Assignment','Template','Story','State'], data.assignments.map(a => row([
+          esc(a.assignment_id), esc(a.template), esc(a.story_id), esc(a.state)
+        ])));
       } catch (err) {
-        app.innerHTML = '<p class=\"error\">' + esc(err.message) + '</p>';
+        error.textContent = err.message;
       }
     }
     render();
