@@ -2,6 +2,7 @@
   (:require [babashka.fs :as fs]
             [clojure.edn :as edn]
             [clojure.string :as str]
+            [squad-tool-table :as tools]
             [clojure.test :refer [deftest is testing]]
             [swarmforge.test-support :refer :all]))
 
@@ -28,6 +29,9 @@
 
 (defn contracts []
   (map contract current-squad-templates))
+
+(defn required-tool-names [role]
+  (set (map :name (tools/required-tools repo-root role))))
 
 (deftest squad-role-templates-exist
   (doseq [template current-squad-templates]
@@ -78,14 +82,16 @@
 
 (deftest squad-role-tooling-contracts-include-required-tools
   (let [by-role (into {} (map (juxt :role identity) (contracts)))]
-    (is (= #{"crap4clj" "dry4clj"}
-           (set (map :name (:required-tools (by-role "cleaner"))))))
+    (is (= ["crap4clj" "dry4clj"] (:required-tool-ids (by-role "cleaner"))))
+    (is (= ["clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator"]
+           (:required-tool-ids (by-role "hardener"))))
+    (is (= ["crap4clj" "dry4clj"] (:required-tool-ids (by-role "qa"))))
+    (is (= ["gherkin-parser" "ir-dry-checker"] (:required-tool-ids (by-role "gherkin-writer"))))
+    (is (= #{"crap4clj" "dry4clj"} (required-tool-names "cleaner")))
     (is (= #{"clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator"}
-           (set (map :name (:required-tools (by-role "hardener"))))))
-    (is (= #{"crap4clj" "dry4clj"}
-           (set (map :name (:required-tools (by-role "qa"))))))
-    (is (= #{"gherkin-parser" "ir-dry-checker"}
-           (set (map :name (:optional-tools (by-role "gherkin-writer"))))))))
+           (required-tool-names "hardener")))
+    (is (= #{"crap4clj" "dry4clj"} (required-tool-names "qa")))
+    (is (= #{"gherkin-parser" "ir-dry-checker"} (required-tool-names "gherkin-writer")))))
 
 (deftest squad-role-prompts-include-valid-helper-examples
   (doseq [template ["cleaner" "hardener" "gherkin-writer" "qa"]]
@@ -99,18 +105,13 @@
         gherkin (slurp (str (fs/path repo-root "swarmforge/role-templates/gherkin-writer.prompt")))
         qa (slurp (str (fs/path repo-root "swarmforge/role-templates/qa.prompt")))]
     (doseq [prompt [cleaner qa]]
-      (is (str/includes? prompt "squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest"))
-      (is (str/includes? prompt "squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest"))
+      (is (str/includes? prompt "generated assignment `Required Tools` section"))
+      (is (str/includes? prompt "swarmforge/tool-table.edn"))
       (is (str/includes? prompt "record `blocked`")))
-    (doseq [tool-line ["squad_tool.sh require clj-mutate github.com/unclebob/clj-mutate latest"
-                       "squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest"
-                       "squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest"
-                       "squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest"
-                       "squad_tool.sh require gherkin-mutator github.com/unclebob/Acceptance-Pipeline-Specification latest"]]
-      (is (str/includes? hardener tool-line)))
-    (doseq [tool-line ["squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest"
-                       "squad_tool.sh require ir-dry-checker github.com/unclebob/Acceptance-Pipeline-Specification latest"]]
-      (is (str/includes? gherkin tool-line)))))
+    (is (str/includes? hardener "generated assignment `Required Tools` section"))
+    (is (str/includes? hardener "swarmforge/tool-table.edn"))
+    (is (str/includes? gherkin "generated assignment `Required Tools` section"))
+    (is (str/includes? gherkin "required tool evidence headers"))))
 
 (deftest squad-leader-contract-encodes-orchestration-boundary
   (let [contract-file (fs/path repo-root "swarmforge/roles/squad-leader.contract.edn")

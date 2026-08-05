@@ -4,6 +4,7 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
             [squad-config :as cfg]
+            [squad-tool-table :as tools]
             [clojure.string :as str]))
 
 (def usage-text
@@ -183,6 +184,14 @@
                      (str "ACTUAL: " (:actual state)))
     :available state))
 
+(defn ensure-canonical-tool! [root tool source version]
+  (when-let [{:keys [field expected actual]} (tools/canonical-mismatch root tool source version)]
+    (exit! 4
+           (str "SQUAD_TOOL_MISMATCH: " tool)
+           (str "FIELD: " field)
+           (str "EXPECTED: " expected)
+           (str "ACTUAL: " actual))))
+
 (defn materialize-link! [cached target]
   (try
     (hardlink! cached target)
@@ -255,7 +264,9 @@
 
 (defn require-tool! [tool source version]
   (validate-tool! tool)
-  (let [paths (ensure-cache!)
+  (let [root (project-root)
+        _ (ensure-canonical-tool! root tool source version)
+        paths (ensure-cache!)
         state (ensure-tool-state! tool (tool-state paths tool source version))
         materialized (when (not-empty (System/getenv "SWARMFORGE_WORKTREE"))
                        (materialize-tool! tool source version nil))]
@@ -318,7 +329,9 @@
 
 (defn ensure-tool! [tool source version install-command]
   (validate-tool! tool)
-  (let [paths (ensure-cache!)
+  (let [root (project-root)
+        _ (ensure-canonical-tool! root tool source version)
+        paths (ensure-cache!)
         lock-dir (acquire-lock! (:locks paths) tool)]
     (try
       (let [state (tool-state paths tool source version)]

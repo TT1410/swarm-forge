@@ -89,6 +89,9 @@
         const data = await (await fetch('/api/state', { cache: 'no-store' })).json();
         meta.textContent = data.project_root + ' | ' + data.generated_at;
         app.innerHTML =
+          `<section><h2>Blockers</h2>${table(['Assignment','Kind','Detail'], data.blockers.map(b => row([
+            esc(b.assignment_id), esc(b.kind || 'blocked'), esc(b.detail || '')
+          ])))}</section>` +
           `<section><h2>Pending Approvals</h2>${approvals(data.approvals.pending)}</section>` +
           `<section><h2>Message Squad Leader</h2><textarea id=\"sl-message\"></textarea><div><button onclick=\"sendMessage()\">Submit</button></div></section>` +
           `<section><h2>Stories</h2>${table(['Story','State','Gherkin','QA Procedure','Implementation','Final'], data.stories.map(s => row([
@@ -1117,6 +1120,22 @@
                                            (fs/path batch-dir "state")))))))
       [])))
 
+(defn blocker-state [root]
+  (let [dir (fs/path root ".squad" "assignments")]
+    (if (fs/exists? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/directory?)
+           (keep (fn [assignment-dir]
+                   (let [blocker (fs/path assignment-dir "blocker")
+                         status (parse-kv-file (fs/path assignment-dir "status"))]
+                     (when (fs/regular-file? blocker)
+                       (merge {"assignment_id" (fs/file-name assignment-dir)
+                               "detail" (get status "detail" "")}
+                              (parse-kv-file blocker))))))
+           (sort-by descending-value #(compare %2 %1))
+           vec)
+      [])))
+
 (defn web-state [root]
   {"generated_at" (now)
    "project_root" (str root)
@@ -1124,6 +1143,7 @@
    "assignments" (assignment-state root)
    "agents" (agent-state root)
    "batches" (batch-state root)
+   "blockers" (blocker-state root)
    "approvals" {"pending" (approval-state-for root "pending")}})
 
 (def status-reasons

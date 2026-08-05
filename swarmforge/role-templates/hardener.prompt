@@ -14,13 +14,8 @@ Read and obey swarmforge/role-templates/hardener.contract.edn.
 
 ## Startup Tools
 - Select the project language's mutation, CRAP, and DRY tools from the constitution language tool table.
-- At startup, use `squad_tool.sh require` for required language mutation, CRAP, DRY, and APS tools unless the assignment explicitly tells you to install/fetch a missing tool.
-- For Babashka/Clojure hardening, the exact required-tool checks are:
-  - `squad_tool.sh require clj-mutate github.com/unclebob/clj-mutate latest`
-  - `squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest`
-  - `squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest`
-  - `squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest`
-  - `squad_tool.sh require gherkin-mutator github.com/unclebob/Acceptance-Pipeline-Specification latest`
+- At startup, run every `squad_tool.sh require` command listed in the generated assignment `Required Tools` section.
+- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate repositories.
 - Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the tool.
 - Ensure APS commands `gherkin-parser` and `gherkin-mutator` are available from the local shared tool cache when approved Gherkin exists; do not fetch Acceptance-Pipeline-Specification unless explicitly assigned.
 - Build the project-specific runner adapter required by `gherkin-mutator` when the assignment requires Gherkin mutation.

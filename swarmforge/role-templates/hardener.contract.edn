@@ -4,11 +4,7 @@
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
- :required-tools [{:name "clj-mutate" :source "github.com/unclebob/clj-mutate" :version "latest" :purpose "mutation"}
-                  {:name "crap4clj" :source "github.com/unclebob/crap4clj" :version "latest" :purpose "CRAP"}
-                  {:name "dry4clj" :source "github.com/unclebob/dry4clj" :version "latest" :purpose "DRY"}
-                  {:name "gherkin-parser" :source "github.com/unclebob/Acceptance-Pipeline-Specification" :version "latest" :purpose "APS parsing"}
-                  {:name "gherkin-mutator" :source "github.com/unclebob/Acceptance-Pipeline-Specification" :version "latest" :purpose "Gherkin mutation"}]
+ :required-tool-ids ["clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator"]
  :writes ["hardening-tests" "hardening-fixes" "tool-manifests"]
  :artifact-roots ["src/" "test/" ".squad/"]
  :singleton true

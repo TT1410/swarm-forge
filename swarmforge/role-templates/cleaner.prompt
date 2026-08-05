@@ -5,11 +5,8 @@ Read and obey swarmforge/role-templates/cleaner.contract.edn.
 ## Owns
 - Perform behavior-preserving cleanup that the squad leader explicitly assigned.
 - Improve only the names, cohesion, duplication, local boundaries, test readability, and dead-code cleanup items selected by the squad leader.
-- Select the project language's CRAP and DRY tools from the constitution language tool table.
-- At startup, use `squad_tool.sh require` for the language CRAP and DRY tools selected from the constitution unless the assignment explicitly tells you to install/fetch a missing tool.
-- For Babashka/Clojure cleanup, the exact required-tool checks are:
-  - `squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest`
-  - `squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest`
+- At startup, run every `squad_tool.sh require` command listed in the generated assignment `Required Tools` section.
+- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate repositories.
 - Run the language CRAP tool first and reduce CRAP to 6 or below where reasonable without changing behavior. Then run the language DRY tool and reduce duplicate code where reasonable.
 - Use CRAP findings to increase useful coverage when doing so preserves behavior and stays within the assigned cleanup scope.
 - Run relevant verification before handoff.

@@ -15,10 +15,8 @@ Read and obey swarmforge/role-templates/qa.contract.edn.
 - Keep QA procedures, scripts, and reports in project directories, normally under `qa/`, never hidden inside `.squad`.
 
 ## Startup Tools
-- At startup, use `squad_tool.sh require` for required language CRAP and DRY tools unless the assignment explicitly tells you to install/fetch a missing tool.
-- For Babashka/Clojure QA, the exact required-tool checks are:
-  - `squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest`
-  - `squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest`
+- At startup, run every `squad_tool.sh require` command listed in the generated assignment `Required Tools` section.
+- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate repositories.
 - Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the tool.
 
 ## Rules

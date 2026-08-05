@@ -4,8 +4,7 @@
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
- :required-tools [{:name "crap4clj" :source "github.com/unclebob/crap4clj" :version "latest" :purpose "CRAP"}
-                  {:name "dry4clj" :source "github.com/unclebob/dry4clj" :version "latest" :purpose "DRY"}]
+ :required-tool-ids ["crap4clj" "dry4clj"]
  :writes ["cleanup" "coverage-improvements"]
  :artifact-roots ["src/" "test/"]
  :behavior-preserving true}

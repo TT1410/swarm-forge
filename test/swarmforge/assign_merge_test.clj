@@ -592,8 +592,122 @@
            "instructions.md")
       (let [assignment (slurp (str (fs/path root ".squad/assignments/wumpus-cave-clean/assignment.md")))]
         (is (str/includes? assignment "## Required Tools"))
+        (is (str/includes? assignment "## Tool Startup"))
         (is (str/includes? assignment "crap4clj (CRAP): `squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest`"))
         (is (str/includes? assignment "dry4clj (DRY): `squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest`")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-blocks-gherkin-results-missing-required-tool-evidence
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
+      (write-file (fs/path root "swarmforge/role-templates/gherkin-writer.prompt")
+                  "gherkin\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Write Gherkin.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (run {:dir root}
+           (script "squad_assign.sh")
+           "create"
+           "wumpus"
+           "cave-topology"
+           "gherkin-writer"
+           "wumpus-cave-gherkin"
+           "instructions.md")
+      (let [assignment (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/assignment.md")))]
+        (is (str/includes? assignment "gherkin-parser (APS parsing): `squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest`"))
+        (is (str/includes? assignment "ir-dry-checker (IR DRY): `squad_tool.sh require ir-dry-checker github.com/unclebob/Acceptance-Pipeline-Specification latest`"))
+        (is (str/includes? assignment "## Required Tool Evidence"))
+        (is (str/includes? assignment "`normalized_ir: <artifact-path-or-summary>`")))
+      (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root "missing-evidence.handoff")
+                    (result-handoff-text "1" "gherkin-writer-001" "wumpus-cave-gherkin"
+                                         "gherkin-writer" commit
+                                         "simulated gherkin result"))
+        (let [result (run {:dir root :ok? false}
+                          (script "squad_assign.sh")
+                          "result"
+                          "wumpus-cave-gherkin"
+                          "missing-evidence.handoff")
+              status (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/status")))
+              blocker (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/blocker")))]
+          (is (= 6 (:exit result)))
+          (is (str/includes? (:err result) "STATE: blocked"))
+          (is (str/includes? status "state: blocked"))
+          (is (str/includes? blocker "kind: required-tool-evidence"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-accepts-gherkin-results-with-required-tool-evidence
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
+      (write-file (fs/path root "swarmforge/role-templates/gherkin-writer.prompt")
+                  "gherkin\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Write Gherkin.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (run {:dir root}
+           (script "squad_assign.sh")
+           "create"
+           "wumpus"
+           "cave-topology"
+           "gherkin-writer"
+           "wumpus-cave-gherkin"
+           "instructions.md")
+      (doseq [[file text] [["features/cave.feature" "Feature: Cave\n"]
+                           [".squad/tool-evidence/cave.transcript" "gherkin-parser ok\nir-dry-checker ok\n"]
+                           [".squad/tool-evidence/cave.normalized-ir.edn" "{:feature \"Cave\"}\n"]
+                           [".squad/tool-evidence/cave.ir-dry.md" "IR DRY ok\n"]
+                           [".squad/tool-evidence/cave.tools" "gherkin-parser APS latest\nir-dry-checker APS latest\n"]]]
+        (write-file (fs/path root file) text))
+      (run {:dir root} "git" "add" "features" ".squad/tool-evidence")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add gherkin and APS evidence")
+      (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))
+            artifacts "features/cave.feature,.squad/tool-evidence/cave.transcript,.squad/tool-evidence/cave.normalized-ir.edn,.squad/tool-evidence/cave.ir-dry.md,.squad/tool-evidence/cave.tools"]
+        (write-file (fs/path root "evidence.handoff")
+                    (str "id: 1\n"
+                         "from: gherkin-writer-001\n"
+                         "to: squad-leader\n"
+                         "priority: 50\n"
+                         "type: git_handoff\n"
+                         "task: wumpus-cave-gherkin\n"
+                         "commit: " commit "\n"
+                         "assignment: wumpus-cave-gherkin\n"
+                         "agent: gherkin-writer-001\n"
+                         "template: gherkin-writer\n"
+                         "artifacts: " artifacts "\n"
+                         "tool_evidence: .squad/tool-evidence/cave.transcript\n"
+                         "normalized_ir: .squad/tool-evidence/cave.normalized-ir.edn\n"
+                         "ir_dry_report: .squad/tool-evidence/cave.ir-dry.md\n"
+                         "tool_metadata: .squad/tool-evidence/cave.tools\n"
+                         "\n"
+                         "simulated gherkin result\n"))
+        (let [result (run {:dir root}
+                          (script "squad_assign.sh")
+                          "result"
+                          "wumpus-cave-gherkin"
+                          "evidence.handoff")
+              status (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/status")))]
+          (is (str/includes? (:out result) "STATE: result_received"))
+          (is (str/includes? status "state: result_received"))))
       (finally
         (fs/delete-tree root)))))
 

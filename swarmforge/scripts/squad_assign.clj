@@ -4,6 +4,7 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
             [squad-config :as cfg]
+            [squad-tool-table :as tools]
             [clojure.edn :as edn]
             [clojure.string :as str]))
 
@@ -228,6 +229,14 @@
   (let [[_ body] (str/split (slurp (str file)) #"\n\n" 2)]
     (or body "")))
 
+(defn header-map [file]
+  (into {}
+        (keep (fn [line]
+                (when-let [[_ k v] (re-matches #"([^:]+):\s*(.*)" line)]
+                  [k v])))
+        (take-while (complement str/blank?)
+                    (str/split-lines (slurp (str file))))))
+
 (defn result-handoff-template [assignment-id template]
   (str "type: git_handoff\n"
        "to: squad-leader\n"
@@ -237,6 +246,42 @@
        "assignment: " assignment-id "\n"
        "template: " template "\n"
        "artifacts: <comma-separated-paths-or-none>\n"))
+
+(defn split-list [value]
+  (->> (str/split (or value "") #",")
+       (map str/trim)
+       (remove str/blank?)
+       (remove #{"none"})
+       vec))
+
+(defn commit-path-exists? [root commit path]
+  (zero? (:exit (sh-at root "git" "cat-file" "-e" (str commit ":" path)))))
+
+(defn required-evidence-missing [root commit headers artifact-set evidence]
+  (some (fn [{:keys [header description]}]
+          (let [value (get headers header)
+                paths (split-list value)]
+            (cond
+              (empty? paths)
+              (str "missing required tool evidence header " header
+                   " (" description ")")
+
+              (some #(not (contains? artifact-set %)) paths)
+              (str "required tool evidence header " header
+                   " references artifacts not listed in artifacts")
+
+              (some #(not (commit-path-exists? root commit %)) paths)
+              (str "required tool evidence artifact for " header
+                   " is not present in result commit"))))
+        evidence))
+
+(defn required-tool-evidence-error [root template handoff-file commit manifest]
+  (let [evidence (tools/required-evidence root template)]
+    (when (seq evidence)
+      (required-evidence-missing root commit
+                                 (header-map handoff-file)
+                                 (set (split-list (get manifest "artifacts")))
+                                 evidence))))
 
 (defn theme-scoped-assignment? [template story-id]
   (and (= "analyst" template)
@@ -256,12 +301,18 @@
                        ": `squad_tool.sh require " name " " source " " version "`\n")))
          "\n")))
 
+(defn tool-startup-lines [tools]
+  (tools/startup-instructions tools))
+
+(defn tool-evidence-lines [evidence]
+  (tools/evidence-instructions evidence))
+
 (defn role-contract [root template]
   (let [file (fs/path root "swarmforge" "role-templates" (str template ".contract.edn"))]
     (when (fs/regular-file? file)
       (edn/read-string (slurp (str file))))))
 
-(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text story-text instructions-text requirement packet-text required-tools optional-tools]}]
+(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
@@ -283,6 +334,8 @@
               "```\n\n"))
        (tool-lines "Required Tools" required-tools)
        (tool-lines "Optional Tools" optional-tools)
+       (tool-startup-lines required-tools)
+       (tool-evidence-lines required-evidence)
        "## Leader Instructions\n\n"
        instructions-text "\n\n"
        "## Required Transient Protocol\n\n"
@@ -355,8 +408,9 @@
                              :instructions-text (slurp (str (:instructions context)))
                              :packet-text (when-let [packet (:packet context)]
                                             (slurp (str packet)))
-                             :required-tools (get-in context [:contract :required-tools])
-                             :optional-tools (get-in context [:contract :optional-tools])})))
+                             :required-tools (tools/required-tools (:root context) (:template context))
+                             :optional-tools (tools/optional-tools (:root context) (:template context))
+                             :required-evidence (tools/required-evidence (:root context) (:template context))})))
 
 (defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now]}]
   (str "assignment_id: " assignment-id "\n"
@@ -518,26 +572,33 @@
                    (not (fs/exists? worktree)))
           (exit! 2 (str "Result sender worktree is missing: " worktree)))))))
 
-(defn validate-result-handoff! [assignment-id template handoff-file]
-  (let [type (read-value handoff-file "type")
-        to (read-value handoff-file "to")
-        task (read-value handoff-file "task")
-        commit (read-value handoff-file "commit")
-        from (read-value handoff-file "from")
-        manifest {"assignment" (read-value handoff-file "assignment")
-                  "agent" (read-value handoff-file "agent")
-                  "template" (read-value handoff-file "template")
-                  "artifacts" (read-value handoff-file "artifacts")}]
-    (validate-result-type! type)
-    (validate-result-recipient! to)
-    (validate-result-task! assignment-id task)
-    (validate-result-commit! commit)
-    (validate-result-sender! from)
-    (validate-result-manifest! assignment-id template from manifest)
-    {:from from
-     :commit commit
-     :manifest manifest
-     :body (handoff-body handoff-file)}))
+(defn validate-result-handoff!
+  ([assignment-id template handoff-file]
+   (validate-result-handoff! (project-root) assignment-id template handoff-file))
+  ([root assignment-id template handoff-file]
+   (let [type (read-value handoff-file "type")
+         to (read-value handoff-file "to")
+         task (read-value handoff-file "task")
+         commit (read-value handoff-file "commit")
+         from (read-value handoff-file "from")
+         manifest {"assignment" (read-value handoff-file "assignment")
+                   "agent" (read-value handoff-file "agent")
+                   "template" (read-value handoff-file "template")
+                   "artifacts" (read-value handoff-file "artifacts")}]
+     (validate-result-type! type)
+     (validate-result-recipient! to)
+     (validate-result-task! assignment-id task)
+     (validate-result-commit! commit)
+     (validate-result-sender! from)
+     (validate-result-manifest! assignment-id template from manifest)
+     (when-let [evidence-error (required-tool-evidence-error root template handoff-file commit manifest)]
+       (exit! 6
+              "SQUAD_REQUIRED_TOOL_EVIDENCE_MISSING"
+              evidence-error))
+     {:from from
+      :commit commit
+      :manifest manifest
+      :body (handoff-body handoff-file)})))
 
 (defn ensure-result-reachable! [root from commit]
   (let [sender-branch (str "swarmforge-" from)
@@ -570,6 +631,38 @@
   (when-not (str/blank? body)
     (println "BODY_RECORDED: true")))
 
+(declare valid-result-commit?)
+
+(defn block-result! [root dir assignment-id detail now]
+  (write-atomic! (fs/path dir "blocker.md") (str detail "\n"))
+  (write-atomic! (fs/path dir "blocker")
+                 (str "assignment_id: " assignment-id "\n"
+                      "state: blocked\n"
+                      "kind: required-tool-evidence\n"
+                      "reason_file: " (fs/path dir "blocker.md") "\n"
+                      "updated_at: " now "\n"))
+  (write-atomic! (fs/path dir "status")
+                 (str "assignment_id: " assignment-id "\n"
+                      "state: blocked\n"
+                      "detail: " detail "\n"
+                      "updated_at: " now "\n"))
+  (append-line! (fs/path dir "events.log")
+                (str now "\tblocked\trequired-tool-evidence"))
+  (assignment-theme-event! root dir "blocked" assignment-id "required-tool-evidence")
+  (binding [*out* *err*]
+    (println "SQUAD_ASSIGNMENT:" assignment-id)
+    (println "STATE: blocked")
+    (println "BLOCKER:" (str (fs/path dir "blocker.md")))
+    (println "DETAIL:" detail))
+  (System/exit 6))
+
+(defn block-missing-tool-evidence! [root dir assignment-id template handoff-file now]
+  (let [commit (read-value handoff-file "commit")
+        manifest {"artifacts" (read-value handoff-file "artifacts")}]
+    (when (valid-result-commit? commit)
+      (when-let [detail (required-tool-evidence-error root template handoff-file commit manifest)]
+        (block-result! root dir assignment-id detail now)))))
+
 (defn record-result! [assignment-id handoff-path]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
@@ -577,10 +670,11 @@
         metadata (fs/path dir "metadata")
         template (read-value metadata "template")
         handoff-file (source-file! handoff-path)
-        {:keys [from commit body manifest]} (validate-result-handoff! assignment-id template handoff-file)
         theme-id (or (read-value metadata "theme_id") "unknown")
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
+    (block-missing-tool-evidence! root dir assignment-id template handoff-file now)
+    (let [{:keys [from commit body manifest]} (validate-result-handoff! root assignment-id template handoff-file)]
     (validate-sender-assignment-lineage! root assignment-id from)
     (ensure-result-reachable! root from commit)
     (write-atomic! (fs/path dir "result.handoff")
@@ -595,7 +689,7 @@
     (write-result-record! dir assignment-id from commit now)
     (when-not (= "unknown" theme-id)
       (assignment-theme-event! root dir "result_received" assignment-id from commit))
-    (print-result-recorded! assignment-id from commit body)))
+      (print-result-recorded! assignment-id from commit body))))
 
 (defn merge-head-exists? [root]
   (fs/exists? (fs/path root ".git" "MERGE_HEAD")))
