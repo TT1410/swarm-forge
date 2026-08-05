@@ -361,7 +361,146 @@
         (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out next) "TEMPLATE: merger"))
         (is (str/includes? (:out next) "ASSIGNMENT: cave-impl-merge"))
+        (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-merger cave-impl cave-impl-merge <instructions-file>"))
         (is (str/includes? (:out next) "merge-blocked assignment needs merger")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-routes-merge-blocked-assignment-to-merger-when-capacity-full
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 1\n")
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
+      (write-agent-status! root "implementer-001" "running")
+      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                  "template: implementer\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  (str "assignment_id: cave-impl\n"
+                       "theme_id: wumpus\n"
+                       "story_id: cave-topology\n"
+                       "template: implementer\n"
+                       "assignment_file: " root "/instructions.md\n"
+                       "created_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  (str "assignment_id: cave-impl\n"
+                       "state: merge_blocked\n"
+                       "detail: dry-run merge failed\n"
+                       "updated_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge/metadata")
+                  (str "assignment_id: cave-impl-merge\n"
+                       "theme_id: wumpus\n"
+                       "story_id: cave-topology\n"
+                       "template: merger\n"
+                       "assignment_file: " root "/merger-assignment.md\n"
+                       "created_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge/status")
+                  (str "assignment_id: cave-impl-merge\n"
+                       "state: created\n"
+                       "detail: merger for cave-topology\n"
+                       "updated_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root "merger-assignment.md")
+                  "Resolve the merge.\n")
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: request_spawn"))
+        (is (str/includes? (:out next) "TEMPLATE: merger"))
+        (is (str/includes? (:out next) "COMMAND: squad_spawn_request.sh merger cave-impl-merge")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-does-not-retire-agent-while-its-handoff-is-merge-blocked
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
+      (write-agent-status! root "implementer-001" "running")
+      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                  "template: implementer\ntask_id: cave-impl\n")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_implementer-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\n"
+                       "to: squad-leader\n"
+                       "from: implementer-001\n"
+                       "priority: 50\n"
+                       "task: cave-impl\n"
+                       "commit: abcdef1234\n\n"
+                       "implementation ready\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  (str "assignment_id: cave-impl\n"
+                       "theme_id: wumpus\n"
+                       "story_id: cave-topology\n"
+                       "template: implementer\n"
+                       "assignment_file: " root "/instructions.md\n"
+                       "created_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  (str "assignment_id: cave-impl\n"
+                       "state: merge_blocked\n"
+                       "detail: accepted merge failed\n"
+                       "updated_at: 2026-08-03T00:00:00Z\n"))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (not (str/includes? (:out next) "NEXT_ACTION: retire_agent")))
+        (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
+        (is (str/includes? (:out next) "TEMPLATE: merger"))
+        (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-merger cave-impl cave-impl-merge <instructions-file>")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-retires-merge-blocked-source-agent-after-downstream-merger-result
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
+      (write-agent-status! root "implementer-001" "running")
+      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                  "template: implementer\ntask_id: cave-impl\n")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_implementer-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\n"
+                       "to: squad-leader\n"
+                       "from: implementer-001\n"
+                       "priority: 50\n"
+                       "task: cave-impl\n"
+                       "commit: abcdef1234\n\n"
+                       "implementation ready\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  (str "assignment_id: cave-impl\n"
+                       "theme_id: wumpus\n"
+                       "story_id: cave-topology\n"
+                       "template: implementer\n"
+                       "assignment_file: " root "/instructions.md\n"
+                       "created_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  (str "assignment_id: cave-impl\n"
+                       "state: merge_blocked\n"
+                       "detail: accepted merge failed\n"
+                       "updated_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge/metadata")
+                  (str "assignment_id: cave-impl-merge\n"
+                       "theme_id: wumpus\n"
+                       "story_id: cave-topology\n"
+                       "template: merger\n"
+                       "merge_for: cave-impl\n"
+                       "assignment_file: " root "/merger.md\n"
+                       "created_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge/status")
+                  (str "assignment_id: cave-impl-merge\n"
+                       "state: merge_blocked\n"
+                       "detail: merger merge failed\n"
+                       "updated_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge/result")
+                  (str "assignment_id: cave-impl-merge\n"
+                       "state: result_received\n"
+                       "from: merger-001\n"
+                       "commit: abcdef1234\n"))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: retire_agent"))
+        (is (str/includes? (:out next) "AGENT: implementer-001"))
+        (is (str/includes? (:out next) "COMMAND: squad_retire.sh implementer-001")))
       (finally
         (fs/delete-tree root)))))
 

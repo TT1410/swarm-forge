@@ -12,6 +12,7 @@
   (str "Usage:\n"
        "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file> [--requires approval:<gate>]\n"
        "  squad_assign.sh create-batch <theme-id> <template> <assignment-id> <instructions-file> [--requires approval:<gate>]\n"
+       "  squad_assign.sh create-merger <blocked-assignment-id> <merger-assignment-id> <instructions-file>\n"
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
        "  squad_assign.sh merge-ready <assignment-id>\n"
        "  squad_assign.sh review <assignment-id> <accepted|changes-requested> <review-file>\n"
@@ -135,6 +136,13 @@
      :instructions-file instructions-file
      :scope "batch"
      :requirement (parse-requirement! requirement)}))
+
+(defn parse-create-merger-args! [args]
+  (when-not (= 4 (count args))
+    (exit! 1 usage-text))
+  {:blocked-assignment-id (second args)
+   :assignment-id (nth args 2)
+   :instructions-file (nth args 3)})
 
 (def valid-review-decisions
   {"accepted" "review_accepted"
@@ -312,7 +320,7 @@
     (when (fs/regular-file? file)
       (edn/read-string (slurp (str file))))))
 
-(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence]}]
+(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence merge-text]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
@@ -336,6 +344,9 @@
        (tool-lines "Optional Tools" optional-tools)
        (tool-startup-lines required-tools)
        (tool-evidence-lines required-evidence)
+       (when merge-text
+         (str "## Merge Source\n\n"
+              merge-text "\n\n"))
        "## Leader Instructions\n\n"
        instructions-text "\n\n"
        "## Required Transient Protocol\n\n"
@@ -412,7 +423,7 @@
                              :optional-tools (tools/optional-tools (:root context) (:template context))
                              :required-evidence (tools/required-evidence (:root context) (:template context))})))
 
-(defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now]}]
+(defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now merge-for conflicting-template conflicting-agent conflicting-commit]}]
   (str "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
        "scope: " scope "\n"
@@ -420,6 +431,14 @@
        "template: " template "\n"
        (when requirement
          (str "requires: " (:text requirement) "\n"))
+       (when merge-for
+         (str "merge_for: " merge-for "\n"))
+       (when conflicting-template
+         (str "conflicting_template: " conflicting-template "\n"))
+       (when conflicting-agent
+         (str "conflicting_agent: " conflicting-agent "\n"))
+       (when conflicting-commit
+         (str "conflicting_commit: " conflicting-commit "\n"))
        "assignment_file: " assignment-file "\n"
        "created_at: " now "\n"))
 
@@ -470,6 +489,52 @@
 
 (defn create-batch-assignment! [args]
   (create-assignment! args))
+
+(defn merge-source-text [{:keys [merge-for conflicting-template conflicting-agent conflicting-commit]}]
+  (str "blocked_assignment_id: " merge-for "\n"
+       "blocked_template: " (or conflicting-template "unknown") "\n"
+       "conflicting_agent: " (or conflicting-agent "unknown") "\n"
+       "conflicting_commit: " (or conflicting-commit "unknown") "\n"
+       "Merge this result commit into the squad leader's current integration state, resolve mechanical conflicts, run the relevant test suites, and hand back one unconflicted result commit.\n"))
+
+(defn original-merge-context [root blocked-assignment-id]
+  (validate-id! "Blocked assignment id" blocked-assignment-id)
+  (let [dir (assignment-dir root blocked-assignment-id)
+        metadata (fs/path dir "metadata")
+        status (fs/path dir "status")
+        result (fs/path dir "result")]
+    (ensure-assignment-dir! dir blocked-assignment-id)
+    (when-not (= "merge_blocked" (read-value status "state"))
+      (exit! 2 (str "Assignment is not merge_blocked: " blocked-assignment-id)))
+    {:dir dir
+     :theme-id (read-value metadata "theme_id")
+     :story-id (read-value metadata "story_id")
+     :conflicting-template (read-value metadata "template")
+     :conflicting-agent (read-value result "from")
+     :conflicting-commit (read-value result "commit")}))
+
+(defn create-merger-assignment! [{:keys [blocked-assignment-id assignment-id instructions-file]}]
+  (validate-id! "Merger assignment id" assignment-id)
+  (let [root (fs/absolutize (project-root))
+        original (original-merge-context root blocked-assignment-id)
+        context (assignment-create-context {:theme-id (:theme-id original)
+                                            :story-id (:story-id original)
+                                            :template "merger"
+                                            :assignment-id assignment-id
+                                            :instructions-file instructions-file})
+        context (merge context
+                       {:merge-for blocked-assignment-id
+                        :conflicting-template (:conflicting-template original)
+                        :conflicting-agent (:conflicting-agent original)
+                        :conflicting-commit (:conflicting-commit original)
+                        :merge-text (merge-source-text
+                                     {:merge-for blocked-assignment-id
+                                      :conflicting-template (:conflicting-template original)
+                                      :conflicting-agent (:conflicting-agent original)
+                                      :conflicting-commit (:conflicting-commit original)})})]
+    (ensure-create-context! context)
+    (print-create-result! context
+                          (write-assignment-records! context (assignment-text context)))))
 
 (defn assignment-status-paths [dir]
   {:metadata (fs/path dir "metadata")
@@ -910,6 +975,42 @@
     (assignment-theme-event! root dir "merged" assignment-id commit head)
     head))
 
+(defn mark-original-resolved-by-merger! [root merger-dir merger-assignment-id merger-commit merge-commit now]
+  (let [metadata (fs/path merger-dir "metadata")
+        original-id (read-value metadata "merge_for")]
+    (when-not (str/blank? original-id)
+      (let [original-dir (assignment-dir root original-id)
+            original-metadata (fs/path original-dir "metadata")
+            original-commit (or (read-value metadata "conflicting_commit") merger-commit)
+            detail (str "resolved by merger assignment " merger-assignment-id)]
+        (ensure-assignment-dir! original-dir original-id)
+        (when (= "merger" (read-value original-metadata "template"))
+          (mark-original-resolved-by-merger! root original-dir original-id merger-commit merge-commit now))
+        (fs/delete-if-exists (fs/path original-dir "blocker"))
+        (fs/delete-if-exists (fs/path original-dir "blocker.md"))
+        (write-atomic! (fs/path original-dir "accepted-merge")
+                       (str "assignment_id: " original-id "\n"
+                            "state: merged\n"
+                            "commit: " original-commit "\n"
+                            "merge_commit: " merge-commit "\n"
+                            "resolved_by: " merger-assignment-id "\n"
+                            "detail: " detail "\n"
+                            "updated_at: " now "\n"))
+        (write-atomic! (fs/path original-dir "merge")
+                       (str "assignment_id: " original-id "\n"
+                            "state: merged\n"
+                            "commit: " merger-commit "\n"
+                            "detail: " detail "\n"
+                            "updated_at: " now "\n"))
+        (write-atomic! (fs/path original-dir "status")
+                       (str "assignment_id: " original-id "\n"
+                            "state: merged\n"
+                            "detail: " detail "\n"
+                            "updated_at: " now "\n"))
+        (append-line! (fs/path original-dir "events.log")
+                      (str now "\tmerged_by_merger\t" merger-assignment-id "\t" merge-commit))
+        (assignment-theme-event! root original-dir "merged" original-id merger-assignment-id merge-commit)))))
+
 (defn ensure-merge-ready! [merge-file]
   (when-not (= "merge_ready" (read-value merge-file "state"))
     (exit! 3 "Assignment is not merge_ready.")))
@@ -968,6 +1069,7 @@
           (block-merge! root dir assignment-id nil "tracked checkout dirty" commit now nil))
         (let [detail (merge-detail! root dir assignment-id commit now)
               merge-commit (record-accepted-merge! root dir assignment-id commit detail now)]
+          (mark-original-resolved-by-merger! root dir assignment-id commit merge-commit now)
           (print-merge-accepted! assignment-id commit merge-commit detail))
         (finally
           (abort-merge! root))))))
@@ -1053,6 +1155,7 @@
 (def assignment-commands
   {"create" (fn [args] (create-assignment! (parse-create-args! args)))
    "create-batch" (fn [args] (create-batch-assignment! (parse-create-batch-args! args)))
+   "create-merger" (fn [args] (create-merger-assignment! (parse-create-merger-args! args)))
    "result" (fn [args] (run-counted-command! args 3 #(record-result! (second %) (nth % 2))))
    "merge-ready" (fn [args] (run-counted-command! args 2 #(mark-merge-ready! (second %))))
    "review" (fn [args] (run-counted-command! args 4 #(record-review! (second %) (nth % 2) (nth % 3))))

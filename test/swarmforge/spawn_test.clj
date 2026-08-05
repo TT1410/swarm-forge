@@ -424,6 +424,32 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-spawn-allows-merger-when-transient-capacity-is-full
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
+      (write-agent-status! root "implementer-001" "running")
+      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                  "template: implementer\n")
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 1\n")
+      (write-file (fs/path root "swarmforge/role-templates/merger.prompt")
+                  "merge\n")
+      (write-file (fs/path root "assignment.md")
+                  "Resolve the merge conflict.\n")
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+                        (script "squad_spawn.sh")
+                        "merger"
+                        "cave-impl-merge"
+                        "assignment.md")]
+        (is (str/includes? (:out result) "SQUAD_AGENT: merger-001")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-spawn-enforces-singleton-quality-gate-limits
   (let [root (tmp-dir)]
     (try

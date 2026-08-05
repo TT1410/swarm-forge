@@ -268,10 +268,13 @@
                           (remove str/blank?))))))
        set))
 
+(declare role-template)
+
 (defn capacity-counted-role? [root socket role role-data]
   (let [state (read-value (fs/path root ".squad" "agents" role "status") "state")
         session (:session role-data)]
     (and (not= "squad-leader" role)
+         (not= "merger" (role-template root role))
          (not (contains? #{"retired" "failed"} state))
          (if (skip-tmux-env?)
            (active-state? state)
@@ -324,16 +327,17 @@
     (str "group-capacity-full:" group)))
 
 (defn spawn-capacity-blocker [root template]
-  (cond
-    (total-capacity-full? root)
-    "capacity-full"
+  (when-not (= "merger" template)
+    (cond
+      (total-capacity-full? root)
+      "capacity-full"
 
-    (template-capacity-full? root template)
-    (str "template-capacity-full:" template)
+      (template-capacity-full? root template)
+      (str "template-capacity-full:" template)
 
-    :else
-    (some #(group-capacity-blocker root %)
-          (cfg/squad-template-group-limits root template))))
+      :else
+      (some #(group-capacity-blocker root %)
+            (cfg/squad-template-group-limits root template)))))
 
 (defn reconcile-roles! [root]
   (let [roles (load-roles root)

@@ -8,10 +8,12 @@ Read and obey swarmforge/role-templates/merger.contract.edn.
 - Record concise integration notes explaining any conflict resolutions.
 
 ## Rules
-- Work only from the squad leader's assignment and the named conflicting result commit.
+- Start from the squad leader's current integration state in your assigned worktree.
+- Merge the named conflicting result commit from the assignment into that current integration state.
 - Resolve mechanical conflicts; do not silently redesign requirements or product behavior.
+- If the merge conflicts again because the squad leader integration state has changed, resolve it if the fix is mechanical.
 - If the conflict exposes a substantive requirement or design disagreement, record `blocked` with `squad_event.sh` and hand the blocker back to `squad-leader`.
-- You may run relevant test suites to ensure the resolved merge did not break existing behavior.
+- Run the relevant test suites before handoff so the squad leader receives an unconflicted result that does not break existing behavior.
 - Do not perform unrelated cleanup.
 - Do not talk directly to the user.
 - Do not spawn other agents.
@@ -22,6 +24,6 @@ Read and obey swarmforge/role-templates/merger.contract.edn.
 - Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state. Use `squad_run.sh` for command telemetry.
 
 ## Handoff
-- Commit the resolved merge and any integration notes.
+- Commit the resolved merge and any integration notes in your worktree.
 - Do not hand off to another transient worker.
-- Send a `git_handoff` back to `squad-leader` using the received task name.
+- Send exactly one `git_handoff` back to `squad-leader` using the received task name and the resolved merge commit.

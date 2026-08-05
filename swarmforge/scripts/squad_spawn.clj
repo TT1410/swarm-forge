@@ -121,11 +121,14 @@
                           (remove str/blank?))))))
        set))
 
+(declare role-template)
+
 (defn capacity-counted-row? [root socket row]
   (let [role (first row)
         session (nth row 3 nil)
         state (read-value (fs/path root ".squad" "agents" role "status") "state")]
     (and (not= "squad-leader" role)
+         (not= "merger" (role-template root role))
          (not (contains? #{"retired" "failed"} state))
          (if (skip-tmux-capacity?)
            (contains? active-agent-states state)
@@ -438,8 +441,9 @@
        (str "MAX_TRANSIENTS: " limit)])))
 
 (defn capacity-error [root rows template]
-  (or (global-capacity-error root rows)
-      (template-capacity-error root rows template)))
+  (when-not (= "merger" template)
+    (or (global-capacity-error root rows)
+        (template-capacity-error root rows template))))
 
 (defn ensure-agent-available! [rows agent-id worktree agent-dir]
   (when (some #(= agent-id (first %)) rows)

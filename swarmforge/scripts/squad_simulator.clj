@@ -11,7 +11,8 @@
        "       [--stories <n|min..max>] [--handoff-ticks <n|min..max>]\n"
        "       [--approval-ticks <n|min..max>] [--stall-percent <0-100>]\n"
        "       [--stall-mode dark|active-then-handoff|active-then-dark|mixed]\n"
-       "       [--stall-active-ticks <n|min..max>] [--max-ticks <n>]"))
+       "       [--stall-active-ticks <n|min..max>] [--merge-failure-template <template[,template...]>]\n"
+       "       [--max-ticks <n>]"))
 
 (defn path-str [path]
   (let [path (fs/path path)]
@@ -103,6 +104,7 @@
    :stall-percent 0
    :stall-mode "dark"
    :stall-active-ticks-range [5 5]
+   :merge-failure-templates []
    :max-ticks 1000})
 
 (defn positive-long! [label value]
@@ -128,6 +130,12 @@
     (exit! 2 "Stall mode must be dark, active-then-handoff, active-then-dark, or mixed."))
   value)
 
+(defn template-sequence! [value]
+  (->> (str/split (or value "") #",")
+       (map str/trim)
+       (remove str/blank?)
+       vec))
+
 (def option-parsers
   {"--seed" [:seed #(parse-long! "Seed" %)]
    "--runs" [:runs #(positive-long! "Runs" %)]
@@ -137,6 +145,7 @@
    "--stall-percent" [:stall-percent stall-percent!]
    "--stall-mode" [:stall-mode stall-mode!]
    "--stall-active-ticks" [:stall-active-ticks-range #(parse-int-range! "Stall active ticks" %)]
+   "--merge-failure-template" [:merge-failure-templates template-sequence!]
    "--max-ticks" [:max-ticks #(positive-long! "Max ticks" %)]})
 
 (defn apply-option! [opts flag value]
@@ -181,6 +190,8 @@
 	                      "approval_required implementation false\n"
 	                      "recovery_quiet_seconds 5\n"
 	                      "recovery_retry_seconds 5\n"))
+    (write-file! (fs/path root "swarmforge" "role-templates" "merger.prompt")
+                 "Simulated merger role.\n")
     (write-file! (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
 	    (run-script! root "squad_theme.sh" "create" "hunt-the-wumpus" "theme.md")
 	    root))
@@ -232,7 +243,20 @@
 (defn assignment-file [root assignment-id]
   (fs/path root ".squad" "assignments" assignment-id "assignment.md"))
 
-(defn create-assignment! [root {:strs [theme story template assignment]}]
+(declare run-command!)
+
+(defn placeholder-instructions! [root]
+  (let [file (fs/path root ".squad" "simulator" "instructions.md")]
+    (write-file! file "Simulated assignment instructions.\n")
+    (path-str file)))
+
+(defn replace-instructions-placeholder [root command]
+  (str/replace command "<instructions-file>" (placeholder-instructions! root)))
+
+(defn create-merger-assignment! [root command]
+  (run-command! root (replace-instructions-placeholder root command)))
+
+(defn create-standard-assignment! [root {:strs [theme story template assignment]}]
   (let [dir (fs/path root ".squad" "assignments" assignment)
         assignment-path (assignment-file root assignment)]
     (write-file! assignment-path
@@ -253,6 +277,11 @@
                       "state: created\n"
                       "detail: simulated\n"
                       "updated_at: simulated\n"))))
+
+(defn create-assignment! [root {:strs [template command] :as command-map}]
+  (if (= "merger" template)
+    (create-merger-assignment! root command)
+    (create-standard-assignment! root command-map)))
 
 (defn role-rows [root]
   (let [file (fs/path root ".swarmforge" "roles.tsv")]
@@ -590,14 +619,80 @@
     (fs/create-dirs (fs/parent target))
     (fs/move handoff target {:replace-existing true})))
 
-(defn process-handoff! [root review-counts stories {:strs [handoff task from]}]
+(defn consume-forced-merge-failure? [merge-failures template]
+  (let [templates (:templates @merge-failures)]
+    (when (and template (= template (first templates)))
+      (swap! merge-failures update :templates #(vec (rest %)))
+      true)))
+
+(defn record-merge-block! [root assignment from]
+  (let [sha (str/trim (:out (sh! root "git" "rev-parse" "--short=10" "HEAD")))
+        dir (fs/path root ".squad" "assignments" assignment)]
+    (write-file! (fs/path dir "result")
+                 (str "assignment_id: " assignment "\n"
+                      "state: result_received\n"
+                      "from: " from "\n"
+                      "commit: " sha "\n"
+                      "updated_at: simulated\n"))
+    (write-file! (fs/path dir "status")
+                 (str "assignment_id: " assignment "\n"
+                      "state: merge_blocked\n"
+                      "detail: simulated merge failure\n"
+                      "updated_at: simulated\n"))
+    (write-file! (fs/path dir "blocker")
+                 (str "assignment_id: " assignment "\n"
+                      "state: blocked\n"))
+    (write-file! (fs/path dir "blocker.md")
+                 "Simulated merge failure.\n")
+    (println "SIM_MERGE_BLOCKED:" assignment (str "agent=" from))))
+
+(defn resolve-merger-assignment! [root assignment]
+  (let [dir (fs/path root ".squad" "assignments" assignment)
+        metadata (file-map (fs/path dir "metadata"))
+        original (get metadata "merge_for")
+        sha (str/trim (:out (sh! root "git" "rev-parse" "--short=10" "HEAD")))]
+    (when original
+      (when (= "merger" (get (file-map (fs/path root ".squad" "assignments" original "metadata")) "template"))
+        (resolve-merger-assignment! root original))
+      (write-file! (fs/path dir "status")
+                   (str "assignment_id: " assignment "\n"
+                        "state: merged\n"
+                        "detail: simulated merger resolved conflict\n"
+                        "updated_at: simulated\n"))
+      (write-file! (fs/path root ".squad" "assignments" original "accepted-merge")
+                   (str "assignment_id: " original "\n"
+                        "state: merged\n"
+                        "commit: " (or (get metadata "conflicting_commit") sha) "\n"
+                        "merge_commit: " sha "\n"
+                        "resolved_by: " assignment "\n"
+                        "detail: simulated merger resolved conflict\n"
+                        "updated_at: simulated\n"))
+      (write-file! (fs/path root ".squad" "assignments" original "status")
+                   (str "assignment_id: " original "\n"
+                        "state: merged\n"
+                        "detail: simulated merger resolved conflict\n"
+                        "updated_at: simulated\n"))
+      (fs/delete-if-exists (fs/path root ".squad" "assignments" original "blocker"))
+      (fs/delete-if-exists (fs/path root ".squad" "assignments" original "blocker.md"))
+      (println "SIM_MERGER_RESOLVED:" original (str "merger=" assignment)))))
+
+(defn process-handoff! [root review-counts stories merge-failures {:strs [handoff task from]}]
   (let [metadata (file-map (fs/path root ".squad" "assignments" task "metadata"))
         template (get metadata "template")
         story (get metadata "story_id")]
     (println (str "AGENT_HANDOFF: " from " assignment=" task))
-    (print-review-decision! story template
-                            (process-template! root review-counts stories task from template story))
-    (mark-assignment! root task "merged")
+    (if (consume-forced-merge-failure? merge-failures template)
+      (do
+        (when-not (= "merger" template)
+          (print-review-decision! story template
+                                  (process-template! root review-counts stories task from template story)))
+        (record-merge-block! root task from))
+      (if (= "merger" template)
+        (resolve-merger-assignment! root task)
+        (do
+          (print-review-decision! story template
+                                  (process-template! root review-counts stories task from template story))
+          (mark-assignment! root task "merged"))))
     (complete-handoff! root handoff)))
 
 (defn retire-agent! [root agent]
@@ -761,7 +856,7 @@
 
    "process_handoff"
    (fn [ctx _ command-map]
-     (process-handoff! (:root ctx) (:review-counts ctx) (:stories ctx) command-map)
+     (process-handoff! (:root ctx) (:review-counts ctx) (:stories ctx) (:merge-failures ctx) command-map)
      (println "SIM_APPLIED: handoff processed"))
 
    "retire_agent"
@@ -808,7 +903,10 @@
            (str "approval_ticks=" (str/join ".." (:approval-ticks-range options)))
            (str "stall_percent=" (:stall-percent options))
            (str "stall_mode=" (:stall-mode options))
-	          (str "stall_active_ticks=" (str/join ".." (:stall-active-ticks-range options))))
+	          (str "stall_active_ticks=" (str/join ".." (:stall-active-ticks-range options)))
+           (str "merge_failure_template=" (if (seq (:merge-failure-templates options))
+                                            (str/join "," (:merge-failure-templates options))
+                                            "none")))
   (println "SIM_ROOT:" (path-str root)))
 
 (defn simulation-context [root stories options rng]
@@ -819,6 +917,7 @@
    :counters (atom {})
    :scheduled (atom [])
    :review-counts (atom {})
+   :merge-failures (atom {:templates (:merge-failure-templates options)})
    :stories stories
    :pending-wait (atom nil)})
 

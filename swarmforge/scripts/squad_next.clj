@@ -60,6 +60,9 @@
       (get (file-map file) "from")
       "unknown"))
 
+(defn handoff-task [file]
+  (get (file-map file) "task" "unknown"))
+
 (defn print-handoff-action! [action file reason command]
   (let [headers (file-map file)]
     (println "NEXT_ACTION:" action)
@@ -293,6 +296,7 @@
 
 (defn capacity-counted-agent? [root agent]
   (and (active-agent? agent)
+       (not= "merger" (:template agent))
        (not (and (= "handoff_sent" (:state agent))
                  (handoff-visible-agent? root (:agent agent))))))
 
@@ -857,12 +861,26 @@
            (filter fs/directory?)
            (map (fn [batch-dir]
                   (let [metadata (file-map (fs/path batch-dir "metadata"))
-                        status (file-map (fs/path batch-dir "status"))]
+                        status (file-map (fs/path batch-dir "status"))
+                        manifest (fs/path batch-dir "manifest.tsv")
+                        story-count (if (fs/regular-file? manifest)
+                                      (max 0 (dec (count (str/split-lines (slurp (str manifest))))))
+                                      0)]
                     {:batch-id (fs/file-name batch-dir)
                      :kind (get metadata "kind")
-                     :state (get status "state" "unknown")})))
+                     :state (get status "state" "unknown")
+                     :story-count story-count})))
            vec)
       [])))
+
+(defn open-batch-with-members [batches requested-kind base]
+  (some (fn [{:keys [batch-id kind state story-count]}]
+          (when (and (= requested-kind kind)
+                     (str/starts-with? batch-id base)
+                     (= "open" state)
+                     (pos? story-count))
+            batch-id))
+        (sort-by :batch-id batches)))
 
 (defn reusable-batch-id [batches assignments requested-kind base]
   (some (fn [{:keys [batch-id kind state]}]
@@ -913,17 +931,19 @@
     :stage-order 170}])
 
 (defn batch-readiness [root theme-packets]
-  {:hardener-ready? (and (seq theme-packets)
-                         (or (batch-id-needing-result theme-packets "hardener_batch" "hardener_sha")
-                             (any-hardener-member-ready? root theme-packets)))
-   :qa-ready? (and (seq theme-packets)
-                   (or (batch-id-needing-result theme-packets "qa_batch" "qa_sha")
-                       (any-qa-member-ready? root theme-packets)))
-   :architecture-ready? (and (seq theme-packets)
-                             (or (architecture-batch-needing-review theme-packets)
-                                 (any-architecture-member-ready? root theme-packets)))
+  (let [theme-id (get (first theme-packets) "theme_id")
+        batches (batch-records root)]
+    {:hardener-ready? (and (seq theme-packets)
+                           (or (batch-id-needing-result theme-packets "hardener_batch" "hardener_sha")
+                               (open-batch-with-members batches "hardener" (str theme-id "-hardener"))))
+     :qa-ready? (and (seq theme-packets)
+                     (or (batch-id-needing-result theme-packets "qa_batch" "qa_sha")
+                         (open-batch-with-members batches "qa" (str theme-id "-qa"))))
+     :architecture-ready? (and (seq theme-packets)
+                               (or (architecture-batch-needing-review theme-packets)
+                                   (open-batch-with-members batches "architecture" (str theme-id "-architecture"))))
    :senior-ready? (and (seq theme-packets)
-                       (any-architecture-needs-senior? theme-packets))})
+                       (any-architecture-needs-senior? theme-packets))}))
 
 (defn batch-candidate-for-rule [root assignments agents theme-id readiness
                                 {:keys [ready? template suffix reason stage-order]}]
@@ -958,7 +978,7 @@
 
 (defn merger-spawn-candidate [root agents existing]
   (when (and (assignment-created? (:state existing))
-             (spawn-capacity? root agents "merger"))
+             (not (active-assignment? agents (:assignment-id existing))))
     {:priority 50
      :stage-order 5
      :next-action "request_spawn"
@@ -970,7 +990,7 @@
      :command (str "squad_spawn_request.sh merger " (:assignment-id existing)
                    " " (:assignment-file existing))}))
 
-(defn merger-create-candidate [theme-id story-id merger-id]
+(defn merger-create-candidate [theme-id blocked-assignment-id story-id merger-id]
   {:priority 50
    :stage-order 5
    :next-action "create_assignment"
@@ -979,7 +999,7 @@
    :template "merger"
    :assignment-id merger-id
    :reason "merge-blocked assignment needs merger"
-   :command (str "squad_assign.sh create " theme-id " " story-id " merger "
+   :command (str "squad_assign.sh create-merger " blocked-assignment-id " "
                  merger-id " <instructions-file>")})
 
 (defn merger-candidate [root assignments agents {:keys [assignment-id theme-id story-id]}]
@@ -988,7 +1008,7 @@
     (if existing
       (when-not (active-assignment? agents (:assignment-id existing))
         (merger-spawn-candidate root agents existing))
-      (merger-create-candidate theme-id story-id (next-id-with-base assignments base)))))
+      (merger-create-candidate theme-id assignment-id story-id (next-id-with-base assignments base)))))
 
 (defn merger-candidates [root rows]
   (let [assignments (assignment-records root)
@@ -1077,11 +1097,36 @@
 (defn agent-state [root agent]
   (get (file-map (fs/path root ".squad" "agents" agent "status")) "state" "unknown"))
 
-(defn completed-handoff-agents [root]
+(defn completed-handoff-records [root]
   (->> (files-with-extension (fs/path root ".swarmforge" "handoffs" "inbox" "completed") ".handoff")
-       (map handoff-sender)
-       (remove #{"unknown"})
-       set))
+       (map (fn [file]
+              {:agent (handoff-sender file)
+               :assignment-id (handoff-task file)}))
+       (remove #(= "unknown" (:agent %)))))
+
+(defn assignment-merge-blocked? [root assignment-id]
+  (= "merge_blocked"
+     (get (file-map (fs/path root ".squad" "assignments" assignment-id "status")) "state")))
+
+(defn assignment-result-recorded? [root assignment-id]
+  (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "result")))
+
+(defn downstream-merger-result-recorded? [root assignment-id]
+  (boolean
+   (let [assignments-dir (fs/path root ".squad" "assignments")]
+     (when (fs/directory? assignments-dir)
+       (some (fn [dir]
+               (let [merger-id (fs/file-name dir)]
+                 (when (and (= assignment-id
+                               (get (file-map (fs/path dir "metadata")) "merge_for"))
+                            (assignment-result-recorded? root merger-id))
+                   merger-id)))
+             (filter fs/directory? (fs/list-dir assignments-dir)))))))
+
+(defn completed-handoff-retirable? [root {:keys [agent assignment-id]}]
+  (and (not= "unknown" agent)
+       (or (not (assignment-merge-blocked? root assignment-id))
+           (downstream-merger-result-recorded? root assignment-id))))
 
 (defn visible-handoff-agents [root]
   (->> ["new" "in_process" "completed"]
@@ -1091,7 +1136,10 @@
        set))
 
 (defn retirement-candidate [root rows]
-  (let [completed (completed-handoff-agents root)]
+  (let [completed (->> (completed-handoff-records root)
+                       (filter #(completed-handoff-retirable? root %))
+                       (map :agent)
+                       set)]
     (some (fn [row]
             (let [agent (first row)
                   state (agent-state root agent)]
