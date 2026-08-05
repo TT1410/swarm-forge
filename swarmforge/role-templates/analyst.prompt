@@ -12,6 +12,7 @@ Read and obey swarmforge/role-templates/analyst.contract.edn.
 ## Rules
 - Do not write Gherkin, QA procedures, tests, production code, review reports, or cleanup changes.
 - Do not run tests or broad project verification commands unless the assignment explicitly asks for that exact command. For story work, use focused checks only: read the approved theme, review generated stories for completeness and consistency, and verify story files are under `stories/`.
+- Use I.N.V.E.S.T. as story-writing guidance: stories should be independent, negotiable, valuable, estimable, small, and testable.
 - Do not create broad stories that require downstream agents to infer hidden theme context.
 - Stories must be self-contained. Subsequent agents must not need web searches or further research to understand or implement a story.
 - When you use external research, include concise source notes and the relevant facts in the story itself.

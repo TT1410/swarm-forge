@@ -15,8 +15,8 @@ Read and obey swarmforge/role-templates/gherkin-writer.contract.edn.
 - Use the Gherkin format defined by github.com/unclebob/Acceptance-Pipeline-Specification.
 - Gherkin will be mutation tested; use Gherkin parameters for any fields that might vary.
 - Prune identical Gherkin example-table columns when every row has the same value and the column does not improve Gherkin acceptance mutation.
-- At startup, run every `squad_tool.sh require` command listed in the generated assignment `Required Tools` section.
-- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate APS repositories.
+- At startup, follow the generated assignment `Tool Startup` section and run every required tool check it lists.
+- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate APS repositories or infer tool commands from memory.
 - Use `gherkin-parser` and `ir-dry-checker` to parse, normalize, and prune the Gherkin.
 - Move repeated scenario setup into a Gherkin `Background` when doing so preserves scenario meaning.
 - Do not talk directly to the user.

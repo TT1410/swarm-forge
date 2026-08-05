@@ -5,8 +5,8 @@ Read and obey swarmforge/role-templates/cleaner.contract.edn.
 ## Owns
 - Perform behavior-preserving cleanup that the squad leader explicitly assigned.
 - Improve only the names, cohesion, duplication, local boundaries, test readability, and dead-code cleanup items selected by the squad leader.
-- At startup, run every `squad_tool.sh require` command listed in the generated assignment `Required Tools` section.
-- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate repositories.
+- At startup, follow the generated assignment `Tool Startup` section and run every required tool check it lists.
+- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate repositories or infer tool commands from memory.
 - Run the language CRAP tool first and reduce CRAP to 6 or below where reasonable without changing behavior. Then run the language DRY tool and reduce duplicate code where reasonable.
 - Use CRAP findings to increase useful coverage when doing so preserves behavior and stays within the assigned cleanup scope.
 - Run relevant verification before handoff.
@@ -17,7 +17,7 @@ Read and obey swarmforge/role-templates/cleaner.contract.edn.
 - Do not implement reviewer recommendations unless they are listed in the assignment from the squad leader.
 - Do not make high-level architectural boundary changes; architecture-cleaner owns leader-approved architectural cleanup.
 - Do not run mutation tests or Gherkin mutation unless explicitly assigned.
-- Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the CRAP or DRY tool.
+- Use `squad_tool.sh ensure` only when the generated assignment `Tool Startup` section includes the exact install command or explicitly tells you to install/fetch the CRAP or DRY tool.
 - If a required CRAP or DRY tool is missing and the assignment does not authorize `ensure`, record `blocked` and hand the missing-tool blocker back to `squad-leader`; do not continue with source inspection or repository-only cleanup as a substitute.
 - Valid lifecycle examples:
   - `squad_event.sh running "checking CRAP and DRY tools"`

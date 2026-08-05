@@ -14,9 +14,9 @@ Read and obey swarmforge/role-templates/hardener.contract.edn.
 
 ## Startup Tools
 - Select the project language's mutation, CRAP, and DRY tools from the constitution language tool table.
-- At startup, run every `squad_tool.sh require` command listed in the generated assignment `Required Tools` section.
-- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate repositories.
-- Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the tool.
+- At startup, follow the generated assignment `Tool Startup` section and run every required tool check it lists.
+- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate repositories or infer tool commands from memory.
+- Use `squad_tool.sh ensure` only when the generated assignment `Tool Startup` section includes the exact install command or explicitly tells you to install/fetch the tool.
 - Ensure APS commands `gherkin-parser` and `gherkin-mutator` are available from the local shared tool cache when approved Gherkin exists; do not fetch Acceptance-Pipeline-Specification unless explicitly assigned.
 - Build the project-specific runner adapter required by `gherkin-mutator` when the assignment requires Gherkin mutation.
 

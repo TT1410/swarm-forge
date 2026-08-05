@@ -15,9 +15,9 @@ Read and obey swarmforge/role-templates/qa.contract.edn.
 - Keep QA procedures, scripts, and reports in project directories, normally under `qa/`, never hidden inside `.squad`.
 
 ## Startup Tools
-- At startup, run every `squad_tool.sh require` command listed in the generated assignment `Required Tools` section.
-- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate repositories.
-- Use `squad_tool.sh ensure` only when the assignment includes the exact install command or explicitly tells you to install/fetch the tool.
+- At startup, follow the generated assignment `Tool Startup` section and run every required tool check it lists.
+- Tool source and version identities come from `swarmforge/tool-table.edn`; do not substitute alternate repositories or infer tool commands from memory.
+- Use `squad_tool.sh ensure` only when the generated assignment `Tool Startup` section includes the exact install command or explicitly tells you to install/fetch the tool.
 
 ## Rules
 - Keep executable QA scripts aligned with the specifier's QA procedure files; when a QA procedure changes, update the corresponding script in the same QA work.

@@ -105,13 +105,35 @@
         gherkin (slurp (str (fs/path repo-root "swarmforge/role-templates/gherkin-writer.prompt")))
         qa (slurp (str (fs/path repo-root "swarmforge/role-templates/qa.prompt")))]
     (doseq [prompt [cleaner qa]]
-      (is (str/includes? prompt "generated assignment `Required Tools` section"))
+      (is (str/includes? prompt "generated assignment `Tool Startup` section"))
       (is (str/includes? prompt "swarmforge/tool-table.edn"))
       (is (str/includes? prompt "record `blocked`")))
-    (is (str/includes? hardener "generated assignment `Required Tools` section"))
+    (is (str/includes? hardener "generated assignment `Tool Startup` section"))
     (is (str/includes? hardener "swarmforge/tool-table.edn"))
-    (is (str/includes? gherkin "generated assignment `Required Tools` section"))
+    (is (str/includes? gherkin "generated assignment `Tool Startup` section"))
     (is (str/includes? gherkin "required tool evidence headers"))))
+
+(deftest squad-analyst-prompt-includes-invest-story-guidance
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))]
+    (is (str/includes? prompt "I.N.V.E.S.T."))
+    (doseq [word ["independent" "negotiable" "valuable" "estimable" "small" "testable"]]
+      (is (str/includes? prompt word)))))
+
+(deftest squad-architect-prompt-frames-principles-as-review-advice
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))]
+    (is (str/includes? prompt "Produce architectural critique only"))
+    (is (str/includes? prompt "The Dependency Rule"))
+    (is (str/includes? prompt "Low level is close to IO"))
+    (is (str/includes? prompt "high level is far from IO"))
+    (is (str/includes? prompt "large modules with many responsibilities"))
+    (is (str/includes? prompt "individual well-named modules with single responsibilities"))))
+
+(deftest required-tool-startup-instructions-come-from-tool-table
+  (let [startup (tools/startup-instructions (tools/required-tools repo-root "gherkin-writer"))]
+    (is (str/includes? startup "## Tool Startup"))
+    (is (str/includes? startup "squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest"))
+    (is (str/includes? startup "squad_tool.sh require ir-dry-checker github.com/unclebob/Acceptance-Pipeline-Specification latest"))
+    (is (str/includes? startup "record `blocked`"))))
 
 (deftest squad-leader-contract-encodes-orchestration-boundary
   (let [contract-file (fs/path repo-root "swarmforge/roles/squad-leader.contract.edn")
