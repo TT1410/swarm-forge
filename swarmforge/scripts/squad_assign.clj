@@ -228,12 +228,15 @@
   (let [[_ body] (str/split (slurp (str file)) #"\n\n" 2)]
     (or body "")))
 
-(defn result-handoff-template [assignment-id]
+(defn result-handoff-template [assignment-id template]
   (str "type: git_handoff\n"
        "to: squad-leader\n"
        "priority: 50\n"
        "task: " assignment-id "\n"
-       "commit: <10-char-commit>\n"))
+       "commit: <10-char-commit>\n"
+       "assignment: " assignment-id "\n"
+       "template: " template "\n"
+       "artifacts: <comma-separated-paths-or-none>\n"))
 
 (defn theme-scoped-assignment? [template story-id]
   (and (= "analyst" template)
@@ -284,11 +287,11 @@
        instructions-text "\n\n"
        "## Required Transient Protocol\n\n"
        "- Stay inside this assignment boundary.\n"
-       "- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state.\n"
+       "- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state.\n"
        "- Commit completed work on your transient branch.\n"
        "- Send the result to `squad-leader` with `swarm_handoff.sh` using this draft shape:\n\n"
        "```text\n"
-       (result-handoff-template assignment-id)
+       (result-handoff-template assignment-id template)
        "```\n"))
 
 (defn validate-create-ids! [theme-id story-id assignment-id]
@@ -368,7 +371,7 @@
 
 (defn assignment-status-text [{:keys [assignment-id template story-id now]}]
   (str "assignment_id: " assignment-id "\n"
-       "state: assignment_created\n"
+       "state: created\n"
        "detail: " template " for " story-id "\n"
        "updated_at: " now "\n"))
 
@@ -378,7 +381,7 @@
         context (assoc context :assignment-file assignment-file)]
     (write-atomic! assignment-file text)
     (write-atomic! (fs/path dir "result-handoff.draft")
-                   (result-handoff-template assignment-id))
+                   (result-handoff-template assignment-id template))
     (write-atomic! (fs/path dir "metadata") (assignment-metadata-text context))
     (write-atomic! (fs/path dir "status") (assignment-status-text context))
     (fs/create-dirs (fs/path theme "assignments"))
@@ -489,19 +492,51 @@
   (when (= "squad-leader" from)
     (exit! 2 "Transient result handoff may not be from: squad-leader.")))
 
-(defn validate-result-handoff! [assignment-id handoff-file]
+(defn validate-result-manifest! [assignment-id template from manifest]
+  (let [{handoff-assignment "assignment"
+         handoff-agent "agent"
+         handoff-template "template"
+         artifacts "artifacts"} manifest]
+    (when-not (= assignment-id handoff-assignment)
+      (exit! 2 (str "Result manifest assignment must match assignment id: " assignment-id)))
+    (when-not (= from handoff-agent)
+      (exit! 2 "Result manifest agent must match handoff sender."))
+    (when-not (= template handoff-template)
+      (exit! 2 (str "Result manifest template must match assignment template: " template)))
+    (when (str/blank? artifacts)
+      (exit! 2 "Result manifest must include artifacts, or artifacts: none."))
+    manifest))
+
+(defn validate-sender-assignment-lineage! [root assignment-id from]
+  (let [agent-metadata (fs/path root ".squad" "agents" from "metadata")]
+    (when (fs/exists? agent-metadata)
+      (let [task-id (read-value agent-metadata "task_id")
+            worktree (read-value agent-metadata "worktree")]
+        (when-not (= assignment-id task-id)
+          (exit! 2 (str "Result sender " from " is assigned to " task-id ", not " assignment-id)))
+        (when (and (not (str/blank? worktree))
+                   (not (fs/exists? worktree)))
+          (exit! 2 (str "Result sender worktree is missing: " worktree)))))))
+
+(defn validate-result-handoff! [assignment-id template handoff-file]
   (let [type (read-value handoff-file "type")
         to (read-value handoff-file "to")
         task (read-value handoff-file "task")
         commit (read-value handoff-file "commit")
-        from (read-value handoff-file "from")]
+        from (read-value handoff-file "from")
+        manifest {"assignment" (read-value handoff-file "assignment")
+                  "agent" (read-value handoff-file "agent")
+                  "template" (read-value handoff-file "template")
+                  "artifacts" (read-value handoff-file "artifacts")}]
     (validate-result-type! type)
     (validate-result-recipient! to)
     (validate-result-task! assignment-id task)
     (validate-result-commit! commit)
     (validate-result-sender! from)
+    (validate-result-manifest! assignment-id template from manifest)
     {:from from
      :commit commit
+     :manifest manifest
      :body (handoff-body handoff-file)}))
 
 (defn ensure-result-reachable! [root from commit]
@@ -540,14 +575,23 @@
   (let [root (fs/absolutize (project-root))
         dir (assignment-dir root assignment-id)
         metadata (fs/path dir "metadata")
+        template (read-value metadata "template")
         handoff-file (source-file! handoff-path)
-        {:keys [from commit body]} (validate-result-handoff! assignment-id handoff-file)
+        {:keys [from commit body manifest]} (validate-result-handoff! assignment-id template handoff-file)
         theme-id (or (read-value metadata "theme_id") "unknown")
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
+    (validate-sender-assignment-lineage! root assignment-id from)
     (ensure-result-reachable! root from commit)
     (write-atomic! (fs/path dir "result.handoff")
                    (slurp (str handoff-file)))
+    (write-atomic! (fs/path dir "result-manifest")
+                   (str "assignment_id: " assignment-id "\n"
+                        "agent: " from "\n"
+                        "template: " template "\n"
+                        "commit: " commit "\n"
+                        "artifacts: " (get manifest "artifacts") "\n"
+                        "received_at: " now "\n"))
     (write-result-record! dir assignment-id from commit now)
     (when-not (= "unknown" theme-id)
       (assignment-theme-event! root dir "result_received" assignment-id from commit))
@@ -890,19 +934,19 @@
                           "created_at: " now "\n"))
       (write-atomic! (fs/path old-dir "replacement")
                      (str "assignment_id: " old-assignment-id "\n"
-                          "state: replacement_created\n"
+                          "state: superseded\n"
                           "replacement: " new-assignment-id "\n"
                           "updated_at: " now "\n"))
       (write-atomic! (fs/path old-dir "status")
                      (str "assignment_id: " old-assignment-id "\n"
-                          "state: replacement_created\n"
+                          "state: superseded\n"
                           "detail: " new-assignment-id "\n"
                           "updated_at: " now "\n"))
       (append-line! (fs/path old-dir "events.log")
-                    (str now "\treplacement_created\t" new-assignment-id))
-      (assignment-theme-event! root old-dir "replacement_created" old-assignment-id new-assignment-id)
+                    (str now "\tsuperseded\t" new-assignment-id))
+      (assignment-theme-event! root old-dir "superseded" old-assignment-id new-assignment-id)
       (println "REPLACES:" old-assignment-id)
-      (println "STATE: replacement_created"))))
+      (println "STATE: superseded"))))
 
 (defn exact-count! [args expected]
   (when-not (= expected (count args))

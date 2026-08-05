@@ -18,6 +18,9 @@ to: <role>[,<role>...]
 priority: NN
 task: <short-stable-task-name>
 commit: <10-character-commit-abbrev>
+assignment: <assignment-id>
+template: <role-template>
+artifacts: <comma-separated-paths-or-none>
 ```
 
 - Unless a local workflow rule or role prompt defines a coordinator-only return

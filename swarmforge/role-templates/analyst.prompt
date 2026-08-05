@@ -19,7 +19,7 @@ Read and obey swarmforge/role-templates/analyst.contract.edn.
 - Do not spawn other agents.
 - Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
 - Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree. Do not create or edit project-root files directly except through approved squad helper commands and shared tool-cache helpers.
-- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state. Use `squad_run.sh` for command telemetry.
+- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state. Use `squad_run.sh` for command telemetry.
 
 ## Handoff
 - Commit only story artifacts and concise notes needed to explain the split.

@@ -163,7 +163,7 @@
           (is (str/includes? (:err bad-state)
                              "unsupported lifecycle state: verifying_passed"))
           (is (str/includes? (:err bad-state)
-                             "Allowed states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired")))
+                             "Allowed states: starting, running, blocked, failed, handoff_ready, handoff_sent, retired")))
         (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
                     (str "agent: specifier-001\n"
                          "task_id: wumpus-theme\n"

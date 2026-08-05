@@ -183,8 +183,11 @@
        vec))
 
 (def terminal-assignment-states
-  #{"merged" "rejected" "blocked" "replacement_created"
+  #{"merged" "rejected" "blocked" "replacement_created" "superseded" "retired"
     "review_accepted" "review_changes_requested"})
+
+(defn assignment-created? [state]
+  (contains? #{"created" "assignment_created"} state))
 
 (defn assignment-for
   ([assignments story-id template]
@@ -269,7 +272,7 @@
        vec))
 
 (defn active-agent? [agent]
-  (not (contains? #{"retired" "failed" "complete" "handoff_sent"} (:state agent))))
+  (not (contains? #{"retired" "failed" "handoff_sent"} (:state agent))))
 
 (defn active-assignment? [agents assignment-id]
   (boolean (some #(and (= assignment-id (:task-id %)) (active-agent? %)) agents)))
@@ -392,7 +395,7 @@
                  " " (:assignment-file assignment))})
 
 (defn spawnable-assignment? [root agents template assignment]
-  (and (= "assignment_created" (:state assignment))
+  (and (assignment-created? (:state assignment))
        (not (active-assignment? agents (:assignment-id assignment)))
        (spawn-capacity? root agents template)))
 
@@ -509,7 +512,7 @@
 
 (defn generic-ready-assignment? [root packet themes agents
                                  {:keys [assignment-id template story-id assignment-file state requires theme-id]}]
-  (and (= "assignment_created" state)
+  (and (assignment-created? state)
        (assignment-file-ok? assignment-file)
        (ready-assignment-requirement-ok? root packet themes story-id theme-id requires)
        (not (active-assignment? agents assignment-id))
@@ -919,7 +922,7 @@
         assignments))
 
 (defn merger-spawn-candidate [root agents existing]
-  (when (and (= "assignment_created" (:state existing))
+  (when (and (assignment-created? (:state existing))
              (spawn-capacity? root agents "merger"))
     {:priority 50
      :stage-order 5

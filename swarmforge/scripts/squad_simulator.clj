@@ -250,7 +250,7 @@
                       "created_at: simulated\n"))
     (write-file! (fs/path dir "status")
                  (str "assignment_id: " assignment "\n"
-                      "state: assignment_created\n"
+                      "state: created\n"
                       "detail: simulated\n"
                       "updated_at: simulated\n"))))
 
@@ -349,7 +349,11 @@
                       "from: " agent "\n"
                       "priority: 50\n"
                       "task: " assignment "\n"
-                      "commit: " sha "\n\n"
+                      "commit: " sha "\n"
+                      "assignment: " assignment "\n"
+                      "agent: " agent "\n"
+                      "template: simulator\n"
+                      "artifacts: none\n\n"
                       "simulated result\n"))))
 
 (defn due-events! [root scheduled tick]

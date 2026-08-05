@@ -17,7 +17,7 @@ Read and obey swarmforge/role-templates/qa-procedure-reviewer.contract.edn.
 - Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
 - Do not run broad project verification commands for artifact-only review unless the assignment explicitly asks for that exact command. Examples include full test suites, mutation runs, coverage gates, process-inspection tests, or framework-wide checks. Review the assigned files against the story, Gherkin, and theme constraints and report evidence.
 - Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree. Do not create or edit project-root files directly except through approved squad helper commands and shared tool-cache helpers.
-- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put review phases, findings, and completion wording in the detail argument, not the state.
+- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent, retired. Put review phases, findings, and completion wording in the detail argument, not the state.
 
 ## Handoff
 - Commit the QA procedure review report under `.squad/reviews/`.

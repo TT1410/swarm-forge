@@ -119,7 +119,7 @@
 (def web-active-agent-states
   #{"starting" "running" "blocked" "handoff_ready" "handoff_sent"})
 (def web-active-assignment-states
-  #{"assignment_created" "result_received" "merge_ready" "review_changes_requested" "blocked"})
+  #{"created" "assignment_created" "in_progress" "handoff_sent" "result_received" "merge_ready" "review_changes_requested" "blocked"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]

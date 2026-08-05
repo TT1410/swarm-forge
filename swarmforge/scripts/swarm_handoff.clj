@@ -13,14 +13,17 @@
        "to: <role>[,<role>...]\n"
        "priority: NN\n"
        "task: <short-stable-task-name>\n"
-       "commit: <10-char-commit-abbrev>\n\n"
+       "commit: <10-char-commit-abbrev>\n"
+       "assignment: <assignment-id>\n"
+       "template: <role-template>\n"
+       "artifacts: <comma-separated-paths-or-none>\n\n"
        "type: note\n"
        "to: <role>[,<role>...]\n"
        "priority: NN\n"
        "message: <one line, max 80 chars>"))
 
 (def reserved-fields #{"id" "from" "role" "recipient" "created_at" "enqueued_at" "dequeued_at" "completed_at"})
-(def allowed-fields #{"type" "to" "priority" "task" "commit" "message"})
+(def allowed-fields #{"type" "to" "priority" "task" "commit" "assignment" "template" "artifacts" "message"})
 (def allowed-types #{"git_handoff" "note"})
 
 (defn usage []
@@ -177,7 +180,7 @@
           [nil (format "Header 'commit' must resolve to a commit; '%s' resolves to '%s'." commit object-type)])))))
 
 (def fields-by-type
-  {"git_handoff" #{"type" "to" "priority" "task" "commit"}
+  {"git_handoff" #{"type" "to" "priority" "task" "commit" "assignment" "template" "artifacts"}
    "note" #{"type" "to" "priority" "message"}})
 
 (defn allowed-for-type? [type field]
@@ -227,6 +230,13 @@
                    ["Missing required header 'task' for git_handoff."])
                  (length-error "task" "task" task-name)))))
 
+(defn git-manifest-errors [type headers]
+  (when (= "git_handoff" type)
+    (vec
+     (for [field ["assignment" "template" "artifacts"]
+           :when (str/blank? (get headers field))]
+       (format "Missing required header '%s' for git_handoff result manifest." field)))))
+
 (defn git-field-errors [type commit task-name commit-error]
   (vec
    (concat (git-task-errors type task-name)
@@ -262,8 +272,9 @@
      :errors (vec (concat (base-errors type to priority)
                           recipient-errors
                           (field-errors type ordered)
-                          (git-field-errors type commit task-name commit-error)
-                          (note-field-errors type note-message)))}))
+           (git-field-errors type commit task-name commit-error)
+           (git-manifest-errors type headers)
+           (note-field-errors type note-message)))}))
 
 (declare acquire-sequence-lock! write-next-sequence!)
 
@@ -307,6 +318,39 @@
     "git_handoff" (str "Re-read your role and constitution.\n\nmerge_and_process " sender " " canonical-commit)
     "note" (str "Re-read your role and constitution.\n\n" note-message)))
 
+(defn handoff-files-in [dir]
+  (when (fs/exists? dir)
+    (->> (fs/list-dir dir)
+         (filter #(and (fs/regular-file? %)
+                       (str/ends-with? (fs/file-name %) ".handoff"))))))
+
+(defn existing-handoff-files []
+  (mapcat handoff-files-in
+          [(fs/path (state-dir) "outbox")
+           (fs/path (state-dir) "sent")
+           (fs/path (state-dir) "failed")]))
+
+(defn read-header [file field]
+  (let [prefix (str field ": ")]
+    (some (fn [line]
+            (when (str/starts-with? line prefix)
+              (subs line (count prefix))))
+          (take-while #(not (str/blank? %))
+                      (str/split-lines (slurp (str file)))))))
+
+(defn duplicate-git-handoff [sender recipients headers canonical-commit]
+  (when (= "git_handoff" (get headers "type"))
+    (let [to (str/join "," recipients)
+          task (get headers "task")]
+      (some (fn [file]
+              (when (and (= "git_handoff" (read-header file "type"))
+                         (= sender (read-header file "from"))
+                         (= to (read-header file "to"))
+                         (= task (read-header file "task"))
+                         (= canonical-commit (read-header file "commit")))
+                file))
+            (existing-handoff-files)))))
+
 (defn write-handoff! [{:keys [headers recipients canonical-commit sender]}]
   (let [timestamp-id (id-timestamp)
         created-at (timestamp)
@@ -329,7 +373,11 @@
                 (= "git_handoff" type)
                 (conj (str "role: " sender)
                       (str "task: " (get headers "task"))
-                      (str "commit: " canonical-commit))
+                      (str "commit: " canonical-commit)
+                      (str "assignment: " (get headers "assignment"))
+                      (str "agent: " sender)
+                      (str "template: " (get headers "template"))
+                      (str "artifacts: " (get headers "artifacts")))
                 (= "note" type)
                 (conj (str "message: " (get headers "message")))
                 true
@@ -375,12 +423,18 @@
     {:headers headers :validation validation}))
 
 (defn queue-handoff! [draft sender {:keys [headers validation]}]
-  (let [outbox-file (write-handoff! {:headers headers
-                                     :recipients (:recipients validation)
-                                     :canonical-commit (:canonical-commit validation)
-                                     :sender sender})]
-    (fs/delete draft)
-    (println "HANDOFF QUEUED:" (str outbox-file))))
+  (let [recipients (:recipients validation)
+        canonical-commit (:canonical-commit validation)]
+    (if-let [existing (duplicate-git-handoff sender recipients headers canonical-commit)]
+      (do
+        (fs/delete draft)
+        (println "HANDOFF EXISTING:" (str existing)))
+      (let [outbox-file (write-handoff! {:headers headers
+                                         :recipients recipients
+                                         :canonical-commit canonical-commit
+                                         :sender sender})]
+        (fs/delete draft)
+        (println "HANDOFF QUEUED:" (str outbox-file))))))
 
 (defn -main [& args]
   (ensure-draft-args! args)

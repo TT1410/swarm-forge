@@ -77,7 +77,7 @@
       (write-file (fs/path root ".squad/assignments/active-assignment/metadata")
                   "assignment_id: active-assignment\ntemplate: implementer\nstory_id: cave-topology\n")
 	      (write-file (fs/path root ".squad/assignments/active-assignment/status")
-	                  "state: assignment_created\ndetail: active\nupdated_at: 2026-08-03T00:00:00Z\n")
+	                  "state: created\ndetail: active\nupdated_at: 2026-08-03T00:00:00Z\n")
 	      (write-file (fs/path root ".squad/assignments/newer-assignment/metadata")
 	                  "assignment_id: newer-assignment\ntemplate: cleaner\nstory_id: cave-topology\n")
 	      (write-file (fs/path root ".squad/assignments/newer-assignment/status")

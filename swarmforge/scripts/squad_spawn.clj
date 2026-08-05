@@ -236,7 +236,7 @@
          "As an analyst, you may search the web to augment the approved theme when source material is needed. Any stories you produce must be self-contained and must not require downstream agents to do further research.\n"
          "Do not search the web unless the assignment explicitly asks you to. The squad leader or analyst-provided artifacts should provide the reference facts you need.\n")
        "Do not fetch, clone, install, update, or check remote versions of external tools unless the assignment explicitly asks for that exact operation. Use already-present project scripts and the shared tool cache first.\n\n"
-       "Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state.\n\n"
+       "Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent, retired. Put phase names and progress wording in the detail argument, not the state.\n\n"
        "If a command triggers an approval or escalation prompt, stop that command path, record `blocked` with `squad_event.sh`, and hand the blocker back to `squad-leader`. Do not wait indefinitely at an invisible approval prompt.\n\n"
        "# Role Template\n\n"
        template-text "\n\n"

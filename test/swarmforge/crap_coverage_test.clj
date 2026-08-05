@@ -170,13 +170,16 @@
                      "to: reviewer\n"
                      "priority: 05\n"
                      "task: story-one\n"
-                     "commit: 0123456789\n"))
+                     "commit: 0123456789\n"
+                     "assignment: story-one\n"
+                     "template: reviewer\n"
+                     "artifacts: none\n"))
     (with-redefs [handoff/role-known? #{"reviewer"}
                   handoff/canonical-commit (fn [commit] [commit nil])]
       (let [{:keys [headers ordered errors]} (handoff/parse-draft draft)
             validated (handoff/validate headers ordered)]
         (is (= [] errors))
-        (is (= ["type" "to" "priority" "task" "commit"] ordered))
+        (is (= ["type" "to" "priority" "task" "commit" "assignment" "template" "artifacts"] ordered))
         (is (= ["reviewer"] (:recipients validated)))
         (is (= "0123456789" (:canonical-commit validated)))
         (is (= [] (:errors validated)))))))
@@ -470,7 +473,7 @@
                      "created_at: now\n"
                      "requires: approval:theme\n"))
     (write-file (fs/path root ".squad/assignments/bravo-analysis/status")
-                "state: assignment_created\n")
+                "state: created\n")
     (write-file (fs/path root ".squad/assignments/bravo-analysis/assignment.md") "assignment\n")
     (let [candidate (some #(when (= "bravo" (:theme-id %)) %) (next/theme-candidates root []))]
       (is (= "request_spawn" (:next-action candidate)))
@@ -1484,10 +1487,16 @@
     (assign/assignment-theme-event! root dir "result_received" "a1" "agent" "abc123")
     (is (str/includes? (slurp (str (fs/path root ".squad" "themes" "theme-a" "events.log")))
                        "assignment_result_received"))
-    (write-file handoff-file "type: git_handoff\nfrom: implementer-001\nto: squad-leader\ntask: a1\ncommit: abcdef1234\n\nbody\n")
+    (write-file handoff-file "type: git_handoff\nfrom: implementer-001\nto: squad-leader\ntask: a1\ncommit: abcdef1234\nassignment: a1\nagent: implementer-001\ntemplate: implementer\nartifacts: none\n\nbody\n")
     (is (= "abcdef1234" (assign/handoff-commit handoff-file)))
-    (is (= {:from "implementer-001" :commit "abcdef1234" :body "body\n"}
-           (assign/validate-result-handoff! "a1" handoff-file)))
+    (is (= {:from "implementer-001"
+            :commit "abcdef1234"
+            :manifest {"assignment" "a1"
+                       "agent" "implementer-001"
+                       "template" "implementer"
+                       "artifacts" "none"}
+            :body "body\n"}
+           (assign/validate-result-handoff! "a1" "implementer" handoff-file)))
     (write-file review-file "review\n")
     (let [source (assign/review-source! root review-file)]
       (is (:durable? source))

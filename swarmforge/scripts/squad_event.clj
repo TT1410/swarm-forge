@@ -11,14 +11,13 @@
     "running"
     "blocked"
     "failed"
-    "complete"
     "handoff_ready"
     "handoff_sent"
     "retired"})
 
 (def usage-text
   (str "Usage: squad_event.sh <state> <detail...>\n"
-       "Allowed states: starting, running, blocked, failed, complete, handoff_ready, handoff_sent, retired\n"
+       "Allowed states: starting, running, blocked, failed, handoff_ready, handoff_sent, retired\n"
        "Put command names, phases, and other progress detail in <detail>, not in <state>."))
 
 (defn exit! [status & lines]

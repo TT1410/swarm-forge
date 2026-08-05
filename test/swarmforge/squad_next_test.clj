@@ -178,7 +178,7 @@
                        "created_at: 2026-08-03T00:00:00Z\n"))
       (write-file (fs/path root ".squad/assignments/alpha-gherkin/status")
                   (str "assignment_id: alpha-gherkin\n"
-                       "state: assignment_created\n"
+                       "state: created\n"
                        "detail: gherkin-writer for alpha\n"
                        "updated_at: 2026-08-03T00:00:00Z\n"))
       (let [spawn (run {:dir root} (script "squad_next.sh"))]
@@ -218,7 +218,7 @@
                        "created_at: 2026-08-03T00:00:00Z\n"))
       (write-file (fs/path root ".squad/assignments/alpha-gherkin-review-r2/status")
                   (str "assignment_id: alpha-gherkin-review-r2\n"
-                       "state: assignment_created\n"
+                       "state: created\n"
                        "detail: gherkin-reviewer for alpha\n"
                        "updated_at: 2026-08-03T00:00:00Z\n"))
       (let [next (run {:dir root} (script "squad_next.sh"))]
@@ -263,7 +263,7 @@
                          "created_at: 2026-08-03T00:00:00Z\n"))
         (write-file (fs/path root ".squad/assignments" assignment-id "status")
                     (str "assignment_id: " assignment-id "\n"
-                         "state: assignment_created\n"
+                         "state: created\n"
                          "detail: " template " for alpha\n"
                          "updated_at: 2026-08-03T00:00:00Z\n"))
         (write-file (fs/path root ".squad/agents" agent-id "metadata")
@@ -298,7 +298,7 @@
                        "created_at: 2026-08-03T00:00:00Z\n"))
       (write-file (fs/path root ".squad/assignments/alpha-revision/status")
                   (str "assignment_id: alpha-revision\n"
-                       "state: assignment_created\n"
+                       "state: created\n"
                        "detail: revision ready\n"
                        "updated_at: 2026-08-03T00:00:00Z\n"))
       (write-file (fs/path root ".squad/approvals/pending/story__beta.approval")

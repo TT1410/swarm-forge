@@ -128,16 +128,26 @@
           (is (fs/exists? draft)))))
     (testing "valid git_handoff writes task, canonical commit, and generated payload"
       (let [draft (fs/path root "tmp" "valid.handoff")]
-        (write-file draft (format "type: git_handoff\nto: receiver\npriority: 50\ntask: task-1-cave-setup\ncommit: %s\n" commit))
+        (write-file draft (format "type: git_handoff\nto: receiver\npriority: 50\ntask: task-1-cave-setup\ncommit: %s\nassignment: task-1-cave-setup\ntemplate: implementer\nartifacts: none\n" commit))
         (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"}}
                           (script "swarm_handoff.sh") (str draft))
               queued (-> (:out result) str/trim (str/replace #"^HANDOFF QUEUED: " ""))
               content (read-file queued)]
           (is (str/includes? content "task: task-1-cave-setup\n"))
           (is (str/includes? content (str "commit: " commit "\n")))
+          (is (str/includes? content "assignment: task-1-cave-setup\n"))
+          (is (str/includes? content "agent: sender\n"))
+          (is (str/includes? content "template: implementer\n"))
+          (is (str/includes? content "artifacts: none\n"))
           (is (str/includes? content (str "merge_and_process sender " commit)))
           (is (fs/exists? queued))
-          (is (not (fs/exists? draft))))))))
+          (is (not (fs/exists? draft)))
+          (let [duplicate (fs/path root "tmp" "duplicate.handoff")]
+            (write-file duplicate (format "type: git_handoff\nto: receiver\npriority: 50\ntask: task-1-cave-setup\ncommit: %s\nassignment: task-1-cave-setup\ntemplate: implementer\nartifacts: none\n" commit))
+            (let [again (run {:dir root :env {"SWARMFORGE_ROLE" "sender"}}
+                             (script "swarm_handoff.sh") (str duplicate))]
+              (is (str/includes? (:out again) (str "HANDOFF EXISTING: " queued)))
+              (is (not (fs/exists? duplicate))))))))))
 
 (deftest ready-for-next-task-accepts-and-resumes-single-tasks
   (let [root (tmp-dir)]

@@ -5,6 +5,21 @@
             [clojure.test :refer [deftest is testing]]
             [swarmforge.test-support :refer :all]))
 
+(defn result-handoff-text [id from task template commit body]
+  (str "id: " id "\n"
+       "from: " from "\n"
+       "to: squad-leader\n"
+       "priority: 50\n"
+       "type: git_handoff\n"
+       "task: " task "\n"
+       "commit: " commit "\n"
+       "assignment: " task "\n"
+       "agent: " from "\n"
+       "template: " template "\n"
+       "artifacts: none\n"
+       "\n"
+       body "\n"))
+
 (deftest squad-assign-generates-durable-assignment-from-theme-story
   (let [root (tmp-dir)]
     (try
@@ -49,7 +64,7 @@
             commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (is (str/includes? (:out create) "SQUAD_ASSIGNMENT: wumpus-cave-impl"))
         (is (str/includes? (:out create) "TEMPLATE: implementer"))
-        (is (str/includes? (:out status) "STATE: assignment_created"))
+        (is (str/includes? (:out status) "STATE: created"))
         (is (str/includes? (slurp (str assignment)) "assignment_id: wumpus-cave-impl"))
         (is (str/includes? (slurp (str assignment)) "Story: cave topology and setup."))
         (is (str/includes? (slurp (str assignment)) "Write unit tests first"))
@@ -93,15 +108,9 @@
           (is (= 2 (:exit leader-authored)))
           (is (str/includes? (:err leader-authored) "Transient result handoff may not be from: squad-leader.")))
         (write-file (fs/path root "result.handoff")
-                    (str "id: 1\n"
-                         "from: implementer-001\n"
-                         "to: squad-leader\n"
-                         "priority: 50\n"
-                         "type: git_handoff\n"
-                         "task: wumpus-cave-impl\n"
-                         "commit: " commit "\n"
-                         "\n"
-                         "merge_and_process implementer-001 " commit "\n"))
+                    (result-handoff-text "1" "implementer-001" "wumpus-cave-impl"
+                                         "implementer" commit
+                                         (str "merge_and_process implementer-001 " commit)))
         (let [result (run {:dir root}
                           (script "squad_assign.sh")
                           "result"
@@ -164,13 +173,13 @@
           (is (str/includes? (:out reject) "STATE: rejected"))
           (is (str/includes? (:out replace) "SQUAD_ASSIGNMENT: wumpus-cave-impl-2"))
           (is (str/includes? (:out replace) "REPLACES: wumpus-cave-impl"))
-          (is (str/includes? (:out replacement-status) "STATE: assignment_created"))
+          (is (str/includes? (:out replacement-status) "STATE: created"))
           (is (str/includes? (:out report) "# Squad Report: wumpus"))
           (is (str/includes? (:out report) "- Stories: cave-topology"))
           (is (str/includes? (:out report) "acceptance-cave-topology: user approved cave topology acceptance spec"))
-          (is (str/includes? (:out report) "wumpus-cave-impl [implementer] story=cave-topology state=replacement_created"))
+          (is (str/includes? (:out report) "wumpus-cave-impl [implementer] story=cave-topology state=superseded"))
           (is (str/includes? (:out report) "replacement=wumpus-cave-impl-2"))
-          (is (str/includes? (:out report) "wumpus-cave-impl-2 [implementer] story=cave-topology state=assignment_created"))
+          (is (str/includes? (:out report) "wumpus-cave-impl-2 [implementer] story=cave-topology state=created"))
           (is (str/includes? (:out report) "replaces=wumpus-cave-impl"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result.handoff")))
                              "from: implementer-001"))
@@ -201,7 +210,7 @@
           (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
                              "\tassignment_rejected\twumpus-cave-impl\tcave-topology"))
           (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
-                             "\tassignment_replacement_created\twumpus-cave-impl\twumpus-cave-impl-2\tcave-topology")))
+                             "\tassignment_superseded\twumpus-cave-impl\twumpus-cave-impl-2\tcave-topology")))
         (write-file (fs/path root "blocked.md")
                     "Blocked because the worker hit an invisible escalation prompt.\n")
         (let [block (run {:dir root}
@@ -267,15 +276,8 @@
         (write-file (fs/path root ".squad/reviews/wumpus-cave-gherkin-review.md")
                     "SL scratch note at colliding review path.\n")
         (write-file (fs/path root "result.handoff")
-                    (str "id: 1\n"
-                         "from: reviewer-001\n"
-                         "to: squad-leader\n"
-                         "priority: 50\n"
-                         "type: git_handoff\n"
-                         "task: wumpus-cave-gherkin-review\n"
-                         "commit: " commit "\n"
-                         "\n"
-                         "review complete\n"))
+                    (result-handoff-text "1" "reviewer-001" "wumpus-cave-gherkin-review"
+                                         "reviewer" commit "review complete"))
         (run {:dir root}
              (script "squad_assign.sh")
              "result"
@@ -289,6 +291,58 @@
           (is (str/includes? (:out merge-ready) "dry-run merge passed"))
           (is (str/includes? (slurp (str (fs/path root ".squad/reviews/wumpus-cave-gherkin-review.md")))
                              "SL scratch note"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-rejects-reachable-result-with-wrong-assignment-manifest
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
+      (write-file (fs/path root "swarmforge/role-templates/implementer.prompt")
+                  "implement\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Implement cave topology.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (prepare-implementation-packet! root "wumpus" "cave-topology")
+      (run {:dir root}
+           (script "squad_assign.sh")
+           "create"
+           "wumpus"
+           "cave-topology"
+           "implementer"
+           "wumpus-cave-impl"
+           "instructions.md")
+      (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root "wrong-result.handoff")
+                    (str "id: 1\n"
+                         "from: implementer-001\n"
+                         "to: squad-leader\n"
+                         "priority: 50\n"
+                         "type: git_handoff\n"
+                         "task: wumpus-cave-impl\n"
+                         "commit: " commit "\n"
+                         "assignment: other-assignment\n"
+                         "agent: implementer-001\n"
+                         "template: implementer\n"
+                         "artifacts: none\n"
+                         "\n"
+                         "merge_and_process implementer-001 " commit "\n"))
+        (let [result (run {:dir root :ok? false}
+                          (script "squad_assign.sh")
+                          "result"
+                          "wumpus-cave-impl"
+                          "wrong-result.handoff")]
+          (is (= 2 (:exit result)))
+          (is (str/includes? (:err result)
+                             "Result manifest assignment must match assignment id"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -325,7 +379,7 @@
             metadata (slurp (str (fs/path root ".squad/assignments/wumpus-cli-analysis/metadata")))]
         (is (str/includes? (:out create) "SQUAD_ASSIGNMENT: wumpus-cli-analysis"))
         (is (str/includes? (:out create) "STORY: theme"))
-        (is (str/includes? (:out status) "STATE: assignment_created"))
+        (is (str/includes? (:out status) "STATE: created"))
         (is (str/includes? assignment "scope: theme"))
         (is (str/includes? assignment "## Theme"))
         (is (str/includes? assignment "Implement a faithful Hunt the Wumpus CLI."))
@@ -576,15 +630,9 @@
            "approval:acceptance-cave-topology")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "result.handoff")
-                    (str "id: 1\n"
-                         "from: implementer-001\n"
-                         "to: squad-leader\n"
-                         "priority: 50\n"
-                         "type: git_handoff\n"
-                         "task: wumpus-cave-accepted\n"
-                         "commit: " commit "\n"
-                         "\n"
-                         "merge_and_process implementer-001 " commit "\n"))
+                    (result-handoff-text "1" "implementer-001" "wumpus-cave-accepted"
+                                         "implementer" commit
+                                         (str "merge_and_process implementer-001 " commit)))
         (run {:dir root} (script "squad_assign.sh") "result" "wumpus-cave-accepted" "result.handoff")
         (run {:dir root} (script "squad_assign.sh") "merge-ready" "wumpus-cave-accepted")
         (run {:dir root} (script "squad_assign.sh") "review" "wumpus-cave-accepted" "accepted" ".squad/reviews/wumpus-cave-accepted-review.md")
@@ -628,15 +676,9 @@
            "instructions.md")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "analysis-result.handoff")
-                    (str "id: 1\n"
-                         "from: analyst-001\n"
-                         "to: squad-leader\n"
-                         "priority: 50\n"
-                         "type: git_handoff\n"
-                         "task: wumpus-analysis\n"
-                         "commit: " commit "\n"
-                         "\n"
-                         "merge_and_process analyst-001 " commit "\n"))
+                    (result-handoff-text "1" "analyst-001" "wumpus-analysis"
+                                         "analyst" commit
+                                         (str "merge_and_process analyst-001 " commit)))
         (run {:dir root} (script "squad_assign.sh") "result" "wumpus-analysis" "analysis-result.handoff")
         (run {:dir root} (script "squad_assign.sh") "merge-ready" "wumpus-analysis")
         (let [accepted (run {:dir root} (script "squad_assign.sh") "accept-merge" "wumpus-analysis")
@@ -677,15 +719,9 @@
            "approval:acceptance-cave-topology")
       (let [result-commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "result.handoff")
-                    (str "id: 1\n"
-                         "from: implementer-001\n"
-                         "to: squad-leader\n"
-                         "priority: 50\n"
-                         "type: git_handoff\n"
-                         "task: wumpus-cave-impl\n"
-                         "commit: " result-commit "\n"
-                         "\n"
-                         "merge_and_process implementer-001 " result-commit "\n"))
+                    (result-handoff-text "1" "implementer-001" "wumpus-cave-impl"
+                                         "implementer" result-commit
+                                         (str "merge_and_process implementer-001 " result-commit)))
         (run {:dir root} (script "squad_assign.sh") "result" "wumpus-cave-impl" "result.handoff"))
       (write-file (fs/path root ".squad/reviews/wumpus-cave-impl-review.md")
                   "Review: changes requested for room topology edge cases.\n")
@@ -693,15 +729,9 @@
       (run {:dir root} "git" "commit" "-q" "-m" "Add cave topology review")
       (let [review-commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "review-result.handoff")
-                    (str "id: 2\n"
-                         "from: reviewer-001\n"
-                         "to: squad-leader\n"
-                         "priority: 50\n"
-                         "type: git_handoff\n"
-                         "task: wumpus-cave-review\n"
-                         "commit: " review-commit "\n"
-                         "\n"
-                         "merge_and_process reviewer-001 " review-commit "\n"))
+                    (result-handoff-text "2" "reviewer-001" "wumpus-cave-review"
+                                         "reviewer" review-commit
+                                         (str "merge_and_process reviewer-001 " review-commit)))
         (let [review (run {:dir root}
                           (script "squad_assign.sh")
                           "review"
@@ -747,15 +777,9 @@
       (run {:dir root} "git" "commit" "-q" "-m" "Add reviewer report")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "review-result.handoff")
-                    (str "id: 1\n"
-                         "from: reviewer-001\n"
-                         "to: squad-leader\n"
-                         "priority: 50\n"
-                         "type: git_handoff\n"
-                         "task: wumpus-cave-review\n"
-                         "commit: " commit "\n"
-                         "\n"
-                         "merge_and_process reviewer-001 " commit "\n"))
+                    (result-handoff-text "1" "reviewer-001" "wumpus-cave-review"
+                                         "reviewer" commit
+                                         (str "merge_and_process reviewer-001 " commit)))
         (run {:dir root} (script "squad_assign.sh") "result" "wumpus-cave-review" "review-result.handoff")
         (run {:dir root} (script "squad_assign.sh") "merge-ready" "wumpus-cave-review")
         (run {:dir root} (script "squad_assign.sh") "review" "wumpus-cave-review" "changes-requested" "review-result.handoff")
