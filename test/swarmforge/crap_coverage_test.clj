@@ -427,6 +427,38 @@
       (is (str/includes? (slurp (str (fs/path root ".swarmforge/roles.tsv"))) "agent-001")))
     (is (= (squadd/load-roles root) (squadd/reconcile-roles! root)))))
 
+(deftest squadd-artifact-content-reads-dashboard-artifacts
+  (let [root (tmp-dir)]
+    (write-file (fs/path root ".squad/themes/wumpus/theme.md")
+                "Theme text\n")
+    (write-file (fs/path root "stories/cave.md")
+                "Story text\n")
+    (write-file (fs/path root "features/cave.feature")
+                "Gherkin text\n")
+    (write-file (fs/path root "qa/cave.md")
+                "QA procedure text\n")
+    (write-file (fs/path root ".squad/stories/cave/packet")
+                (str "story_path: stories/cave.md\n"
+                     "gherkin_path: features/cave.feature\n"
+                     "qa_procedure_path: qa/cave.md\n"))
+    (write-file (fs/path root ".squad/stories/fallback/packet")
+                "story_id: fallback\n")
+    (write-file (fs/path root ".squad/reviews/review-001.md")
+                "Review text\n")
+    (write-file (fs/path root ".squad/assignments/review-002/review")
+                "Assignment review text\n")
+    (write-file (fs/path root ".squad/assignments/blocker-001/blocker.md")
+                "Blocker text\n")
+    (is (= "Theme text\n" (squadd/artifact-content root "theme" "wumpus")))
+    (is (= "Story text\n" (squadd/artifact-content root "story" "cave")))
+    (is (= "Gherkin text\n" (squadd/artifact-content root "gherkin" "cave")))
+    (is (= "QA procedure text\n" (squadd/artifact-content root "qa-procedure" "cave")))
+    (is (= "story_id: fallback\n" (squadd/artifact-content root "story" "fallback")))
+    (is (= "Review text\n" (squadd/artifact-content root "review" "review-001")))
+    (is (= "Assignment review text\n" (squadd/artifact-content root "review" "review-002")))
+    (is (= "Blocker text\n" (squadd/artifact-content root "blocker" "blocker-001")))
+    (is (nil? (squadd/artifact-content root "unknown" "cave")))))
+
 (deftest stop-handoff-daemon-covers-pid-and-stop-file-branches
   (let [root (tmp-dir)
         daemon-dir (fs/path root ".swarmforge/daemon")
@@ -1536,6 +1568,62 @@
     (is (= "result_received" (assign/read-value (fs/path dir "status") "state")))
     (assign/write-merge-state! root dir "a1" "merge_ready" "clean" "abcdef1234" "now")
     (is (= "merge_ready" (assign/read-value (fs/path dir "merge") "state")))))
+
+(deftest assignment-create-context-helper-branches
+  (let [root (tmp-dir)
+        instructions (fs/path root "instructions.md")]
+    (write-file instructions "Do the work.\n")
+    (write-file (fs/path root ".squad/themes/wumpus/theme.md") "Theme\n")
+    (write-file (fs/path root ".squad/themes/wumpus/stories/cave.ref") "path: stories/cave.md\n")
+    (write-file (fs/path root "stories/cave.md") "Story\n")
+    (write-file (fs/path root "swarmforge/role-templates/implementer.prompt") "Implement\n")
+    (write-file (fs/path root "swarmforge/role-templates/analyst.prompt") "Analyze\n")
+    (write-file (fs/path root "swarmforge/role-templates/hardener.prompt") "Harden\n")
+    (write-file (fs/path root ".squad/stories/cave/packet") "theme_id: wumpus\n")
+    (with-redefs [assign/project-root (constantly root)
+                  assign/timestamp (constantly "now")]
+      (is (= "story" (assign/assignment-scope {:template "implementer" :story-id "cave"})))
+      (is (= "theme" (assign/assignment-scope {:template "analyst" :story-id "theme"})))
+      (is (= "batch" (assign/assignment-scope {:template "hardener" :story-id "batch" :scope "batch"})))
+      (is (true? (assign/story-file-required? "story")))
+      (is (false? (assign/story-file-required? "theme")))
+      (is (false? (assign/story-file-required? "batch")))
+      (is (= {:theme-scoped? true :batch-scoped? false}
+             (assign/assignment-scope-flags "theme")))
+      (is (= {:theme-scoped? false :batch-scoped? true}
+             (assign/assignment-scope-flags "batch")))
+      (let [story-context (assign/assignment-create-context
+                           {:theme-id "wumpus"
+                            :story-id "cave"
+                            :template "implementer"
+                            :assignment-id "impl-001"
+                            :instructions-file instructions
+                            :requirement {:kind "approval"
+                                          :value "implementation"
+                                          :text "approval:implementation"}})
+            theme-context (assign/assignment-create-context
+                           {:theme-id "wumpus"
+                            :story-id "theme"
+                            :template "analyst"
+                            :assignment-id "analysis-001"
+                            :instructions-file instructions})
+            batch-context (assign/assignment-create-context
+                           {:theme-id "wumpus"
+                            :story-id "batch"
+                            :scope "batch"
+                            :template "hardener"
+                            :assignment-id "hardener-001"
+                            :instructions-file instructions})]
+        (is (= "story" (:scope story-context)))
+        (is (= (fs/path root "stories/cave.md") (:story-file story-context)))
+        (is (= "approval:implementation" (get-in story-context [:requirement :text])))
+        (is (= (fs/path root ".squad/stories/cave/packet") (:packet story-context)))
+        (is (= "theme" (:scope theme-context)))
+        (is (:theme-scoped? theme-context))
+        (is (nil? (:story-file theme-context)))
+        (is (= "batch" (:scope batch-context)))
+        (is (:batch-scoped? batch-context))
+        (is (nil? (:story-file batch-context)))))))
 
 (deftest packet-validation-and-map-helper-branches
   (let [root (tmp-dir)

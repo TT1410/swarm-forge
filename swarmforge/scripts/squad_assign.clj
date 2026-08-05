@@ -369,11 +369,24 @@
     (or (referenced-project-file root (fs/path theme "stories" (str story-id ".ref")))
         (fs/path theme "stories" (str story-id ".md")))))
 
+(defn assignment-scope [{:keys [template story-id scope]}]
+  (cond
+    (theme-scoped-assignment? template story-id) "theme"
+    (batch-scoped-assignment? scope story-id) "batch"
+    :else "story"))
+
+(defn story-file-required? [scope]
+  (= "story" scope))
+
+(defn assignment-scope-flags [scope]
+  {:theme-scoped? (= "theme" scope)
+   :batch-scoped? (= "batch" scope)})
+
 (defn assignment-create-context [{:keys [theme-id story-id template assignment-id instructions-file requirement scope]}]
   (let [root (fs/absolutize (project-root))
         theme (theme-dir root theme-id)
-        theme-scoped? (theme-scoped-assignment? template story-id)
-        batch-scoped? (batch-scoped-assignment? scope story-id)]
+        resolved-scope (assignment-scope {:template template :story-id story-id :scope scope})
+        scope-flags (assignment-scope-flags resolved-scope)]
     {:root root
      :theme theme
      :theme-id theme-id
@@ -381,14 +394,12 @@
      :template template
      :assignment-id assignment-id
      :requirement requirement
-     :theme-scoped? theme-scoped?
-     :batch-scoped? batch-scoped?
-     :scope (cond
-              theme-scoped? "theme"
-              batch-scoped? "batch"
-              :else "story")
+     :theme-scoped? (:theme-scoped? scope-flags)
+     :batch-scoped? (:batch-scoped? scope-flags)
+     :scope resolved-scope
      :theme-file (fs/path theme "theme.md")
-     :story-file (assignment-story-file root theme story-id (or theme-scoped? batch-scoped?))
+     :story-file (when (story-file-required? resolved-scope)
+                   (assignment-story-file root theme story-id false))
      :template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
      :instructions (source-file! instructions-file)
      :dir (assignment-dir root assignment-id)

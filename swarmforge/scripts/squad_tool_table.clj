@@ -5,7 +5,9 @@
             [clojure.edn :as edn]
             [clojure.string :as str]))
 
-(def script-dir (fs/parent *file*))
+(def script-dir
+  (or (some-> *file* fs/parent)
+      (fs/path (System/getProperty "user.dir") "swarmforge" "scripts")))
 
 (defn table-file [root]
   (let [project-file (fs/path root "swarmforge" "tool-table.edn")

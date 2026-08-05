@@ -2,6 +2,7 @@
   (:require [clojure.test :as test :refer [deftest]]
             [swarmforge.artifact-workflow-test]
             [swarmforge.assign-merge-test]
+            [swarmforge.crap-coverage-test]
             [swarmforge.handoff-lib-test]
             [swarmforge.launcher-test]
             [swarmforge.recover-test]
@@ -16,6 +17,7 @@
 (def script-test-namespaces
   '[swarmforge.artifact-workflow-test
     swarmforge.assign-merge-test
+    swarmforge.crap-coverage-test
     swarmforge.handoff-lib-test
     swarmforge.launcher-test
     swarmforge.recover-test

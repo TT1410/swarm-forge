@@ -1293,18 +1293,23 @@
   (or (artifact-project-content root (get (packet-for root story-id) "story_path"))
       (slurp-if-exists (packet-file-for root story-id))))
 
+(def artifact-readers
+  {"theme" theme-content
+   "story" story-content
+   "gherkin" (fn [root id]
+               (or (artifact-project-content root (get (packet-for root id) "gherkin_path"))
+                   (slurp-if-exists (packet-file-for root id))))
+   "qa-procedure" (fn [root id]
+                    (or (artifact-project-content root (get (packet-for root id) "qa_procedure_path"))
+                        (slurp-if-exists (packet-file-for root id))))
+   "review" review-content
+   "blocker" (fn [root id]
+               (or (assignment-artifact-content root id "blocker.md")
+                   (assignment-artifact-content root id "blocker")))})
+
 (defn artifact-content [root kind id]
-  (case kind
-    "theme" (theme-content root id)
-    "story" (story-content root id)
-    "gherkin" (or (artifact-project-content root (get (packet-for root id) "gherkin_path"))
-                  (slurp-if-exists (packet-file-for root id)))
-    "qa-procedure" (or (artifact-project-content root (get (packet-for root id) "qa_procedure_path"))
-                       (slurp-if-exists (packet-file-for root id)))
-    "review" (review-content root id)
-    "blocker" (or (assignment-artifact-content root id "blocker.md")
-                  (assignment-artifact-content root id "blocker"))
-    nil))
+  (when-let [reader (get artifact-readers kind)]
+    (reader root id)))
 
 (defn artifact-response [root path]
   (let [[_ kind encoded-id] (re-matches #"/artifact/([^/]+)/([^/]+)" path)
