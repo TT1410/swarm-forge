@@ -56,53 +56,92 @@
   <script>
     const app = document.getElementById('app');
     const meta = document.getElementById('meta');
+    const slDraftKey = 'swarmforge.slMessageDraft';
+    let slDraft = localStorage.getItem(slDraftKey) || '';
     const esc = value => String(value ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
-    async function post(path, body = null, contentType = null) {
+    async function post(path, body = null, contentType = null, refresh = true) {
       const options = { method: 'POST' };
       if (body !== null) options.body = body;
       if (contentType) options.headers = { 'Content-Type': contentType };
       const response = await fetch(path, options);
       if (!response.ok) throw new Error(await response.text());
-      await render();
+      if (refresh) await render();
     }
     function row(cells) { return '<tr>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>'; }
     function table(headers, rows) {
       return '<table><thead><tr>' + headers.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
     }
+    function artifactKindForApproval(a) {
+      const gate = String(a.gate || '').replaceAll('_', '-');
+      if (gate === 'theme') return 'theme';
+      if (gate === 'story' || gate === 'implementation' || gate === 'final') return 'story';
+      if (gate === 'gherkin') return 'gherkin';
+      if (gate === 'qa-procedure' || gate === 'qa') return 'qa-procedure';
+      if (gate === 'code-review' || gate === 'architecture') return 'review';
+      if (gate === 'hardening') return 'story';
+      return String(a.target_kind || 'story').replaceAll('_', '-');
+    }
+    function artifactLink(kind, id, label) {
+      return `<a target=\"_blank\" href=\"/artifact/${encodeURIComponent(kind)}/${encodeURIComponent(id)}\">${esc(label)}</a>`;
+    }
     function approvals(items) {
       if (!items.length) return '<p class=\"muted\">No pending approvals.</p>';
       return table(['Approval', 'Target', 'Gate', 'Reason', 'Actions'], items.map(a => row([
-        esc(a.approval_id), esc(a.target_kind + ' ' + a.target_id), esc(a.gate), esc(a.reason),
+        esc(a.approval_id),
+        artifactLink(artifactKindForApproval(a), a.target_id, a.target_kind + ' ' + a.target_id),
+        esc(a.gate), esc(a.reason),
         `<button onclick=\"post('/api/approvals/${encodeURIComponent(a.approval_id)}/approve')\">Approve</button>` +
         `<button onclick=\"post('/api/approvals/${encodeURIComponent(a.approval_id)}/reject')\">Reject</button>`
       ])));
+    }
+    function blockers(items) {
+      if (!items.length) return '<p class=\"muted\">No blockers.</p>';
+      return table(['Assignment','Kind','Detail'], items.map(b => row([
+        artifactLink('blocker', b.assignment_id, b.assignment_id), esc(b.kind || 'blocked'), esc(b.detail || '')
+      ])));
+    }
+    function bindMessageBox() {
+      const input = document.getElementById('sl-message');
+      if (!input) return;
+      input.value = slDraft;
+      input.addEventListener('input', () => {
+        slDraft = input.value;
+        localStorage.setItem(slDraftKey, slDraft);
+      });
     }
     async function sendMessage() {
       const input = document.getElementById('sl-message');
       const text = input.value.trim();
       if (!text) return;
-      await post('/api/sl-message', text, 'text/plain; charset=utf-8');
+      await post('/api/sl-message', text, 'text/plain; charset=utf-8', false);
+      slDraft = '';
+      localStorage.removeItem(slDraftKey);
       input.value = '';
+      await render();
     }
     async function render() {
       try {
+        const existingMessage = document.getElementById('sl-message');
+        if (existingMessage) {
+          slDraft = existingMessage.value;
+          localStorage.setItem(slDraftKey, slDraft);
+        }
         const data = await (await fetch('/api/state', { cache: 'no-store' })).json();
         meta.textContent = data.project_root + ' | ' + data.generated_at;
         app.innerHTML =
-          `<section><h2>Blockers</h2>${table(['Assignment','Kind','Detail'], data.blockers.map(b => row([
-            esc(b.assignment_id), esc(b.kind || 'blocked'), esc(b.detail || '')
-          ])))}</section>` +
+          `<section><h2>Blockers</h2>${blockers(data.blockers)}</section>` +
           `<section><h2>Pending Approvals</h2>${approvals(data.approvals.pending)}</section>` +
           `<section><h2>Message Squad Leader</h2><textarea id=\"sl-message\"></textarea><div><button onclick=\"sendMessage()\">Submit</button></div></section>` +
           `<section><h2>Stories</h2>${table(['Story','State','Gherkin','QA Procedure','Implementation','Final'], data.stories.map(s => row([
-            esc(s.story_id), '<span class=\"pill\">' + esc(s.state) + '</span>', esc(s.gherkin_review_state), esc(s.qa_procedure_review_state), esc(s.implementation_assignment_state), esc(s.final_state)
+            artifactLink('story', s.story_id, s.story_id), '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.gherkin_review_state), esc(s.qa_procedure_review_state), esc(s.implementation_assignment_state), esc(s.final_state)
           ])))}</section>` +
           `<section><h2>Agents</h2>${table(['Agent','Template','Task','State','Detail'], data.agents.map(a => row([
-            esc(a.agent_id), esc(a.template), esc(a.task_id), esc(a.state), esc(a.detail)
+            `<a target=\"_blank\" href=\"/agent/${encodeURIComponent(a.agent_id)}\">${esc(a.agent_id)}</a>`, esc(a.template), esc(a.task_id), esc(a.state), esc(a.detail)
           ])))}</section>` +
           `<section><h2>Assignments</h2>${table(['Assignment','Template','Story','State'], data.assignments.map(a => row([
             esc(a.assignment_id), esc(a.template), esc(a.story_id), esc(a.state)
           ])))}</section>`;
+        bindMessageBox();
       } catch (err) {
         app.innerHTML = '<p class=\"error\">' + esc(err.message) + '</p>';
       }
@@ -189,7 +228,7 @@
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
 
-(declare agent-dirs log! parse-kv-file tmux-session-exists? idle-prompt-tail?)
+(declare agent-dirs log! parse-kv-file tmux-session-exists? idle-prompt-tail? socket-value)
 
 (defn load-roles [root]
   (into {}
@@ -1053,12 +1092,36 @@
 (defn map-with-id [id-key id file]
   (assoc (parse-kv-file file) id-key id))
 
+(def stage-labels
+  {"story_recorded" "specified"
+   "story_approved" "specified"
+   "specification_in_progress" "specified"
+   "implementation_approval_ready" "qa approved"
+   "implementation_approved" "qa approved"
+   "implemented" "implemented"
+   "cleaned" "cleaned"
+   "code_reviewed" "code reviewed"
+   "code_review_approved" "code reviewed"
+   "hardener_returned" "hardened"
+   "hardening_approved" "hardened"
+   "qa_returned" "hardened"
+   "qa_approved" "hardened"
+   "architecture_returned" "hardened"
+   "architecture_revision_returned" "hardened"
+   "architecture_reviewed" "architect approved"
+   "architecture_approved" "architect approved"
+   "final_approved" "done"})
+
+(defn stage-label [state]
+  (get stage-labels state state))
+
 (defn canonical-story-row [story-id packet-file]
   (let [packet (assoc (squad-state/read-kv-file packet-file) "story_id" story-id)
         state (squad-state/recompute-state packet)]
     (merge packet
            (squad-state/derived-stage-fields packet state)
-           {"state" state})))
+           {"state" state
+            "stage_label" (stage-label state)})))
 
 (defn story-state [root]
   (let [dir (fs/path root ".squad" "stories")]
@@ -1163,6 +1226,131 @@
 (defn url-decode [value]
   (URLDecoder/decode value "UTF-8"))
 
+(defn html-escape [value]
+  (-> (str value)
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")
+      (str/replace "\"" "&quot;")
+      (str/replace "'" "&#39;")))
+
+(defn artifact-page [title content]
+  (str "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+       "<title>" (html-escape title) "</title>"
+       "<style>:root{font-family:ui-sans-serif,system-ui,sans-serif;color-scheme:light dark}"
+       "body{margin:0;background:#f7f7f4;color:#202124}"
+       "header{padding:14px 18px;border-bottom:1px solid #d9d9d2}"
+       "h1{font-size:18px;margin:0}main{padding:18px}"
+       "pre{white-space:pre-wrap;background:white;border:1px solid #d9d9d2;padding:14px;overflow:auto}</style>"
+       "</head><body><header><h1>" (html-escape title) "</h1></header><main><pre>"
+       (html-escape content)
+       "</pre></main></body></html>"))
+
+(defn root-child-file [root relative]
+  (when-not (str/blank? relative)
+    (let [root-path (.normalize (.toAbsolutePath (fs/path root)))
+          file-path (.normalize (.toAbsolutePath (fs/path root relative)))]
+      (when (and (.startsWith file-path root-path)
+                 (fs/regular-file? file-path))
+        file-path))))
+
+(defn packet-file-for [root story-id]
+  (fs/path root ".squad" "stories" story-id "packet"))
+
+(defn packet-for [root story-id]
+  (squad-state/read-kv-file (packet-file-for root story-id)))
+
+(defn artifact-project-content [root relative]
+  (when-let [file (root-child-file root relative)]
+    (slurp (str file))))
+
+(defn assignment-artifact-content [root assignment-id file-name]
+  (let [file (fs/path root ".squad" "assignments" assignment-id file-name)]
+    (when (fs/regular-file? file)
+      (slurp (str file)))))
+
+(defn review-content [root id]
+  (or (let [file (fs/path root ".squad" "reviews" (str id ".md"))]
+        (when (fs/regular-file? file)
+          (slurp (str file))))
+      (assignment-artifact-content root id "review.md")
+      (assignment-artifact-content root id "review")
+      (let [packet (packet-for root id)]
+        (str/join "\n\n"
+                  (keep (fn [[label field]]
+                          (when-let [assignment (get packet field)]
+                            (review-content root assignment)))
+                        [["Gherkin Review" "gherkin_review_assignment"]
+                         ["QA Procedure Review" "qa_procedure_review_assignment"]
+                         ["Code Review" "code_review_assignment"]
+                         ["Architecture Review" "architecture_review_assignment"]])))))
+
+(defn theme-content [root theme-id]
+  (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md")))
+
+(defn story-content [root story-id]
+  (or (artifact-project-content root (get (packet-for root story-id) "story_path"))
+      (slurp-if-exists (packet-file-for root story-id))))
+
+(defn artifact-content [root kind id]
+  (case kind
+    "theme" (theme-content root id)
+    "story" (story-content root id)
+    "gherkin" (or (artifact-project-content root (get (packet-for root id) "gherkin_path"))
+                  (slurp-if-exists (packet-file-for root id)))
+    "qa-procedure" (or (artifact-project-content root (get (packet-for root id) "qa_procedure_path"))
+                       (slurp-if-exists (packet-file-for root id)))
+    "review" (review-content root id)
+    "blocker" (or (assignment-artifact-content root id "blocker.md")
+                  (assignment-artifact-content root id "blocker"))
+    nil))
+
+(defn artifact-response [root path]
+  (let [[_ kind encoded-id] (re-matches #"/artifact/([^/]+)/([^/]+)" path)
+        id (url-decode encoded-id)
+        title (str (str/capitalize (str/replace kind "-" " ")) " " id)]
+    (if-let [content (not-empty (or (artifact-content root kind id) ""))]
+      (response 200 "text/html; charset=utf-8" (artifact-page title content))
+      (response 404 "text/plain; charset=utf-8" "Artifact not found\n"))))
+
+(defn tail-section [file]
+  (when (fs/regular-file? file)
+    (let [[_ tail] (str/split (slurp (str file)) #"(?m)^last_10_lines:\s*\n" 2)]
+      tail)))
+
+(defn agent-pane-content [root agent-id]
+  (let [metadata (fs/path root ".squad" "agents" agent-id "metadata")
+        session (read-value metadata "session")
+        socket (socket-value root)]
+    (or (when (and socket (not (str/blank? session)))
+          (capture-pane-tail socket session))
+        (tail-section (fs/path root ".squad" "agents" agent-id "liveness"))
+        "")))
+
+(defn pane-page [agent-id]
+  (str "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+       "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+       "<title>Agent " (html-escape agent-id) "</title>"
+       "<style>:root{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color-scheme:light dark}"
+       "body{margin:0;background:#111;color:#f4f4f4}header{padding:10px 12px;border-bottom:1px solid #333}"
+       "h1{font:inherit;margin:0}pre{margin:0;padding:12px;white-space:pre-wrap;min-height:calc(100vh - 42px)}</style>"
+       "</head><body><header><h1>" (html-escape agent-id) "</h1></header><pre id=\"pane\"></pre>"
+       "<script>const pane=document.getElementById('pane');async function refresh(){"
+       "const r=await fetch('/api/agents/" (html-escape agent-id) "/pane',{cache:'no-store'});"
+       "pane.textContent=await r.text();window.scrollTo(0,document.body.scrollHeight)}"
+       "refresh();setInterval(refresh,1000);</script></body></html>"))
+
+(defn agent-pane-response [root path]
+  (let [[_ encoded-id] (re-matches #"/api/agents/([^/]+)/pane" path)
+        agent-id (url-decode encoded-id)]
+    (response 200 "text/plain; charset=utf-8" (agent-pane-content root agent-id))))
+
+(defn agent-page-response [_ path]
+  (let [[_ encoded-id] (re-matches #"/agent/([^/]+)" path)
+        agent-id (url-decode encoded-id)]
+    (response 200 "text/html; charset=utf-8" (pane-page agent-id))))
+
 (defn approval-web-action! [root approval-id action]
   (let [detail (if (= action "approve") "approved-by-web" "rejected-by-web")
         result (process/sh {:continue true :dir (str root)}
@@ -1231,6 +1419,15 @@
    {:method "GET"
     :path "/api/state"
     :handler (fn [root _ _] (state-response root))}
+   {:method "GET"
+    :pattern #"/artifact/[^/]+/[^/]+"
+    :handler (fn [root path _] (artifact-response root path))}
+   {:method "GET"
+    :pattern #"/agent/[^/]+"
+    :handler (fn [root path _] (agent-page-response root path))}
+   {:method "GET"
+    :pattern #"/api/agents/[^/]+/pane"
+    :handler (fn [root path _] (agent-pane-response root path))}
    {:method "POST"
     :pattern #"/api/approvals/[^/]+/(approve|reject)"
     :handler (fn [root path _] (approval-response root path))}

@@ -29,6 +29,10 @@
 	                       "    esac\n"
 	                       "    exit 0\n"
                        "    ;;\n"
+                       "  capture-pane)\n"
+                       "    printf '%s\\n' 'active pane line 1' 'active pane line 2'\n"
+                       "    exit 0\n"
+                       "    ;;\n"
                        "  *) exit 0 ;;\n"
                        "esac\n"))
       (run {:dir root} "chmod" "+x" (str fake-tmux))
@@ -41,9 +45,13 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/cave-topology.md")
                   "Story: cave topology and setup.\n")
+      (write-file (fs/path root "features/cave-topology.feature")
+                  "Feature: Cave topology\n")
+      (write-file (fs/path root "qa/cave-topology.md")
+                  "# QA Procedure\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
-      (run {:dir root} "git" "add" "stories")
+      (run {:dir root} "git" "add" "stories" "features" "qa")
       (run {:dir root} "git" "commit" "-q" "-m" "Prepare story for dashboard")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (run {:dir root}
@@ -57,6 +65,9 @@
 	      (spit (str (fs/path root ".squad/stories/cave-topology/packet"))
 	            "state: specification_in_progress\nimplementation_sha: implementation-sha\n"
 	            :append true)
+	      (spit (str (fs/path root ".squad/stories/cave-topology/packet"))
+	            "gherkin_path: features/cave-topology.feature\nqa_procedure_path: qa/cave-topology.md\ngherkin_review_assignment: active-assignment\n"
+	            :append true)
       (run {:dir root}
            (script "squad_approval.sh")
            "request"
@@ -67,7 +78,7 @@
            "Approve story"
            "story is ready")
       (write-file (fs/path root ".squad/agents/active-001/metadata")
-                  "agent_id: active-001\ntemplate: implementer\ntask_id: active-task\n")
+                  "agent_id: active-001\ntemplate: implementer\ntask_id: active-task\nsession: active-session\n")
       (write-file (fs/path root ".squad/agents/active-001/status")
                   "state: running\ndetail: active\nupdated_at: 2026-08-03T00:00:00Z\n")
       (write-file (fs/path root ".squad/agents/retired-001/metadata")
@@ -84,6 +95,10 @@
 	                  "state: blocked\ndetail: active\nupdated_at: 2026-08-04T00:00:00Z\n")
 	      (write-file (fs/path root ".squad/assignments/newer-assignment/blocker")
 	                  "assignment_id: newer-assignment\nstate: blocked\nkind: required-tool-evidence\nupdated_at: 2026-08-04T00:00:00Z\n")
+	      (write-file (fs/path root ".squad/assignments/newer-assignment/blocker.md")
+	                  "Cleaner could not load crap4clj.\n")
+	      (write-file (fs/path root ".squad/reviews/active-assignment.md")
+	                  "accepted\n")
       (write-file (fs/path root ".squad/assignments/merged-assignment/metadata")
                   "assignment_id: merged-assignment\ntemplate: analyst\nstory_id: cave-topology\n")
       (write-file (fs/path root ".squad/assignments/merged-assignment/status")
@@ -97,7 +112,16 @@
       (let [url-file (fs/path root ".swarmforge/daemon/squad-web-url")]
 	        (is (wait-for-file url-file 3000))
 	        (let [base-url (str/trim (slurp (str url-file)))
+	              page (slurp base-url)
 	              state (slurp (str base-url "api/state"))
+	              theme-page (slurp (str base-url "artifact/theme/wumpus"))
+	              story-page (slurp (str base-url "artifact/story/cave-topology"))
+	              gherkin-page (slurp (str base-url "artifact/gherkin/cave-topology"))
+	              qa-page (slurp (str base-url "artifact/qa-procedure/cave-topology"))
+	              review-page (slurp (str base-url "artifact/review/active-assignment"))
+	              blocker-page (slurp (str base-url "artifact/blocker/newer-assignment"))
+	              agent-page (slurp (str base-url "agent/active-001"))
+	              pane-tail (slurp (str base-url "api/agents/active-001/pane"))
 	              approve (http-post (str base-url "api/approvals/story__cave-topology/approve"))
 	              returns-before-message (Long/parseLong
 	                                      (str/trim
@@ -110,6 +134,7 @@
 	          (is (str/includes? state "\"approval_id\":\"story__cave-topology\""))
 	          (is (str/includes? state "\"story_id\":\"cave-topology\""))
 	          (is (str/includes? state "\"state\":\"implemented\""))
+	          (is (str/includes? state "\"stage_label\":\"implemented\""))
 	          (is (not (str/includes? state "\"state\":\"specification_in_progress\"")))
 	          (is (str/includes? state "\"agent_id\":\"active-001\""))
 	          (is (not (str/includes? state "\"agent_id\":\"retired-001\"")))
@@ -120,6 +145,19 @@
 	          (is (< (str/index-of state "\"assignment_id\":\"newer-assignment\"")
 	                 (str/index-of state "\"assignment_id\":\"active-assignment\"")))
 	          (is (not (str/includes? state "\"assignment_id\":\"merged-assignment\"")))
+	          (is (str/includes? page "localStorage.getItem(slDraftKey)"))
+	          (is (str/includes? page "input.addEventListener('input'"))
+	          (is (str/includes? page "localStorage.removeItem(slDraftKey)"))
+	          (is (str/includes? page "/artifact/${encodeURIComponent(kind)}/${encodeURIComponent(id)}"))
+	          (is (str/includes? page "/agent/${encodeURIComponent(a.agent_id)}"))
+	          (is (str/includes? theme-page "faithful Hunt the Wumpus"))
+	          (is (str/includes? story-page "cave topology and setup"))
+	          (is (str/includes? gherkin-page "Feature: Cave topology"))
+	          (is (str/includes? qa-page "QA Procedure"))
+	          (is (str/includes? review-page "accepted"))
+	          (is (str/includes? blocker-page "crap4clj"))
+	          (is (str/includes? agent-page "/api/agents/active-001/pane"))
+	          (is (str/includes? pane-tail "active pane line 2"))
 	          (is (= 200 (:status approve)))
 	          (is (= 200 (:status message)))
 	          (is (str/includes? approved "\"approved\""))
