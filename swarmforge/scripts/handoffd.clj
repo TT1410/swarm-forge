@@ -16,7 +16,7 @@
   (System/exit 1))
 
 (def project-root
-  (or (first *command-line-args*) (usage)))
+  (or (first *command-line-args*) "."))
 
 (def state-dir (fs/path project-root ".swarmforge"))
 (def daemon-dir (fs/path state-dir "daemon"))
@@ -209,6 +209,8 @@
     (catch Exception _ nil)))
 
 (defn -main []
+  (when-not (first *command-line-args*)
+    (usage))
   (fs/create-dirs daemon-dir)
   (fs/delete-if-exists stop-file)
   (spit (str pid-file) (str (.pid (java.lang.ProcessHandle/current)) "\n"))
