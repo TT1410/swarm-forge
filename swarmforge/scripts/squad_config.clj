@@ -3,7 +3,7 @@
             [clojure.java.shell :as shell]
             [clojure.string :as str]))
 
-(def squad-default-max-transient-agents 5)
+(def squad-default-max-transient-agents 10)
 (def squad-default-recovery-quiet-seconds 300)
 (def squad-default-recovery-retry-seconds 60)
 (def squad-default-approval-required

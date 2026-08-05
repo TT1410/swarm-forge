@@ -1,256 +1,248 @@
 # Bug Fix Plan
 
-## Phase 1: Make Workflow State Authoritative
+This plan fixes the swarm issues in dependency order. Each phase should leave
+the system internally consistent before the next phase starts. Do not mix phases
+unless a later phase exposes a defect in an earlier phase's contract.
 
-Goal: eliminate helper/FSM disagreement before touching scheduling behavior.
+## Phase 1: Canonical Workflow State And Helper Contracts
 
-Relevant `bugs.md` sections:
+Fixes:
 
-- `Packet review fields do not distinguish stale findings from current state`
-- `Helpers enforce workflow from stale side metadata`
-- `Architecture result does not propagate to member story packets`
-- `Dashboard story state label is misleading`
-- `Accepted analyst stories are not registered for approval`
+- `FSM Must Be The Workflow Authority`
+- `Approval Requests Must Be Idempotent By Semantic Gate`
+- `Squad Next Emits Invalid Batch Assignment Commands`
+- `Bulk Operations Are Missing`
+- `Direct SL-Created Stories Are Not Supported`
+- `Generic Ready Assignments Are Not Spawned Reliably`
+- `Finish-Current Recommendations Can Be Stale`
 
-1. Define the canonical workflow state model.
-   - One authoritative source for story stage, current artifact iteration,
-     current review verdict, batch membership, approval state, and active
-     assignment.
-   - Treat files like `active-batches/<kind>` as derived indexes only.
-2. Add a workflow-state read/write API.
-   - Helpers must call this API instead of independently interpreting side
-     files.
-   - It must expose "current effective state" distinct from historical
-     iterations.
-3. Update packet semantics.
-   - Tie review verdicts to the artifact SHA they reviewed.
-   - Preserve old rejected reviews in history.
-   - Prevent stale `code_review: changes-requested` from appearing as the
-     current verdict after a later fix supersedes it.
-4. Add consistency validation.
-   - Detect disagreement between packet fields, batch manifests, active-batch
-     indexes, assignments, and approvals.
-   - Report repair instructions rather than enforcing stale state.
+Work:
 
-## Phase 2: Make Helpers Mechanical Only
+1. Define the helper/FSM contract in code and docs: `squad_next.sh` recommends
+   workflow actions, while helpers validate and mutate durable state.
+2. Preserve the clarified SL exception: the SL may create workflow records
+   directly only for explicit user instruction or artifact quality-control
+   decisions.
+3. Make approval requests idempotent by `(target_kind, target_id, gate)`.
+4. Add `squad_assign.sh create-batch ...` and stop emitting story-shaped
+   `batch` commands.
+5. Add explicit-id bulk helpers for repeated story and approval operations.
+6. Add helper support for direct SL-authored stories as already approved.
+7. Add a generic ready-assignment scan to `squad_next.sh`; explicit ready
+   assignments outrank ordinary stage-derived spawn candidates.
+8. Require `finish_in_process_handoff` recommendations to include a concrete
+   handoff id/path. Do not emit bare `done_with_current.sh`.
 
-Goal: helpers validate and apply transitions, but never decide workflow.
+Validation:
 
-Relevant `bugs.md` sections:
+- Unit tests for approval dedupe by semantic gate.
+- Unit tests for `create-batch` command shape.
+- FSM/simulator cases for direct story creation, explicit ready assignments, and
+  stale `done_with_current` prevention.
 
-- `Helpers enforce workflow from stale side metadata`
-- `Spawning an agent does not mark assignment in progress`
-- `Review report merge checks blocked by untracked SL-side files`
-- `Merge conflicts should route to a merger agent`
-- `Kill swarm leaves dead agents and worktrees behind`
+## Phase 2: Assignment Lifecycle, Result Manifests, And Handoff Integrity
 
-1. Refactor helpers:
-   - `squad_batch_story.sh`
-   - `squad_packet.sh`
-   - `squad_assign.sh`
-   - `squad_approval.sh`
-   - spawn/retire helpers
-2. Remove helper-side workflow enforcement.
-   - No helper should reject a valid FSM-requested action because of stale
-     derived metadata.
-   - Terminal old batches must not block new batches.
-3. Make helper updates transactional.
-   - Batch add updates packet, manifest, indexes, and events atomically.
-   - Assignment creation marks assignment in-progress/assigned immediately.
-   - Retirement removes session, worktree, branch, and records durable status.
-4. Fix merge-readiness mechanics.
-   - Run dry-run merges in a clean temporary worktree/index.
-   - Prevent untracked SL-side `.squad/reviews/*.md` files from blocking
-     incoming review reports.
+Fixes:
 
-## Phase 3: Complete FSM Transitions
+- `Lifecycle States Are Used For Step Telemetry`
+- `Assignment And Agent State Are Not Synchronized`
+- `Handoff Sending Is Not Cleanly Idempotent`
+- `Result Handoff Validation Is Too Weak`
+- `Retry Loops Do Not Reset Downstream State`
 
-Goal: every workflow result has a deterministic next step.
+Work:
 
-Relevant `bugs.md` sections:
+1. Enforce canonical assignment states: `created`, `in_progress`,
+   `handoff_sent`, `result_received`, `merged`, `blocked`, `superseded`, and
+   `retired`.
+2. Remove `complete` from transient agent lifecycle. Agents use
+   `handoff_ready` when work is ready to hand off.
+3. Treat `failed` as terminal. Recoverable command failures stay in
+   `running` detail or `squad_run` telemetry.
+4. Update spawn fulfillment to mark assignments `in_progress` with agent id and
+   session.
+5. Make handoff send idempotent by `(task, sender, recipient, commit)`.
+6. Require every handoff to include a result manifest tying assignment, agent,
+   template, commit, and artifacts together.
+7. Validate result handoffs by both branch/worktree lineage and result manifest.
+8. Implement supersession semantics for retries: downstream artifacts from the
+   prior chain are marked `superseded`, not erased.
 
-- `SL-created approval duplicates FSM-created approval`
-- `FSM ignores SL-created replacement assignments`
-- `Pending approval starves ready replacement assignments`
-- `Any active agent causes global scheduler wait`
-- `Old review assignment suppresses review of revised artifact`
-- `FSM lacks code-review revision loop`
-- `Architecture batch waits instead of starting with ready members`
-- `Architecture result does not propagate to member story packets`
-- `Senior-implementor output does not route back to architect`
-- `Merge conflicts should route to a merger agent`
+Validation:
 
-1. Fix approval gates.
-   - FSM recommends approval requests.
-   - SL creates them idempotently.
-   - Web approvals wake the SL.
-   - Approval gates never wait for all stories.
-2. Fix per-story progression.
-   - Accepted story can move immediately to Gherkin/QA procedure.
-   - Accepted Gherkin can move immediately onward.
-   - Accepted QA procedure can move immediately onward.
-   - Code review rejection loops:
+- Tests proving wrong-assignment reachable commits cannot advance a story.
+- Tests proving duplicate handoff sends return the existing handoff identity.
+- FSM/simulator retry loops for reviewer changes and implementer fixes.
+- Tests for terminal `failed` and absence of transient `complete`.
 
-     ```text
-     implementer -> cleaner -> code-reviewer -> implementer
-     ```
+## Phase 3: Throughput, Capacity, Cleanup, And Recovery
 
-3. Fix batch progression.
-   - Hardener, QA, and architecture batches start when they have eligible
-     members.
-   - Batches do not wait for all stories.
-   - Once started, a batch is closed.
-   - Later eligible stories go to a later batch.
-4. Fix architecture loop.
+Fixes:
 
-   ```text
-   architect changes-requested
-   -> senior-implementor
-   -> architect review
-   -> accepted or changes-requested
-   ```
+- `Capacity And Throughput Are Poorly Scheduled`
+- `Handoff-Sent Agents Are Not Retired Promptly`
+- `Swarm Shutdown Leaves In-Flight Worktrees Behind`
+- `Stall Recovery Is Too Sensitive And SL Wakeups Are Weak`
 
-5. Add merger workflow.
+Work:
 
-   ```text
-   merge blocked
-   -> merger
-   -> SL merge check
-   -> merged or another merger pass
-   ```
+1. Count live tmux sessions against `max_transient_agents`; agents in
+   `handoff_sent` do not count once their handoff has actually been sent.
+2. Prioritize actions to free completed slots, then fill empty slots with ready
+   work.
+3. Retire agents promptly after merged handoffs unless merge-blocked preservation
+   applies.
+4. On swarm kill, delete all non-merge-blocked transient worktrees and branches
+   unconditionally.
+5. Use a 60 second SL idle threshold based on no pane/status activity, not raw
+   elapsed time alone.
+6. Treat busy pane tails as liveness even when no `squad_event` heartbeat is
+   written.
+7. Tighten SL wakeup text: run `squad_next.sh`, execute its `COMMAND`, then
+   continue the advisor loop until waiting, blocked, or user-gated.
 
-   No merge lock for now.
+Validation:
 
-## Phase 4: Tooling Contracts
+- Monte Carlo simulator runs that demonstrate full slot usage without exceeding
+  capacity.
+- Shutdown tests proving worktrees/branches are removed except preserved
+  merge-blocked cases.
+- Watchdog tests for active pane tail suppression and SL wakeup wording.
 
-Goal: agents either use required tools correctly or block.
+## Phase 4: Tool Provisioning And Required Tool Enforcement
 
-Relevant `bugs.md` sections:
+Fixes:
 
-- `Hardener proceeds without required hardening tools`
-- `Cleaner proceeds without required CRAP and DRY tools`
-- `Helper usage examples still produce wrong command shapes`
+- `Tool Installation Policy Is Contradictory`
+- `APS Tool Source Identity Is Inconsistent`
+- `APS Tool Usage Is Not Enforced`
+- `Required Tool Failures Are Hidden`
+- `Role Prompts Must Require Tool Loading Up Front`
 
-1. Fix role prompts and contracts.
-   - Cleaner must use CRAP/DRY.
-   - Hardener must use mutation, Gherkin parser/mutator, CRAP, and DRY.
-   - Gherkin writer must use APS parser/IR DRY where required.
-   - QA uses CRAP/DRY before handoff.
-2. Add exact command examples.
-   - Valid `squad_event.sh <state> <detail...>`.
-   - Valid `squad_tool.sh require <tool> <source> <version>`.
-   - No examples with agent id as first `squad_event.sh` argument.
-3. Enforce missing-tool behavior.
-   - If install/fetch is allowed, use `ensure`.
-   - If not allowed, create a `blocked` handoff.
-   - No "repository-only" fallback for required role tools.
+Work:
 
-## Phase 5: Liveness And Cleanup
+1. Make the constitution/tool table the only source of required tool identities.
+2. Generate role startup tool instructions from that table.
+3. Let agents run `squad_tool.sh ensure` as needed for required tools.
+4. Canonicalize APS tools to
+   `github.com/unclebob/Acceptance-Pipeline-Specification`.
+5. Make `squad_tool.sh require` reject source mismatches clearly.
+6. Block merge when required tool evidence is missing.
+7. Require Gherkin handoffs to include both command transcript evidence and
+   normalized IR artifacts, including IR DRY reports and tool metadata.
+8. Make missing/install-failed tools canonical assignment blockers and dashboard
+   blockers.
 
-Goal: no invisible stalls and no residue after kill.
+Validation:
 
-Relevant `bugs.md` sections:
+- Tests for tool table driven prompt generation.
+- Tests for APS source mismatch rejection.
+- Handoff validation tests that reject missing Gherkin parser/IR evidence.
+- Dashboard data tests for tool blockers.
 
-- `SL can sit idle at prompt without re-entering workflow`
-- `Kill swarm leaves dead agents and worktrees behind`
-- `Dashboard drops agent around handoff transition`
+## Phase 5: Late-Stage Workflow And Merger Role
 
-1. Consolidate daemon responsibilities under `squadd`.
-   - Make `squadd` the only long-running squad daemon.
-   - Move any remaining `squad_statusd` liveness/status responsibilities into
-     `squadd`.
-   - Remove `squad_statusd` as an independent daemon, including startup,
-     shutdown, cleanup, and copied-script references.
-2. Add SL watchdog inside `squadd`.
-   - Watch SL tmux pane tail.
-   - If unchanged for 60 seconds and at idle prompt, send `Run squad_next.sh.`
-     plus the second return.
-   - Do not spam during visible activity or required approval wait.
-3. Improve agent liveness in `squadd`.
-   - Use pane-tail activity and heartbeat/status.
-   - Do not treat active visible work as stalled.
-   - Recovery must be race-tolerant.
-4. Fix kill cleanup.
-   - Kill tmux sessions.
-   - Retire all non-retired agents.
-   - Remove transient worktrees.
-   - Delete transient branches when safe.
-   - Preserve/recover handoffs from `handoff_sent` agents.
+Fixes:
 
-## Phase 6: Dashboard Fixes
+- `Architect And Batch Flow Ordering Is Wrong Or Incomplete`
+- `Merge Conflicts Need A Merger Workflow`
+- remaining late-stage portions of `Retry Loops Do Not Reset Downstream State`
 
-Goal: dashboard reflects authoritative workflow state and can drive approvals and
-messages.
+Work:
 
-Relevant `bugs.md` sections:
+1. Encode the late-stage FSM as `QA -> architect <-> senior-implementer -> done`.
+2. Ensure ready batches do not wait for unrelated stories or batches.
+3. Route senior-implementer output back to architect until the architect accepts.
+4. Add the special merger role outside normal transient-agent capacity.
+5. On merge conflict, preserve required branches/worktrees and assign merger.
+6. Have merger merge against the SL current integration state, run required test
+   suites, and hand back an unconflicted result.
 
-- `Dashboard drops agent around handoff transition`
-- `Dashboard assignment ordering and approval history are noisy`
-- `Dashboard story state label is misleading`
-- `Dashboard should allow sending free-form messages to SL`
-- `SL-created approval duplicates FSM-created approval`
+Validation:
 
-1. Render only active agents and active assignments.
-2. Show story state from canonical FSM state, not stale packet fields.
-3. Show newest assignments first.
-4. Remove approval history section.
-5. Add approval buttons from pending approval state.
-6. Add SL message textarea.
-   - Submit sends text to SL.
-   - Send two returns with 100ms delay.
+- FSM/simulator cases for QA-to-architect, architect rejection, senior
+  implementation, architect acceptance, and done.
+- Merge-conflict integration test that spawns merger and preserves required
+  worktrees/branches.
 
-## Phase 7: Simulation And Regression Tests
+## Phase 6: Dashboard Canonical Rendering And Controls
 
-Goal: prove the full workflow, not individual patches.
+Fixes:
 
-Relevant `bugs.md` sections:
+- `Dashboard Refresh Destroys SL Message Drafts`
+- `Dashboard Needs Artifact Links And Renderers`
+- `Dashboard Needs Live Agent Pane Windows`
+- `Dashboard Agent And Assignment Filtering Uses Stale State`
+- `Dashboard Story State Labels Are Confusing`
+- `User Messages From Web Dashboard Need Correct SL Delivery`
+- `Blockers Must Be First-Class Dashboard Items`
 
-- All workflow and helper bugs above.
-- `SL-created approval duplicates FSM-created approval`
-- `FSM ignores SL-created replacement assignments`
-- `Pending approval starves ready replacement assignments`
-- `Any active agent causes global scheduler wait`
-- `FSM lacks code-review revision loop`
-- `Architecture batch waits instead of starting with ready members`
-- `Senior-implementor output does not route back to architect`
-- `Helpers enforce workflow from stale side metadata`
-- `Review report merge checks blocked by untracked SL-side files`
+Work:
 
-1. Expand simulator coverage.
-   - Multiple stories.
-   - Partial approvals.
-   - Partial batches.
-   - Reviewer rejects once then accepts.
-   - Architecture reject/fix/re-review.
-   - Merge conflicts with repeated merger passes.
-   - Stalls: active-then-recovers and active-then-dark.
-   - Agent slots filling and freeing.
-2. Add helper regression tests.
-   - No stale active-batch blocker.
-   - No untracked review-file merge blocker.
-   - Transactional batch add.
-   - Retire removes worktree/branch.
-   - Required tool missing causes blocked handoff.
-3. Keep simulator out of normal `bb test`.
-   - Add explicit command for Monte Carlo/regression simulation.
+1. Preserve unsent SL message textarea content in browser memory across polling;
+   clear it only after successful submit.
+2. Keep polling active while typing and preserve text on backend failure.
+3. Deliver SL messages with the required two returns and 100 ms delay.
+4. Wake the SL after message delivery.
+5. Add Tier 1 artifact renderers: theme, story, Gherkin, QA procedure, review,
+   and blocker.
+6. Make pending approval artifact names link to the renderer.
+7. Add read-only live tmux pane windows for active agents.
+8. Show only current canonical assignments in active views; hide superseded
+   assignments by default.
+9. Sort assignment lists newest first and remove approval history from the normal
+   dashboard.
+10. Add a top-level blockers section.
+11. Use stage labels: `specified`, `gherkin approved`, `qa approved`,
+    `implemented`, `cleaned`, `code reviewed`, `architect approved`, `hardened`,
+    and `done`.
 
-## Phase 8: End-To-End Trial
+Validation:
 
-Goal: validate no partial fixes remain.
+- Browser tests for textarea preservation, submit success clearing, and submit
+  failure retention.
+- Browser tests for approval links, Tier 1 renderers, newest-first assignment
+  ordering, hidden superseded assignments, and blocker section.
+- Live pane endpoint/UI tests with mocked tmux output.
 
-Relevant `bugs.md` sections:
+## Phase 7: Role Prompt Quality
 
-- All sections in `bugs.md`; this phase is the integrated acceptance check.
+Fixes:
 
-1. Run a fresh HTW trial.
-2. Watch:
-   - approvals
-   - handoffs
-   - batch creation/closure
-   - code review loops
-   - hardener/QA/architecture loops
-   - merger behavior
-   - cleanup after kill
-3. Do not accept manual SL creativity as success.
-   - The FSM must recommend the correct actions.
-   - The SL should execute, not invent workflow.
+- `Analyst Prompt Lacks Story Writing Principles`
+- `Architect Prompt Needs Review-Oriented Principles`
+- `Role Prompts Must Require Tool Loading Up Front`
+
+Work:
+
+1. Add I.N.V.E.S.T. story guidance to the analyst prompt.
+2. Rephrase architect principles as advisory review criteria only.
+3. Include the Dependency Rule in architect review guidance.
+4. Include "low level is close to IO; high level is far from IO".
+5. Strengthen architect guidance to recommend splitting large multi-responsibility
+   modules into individual well-named modules with single responsibilities.
+6. Generate standard required-tool startup blocks for every role prompt from the
+   constitution/tool table.
+
+Validation:
+
+- Prompt snapshot or content tests for analyst, architect, cleaner, hardener,
+  Gherkin, QA, and other tool-using roles.
+
+## Phase 8: End-To-End Trial Readiness
+
+Work:
+
+1. Run focused unit and simulator suites from the prior phases.
+2. Run at least ten Monte Carlo simulator scenarios with varied story counts,
+   handoff delays, approval delays, and stall behaviors.
+3. Verify at least one scenario fills all available slots, frees slots
+   continuously, and starts pending work as slots free.
+4. Run one HTW-style dry trial and confirm:
+   - no duplicate approvals,
+   - no invalid batch commands,
+   - no hidden tool blockers,
+   - no stale dashboard assignments,
+   - no over-capacity transient agents,
+   - no orphaned non-preserved worktrees after kill.
+5. Update `bugs.md` with any new findings before another live swarm trial.

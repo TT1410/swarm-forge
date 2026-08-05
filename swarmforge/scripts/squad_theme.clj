@@ -6,10 +6,14 @@
             [squad-config :as cfg]
             [clojure.string :as str]))
 
+(def script-dir (fs/parent *file*))
+
 (def usage-text
   (str "Usage:\n"
        "  squad_theme.sh create <theme-id> <theme-file>\n"
        "  squad_theme.sh story <theme-id> <story-id> <story-file>\n"
+       "  squad_theme.sh stories <theme-id> <story-id>:<story-file>...\n"
+       "  squad_theme.sh approved-story <theme-id> <story-id> <story-file> <assignment-id> <branch> <sha> <detail...>\n"
        "  squad_theme.sh acceptance <theme-id> <artifact-id> <acceptance-file>\n"
        "  squad_theme.sh approve <theme-id> <gate> <detail...>\n"
        "  squad_theme.sh status <theme-id>"))
@@ -142,6 +146,38 @@
     (println "PATH:" relative-source)
     (println "STATE: story_added")))
 
+(defn parse-story-pair! [pair]
+  (let [[story-id story-file extra] (str/split pair #":" 3)]
+    (when (or extra (str/blank? story-id) (str/blank? story-file))
+      (exit! 2 "Story pairs must use <story-id>:<story-file>."))
+    {:story-id story-id
+     :story-file story-file}))
+
+(defn add-stories! [theme-id pairs]
+  (when-not (seq pairs)
+    (exit! 1 usage-text))
+  (doseq [{:keys [story-id story-file]} (map parse-story-pair! pairs)]
+    (add-story! theme-id story-id story-file)))
+
+(defn run-packet! [root & args]
+  (let [result (apply process/sh (concat [{:dir (str root) :continue true}
+                                          (str (fs/path script-dir "squad_packet.sh"))]
+                                         args))]
+    (when-not (zero? (:exit result))
+      (exit! (:exit result) (:err result)))
+    result))
+
+(defn add-approved-story! [theme-id story-id story-file assignment-id branch sha detail-parts]
+  (add-story! theme-id story-id story-file)
+  (let [root (fs/absolutize (project-root))
+        detail (str/replace (str/join " " detail-parts) #"\R+" " ")
+        detail (if (str/blank? detail) "approved-by-user" detail)]
+    (run-packet! root "create" theme-id story-id assignment-id branch sha)
+    (run-packet! root "approve" story-id "story" detail)
+    (println "SQUAD_THEME:" theme-id)
+    (println "STORY:" story-id)
+    (println "STATE: story_approved")))
+
 (defn add-acceptance! [theme-id artifact-id acceptance-file]
   (validate-id! "Theme id" theme-id)
   (validate-id! "Acceptance artifact id" artifact-id)
@@ -249,6 +285,14 @@
    "story" (fn [args]
              (exact-count! args 4)
              (add-story! (second args) (nth args 2) (nth args 3)))
+   "stories" (fn [args]
+               (minimum-count! args 3)
+               (add-stories! (second args) (drop 2 args)))
+   "approved-story" (fn [args]
+                      (minimum-count! args 7)
+                      (add-approved-story! (second args) (nth args 2) (nth args 3)
+                                           (nth args 4) (nth args 5) (nth args 6)
+                                           (drop 7 args)))
    "acceptance" (fn [args]
                   (exact-count! args 4)
                   (add-acceptance! (second args) (nth args 2) (nth args 3)))

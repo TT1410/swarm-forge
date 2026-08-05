@@ -210,6 +210,23 @@
       (is (some? (header completed "completed_at")))
       (is (some? (header next-file "dequeued_at"))))))
 
+(deftest done-with-current-rejects-stale-current-handoff-argument
+  (let [root (tmp-dir)
+        current (fs/path root ".swarmforge/handoffs/inbox/in_process/50_20260615T000001Z_000001_from_sender_to_receiver.handoff")
+        stale (fs/path root ".swarmforge/handoffs/inbox/in_process/50_20260615T999999Z_999999_from_sender_to_receiver.handoff")]
+    (init-repo! root)
+    (setup-project! root {"receiver" "task"})
+    (put-handoff! root "in_process" (fs/file-name current)
+                  {:id "20260615T000001Z_000001_from_sender"
+                   :from "sender" :to "receiver" :recipient "receiver"
+                   :priority "50" :type "git_handoff" :task "task-current"
+                   :commit "0123456789"})
+    (let [stale-result (run {:dir root :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                            (script "done_with_current.sh") (str stale))]
+      (is (= 1 (:exit stale-result)))
+      (is (str/includes? (:err stale-result) "CURRENT_HANDOFF_MISMATCH:"))
+      (is (fs/exists? current)))))
+
 (deftest done-with-current-batch-completes-and-accepts-next-batch
   (let [root (tmp-dir)
         batch (fs/path root ".swarmforge/handoffs/inbox/in_process/batch_20260615T000001Z_000001")]

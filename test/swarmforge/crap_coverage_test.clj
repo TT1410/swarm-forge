@@ -975,6 +975,7 @@
 
 (deftest config-and-forge-helper-branches
   (let [root (tmp-dir)]
+    (is (= 10 (config/squad-max-transient-agents root)))
     (write-file (fs/path root "swarmforge/squad.conf")
                 (str "approval_required theme false\n"
                      "approval_required qa-procedure required\n"
@@ -1413,6 +1414,7 @@
       (write-file approval-file "target_kind: story\ntarget_id: s1\ngate: story\nstate: pending\n")
       (is (= approval-file (approval/equivalent-approval-file root "story" "s1" "story")))
       (is (nil? (approval/equivalent-approval-file root "story" "s2" "story"))))))
+
 
 (deftest handoff-header-update-helper-branches
   (let [root (tmp-dir)

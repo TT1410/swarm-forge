@@ -1,1017 +1,624 @@
 # Bugs
 
-## SL-created approval duplicates FSM-created approval
-
-Observed in the HTW trial: after creating the `hunt-the-wumpus` theme, the SL
-manually created a theme approval request:
-
-```sh
-squad_approval.sh request approve-hunt-the-wumpus-theme ...
-```
-
-Then `squad_next.sh` recommended its canonical approval request:
-
-```sh
-squad_approval.sh request theme__hunt-the-wumpus ...
-```
-
-The result was two pending approvals for the same workflow gate:
-
-- `approve-hunt-the-wumpus-theme`
-- `theme__hunt-the-wumpus`
-
-Both targeted `(target_kind=theme, target_id=hunt-the-wumpus, gate=theme)`.
-Approving one would leave the other as stale pending state.
-
-Expected behavior: the FSM is the single source of workflow recommendations.
-The SL should create artifacts needed to satisfy the current recommended action,
-execute the command recommended by `squad_next.sh`, and then call
-`squad_next.sh` again. The SL should not independently create workflow records
-such as approvals, assignments, reviews, or retirements under alternate IDs.
-
-Likely cause: the SL interpreted the theme setup as requiring a hand-authored
-approval request before returning to the FSM. Separately, `squad_next.sh`
-deduplicates approval records by approval id rather than by
-`(target_kind, target_id, gate)`, so it did not recognize the manually created
-approval as equivalent to its canonical request.
-
-Reliable fix:
-
-1. Make `squad_next.sh` the only workflow planner.
-
-   The SL prompt must say that approvals, assignments, reviews, retirements, and
-   recovery actions are only created when `squad_next.sh` returns that exact
-   `NEXT_ACTION` and `COMMAND`. For theme setup, the SL may create the theme
-   artifact, then must immediately return to `squad_next.sh` for the approval
-   request.
-
-2. Make `squad_approval.sh request` idempotent by semantic key.
-
-   The helper should detect existing pending, approved, or rejected approvals
-   for the same `(target_kind, target_id, gate)`, even when the approval id
-   differs. If an equivalent pending approval exists, print the existing approval
-   and exit successfully. If the equivalent approval is already approved or
-   rejected, report that resolved state and exit without creating another
-   record.
-
-This gives the SL a strict planner/executor contract while also making retries,
-races, web requests, and accidental alternate ids harmless.
-
-## FSM ignores SL-created replacement assignments
-
-Observed in the HTW trial: after the analyst produced stories, the SL reviewed
-the merged artifacts and found that they conflicted with the user's clarified
-command grammar. The SL correctly recorded a `changes-requested` review and
-created a replacement analyst assignment:
-
-```text
-assignment_id: hunt-the-wumpus-analysis-command-grammar
-template: analyst
-state: assignment_created
-replaces: hunt-the-wumpus-analysis
-```
-
-After the original analyst was retired, `squad_next.sh` returned:
-
-```text
-NEXT_ACTION: wait
-REASON: no handoffs, pending approvals, active transient agents, or stale locks
-```
-
-Expected behavior: the SL must have the flexibility to review any merged
-artifact and send it back for revision. Once the SL records that review and
-creates a replacement assignment through the helper, the FSM should treat that
-replacement assignment like any other ready assignment. If capacity is
-available, `squad_next.sh` should recommend spawning the appropriate replacement
-agent.
-
-Likely cause: `squad_next.sh` builds spawn candidates mostly from its own
-stage-derived transition table. It does not have a general pass that scans
-durable `assignment_created` records and recommends spawning them when their
-requirements are satisfied and no active agent already owns the assignment.
-
-Reliable fix:
-
-1. Keep SL review authority explicit.
-
-   The SL may inspect merged artifacts, record review decisions, and create
-   replacement assignments when an artifact needs correction. This is not
-   workflow planning; it is artifact quality control.
-
-2. Add a generic ready-assignment spawn pass to `squad_next.sh`.
-
-   Before returning `wait`, the FSM should scan `.squad/assignments/*` for
-   assignments in `assignment_created` state, including replacements. For each
-   assignment, it should verify:
-
-   - the assignment's requirements are satisfied,
-   - no active or created agent already owns the assignment,
-   - template/group capacity allows a spawn,
-   - the assignment has a valid assignment file.
-
-   If those checks pass, `squad_next.sh` should return `request_spawn` with:
-
-   ```sh
-   squad_spawn_request.sh <template> <assignment-id> <assignment-file>
-   ```
-
-3. Preserve deterministic ordering.
-
-   Generic ready assignments should be sorted by priority, theme, story, stage,
-   creation time, and assignment id so replacement work does not starve normal
-   pipeline work and normal pipeline work does not hide ready replacements.
-
-4. Make replacement completion update the replaced assignment and current
-   artifact state.
-
-   When the replacement result is merged, the replaced assignment should remain
-   traceable as superseded, and the FSM should reason from the replacement
-   artifact as the current artifact for any downstream review or approval gate.
-
-## Spawning an agent does not mark assignment in progress
-
-Observed in the HTW trial: after manually spawning `analyst-002` for replacement
-assignment `hunt-the-wumpus-analysis-command-grammar`, the agent registry showed
-the agent as running:
-
-```text
-AGENT: analyst-002
-TASK_ID: hunt-the-wumpus-analysis-command-grammar
-STATE: running
-PANE_LIVE: true
-```
-
-But the assignment record still showed:
-
-```text
-assignment_id: hunt-the-wumpus-analysis-command-grammar
-state: assignment_created
-```
-
-Expected behavior: once a spawn request is fulfilled and an agent is assigned to
-an assignment, the assignment state should move to an active state such as
-`assigned` or `in_progress`, with the agent id recorded. The assignment record
-and the agent registry should agree about ownership and liveness.
-
-Likely cause: spawn fulfillment creates the agent registry entry and tmux
-session, but does not update `.squad/assignments/<assignment-id>/status`.
-
-Reliable fix:
-
-- When `squad_spawn_request.sh` or the spawn daemon successfully creates an
-  agent for an assignment, update the assignment status with:
-
-  ```text
-  state: in_progress
-  agent_id: <agent-id>
-  session: <session>
-  updated_at: <timestamp>
-  ```
-
-- When the agent sends a result handoff, transition the assignment from
-  `in_progress` to `result_received`.
-- Make `squad_next.sh` treat `assignment_created` as spawnable, `in_progress` as
-  owned by an active or recently active agent, and stale `in_progress` as a
-  recovery candidate only after liveness checks fail.
-
-## Dashboard drops agent around handoff transition
-
-Observed in the HTW trial: the web dashboard stopped listing an active transient
-agent just before handoff, then listed it again during handoff processing. The
-agent had not actually disappeared; `squad_status.sh` still showed the agent and
-the tmux pane remained live.
-
-Expected behavior: the dashboard should show agents consistently through the
-full lifecycle from spawn through retirement, including `complete`,
-`handoff_ready`, `handoff_sent`, and handoff processing states. The agent should
-not disappear from the web view merely because it is between active work and
-handoff delivery.
-
-Likely cause: this is a state interpretation/filtering issue in the web tool.
-The dashboard appears to filter agents by a subset of states considered
-"active", while the lower-level status tools still know about the agent. During
-fast transitions, the agent can move through a state that the dashboard does not
-render, then reappear when it reaches a rendered handoff state.
-
-Reliable fix:
-
-- Define one shared lifecycle classification for dashboard visibility instead
-  of having the web UI infer visibility from its own state subset.
-- Show every non-retired agent in the active agent list.
-- Show retired agents only in history or omit them from the normal active view,
-  but do not hide live agents in transitional states.
-- Ensure `complete`, `handoff_ready`, and `handoff_sent` are treated as visible
-  live states until `squad_retire.sh` records `retired`.
-
-## Accepted analyst stories are not registered for approval
-
-Observed in the HTW trial: the replacement analyst assignment
-`hunt-the-wumpus-analysis-command-grammar` was merged and reviewed as accepted.
-The revised story files existed under `stories/*.md`, and the assignment status
-was:
-
-```text
-state: review_accepted
-```
-
-After the agent was retired, `squad_next.sh` returned:
-
-```text
-NEXT_ACTION: wait
-REASON: no handoffs, pending approvals, active transient agents, or stale locks
-```
-
-No story approvals were registered because no durable story packets existed
-under `.squad/stories`.
-
-Expected behavior: accepting an analyst/story-writing assignment should lead to
-durable story registration. Each accepted story artifact should be recorded in
-the workflow state, then `squad_next.sh` should create or request the configured
-story approval gates.
-
-Likely cause: the workflow treats accepted theme-level analyst work as complete
-but does not transition the resulting `stories/*.md` artifacts into `.squad`
-story packet state. `squad_next.sh` only reasons over packet records, not raw
-files in `stories/`.
-
-Reliable fix:
-
-1. Add an explicit story-registration transition after accepted analyst work.
-
-   When a theme-scoped analyst assignment reaches `review_accepted`, the FSM
-   should recommend a deterministic registration action for the produced story
-   artifacts.
-
-2. Use a helper to register stories into durable workflow state.
-
-   The command should either call existing helpers such as:
-
-   ```sh
-   squad_theme.sh story <theme-id> <story-id> <story-file>
-   ```
-
-   or use a dedicated story packet helper that records the story id, theme id,
-   artifact path, source assignment, revision, and approval fields.
-
-3. Make registration idempotent.
-
-   Re-running the registration action should update or report existing story
-   records for the same story id and artifact path rather than creating
-   duplicates.
-
-4. After registration, continue the normal approval pipeline.
-
-   Once story packets exist, `squad_next.sh` should recommend story approval
-   creation for every story whose `story` approval gate is required and not yet
-   satisfied.
-
-## Dashboard assignment ordering and approval history are noisy
-
-Observed in the HTW trial: the web dashboard lists assignments, but the ordering
-does not prioritize the newest work. During active swarm monitoring, the newest
-assignments are the most relevant because they show the current recovery,
-revision, and handoff context.
-
-Expected behavior: assignments in the web dashboard should be listed in reverse
-chronological order, newest first.
-
-Observed separately: the dashboard includes an approval history section. During
-live operation this adds noise without helping the SL or user make the next
-decision.
-
-Expected behavior: remove the approval history section from the dashboard. The
-dashboard should focus on pending approvals, current stories, active agents, and
-active/relevant assignments.
-
-## Merge conflicts should route to a merger agent
-
-Observed in the HTW trial discussion: `squad_assign.sh merge-ready` correctly
-detects merge conflicts by attempting a no-commit merge and marking the
-assignment `merge_blocked` when the dry-run merge fails. The policy for what
-happens next needs to be explicit.
-
-Expected behavior: merge conflicts should be handled by a specialized transient
-agent named `merger`, not by the SL and not automatically by the original
-transient agent. The SL decides that a merge conflict needs merger work, creates
-or requests the merger assignment, and the merger hands back an unconflicted
-merge result.
-
-Policy:
-
-- The SL does not resolve merge conflicts directly.
-- The SL routes merge conflicts to a `merger` role through the workflow.
-- The merger resolves mechanical conflicts between current `HEAD` and the
-  handed-off result commit.
-- The merger may make minimal integration edits needed to preserve both sides.
-- The merger records what it changed during conflict resolution.
-- The merger must not silently rewrite the artifact's intended behavior while
-  resolving conflicts.
-- If a conflict exposes a substantive requirement or design disagreement, the
-  merger should hand back a blocker instead of guessing.
-- Unlike most transient artifact roles, the merger is allowed to run relevant
-  test suites to ensure the resolved merge did not break existing behavior.
-- Do not introduce a merge lock for now. Other handoffs may continue to be
-  accepted while a merger is active.
-- Because there is no merge lock, a merger handoff may itself conflict if
-  `master` has moved again before the SL accepts it. In that case, the SL should
-  route the new conflict through another merger pass rather than resolving it
-  directly.
-
-Reliable fix:
-
-- When `squad_assign.sh merge-ready` records `merge_blocked` because of a merge
-  conflict, `squad_next.sh` should recommend creating a `merger` assignment or
-  requesting a `merger` spawn.
-- Add a `merger` role template and contract.
-- Add helper support for merger assignments that includes:
-  - assignment id and original assignment id,
-  - conflicted result commit,
-  - target branch or current `HEAD`,
-  - merge error details,
-  - allowed test command scope,
-  - required conflict-resolution notes.
-- Define the merger handoff format so it returns either:
-  - an unconflicted merge commit ready for SL acceptance, or
-  - a blocker explaining the substantive conflict.
-- Update the FSM so a successful merger handoff can move the original assignment
-  back to merge-ready or merged workflow state without losing traceability.
-- Add FSM coverage for repeated merger passes caused by concurrent accepted
-  handoffs, since no merge lock is used.
-
-## Dashboard should allow sending free-form messages to SL
-
-Requested during the HTW trial: the web dashboard should include a text area and
-a submit button for sending free-form user text to the squad leader.
+This file groups the swarm trial bugs by the subsystem that should own the fix.
+The common theme is that durable workflow state must be canonical, helpers must
+enforce validity without inventing workflow, and the dashboard must render that
+canonical state without guessing.
+
+## Workflow FSM And Helper Contract
+
+### FSM Must Be The Workflow Authority
+
+The FSM should recommend actions to the squad leader, and the squad leader
+should execute those actions. The SL should not independently create workflow
+records such as approvals, assignments, reviews, retirements, or recovery paths
+under alternate ids.
+
+Observed failure modes:
+
+- The SL created an approval manually, then `squad_next.sh` recommended a
+  second canonical approval for the same gate.
+- The SL sometimes recognized that the FSM recommendation was wrong and worked
+  around it manually.
+- Helper tools sometimes failed or forced manual file edits, so the SL bypassed
+  them and hand-wrote assignment mirrors.
 
 Expected behavior:
 
-- The dashboard shows a multiline text area.
-- The dashboard shows a submit button near that text area.
-- When the user submits text, the web daemon sends that text to the SL.
-- The SL receives it in the same practical channel as other wake-up or handoff
-  notifications, so the message can interrupt a wait state and prompt the SL to
-  run `squad_next.sh` or otherwise respond according to its role.
-- When sending the text into the SL tmux pane, send two returns with a 100ms
-  delay between them. The second return is needed to reliably submit the
-  message to the running Codex session.
+1. `squad_next.sh` is the single source of workflow recommendations.
+2. The SL creates or updates durable workflow state only through helper commands
+   recommended by the FSM, except that the SL is allowed to create workflow
+   records directly when it is explicitly acting on user instruction or making a
+   quality-control decision about an artifact it has reviewed.
+3. Helpers enforce command format, object identity, and data validity, but do not
+   impose an alternate workflow policy.
+4. After executing a recommendation, the SL calls `squad_next.sh` again until the
+   next state is waiting, blocked, or user-gated.
 
-Purpose: this gives the user a low-friction way to clarify requirements,
-approve direction informally, or redirect the SL without manually attaching to
-the tmux session.
+### Approval Requests Must Be Idempotent By Semantic Gate
 
-## Pending approval starves ready replacement assignments
+Approval records can be duplicated when the same workflow gate is created with
+different approval ids.
 
-Observed in the HTW trial: while Story 04 was waiting for QA procedure approval,
-there were no active transient agents. Several independent replacement
-assignments were already in `assignment_created` state and could have been
-spawned:
+Observed in a trial: the SL manually requested theme approval using one id, then
+`squad_next.sh` recommended another approval id for the same
+`(target_kind, target_id, gate)`.
 
-```text
-hunt-the-wumpus-01-console-setup-qa-procedure-revision
-hunt-the-wumpus-02-turn-movement-hazards-gherkin-revision
-hunt-the-wumpus-03-crooked-arrows-gherkin-revision
-hunt-the-wumpus-05-fidelity-contract-gherkin-revision
-hunt-the-wumpus-05-fidelity-contract-qa-procedure-revision
-```
+Expected behavior:
 
-But `squad_next.sh` returned only:
+1. `squad_approval.sh request` should be idempotent by
+   `(target_kind, target_id, gate)`, not just by approval id.
+2. If an equivalent pending approval exists, return that approval.
+3. If the equivalent approval is already approved or rejected, report that
+   resolved state and do not create a duplicate.
+4. Web approval button presses should wake the SL and cause it to run and execute
+   `squad_next.sh`.
 
-```text
-NEXT_ACTION: request_user_approval
-APPROVAL: qa-procedure__hunt-the-wumpus-04-terminal-replay
-```
+### Squad Next Emits Invalid Batch Assignment Commands
 
-Expected behavior: a pending approval for one story should not globally block
-ready work for other stories. If transient slots are available and independent
-assignments are ready, the FSM should recommend spawning those assignments even
-while another story is waiting at an approval gate.
+`squad_next.sh` can recommend a batch assignment command using `batch` where
+`squad_assign.sh create` expects a story id or another valid scope.
 
-Likely cause: approval waits have higher global priority than ready assignment
-spawns, and `squad_next.sh` returns a single pending approval action before
-considering independent ready assignments.
-
-Reliable fix:
-
-- Treat approvals as gates for their own target artifact, not as global swarm
-  blockers.
-- When there are open transient slots, prefer ready spawn/create-assignment work
-  over merely re-reporting an already pending approval.
-- Continue showing pending approvals in `squad_next.sh` output or dashboard
-  state, but do not let them starve independent work.
-- Include replacement assignments in the generic ready-assignment spawn pass so
-  revision work keeps moving while unrelated approvals are pending.
-
-## Any active agent causes global scheduler wait
-
-Observed in the HTW trial: after Story 04 implementation started, the swarm had
-one active implementer and a configured capacity of five transient agents:
+Observed in `/Users/unclebob/junk/squad`:
 
 ```text
-max_transient_agents 5
-ACTIVE: implementer-001 hunt-the-wumpus-04-terminal-replay-implementation running
+NEXT_ACTION: create_assignment
+THEME: greg-yob-wumpus
+STORY: batch
+TEMPLATE: hardener
+COMMAND: squad_assign.sh create greg-yob-wumpus batch hardener greg-yob-wumpus-hardener-r5 <instructions-file>
 ```
 
-`squad_next.sh` returned:
+Earlier attempts to run this command shape failed with:
 
 ```text
-NEXT_ACTION: wait
-REASON: active agents are still working or awaiting handoff delivery
+Story file not found: .../.squad/themes/greg-yob-wumpus/stories/batch.md
 ```
 
-Other independent work was available, including previously created replacement
-assignments, but no additional agents were spawned.
+Expected behavior:
 
-Expected behavior: active agents should consume capacity, not block the whole
-scheduler. If total transient capacity is not full and independent work is
-ready, `squad_next.sh` should recommend creating or spawning additional
-assignments while existing agents continue working.
+1. `squad_next.sh` should only emit commands accepted by the corresponding
+   helper.
+2. Batch-scoped work should use `squad_assign.sh create-batch ...`, not
+   story-shaped `squad_assign.sh create ... batch ...` syntax.
+3. Batch assignment creation should not require the SL to bypass helpers or
+   write state files manually.
 
-Likely cause: the advisor has a global wait path for "active agents are still
-working" that fires before checking whether additional work can fit in the
-remaining transient slots.
+### Bulk Operations Are Missing
 
-Reliable fix:
+The helper interface forces the SL to run many nearly identical commands for
+repeated artifacts.
 
-- Replace the global active-agent wait with capacity-aware scheduling.
-- Count active transient agents against `max_transient_agents`.
-- Count template and group limits separately.
-- If open capacity remains, continue evaluating ready workflow actions.
-- Return `wait` for active agents only when no independent ready action exists
-  or all relevant capacity limits are full.
-- Include the active-agent summary as context in `wait` output, not as a reason
-  to stop scheduling by itself.
+Needed bulk operations:
 
-## Dashboard story state label is misleading
+- Add all stories produced by an analyst in one command.
+- Request or record approval for all eligible stories in one command.
+- Generalize this pattern for any repeated workflow action over a selected or
+  eligible set of artifacts.
 
-Observed in the HTW trial: the web dashboard showed Story 1 as
-`specification_in_progress` even though the story had progressed into
-implementation-related work. The visible story state did not match the user's
-understanding of what was actively happening.
+Expected behavior: bulk helpers should take explicit artifact ids, apply the same
+deterministic validation as single-artifact helpers, and report per-artifact
+results. They should not default to "all eligible" without an explicit selected
+set.
 
-Expected behavior: the dashboard should show a derived user-facing current
-phase for each story, not the raw packet `state` field.
+### Direct SL-Created Stories Are Not Supported
 
-Likely cause: the dashboard Stories table displays `s.state` directly from the
-story packet. That field is a coarse packet/FSM state and can remain
-`specification_in_progress` while downstream stage fields or assignments show
-that the story is in review, approval, implementation, revision, or another
-more specific phase.
+The user should be able to define a story directly through the SL.
 
-Reliable fix:
+Expected behavior:
 
-- Add a derived dashboard story phase, computed from the most advanced relevant
-  fields and live assignment/agent state.
-- Prefer active work over coarse packet state. For example, show
-  `implementation running` when an implementer assignment/agent is active.
-- Show pending gates explicitly, such as `awaiting QA approval`.
-- Show revision states explicitly, such as `Gherkin revision needed` or
-  `QA procedure revision running`.
-- Keep the raw packet `state` available for debugging if useful, but do not use
-  it as the primary user-facing story state.
+1. The SL creates the story artifact through a helper.
+2. The story is registered as already approved; a user-authored direct story is
+   treated as already user-approved.
+3. The story receives an id, source artifact, packet entry, and events log.
+4. The FSM sends the approved story to Gherkin and QA procedure agents through
+   the normal downstream path.
 
-## Old review assignment suppresses review of revised artifact
+### Generic Ready Assignments Are Not Spawned Reliably
 
-Observed in the HTW trial: Story 1 had a revised QA procedure attached:
+The FSM does not reliably discover ready assignment records that were created by
+the SL or by a recovery/revision path.
+
+Observed failure modes:
+
+- The SL created a replacement analyst assignment after reviewing a clarified
+  theme, but `squad_next.sh` returned `wait` instead of spawning the replacement.
+- Ready story work could sit idle while `squad_next.sh` focused on a duplicate
+  batch recommendation.
+
+Expected behavior:
+
+1. Before returning `wait`, `squad_next.sh` scans canonical assignments for
+   spawnable `assignment_created` work.
+2. It verifies requirements, capacity, ownership, and assignment file validity.
+3. Explicit ready assignments outrank ordinary stage-derived spawn candidates,
+   because they represent intentional user/SL/recovery work.
+4. It recommends spawning ready assignments in deterministic priority order.
+5. Replacement assignment completion supersedes the replaced assignment and
+   updates current artifact state.
+
+### Retry Loops Do Not Reset Downstream State
+
+When a reviewer requests changes and a writer/implementer retry completes, the
+story does not always re-enter the correct downstream path.
+
+Observed in `/Users/unclebob/junk/squad`: Story 1 received code-review changes,
+an implementer retry was merged, and the packet returned to `implemented`, but
+stale cleaner/code-review fields still blocked or confused the next cleaner and
+review pass.
+
+Expected behavior:
+
+1. A completed retry marks downstream results derived from the prior artifact as
+   superseded, retaining history.
+2. Implementer retry success routes to cleaner, then code reviewer.
+3. Code reviewer changes route back to implementer.
+4. Cleaner success routes to code reviewer.
+5. Senior implementer output routes back to architect, because the architect has
+   final architectural review authority.
+6. Stale `changes-requested`, blocked, or review fields from a superseded chain
+   must not permanently block the current chain.
+
+### Architect And Batch Flow Ordering Is Wrong Or Incomplete
+
+Batches should not wait unnecessarily once their inputs are ready. The desired
+late-stage flow is `QA -> architect <-> senior-implementer -> done`.
+
+Observed failure modes:
+
+- A batch appeared ready for architecture but was not started.
+- Story 4 appeared ready for hardening, but `squad_next.sh` continued to
+  recommend duplicate hardener work instead of starting the needed work.
+- Senior implementer routing did not clearly return to architect review.
+
+Expected behavior: batch and story flow should be encoded directly in the FSM,
+with no requirement that all unrelated stories complete before a ready story or
+batch advances. Architect and senior-implementer should form a review/revision
+loop until the architect accepts the result, at which point the workflow reaches
+done.
+
+### Merge Conflicts Need A Merger Workflow
+
+Merge conflicts should not be resolved directly by the SL long term. They should
+trigger a dedicated merger agent. The merger is a special role outside normal
+transient-agent capacity.
+
+Expected behavior:
+
+1. A `merge_blocked` assignment triggers merger workflow.
+2. The merger checks out the SL's current integration state and merges the
+   author agent's result branch or commit.
+3. The merger runs relevant test suites to ensure the merge did not break
+   existing behavior.
+4. The merger hands an unconflicted merge result back to the SL.
+5. The author branch remains reachable until merge resolution succeeds or is
+   explicitly abandoned.
+6. The author worktree is preserved when it may contain useful conflict context,
+   generated artifacts, or diagnostics.
+
+No lock is required for now, but the workflow must tolerate a second merge
+conflict after the merger hands work back to the SL.
+
+### Result Handoff Validation Is Too Weak
+
+The workflow can accept a result handoff commit that is already reachable from
+`HEAD` even when that commit does not belong to the assignment.
+
+Observed in `/Users/unclebob/junk/squad`: Story 2 was marked `cleaned` from
+cleaner assignment `greg-yob-wumpus-002-movement-and-room-hazards-cleaner-r2`,
+with `cleaner_sha: 5569bb70f5`. That commit was actually a merge commit for a
+different Gherkin assignment.
+
+Expected behavior:
+
+1. A result handoff commit is validated against sender, assignment id,
+   role/template, branch, and worktree lineage.
+2. Every handoff also includes an explicit assignment result manifest tying the
+   result to the assignment, agent, template, commit, and produced artifacts.
+3. A commit merely being reachable from `HEAD` is not enough.
+4. No-op results still need an explicit assignment result artifact or no-op
+   declaration tied to the assignment.
+5. Invalid result handoffs block the assignment and become visible dashboard
+   blockers.
+
+### Finish-Current Recommendations Can Be Stale
+
+`squad_next.sh` can recommend `finish_in_process_handoff` and tell the SL to run
+`done_with_current.sh` when no current handoff/task exists.
+
+Observed in `/Users/unclebob/junk/squad`: the SL ran `done_with_current.sh` and
+received `NO_TASK`; a fresh `squad_next.sh` then recommended retiring an agent.
+
+Expected behavior: `finish_in_process_handoff` is recommended only when the
+handoff helper has an actual in-process handoff and `squad_next.sh` can include
+the concrete handoff id or path. Otherwise the FSM should return the next valid
+action. `squad_next.sh` should not emit bare `done_with_current.sh` without a
+concrete current handoff.
+
+## Agent Lifecycle, Capacity, And Cleanup
+
+### Lifecycle States Are Used For Step Telemetry
+
+Agents use lifecycle states such as `failed` and `complete` for intermediate
+steps, then continue working. This makes liveness, dashboard display, and stall
+recovery ambiguous.
+
+Observed in `/Users/unclebob/junk/squad`: `hardener-004` logged:
 
 ```text
-qa_procedure_assignment: hunt-the-wumpus-01-console-setup-qa-procedure-revision
-qa_procedure_assignment_state: complete
-qa_procedure_review_state: pending
+failed  hardening failed: gherkin-mutator story 001 exit 1
+running hardening: gherkin-parser story 001 after pruning
+running hardening passed: gherkin-mutator story 001 after pruning
 ```
 
-The correct next step was a fresh `qa-procedure-reviewer` assignment for the
-revised QA procedure. However, the old QA procedure review assignment still
-existed:
+Other agents logged `complete` before later `handoff_ready` and `handoff_sent`.
+
+Expected behavior:
+
+1. Lifecycle states describe assignment lifecycle, not command results.
+2. Recoverable red/green failures are recorded as `running` detail or command
+   telemetry.
+3. `failed` is terminal unless an explicit deterministic retry/recovery
+   transition changes assignment state.
+4. `complete` should be removed from transient agent lifecycle. Agents should use
+   `handoff_ready` when the assignment artifact is complete and ready to hand
+   off.
+
+### Assignment And Agent State Are Not Synchronized
+
+Spawning an agent does not always mark the assignment as active, and result
+handoffs do not always transition assignments deterministically.
+
+Expected behavior:
+
+1. Spawn fulfillment sets assignment state to `in_progress` and records agent id
+   and session.
+2. Result handoff transitions assignment from `in_progress` to `result_received`
+   or a blocked/invalid state.
+3. `squad_next.sh` reasons from canonical assignment state, not stale mirrors.
+4. Canonical assignment states are `created`, `in_progress`, `handoff_sent`,
+   `result_received`, `merged`, `blocked`, `superseded`, and `retired`.
+
+### Capacity And Throughput Are Poorly Scheduled
+
+The swarm can exceed configured capacity and can also underuse available slots.
+
+Observed failure modes:
+
+- `max_transient_agents` was 5, but six transient tmux sessions were active.
+- The swarm repeatedly filled slots, waited while agents sat in `handoff_sent`,
+  flushed retirements only after the wave completed, then started a new wave.
+- Ready work sat idle while only one or two agents were running.
+
+Likely causes:
+
+- Capacity checks use stale or incomplete active-agent state.
+- `handoff_sent` agents with live tmux sessions do not consistently count
+  against capacity.
+- `squad_next` action priority does not first free completed slots and then fill
+  available slots.
+
+Expected behavior:
+
+1. Live transient tmux sessions never exceed `max_transient_agents`.
+2. Agents whose merged handoff no longer needs them are retired promptly.
+3. Ready work is spawned as soon as capacity is available.
+4. The swarm behaves as a continuous pipeline, not a fill/wait/flush batch.
+5. Agents in `handoff_sent` do not count against capacity once their handoff has
+   been sent, even if they have not yet been retired.
+
+### Handoff-Sent Agents Are Not Retired Promptly
+
+Agents in `handoff_sent` can remain present after the SL has merged their
+handoff, occupying capacity and cluttering status displays.
+
+Observed in `/Users/unclebob/junk/squad`: several agents remained listed as
+`handoff_sent` after `squadd.log` recorded `handoff-delivered` for their
+handoffs.
+
+Expected behavior: once a transient agent's handoff result has been merged, the
+agent should be retired promptly unless merge-blocked preservation applies.
+Retirement removes the tmux session, worktree, role registration, and branch
+according to the normal policy.
+
+### Swarm Shutdown Leaves In-Flight Worktrees Behind
+
+Killing or stopping the swarm can leave an in-flight transient agent registered
+as `running`, with its git worktree and branch still present, even though its
+tmux session is gone and `squadd` has stopped.
+
+Observed in `/Users/unclebob/junk/squad`: after shutdown, `tmux ls` was empty
+and `.swarmforge/daemon/squadd.log` ended with `stopped`, but `hardener-004`
+still had `state: running`, and `git worktree list --porcelain` still showed
+`.worktrees/hardener-004` on branch `swarmforge-hardener-004`.
+
+Expected behavior:
+
+1. Swarm shutdown cleanup reconciles every registered transient agent.
+2. If the tmux session is gone, the agent does not remain in `running`.
+3. On swarm kill, all non-merge-blocked transient worktrees and branches are
+   deleted unconditionally.
+4. Preserved worktrees are marked with explicit preserved/blocked state and
+   reason.
+
+### Handoff Sending Is Not Cleanly Idempotent
+
+Agents can believe they sent a handoff, then resume running and send again when
+a helper-side draft or path issue occurs.
+
+Observed in `/Users/unclebob/junk/squad`: `qa-procedure-reviewer-007` logged
+`handoff_sent`, then `running` because the draft path was missing, then
+`handoff_sent` again. Only one completed inbox handoff remained in that case,
+but the agent-facing lifecycle was confusing and could create duplicate SL work.
+
+Expected behavior:
+
+1. Handoff creation/sending is idempotent by `(task, sender, recipient, commit)`.
+2. If a send fails before enqueue, the helper reports failure without recording
+   `handoff_sent`.
+3. If a send succeeds, repeating the command returns the existing handoff
+   identity.
+
+### Stall Recovery Is Too Sensitive And SL Wakeups Are Weak
+
+Recovery is too aggressive, too race-sensitive, and does not reliably use agent
+activity evidence such as status timestamps and pane tails.
+
+Observed failure modes:
+
+- The SL treated active agents as blocked or missing even when their pane tails
+  showed work.
+- The SL was woken by `squadd`, ran `squad_next.sh`, and summarized the
+  recommendation instead of executing the `COMMAND`.
+- The SL can sit idle waiting for a prompt when no agents are active and ready
+  work exists.
+
+Expected behavior:
+
+1. `squadd` determines idleness from no pane/status activity for the configured
+   60 second threshold, not raw elapsed time alone.
+2. Agent pane tails and heartbeat/status updates count as liveness. A busy pane
+   tail suppresses stall recovery even if no `squad_event` heartbeat is written.
+3. A wakeup tells the SL to run `squad_next.sh`, execute the recommended command,
+   then continue the advisor loop.
+4. If a command cannot be executed, the SL records/reports a blocker instead of
+   repeatedly printing the same recommendation.
+
+## Tool Provisioning And Role Contracts
+
+### Tool Installation Policy Is Contradictory
+
+The constitution identifies required quality-tool repositories and says
+quality-gate agents should install missing task-specific tools when needed, but
+some role prompts instruct agents to use `squad_tool.sh require` and block unless
+the assignment explicitly authorizes `ensure`.
+
+Observed in `/Users/unclebob/junk/squad`: cleaner agents knew the Clojure CRAP
+and DRY tool sources, but the shared tool cache was empty. `require` failed with
+`SQUAD_TOOL_MISSING`, and the cleaner blocked because its prompt prohibited
+installation without assignment-specific authorization.
+
+Expected behavior:
+
+1. Constitution, role prompts, role contracts, and generated assignments agree
+   on the tool acquisition policy.
+2. Agents load/install required tools as needed by running `squad_tool.sh ensure`
+   for tools listed in the canonical role/tool table.
+3. Missing required tools become deterministic assignment blockers only after
+   install/provisioning has failed.
+4. All roles that need external tools are explicitly told at startup to load or
+   ensure those tools.
+5. Required tools are defined only in the constitution/tool table. Role prompts
+   refer to that table instead of hardcoding divergent tool commands.
+
+Affected roles include cleaner, hardener, QA, architect/reviewer roles, code
+reviewer, Gherkin writer/reviewer, and any role using CRAP, DRY, mutation, or APS
+tools.
+
+### APS Tool Source Identity Is Inconsistent
+
+The hardener role contract required `gherkin-parser` and `gherkin-mutator` from
+`github.com/unclebob/Acceptance-Pipeline-Specification`, but retry assignment
+text and shared manifests used standalone sources:
 
 ```text
-hunt-the-wumpus-01-console-setup-qa-procedure-review
-template: qa-procedure-reviewer
-state: review_accepted
+github.com/unclebob/gherkin-parser
+github.com/unclebob/gherkin-mutator
 ```
 
-No new review assignment was created for the revised artifact.
-
-Expected behavior: each revised artifact needs its own fresh review. An old
-review assignment for a superseded artifact must not suppress review of a newer
-replacement artifact.
-
-Likely cause: the FSM checks for any existing review assignment by story and
-template, without considering whether that assignment reviewed the current
-artifact revision and without treating `review_accepted` as terminal for
-assignment-creation suppression.
-
-Reliable fix:
-
-- Treat `review_accepted` and `review_changes_requested` as terminal assignment
-  states for the purpose of deciding whether another review assignment is
-  needed.
-- Scope review assignment suppression to the current artifact revision, not only
-  `(story_id, template)`.
-- Include artifact path, artifact assignment id, and artifact sha in review
-  assignment metadata.
-- When a replacement writer artifact is attached, clear or supersede the prior
-  review state so the FSM can request review of the current artifact.
-
-## FSM lacks code-review revision loop
-
-Observed in workflow review: the intended post-implementation loop is:
-
-```text
-implementer -> cleaner -> code-reviewer -> implementer -> cleaner -> code-reviewer -> ...
-```
-
-The loop should continue until the code reviewer accepts the cleaned
-implementation.
-
-Current FSM behavior appears to be linear:
-
-```text
-implementation_sha present
--> cleaner assignment if cleaner_sha missing
--> code-reviewer assignment if cleaner_sha present and code_review missing
--> code-review approval if code_review accepted
--> hardener
-```
-
-Expected behavior: when a code reviewer requests changes, the FSM should route
-the work back to an implementer revision assignment. After the revised
-implementation is merged and attached, the FSM should run cleaner again, then
-code reviewer again.
-
-Likely cause: the transition table does not include an explicit
-`code_review == changes-requested` branch, and downstream state is keyed only on
-the presence of fields such as `implementation_sha`, `cleaner_sha`, and
-`code_review`.
-
-Reliable fix:
-
-- Add a code-review rejection transition:
-
-  ```text
-  code_review: changes-requested -> replacement implementer assignment
-  ```
-
-- Scope cleaner and code-review state to the current implementation revision,
-  not only the story.
-- When a replacement implementation is attached, clear or supersede
-  `cleaner_sha`, `code_review`, `code_review_sha`, and downstream post-cleaning
-  state for the prior implementation.
-- Require the replacement implementer assignment to include the code review
-  report, current implementation commit, approved story, approved Gherkin, and
-  approved QA procedure.
-- After replacement implementation is merged, rerun the normal cleaner and
-  code-reviewer stages before allowing hardener work.
-
-## Hardener proceeds without required hardening tools
-
-Observed in the HTW trial: `hardener-001` attempted to require the expected
-hardening tools:
-
-```text
-clj-mutate
-gherkin-parser
-dry4clj
-gherkin-mutator
-```
-
-Each `squad_tool.sh require` call returned `SQUAD_TOOL_MISSING` with reason
-`missing manifest`. The hardener then recorded:
-
-```text
-required hardening tools missing from cache; proceeding with repository workflow only
-```
-
-Expected behavior: the hardener must not silently downgrade to repository-only
-verification when required hardening tools are unavailable. Mutation, soft
-Gherkin mutation, CRAP, and DRY checks are the hardener's core role.
-
-Policy:
-
-- If the assignment or role policy permits fetching/installing tools, the
-  hardener should obtain the required tools through `squad_tool.sh ensure`.
-- If fetching/installing is not permitted, missing required hardening tools are
-  a blocker.
-- The hardener should record `blocked` and hand the missing-tool blocker to the
-  SL rather than proceeding without the tools.
-
-Reliable fix:
-
-- Tighten the hardener prompt so `SQUAD_TOOL_MISSING` for required hardening
-  tools requires either approved tool acquisition or a blocker handoff.
-- Do not allow "repository workflow only" as a substitute for hardening.
-- Make hardener assignments include explicit tool-acquisition permission or
-  preflight the shared tool cache before spawning the hardener.
-
-## Packet review fields do not distinguish stale findings from current state
-
-Observed in the HTW trial: Story 1 appeared to be invalidly included in
-hardener batch `hunt-the-wumpus-hardener` because its packet still showed an old
-negative code review:
-
-```text
-hardener_batch: hunt-the-wumpus-hardener
-hardener_batch_stage: code_reviewed
-hardener_batch_assignment: hunt-the-wumpus-01-console-setup-code-review
-hardener_batch_sha: f53e2c6619
-code_review: changes-requested
-code_review_assignment: hunt-the-wumpus-01-console-setup-code-review
-```
-
-But Story 1 also had later downstream state from a replacement/fix path:
-implementation fix, hardening approval, QA approval, and architecture review.
-The packet retained the old `code_review: changes-requested` fields beside newer
-state, making the current effective workflow state ambiguous.
-
-Expected behavior: packet state must distinguish historical review findings from
-the current effective review for the current artifact/implementation iteration.
-Old rejected reviews should remain available as history, but they must not look
-like the current effective verdict after a replacement/fix path succeeds.
-
-This is different from the genuinely invalid Stories 2/3 case, where rejected
-code-review results were newly added to the hardener batch before a replacement
-implementation had succeeded.
-
-Policy:
-
-- Eligibility checks must use the current active iteration, not any historical
-  rejected review field.
-- Replacement/fix work should supersede or version old review fields when it
-  becomes the current implementation path.
-- Historical findings should be kept in iteration history, not exposed as the
-  canonical current `code_review` if they no longer apply to the current
-  implementation sha.
-- Only stories whose current effective code review is accepted should enter a
-  hardener batch.
-- A story whose current effective review is `changes-requested` must route back
-  through the revision loop:
-
-```text
-implementer -> cleaner -> code-reviewer
-```
-
-Likely cause: story packets store one set of canonical review fields while also
-using `*_iterations` as history. Replacement/fix paths can add newer successful
-artifact state without clearing, superseding, or versioning older negative
-review fields. Separately, hardener eligibility can be fooled if it looks only at
-`code_review_sha` presence and/or optional `code-review` approval satisfaction
-rather than the current effective verdict for the current implementation sha.
-
-Reliable fix:
-
-- Define a deterministic "current effective iteration" view for each stage.
-- Tie review verdicts to the artifact sha they reviewed.
-- When replacement/fix implementation is accepted, either:
-  - clear superseded negative review fields from the canonical view, or
-  - keep them only in iteration history while promoting the replacement verdict
-    into the canonical current fields.
-- Hardener eligibility must require the current effective review to be accepted:
-
-  ```text
-  code_review: accepted
-  code_review_sha: present
-  code_review_approval satisfied
-  ```
-
-- Once a batch has been started, that batch is closed. Do not add new stories to
-  an already-started hardener, QA, or architecture batch.
-- If a story was already incorrectly batched, provide a deterministic way to
-  remove or supersede that hardener batch membership.
-- Add FSM tests covering:
-  - stale historical `code_review: changes-requested` superseded by a later
-    accepted/fixed implementation path,
-  - current effective `code_review: changes-requested` with a present
-    `code_review_sha` and optional code-review approval disabled; expected next
-    action is implementer revision, not hardener batch.
-
-## SL can sit idle at prompt without re-entering workflow
-
-Observed in HTW trials: from time to time the SL waits at a prompt even when no
-agent work or command is visibly in progress. If no handoff message arrives or a
-previous wake message is missed, the swarm can stall even though `squad_next.sh`
-would have useful work to recommend.
-
-Expected behavior: a lightweight supervisor daemon should monitor SL liveness
-and nudge the SL back into the workflow when it is visibly idle.
-
-Policy:
-
-- Keep this separate from `squad_next.sh`. The FSM remains deterministic
-  workflow guidance; the watchdog handles liveness only.
-- The daemon watches the SL tmux pane, not raw assignment age.
-- Poll the SL pane periodically and track whether the last 20-40 visible lines
-  have changed.
-- If the pane has not changed for 60 seconds and appears to be at an idle prompt,
-  send:
-
-  ```text
-  Run squad_next.sh.
-  ```
-
-- Send the required second return after a short delay so the prompt submits.
-- If the pane is changing, do nothing.
-- If the SL is running a command, do nothing.
-- If the SL is waiting on required user approval, avoid spam; either do nothing
-  or use a much slower reminder cadence.
-
-Reliable fix:
-
-- Add a daemon such as `squad_leader_watchdog.sh`.
-- Base idleness on pane-content inactivity, not wall-clock time since last
-  workflow action.
-- Reuse the same tmux send behavior used for dashboard-to-SL messages: send the
-  text, press return, wait about 100ms, press return again.
-
-## Architecture batch waits instead of starting with ready members
-
-Observed in the HTW trial: Stories 1 and 4 reached `qa_approved` and were added
-to architecture batch `hunt-the-wumpus-architecture`:
-
-```text
-architecture_batch: hunt-the-wumpus-architecture
-architecture_result_state: batched
-```
-
-The batch existed under `.squad/batches/hunt-the-wumpus-architecture/` with
-members in `manifest.tsv`, but no architecture assignment or architect agent was
-created.
-
-Expected behavior: batches should not wait for all stories. Once a batch has one
-or more eligible members and the relevant role capacity is available, the FSM
-should recommend starting that batch. Once started, the batch is closed and later
-eligible stories go to a later batch.
-
-Reliable fix:
-
-- Add FSM logic that emits an architect assignment/spawn recommendation for an
-  open architecture batch with eligible members.
-- Do not require every story in the theme to be architecture-ready before
-  starting an architecture batch.
-- When the architect starts, close the batch so later stories cannot be added to
-  the active batch.
-- Add simulator/FSM coverage for partial batches: Stories 1 and 4 can enter
-  architecture while Stories 2, 3, and 5 are still in implementation/cleaning.
-
-## Architecture result does not propagate to member story packets
-
-Observed in the HTW trial: architecture assignment
-`hunt-the-wumpus-architecture` completed and merged successfully:
-
-```text
-assignment_id: hunt-the-wumpus-architecture
-state: merged
-commit: cb5fb2c2b1
-merge_commit: 42398a6f7b
-```
-
-The architect report verdict was:
-
-```text
-Changes requested.
-```
-
-Initially, member story packets for Stories 1 and 4 still showed:
-
-```text
-architecture_batch: hunt-the-wumpus-architecture
-architecture_result_state: batched
-```
-
-After later SL processing, the packets advanced only to:
-
-```text
-architecture_assignment: hunt-the-wumpus-architecture
-architecture_sha: 42398a6f7b
-architecture_result_state: pending_review
-```
-
-They still did not record the verdict:
-
-```text
-architecture_review: changes-requested
-```
-
-This blocks the senior-implementor path. `squad_next.clj` only recommends
-`senior-implementor` when it sees `architecture_review: changes-requested` in a
-story packet, so a merged architecture critique with an unrecorded verdict leaves
-the senior-implementor trigger invisible to the FSM.
-
-Expected behavior: when a batch role result is merged, the workflow should parse
-or record the batch verdict and update every member story packet consistently.
-For a changes-requested architecture result, each member story should reflect the
-architecture finding and route to the appropriate revision path.
-
-Reliable fix:
-
-- Add deterministic result handling for architecture batch handoffs.
-- Record the architecture verdict, report path, assignment id, result commit,
-  and merge commit on every member story packet.
-- Transition member stories out of `architecture_result_state: batched` or
-  `pending_review` after the architecture handoff verdict is processed.
-- Ensure `changes-requested` architecture verdicts set
-  `architecture_review: changes-requested` so the senior-implementor FSM rule can
-  fire.
-- Add FSM tests for architecture `accepted` and `changes-requested` batch
-  results.
-
-## Senior-implementor output does not route back to architect
-
-Observed in the FSM: an architecture critique with `changes-requested` can
-trigger a `senior-implementor` assignment, and `squad_packet.sh record` can
-record `senior_implementor_sha`. However, `squad_next.clj` has no follow-up
-transition that routes the senior-implementor result back to the architect for
-review.
-
-Expected behavior: the architect has final say on architecture acceptance.
-Senior-implementor output must go back to the architect, not directly to final
-approval or a terminal state.
-
-Required loop:
-
-```text
-architect changes-requested
--> senior-implementor
--> architect review
--> accepted or changes-requested
--> senior-implementor ...
-```
-
-Reliable fix:
-
-- Add an FSM transition for `senior_implementor_sha` present and no current
-  accepted architecture review: create/spawn an architect review assignment.
-- The architect review assignment must include the original architecture
-  critique, the senior-implementor commit, and the affected story/batch members.
-- If architect accepts, record `architecture_review: accepted` and proceed to
-  architecture approval/final flow.
-- If architect requests changes, record `architecture_review: changes-requested`
-  and route another senior-implementor pass.
-- Add simulator coverage for at least one architecture reject/fix/re-review
-  cycle.
-
-## Helpers enforce workflow from stale side metadata
-
-Observed in the HTW trial: the SL tried to move Story 2 into a new hardener
-batch `hunt-the-wumpus-hardener-r2` after Story 2's current effective code
-review was accepted. `squad_batch_story.sh add` refused:
-
-```text
-Story hunt-the-wumpus-02-turn-movement-hazards is already in active hardener
-batch hunt-the-wumpus-hardener
-```
-
-The old batch manifest row had been removed and the packet had been updated, but
-the helper still read `.squad/stories/.../active-batches/hardener`, which pointed
-at the old batch. That stale side file made the helper enforce an obsolete
-workflow decision.
-
-Policy: the workflow FSM/state model is the sole authority for routing,
-eligibility, and next actions. Helpers may validate formats and mechanically
-apply requested transitions, but they must not independently decide workflow
-truth from denormalized side metadata.
-
-Expected helper behavior:
-
-- `squad_next` or the workflow tool decides whether a story may enter a batch.
-- `squad_batch_story.sh add` executes that transition atomically.
-- `active-batches/<kind>` and similar files are indexes/caches, not routing
-  authority.
-- Terminal old batch states must not block new workflow actions.
-- If helper-visible metadata disagrees with workflow state, the helper should
-  report a consistency error with repair instructions, not enforce stale routing.
-
-Reliable fix:
-
-- Make batch membership updates transactional across packet fields, batch
-  manifest, and any derived active-batch index.
-- Stop using `active-batches/<kind>` as an authority for rejecting workflow
-  transitions.
-- Treat batches in terminal states such as `result_received`, `rejected`, or
-  `merged` as inactive even if stale indexes point to them.
-- Add tests where a story leaves an old terminal batch and enters a new batch
-  without manual side-file repair.
-
-## Kill swarm leaves dead agents and worktrees behind
-
-Observed in the HTW trial after killing the swarm: tmux sessions disappeared,
-but agent metadata and git worktrees remained:
-
-```text
-hardener-002: state: running
-code-reviewer-008: state: handoff_sent
-.worktrees/code-reviewer-008
-.worktrees/hardener-002
-```
-
-Expected behavior: killing a swarm should fully retire remaining transient
-agents and remove their worktrees/branches when possible. After tmux sessions are
-gone, no agent should remain in `running` or `handoff_sent` state unless the
-cleanup explicitly records a recoverable handoff.
-
-Reliable fix:
-
-- After terminating tmux sessions, enumerate all non-retired transient agents.
-- For each agent, mark it retired or killed with explicit detail that the swarm
-  was terminated.
-- Remove its git worktree and branch when safe.
-- If an agent had `handoff_sent`, either preserve the handoff in the inbox/outbox
-  with recovery metadata or mark the agent retired after confirming the handoff
-  file location.
-- Add a final cleanup verification step: no tmux sessions, no non-retired
-  transient statuses, and no leftover transient git worktrees.
-
-## Review report merge checks blocked by untracked SL-side files
-
-Observed repeatedly in HTW assignment merge errors: review handoffs failed
-`merge-ready` because the SL worktree already had untracked files at the same
-paths the review agent commit wanted to add:
-
-```text
-error: The following untracked working tree files would be overwritten by merge:
-  .squad/reviews/hunt-the-wumpus-01-console-setup-gherkin-review.md
-Please move or remove them before you merge.
-Aborting
-```
-
-This happened for multiple Gherkin and QA procedure review reports. These are
-not semantic merge conflicts and should not need a merger agent; they are
-orchestration artifact path collisions.
-
-Expected behavior: the SL should not create untracked review files at the same
-durable paths owned by reviewer agents, and merge-readiness checks should run
-from a clean state or isolated temporary worktree.
-
-Reliable fix:
-
-- Keep SL-authored review notes under a separate path from transient review
-  agent reports.
-- Before `merge-ready`, detect untracked files that would be overwritten and
-  either move them to orchestration scratch space or fail with a precise repair
-  action.
-- Prefer running dry-run merges in a temporary clean worktree/index so local
-  orchestration scratch files cannot block incoming review commits.
-- Add tests where an untracked `.squad/reviews/...md` file exists before a review
-  handoff merge check; expected behavior is deterministic repair guidance, not a
-  generic merge block.
-
-## Cleaner proceeds without required CRAP and DRY tools
-
-Observed in the HTW trial: `cleaner-002` recorded:
-
-```text
-tooling: CRAP/DRY cache manifests missing; continuing with assigned source/test
-inspection
-```
-
-and later completed:
-
-```text
-cleanup complete; bb test passed; CRAP/DRY manifests missing in shared cache
-```
-
-Expected behavior: the cleaner must use CRAP and DRY tools. Missing required
-cleaner tools should not silently downgrade the role to source inspection plus
-tests.
-
-Reliable fix:
-
-- Tighten the cleaner prompt and contract to treat missing CRAP/DRY tools as
-  either an explicit tool-acquisition step or a blocker handoff.
-- Make cleaner assignments include explicit permission for `squad_tool.sh ensure`
-  when tools may be installed/fetched.
-- Add a preflight before spawning cleaner work, or make cleaner startup fail
-  fast with `blocked` if required manifests are unavailable and installation is
-  not assigned.
-- Add tests or simulator checks that a cleaner without CRAP/DRY does not report
-  successful cleanup.
-
-## Helper usage examples still produce wrong command shapes
-
-Observed in HTW panes: several agents called helper commands with invalid
-argument shapes before recovering. Examples:
-
-```text
-squad_event.sh qa-008 starting "hunt-the-wumpus-qa startup"
-SQUAD_EVENT_USAGE_ERROR: first argument is the state, not the agent id.
-
-squad_tool.sh require crap4clj
-Usage: squad_tool.sh init ...
-```
-
-The agents recovered after reading usage output, but these repeated errors show
-that prompts/contracts do not give sufficiently concrete command examples for
-required helper calls.
-
-Expected behavior: role prompts and assignment templates should include exact,
-valid helper command forms for common required actions.
-
-Reliable fix:
-
-- Include valid `squad_event.sh` examples that never pass the agent id as the
-  first argument.
-- Include valid `squad_tool.sh require <tool> <source> <version>` examples for
-  CRAP, DRY, APS, and mutation tools where those tools are required.
-- Make generated assignments list exact required tool names, sources, and
-  versions when the role is expected to call `require`.
-- Add prompt regression checks for invalid examples such as
-  `squad_event.sh <agent-id> starting ...` and `squad_tool.sh require <tool>`
-  without source/version.
+Expected behavior:
+
+1. The constitution, role prompts, generated assignments, and tool manifests use
+   the same canonical source identity for each tool.
+2. APS commands such as `gherkin-parser`, `ir-dry-checker`, and
+   `gherkin-mutator` consistently resolve to
+   `github.com/unclebob/Acceptance-Pipeline-Specification` unless the tool table
+   is deliberately changed.
+3. `squad_tool.sh require` rejects source mismatches clearly.
+
+### APS Tool Usage Is Not Enforced
+
+Gherkin-writing and related acceptance-pipeline agents can produce and hand off
+artifacts without proving they used required APS tools.
+
+Observed in `/Users/unclebob/junk/squad`: Gherkin prompts referenced
+`gherkin-parser` and `ir-dry-checker`, but artifacts were merged and advanced
+even when the shared tool cache later showed those tools missing and logs did
+not show successful parser or IR DRY runs.
+
+Expected behavior:
+
+1. APS parser and IR DRY tools are required when assigned to a Gherkin role.
+2. The agent must run the parser against produced Gherkin before handoff.
+3. The agent must run IR DRY checking/normalization when assigned.
+4. The handoff includes both command transcript evidence and generated normalized
+   IR artifacts. Evidence must include tool name, canonical source/version,
+   command, exit code, short output summary, normalized IR artifact path, IR DRY
+   result/report path, and metadata tying those outputs to the story,
+   assignment, and tool manifest.
+5. Failure to install, load, or run required APS tools blocks the assignment and
+   appears on the dashboard.
+
+### Required Tool Failures Are Hidden
+
+When an agent cannot load required tools, the failure can disappear into a
+handoff or retirement path instead of becoming visible canonical workflow state.
+
+Observed in `/Users/unclebob/junk/squad`: cleaner and hardener assignments
+blocked on missing `crap4clj`, `dry4clj`, `gherkin-parser`, or
+`gherkin-mutator`, but the dashboard and packets did not consistently show a
+clear user-visible blockage.
+
+Expected behavior:
+
+1. Agent reports missing or unloaded required tool.
+2. Workflow directs tool loading/provisioning.
+3. If loading succeeds, the agent continues.
+4. If loading fails, the assignment/story packet records a blocked state with
+   tool and reason.
+5. Missing required tool evidence blocks merge of the handoff; the web dashboard
+   shows the blockage prominently.
+
+## Dashboard And Web Tool
+
+### Dashboard Refresh Destroys SL Message Drafts
+
+The web dashboard refresh loop clears the squad leader message textarea while
+the user is typing.
+
+Expected behavior:
+
+1. Polling should continue normally while the user is typing.
+2. The unsent textarea value should always be preserved across dashboard
+   refreshes, whether or not the textarea currently has focus.
+3. Draft preservation only needs to live in browser memory; it does not need to
+   survive a full page reload.
+4. After a successful submit, the textarea should clear immediately.
+5. If the backend rejects the message or delivery fails, the typed text should
+   remain in the textarea for retry.
+
+### Dashboard Needs Artifact Links And Renderers
+
+Pending approval rows should link the artifact name to a readable rendered view
+of the referenced artifact.
+
+Renderer priority:
+
+1. Tier 1 renderers are required first: theme, story, Gherkin, QA procedure,
+   review, and blocker.
+2. Later renderers can cover implementation result/handoff manifest, cleaner
+   report, code review report, architect report, hardener report, QA execution
+   report, and merger result.
+3. The renderer registry should be extensible so adding later artifact types does
+   not require changing the approval list UI.
+
+### Dashboard Needs Live Agent Pane Windows
+
+Clicking an active agent should open a separate window that continuously shows
+the agent's tmux pane activity in a scrolling view.
+
+Expected behavior: the pane updates live or near-live, preserves scroll behavior
+appropriately, and shows enough recent output to judge progress. The live pane
+window is read-only.
+
+### Dashboard Agent And Assignment Filtering Uses Stale State
+
+The dashboard can show stale assignments as active, hide active agents during
+lifecycle transitions, or keep superseded blocked assignments in the current
+view.
+
+Observed failure modes:
+
+- Agents disappear and reappear around handoff transitions.
+- An original Gherkin review assignment remained listed as active after an `-r2`
+  replacement review was accepted and merged.
+- Original blocked hardener assignments remained visible as current after a
+  replacement hardener succeeded.
+- Many `handoff_sent` agents remained listed after their useful work was merged.
+
+Expected behavior:
+
+1. Dashboard visibility derives from canonical packet/assignment state and
+   explicit supersession records.
+2. Every non-retired agent remains visible from spawn through retirement, with a
+   stable display state.
+3. Active assignment views show only current canonical assignments; superseded
+   assignments are hidden by default and shown only in history/debug views.
+4. Assignment lists are ordered reverse chronologically, newest first.
+5. The approval history section should be removed from the normal dashboard.
+
+### Dashboard Story State Labels Are Confusing
+
+Story state on the dashboard does not reliably reflect the latest canonical
+stage.
+
+Observed failure modes:
+
+- Story 1 was cleaned, but the dashboard still showed `implemented` or
+  `specification in progress`.
+- Blocked hardener/cleaner state appeared to contradict what the SL believed had
+  succeeded.
+
+Expected behavior: dashboard story state is derived from the latest canonical
+packet/FSM stage, including cleaner completion, code review status, architecture
+review, hardening, QA, blockers, and superseded retry chains. The major stage
+labels are `specified`, `gherkin approved`, `qa approved`, `implemented`,
+`cleaned`, `code reviewed`, `architect approved`, `hardened`, and `done`.
+
+### User Messages From Web Dashboard Need Correct SL Delivery
+
+The web dashboard should provide a textarea and submit button that sends text to
+the SL. Sending text to the SL currently requires two returns with a 100 ms delay
+between them, otherwise the SL may not receive or process the message correctly.
+
+Expected behavior:
+
+1. The dashboard preserves user input while polling.
+2. Submit sends the message to the SL pane.
+3. Delivery sends the required extra return sequence reliably.
+4. The SL wakes and runs the workflow loop after processing the message.
+
+### Blockers Must Be First-Class Dashboard Items
+
+Failures that require user intervention or workflow repair should appear clearly
+on the dashboard in a dedicated top-level blockers section.
+
+Examples:
+
+- Required tool install/load failures.
+- Invalid result handoffs.
+- Merge conflicts awaiting merger.
+- Agents that cannot load their required tools after being told to do so.
+- Assignments that are blocked but have been incorrectly treated as complete.
+
+## Role Prompt Quality
+
+### Analyst Prompt Lacks Story Writing Principles
+
+The analyst prompt should describe story writing principles: scope,
+independence, acceptance readiness, downstream implementability, and avoiding
+vague or bundled requirements. It should explicitly teach and require the
+I.N.V.E.S.T. criteria: independent, negotiable, valuable, estimable, small, and
+testable.
+
+### Architect Prompt Needs Review-Oriented Principles
+
+The architect only reviews and recommends; its prompt should frame architectural
+principles as advisory review criteria and recommendations, not as direct
+implementation orders. The architect should not directly mark an artifact
+blocked pending architectural changes.
+
+Required principles include:
+
+- The Dependency Rule.
+- Low level is close to IO; high level is far from IO.
+- Prefer separating large modules with many responsibilities into individual
+  well-named modules with single responsibilities.
+
+### Role Prompts Must Require Tool Loading Up Front
+
+Every role prompt should include a standard "load required tools first" block
+generated from the constitution/tool table. All roles with required tools should
+load or ensure those tools before substantive work. If tools cannot be loaded,
+the role must report a canonical blocker with enough detail for the dashboard and
+FSM.

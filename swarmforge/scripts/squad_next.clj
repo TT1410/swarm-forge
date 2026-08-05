@@ -186,13 +186,18 @@
   #{"merged" "rejected" "blocked" "replacement_created"
     "review_accepted" "review_changes_requested"})
 
-(defn assignment-for [assignments story-id template]
+(defn assignment-for
+  ([assignments story-id template]
+   (assignment-for assignments nil story-id template))
+  ([assignments theme-id story-id template]
   (some (fn [assignment]
-          (when (and (= story-id (:story-id assignment))
+          (when (and (or (nil? theme-id)
+                         (= theme-id (:theme-id assignment)))
+                     (= story-id (:story-id assignment))
                      (= template (:template assignment))
                      (not (contains? terminal-assignment-states (:state assignment))))
             assignment))
-        assignments))
+        assignments)))
 
 (defn active-or-created-assignment-for? [assignments story-id template]
   (boolean (assignment-for assignments story-id template)))
@@ -340,7 +345,7 @@
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         theme-id (get packet "theme_id")
         assignment-id (next-assignment-id assignments story-id assignment-suffix)
-        assignment (assignment-for assignments story-id template)]
+        assignment (assignment-for assignments theme-id story-id template)]
     (if assignment
       (when (spawnable-assignment? root agents template assignment)
         (assignment-spawn-candidate assignment theme-id story-id template reason priority stage-order))
@@ -356,6 +361,20 @@
    :assignment-id assignment-id
    :reason reason
    :command (str "squad_assign.sh create " theme-id " " story-id " " template " "
+                 assignment-id " <instructions-file>"
+                 (when requirement
+                   (str " --requires approval:" requirement)))})
+
+(defn batch-assignment-create-candidate [theme-id template assignment-id reason priority stage-order requirement]
+  {:priority priority
+   :stage-order stage-order
+   :next-action "create_assignment"
+   :theme-id theme-id
+   :story-id "batch"
+   :template template
+   :assignment-id assignment-id
+   :reason reason
+   :command (str "squad_assign.sh create-batch " theme-id " " template " "
                  assignment-id " <instructions-file>"
                  (when requirement
                    (str " --requires approval:" requirement)))})
@@ -408,16 +427,16 @@
 
 (defn batch-assignment-candidate [root assignments agents theme-id template assignment-base reason priority stage-order]
   (let [assignment-id (next-id-with-base assignments assignment-base)
-        assignment (assignment-for assignments "batch" template)]
+        assignment (assignment-for assignments theme-id "batch" template)]
     (if assignment
       (when (spawnable-assignment? root agents template assignment)
         (assignment-spawn-candidate assignment theme-id "batch" template reason priority stage-order))
-      (assignment-create-candidate theme-id "batch" template assignment-id reason priority stage-order nil))))
+      (batch-assignment-create-candidate theme-id template assignment-id reason priority stage-order nil))))
 
 (defn theme-assignment-candidate [root assignments agents theme template assignment-suffix reason priority stage-order requirement]
   (let [theme-id (:theme-id theme)
         assignment-id (next-assignment-id assignments theme-id assignment-suffix)
-        assignment (assignment-for assignments "theme" template)]
+        assignment (assignment-for assignments theme-id "theme" template)]
     (if assignment
       (when (spawnable-assignment? root agents template assignment)
         (assignment-spawn-candidate assignment theme-id "theme" template reason priority stage-order))
@@ -497,7 +516,7 @@
        (spawn-capacity? root agents template)))
 
 (defn generic-ready-candidate [{:keys [assignment-id template story-id assignment-file theme-id created-at]}]
-  {:priority 55
+  {:priority 10
    :stage-order 0
    :next-action "request_spawn"
    :theme-id theme-id
@@ -1122,7 +1141,7 @@
   (println "COMMAND: sleep 30 && squad_next.sh"))
 
 (defn ready-actions [root rows]
-  (sort-by (juxt :theme-id :story-id :stage-order :priority :assignment-id)
+  (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id)
            (concat (theme-candidates root rows)
                    (story-candidates root rows)
                    (batch-candidates root rows)
@@ -1172,7 +1191,7 @@
      (print-handoff-action! "finish_in_process_handoff"
                             in-process
                             "handoff is already claimed and must be completed before new mail"
-                            "continue processing current handoff; run done_with_current.sh when complete"))
+                            (str "done_with_current.sh " in-process)))
    :process-handoff
    (fn [{:keys [new-handoff]}]
      (print-handoff-action! "process_handoff" new-handoff "new handoff mail is waiting" "ready_for_next.sh"))

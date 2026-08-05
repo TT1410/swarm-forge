@@ -375,6 +375,8 @@
                        "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"
                        "reviewer-001\treviewer-001\t" root "/.worktrees/reviewer-001\tswarmforge-reviewer-001\tReviewer 001\tcodex\ttask\n"
                        "qa-001\tqa-001\t" root "/.worktrees/qa-001\tswarmforge-qa-001\tQa 001\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 5\n")
       (doseq [agent-id ["specifier-001" "specifier-002" "implementer-001" "reviewer-001" "qa-001"]]
         (write-agent-status! root agent-id "running"))
       (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")

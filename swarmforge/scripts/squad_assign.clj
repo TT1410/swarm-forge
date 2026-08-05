@@ -10,6 +10,7 @@
 (def usage-text
   (str "Usage:\n"
        "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file> [--requires approval:<gate>]\n"
+       "  squad_assign.sh create-batch <theme-id> <template> <assignment-id> <instructions-file> [--requires approval:<gate>]\n"
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
        "  squad_assign.sh merge-ready <assignment-id>\n"
        "  squad_assign.sh review <assignment-id> <accepted|changes-requested> <review-file>\n"
@@ -120,6 +121,20 @@
      :instructions-file instructions-file
      :requirement (parse-requirement! requirement)}))
 
+(defn parse-create-batch-args! [args]
+  (when-not (#{5 7} (count args))
+    (exit! 1 usage-text))
+  (let [[_ theme-id template assignment-id instructions-file flag requirement] args]
+    (when (and flag (not= "--requires" flag))
+      (exit! 1 usage-text))
+    {:theme-id theme-id
+     :story-id "batch"
+     :template template
+     :assignment-id assignment-id
+     :instructions-file instructions-file
+     :scope "batch"
+     :requirement (parse-requirement! requirement)}))
+
 (def valid-review-decisions
   {"accepted" "review_accepted"
    "changes-requested" "review_changes_requested"})
@@ -224,6 +239,10 @@
   (and (= "analyst" template)
        (= "theme" story-id)))
 
+(defn batch-scoped-assignment? [scope story-id]
+  (or (= "batch" scope)
+      (= "batch" story-id)))
+
 (defn tool-lines [label tools]
   (when (seq tools)
     (str "## " label "\n\n"
@@ -278,15 +297,16 @@
                         ["Assignment id" assignment-id]]]
     (validate-id! kind value)))
 
-(defn assignment-story-file [root theme story-id theme-scoped?]
-  (when-not theme-scoped?
+(defn assignment-story-file [root theme story-id skip-story?]
+  (when-not skip-story?
     (or (referenced-project-file root (fs/path theme "stories" (str story-id ".ref")))
         (fs/path theme "stories" (str story-id ".md")))))
 
-(defn assignment-create-context [{:keys [theme-id story-id template assignment-id instructions-file requirement]}]
+(defn assignment-create-context [{:keys [theme-id story-id template assignment-id instructions-file requirement scope]}]
   (let [root (fs/absolutize (project-root))
         theme (theme-dir root theme-id)
-        theme-scoped? (theme-scoped-assignment? template story-id)]
+        theme-scoped? (theme-scoped-assignment? template story-id)
+        batch-scoped? (batch-scoped-assignment? scope story-id)]
     {:root root
      :theme theme
      :theme-id theme-id
@@ -295,9 +315,13 @@
      :assignment-id assignment-id
      :requirement requirement
      :theme-scoped? theme-scoped?
-     :scope (if theme-scoped? "theme" "story")
+     :batch-scoped? batch-scoped?
+     :scope (cond
+              theme-scoped? "theme"
+              batch-scoped? "batch"
+              :else "story")
      :theme-file (fs/path theme "theme.md")
-     :story-file (assignment-story-file root theme story-id theme-scoped?)
+     :story-file (assignment-story-file root theme story-id (or theme-scoped? batch-scoped?))
      :template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
      :instructions (source-file! instructions-file)
      :dir (assignment-dir root assignment-id)
@@ -311,9 +335,9 @@
     (exit! 2
            (str "Story packet " story-id " belongs to a different theme."))))
 
-(defn ensure-create-context! [{:keys [theme-file theme-scoped? story-file template-file dir] :as context}]
+(defn ensure-create-context! [{:keys [theme-file theme-scoped? batch-scoped? story-file template-file dir] :as context}]
   (ensure-file! "Theme file not found" theme-file)
-  (when-not theme-scoped?
+  (when-not (or theme-scoped? batch-scoped?)
     (ensure-file! "Story file not found" story-file))
   (ensure-file! "Role template not found" template-file)
   (ensure-packet-theme! context)
@@ -372,7 +396,7 @@
     (println "REQUIRES:" (:text requirement)))
   (println "ASSIGNMENT:" (str assignment-file)))
 
-(defn create-assignment! [{:keys [theme-id story-id template assignment-id instructions-file requirement]}]
+(defn create-assignment! [{:keys [theme-id story-id template assignment-id instructions-file requirement scope]}]
   (validate-create-ids! theme-id story-id assignment-id)
   (validate-template! template)
   (validate-template-requirement! template story-id requirement)
@@ -381,10 +405,14 @@
                                             :template template
                                             :assignment-id assignment-id
                                             :instructions-file instructions-file
+                                            :scope scope
                                             :requirement requirement})]
     (ensure-create-context! context)
     (print-create-result! context
                           (write-assignment-records! context (assignment-text context)))))
+
+(defn create-batch-assignment! [args]
+  (create-assignment! args))
 
 (defn assignment-status-paths [dir]
   {:metadata (fs/path dir "metadata")
@@ -886,6 +914,7 @@
 
 (def assignment-commands
   {"create" (fn [args] (create-assignment! (parse-create-args! args)))
+   "create-batch" (fn [args] (create-batch-assignment! (parse-create-batch-args! args)))
    "result" (fn [args] (run-counted-command! args 3 #(record-result! (second %) (nth % 2))))
    "merge-ready" (fn [args] (run-counted-command! args 2 #(mark-merge-ready! (second %))))
    "review" (fn [args] (run-counted-command! args 4 #(record-review! (second %) (nth % 2) (nth % 3))))

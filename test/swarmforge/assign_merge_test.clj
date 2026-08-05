@@ -337,6 +337,141 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-assign-creates-batch-assignment-without-story-file
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
+      (write-file (fs/path root "swarmforge/role-templates/hardener.prompt")
+                  "harden a batch\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus CLI.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Harden all batch members.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus-cli" "theme.md")
+      (let [create (run {:dir root}
+                        (script "squad_assign.sh")
+                        "create-batch"
+                        "wumpus-cli"
+                        "hardener"
+                        "wumpus-cli-hardener"
+                        "instructions.md")
+            assignment (slurp (str (fs/path root ".squad/assignments/wumpus-cli-hardener/assignment.md")))
+            metadata (slurp (str (fs/path root ".squad/assignments/wumpus-cli-hardener/metadata")))]
+        (is (str/includes? (:out create) "SQUAD_ASSIGNMENT: wumpus-cli-hardener"))
+        (is (str/includes? (:out create) "STORY: batch"))
+        (is (str/includes? assignment "scope: batch"))
+        (is (str/includes? assignment "Harden all batch members."))
+        (is (not (str/includes? assignment "## Story")))
+        (is (str/includes? metadata "scope: batch"))
+        (is (str/includes? metadata "story_id: batch")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-theme-supports-bulk-and-approved-direct-stories
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md") "Build the CLI.\n")
+      (write-file (fs/path root "stories/one.md") "Story: one.\n")
+      (write-file (fs/path root "stories/two.md") "Story: two.\n")
+      (write-file (fs/path root "stories/direct.md") "Story: direct.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus-cli" "theme.md")
+      (run {:dir root}
+           (script "squad_theme.sh")
+           "stories"
+           "wumpus-cli"
+           "one:stories/one.md"
+           "two:stories/two.md")
+      (run {:dir root} "git" "add" "stories")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add stories")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))
+            approved (run {:dir root}
+                          (script "squad_theme.sh")
+                          "approved-story"
+                          "wumpus-cli"
+                          "direct"
+                          "stories/direct.md"
+                          "sl-direct-story"
+                          "master"
+                          sha
+                          "approved-by-user")
+            packet (slurp (str (fs/path root ".squad/stories/direct/packet")))]
+        (is (str/includes? (:out approved) "STATE: story_approved"))
+        (is (fs/regular-file? (fs/path root ".squad/themes/wumpus-cli/stories/one.ref")))
+        (is (fs/regular-file? (fs/path root ".squad/themes/wumpus-cli/stories/two.ref")))
+        (is (str/includes? packet "story_approval: approved"))
+        (is (str/includes? packet "story_assignment: sl-direct-story")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-approval-request-is-idempotent-by-semantic-gate-and-supports-bulk
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md") "Build the CLI.\n")
+      (write-file (fs/path root "stories/one.md") "Story: one.\n")
+      (write-file (fs/path root "stories/two.md") "Story: two.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "one" "stories/one.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "two" "stories/two.md")
+      (run {:dir root} "git" "add" "stories")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add stories")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "one" "analysis-one" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "two" "analysis-two" "master" sha))
+      (let [first-request (run {:dir root}
+                               (script "squad_approval.sh")
+                               "request"
+                               "story__one"
+                               "story"
+                               "one"
+                               "story"
+                               "Approve_story"
+                               "story-ready")
+            duplicate (run {:dir root}
+                           (script "squad_approval.sh")
+                           "request"
+                           "alternate-one"
+                           "story"
+                           "one"
+                           "story"
+                           "Approve_story"
+                           "story-ready")
+            same-id (run {:dir root}
+                         (script "squad_approval.sh")
+                         "request"
+                         "story__one"
+                         "story"
+                         "one"
+                         "story"
+                         "Approve_story"
+                         "story-ready")
+            bulk (run {:dir root}
+                      (script "squad_approval.sh")
+                      "request-bulk"
+                      "story"
+                      "story"
+                      "Approve_story"
+                      "story-ready"
+                      "story__one_again:one"
+                      "story__two:two")
+            pending-files (fs/list-dir (fs/path root ".squad/approvals/pending"))]
+        (is (str/includes? (:out first-request) "SQUAD_APPROVAL: story__one"))
+        (is (str/includes? (:out duplicate) "SQUAD_APPROVAL: story__one"))
+        (is (str/includes? (:out same-id) "SQUAD_APPROVAL: story__one"))
+        (is (str/includes? (:out bulk) "SQUAD_APPROVAL: story__two"))
+        (is (= #{"story__one.approval" "story__two.approval"}
+               (set (map fs/file-name pending-files)))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-assign-records-workflow-metadata-without-enforcing-readiness
   (let [root (tmp-dir)]
     (try

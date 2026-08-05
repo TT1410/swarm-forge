@@ -12,6 +12,7 @@
   (str "Usage:\n"
        "  squad_approval.sh required <gate>\n"
        "  squad_approval.sh request <approval-id> <theme|story> <target-id> <gate> <title> <reason...>\n"
+       "  squad_approval.sh request-bulk <theme|story> <gate> <title> <reason> <approval-id>:<target-id>...\n"
        "  squad_approval.sh approve <approval-id> <detail...>\n"
        "  squad_approval.sh reject <approval-id> <reason...>\n"
        "  squad_approval.sh status [approval-id]\n"))
@@ -144,10 +145,6 @@
   (when-not (target-exists? root target-kind target-id)
     (exit! 1 (str "Approval target not found: " target-kind " " target-id))))
 
-(defn ensure-new-approval! [root approval-id]
-  (when (approval-file root approval-id)
-    (exit! 2 (str "Approval already exists: " approval-id))))
-
 (defn request-content [approval-id target-kind target-id gate title reason now]
   (str "approval_id: " approval-id "\n"
        "target_kind: " target-kind "\n"
@@ -180,12 +177,30 @@
         reason (normalized-detail reason-parts "approval requested")
         now (timestamp)]
     (ensure-target-exists! root target-kind target-id)
-    (ensure-new-approval! root approval-id)
-    (if-let [existing (equivalent-approval-file root target-kind target-id gate)]
+    (if-let [existing (or (approval-file root approval-id)
+                          (equivalent-approval-file root target-kind target-id gate))]
       (print-request-result! root existing)
       (do
         (write-request! file approval-id target-kind target-id gate title reason now)
         (print-request-result! root file)))))
+
+(defn parse-bulk-pair! [pair]
+  (let [[approval-id target-id extra] (str/split pair #":" 3)]
+    (when (or extra (str/blank? approval-id) (str/blank? target-id))
+      (exit! 2 "Bulk approval pairs must use <approval-id>:<target-id>."))
+    (validate-id! "Approval id" approval-id)
+    (validate-id! "Target id" target-id)
+    {:approval-id approval-id
+     :target-id target-id}))
+
+(defn request-bulk! [target-kind gate title reason pairs]
+  (when-not (contains? valid-target-kinds target-kind)
+    (exit! 2 "Approval target kind must be theme or story."))
+  (validate-gate! gate)
+  (when-not (seq pairs)
+    (exit! 1 usage-text))
+  (doseq [{:keys [approval-id target-id]} (map parse-bulk-pair! pairs)]
+    (request! approval-id target-kind target-id gate title [reason])))
 
 (defn move-with-state! [source target state detail]
   (let [content (slurp (str source))
@@ -274,6 +289,9 @@
    "request" (fn [args]
                (minimum-count! args 7)
                (request! (second args) (nth args 2) (nth args 3) (nth args 4) (nth args 5) (drop 6 args)))
+   "request-bulk" (fn [args]
+                    (minimum-count! args 6)
+                    (request-bulk! (second args) (nth args 2) (nth args 3) (nth args 4) (drop 5 args)))
    "approve" (fn [args]
                (minimum-count! args 2)
                (approve! (second args) (drop 2 args)))

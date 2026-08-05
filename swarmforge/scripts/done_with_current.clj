@@ -50,11 +50,24 @@
 (defn run-helper! [script]
   (process/exec (str (fs/path script-dir script))))
 
-(defn -main []
+(defn in-process-paths [root]
+  (let [dir (fs/path root ".swarmforge" "handoffs" "inbox" "in_process")]
+    (when (fs/exists? dir)
+      (map #(str (fs/absolutize %)) (fs/list-dir dir)))))
+
+(defn ensure-current-handoff! [expected]
+  (when (not-empty expected)
+    (let [expected-path (str (fs/absolutize expected))
+          current-paths (set (in-process-paths (project-root)))]
+      (when-not (contains? current-paths expected-path)
+        (exit! 1 (str "CURRENT_HANDOFF_MISMATCH: " expected))))))
+
+(defn -main [& args]
+  (ensure-current-handoff! (first args))
   (case (receive-mode (role))
     "batch" (run-helper! "done_with_current_batch.sh")
     "task" (run-helper! "done_with_current_task.sh")
     (exit! 2 (str "INVALID_RECEIVE_MODE: " (receive-mode (role)) " for role " (role)))))
 
 (when (= *file* (System/getProperty "babashka.file"))
-  (-main))
+  (apply -main *command-line-args*))

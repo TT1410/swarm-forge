@@ -122,6 +122,8 @@
                        "qa-001\tqa-001\t" root "/.worktrees/qa-001\tswarmforge-qa-001\tQa 001\tcodex\ttask\n"))
       (write-file (fs/path root ".swarmforge/tmux-socket")
                   "/tmp/swarmforge-test.sock\n")
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 5\n")
       (doseq [agent-id ["specifier-001" "specifier-002" "implementer-001" "reviewer-001" "qa-001"]]
         (write-agent-status! root agent-id "running"))
       (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")

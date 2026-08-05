@@ -30,7 +30,9 @@
                (fs/path root ".swarmforge/handoffs/inbox/in_process/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff"))
       (let [in-process (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out in-process) "NEXT_ACTION: finish_in_process_handoff"))
-        (is (str/includes? (:out in-process) "done_with_current.sh")))
+        (is (str/includes? (:out in-process) "HANDOFF:"))
+        (is (str/includes? (:out in-process) "COMMAND: done_with_current.sh "))
+        (is (str/includes? (:out in-process) "in_process/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")))
       (fs/create-dirs (fs/path root ".swarmforge/handoffs/inbox/completed"))
       (fs/move (fs/path root ".swarmforge/handoffs/inbox/in_process/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")
                (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff"))
@@ -360,5 +362,33 @@
         (is (str/includes? (:out next) "TEMPLATE: merger"))
         (is (str/includes? (:out next) "ASSIGNMENT: cave-impl-merge"))
         (is (str/includes? (:out next) "merge-blocked assignment needs merger")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-emits-create-batch-for-batch-assignments
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required code_review false\n")
+      (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md") "Story: cave topology and setup.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (let [sha (prepare-implementation-packet! root "wumpus" "cave-topology")]
+        (run {:dir root} (script "squad_packet.sh") "approve" "cave-topology" "implementation" "approved")
+        (run {:dir root} (script "squad_packet.sh") "record" "cave-topology" "implementation" "impl-1" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "record" "cave-topology" "cleaner" "clean-1" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "review" "cave-topology" "code" "accepted" "review-1" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "approve" "cave-topology" "code-review" "approved")
+        (run {:dir root} (script "squad_packet.sh") "batch" "cave-topology" "hardener" "wumpus-hardener" "code_reviewed" "review-1" "master" sha)
+        (let [next (run {:dir root} (script "squad_next.sh"))]
+          (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
+          (is (str/includes? (:out next) "STORY: batch"))
+          (is (str/includes? (:out next) "TEMPLATE: hardener"))
+          (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-batch wumpus hardener wumpus-hardener <instructions-file>"))
+          (is (not (str/includes? (:out next) "squad_assign.sh create wumpus batch")))))
       (finally
         (fs/delete-tree root)))))
