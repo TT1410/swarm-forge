@@ -223,6 +223,31 @@
 (defn story-packet-exists? [root story-id]
   (fs/regular-file? (fs/path root ".squad" "stories" story-id "packet")))
 
+(defn theme-story-ref-files [root]
+  (let [themes-dir (fs/path root ".squad" "themes")]
+    (if (fs/directory? themes-dir)
+      (->> (fs/list-dir themes-dir)
+           (filter fs/directory?)
+           (mapcat (fn [theme-dir]
+                     (let [stories-dir (fs/path theme-dir "stories")]
+                       (if (fs/directory? stories-dir)
+                         (fs/list-dir stories-dir)
+                         []))))
+           (filter fs/regular-file?)
+           (filter #(str/ends-with? (fs/file-name %) ".ref"))
+           (sort-by str)
+           vec)
+      [])))
+
+(defn theme-story-ref-record [file]
+  (let [record (file-map file)
+        story-id (or (get record "story_id")
+                     (str/replace (fs/file-name file) #"\.ref$" ""))
+        theme-id (fs/file-name (fs/parent (fs/parent file)))]
+    {:theme-id theme-id
+     :story-id story-id
+     :path (get record "path")}))
+
 (def terminal-assignment-states
   #{"merged" "rejected" "blocked" "replacement_created" "superseded" "retired"
     "review_accepted" "review_changes_requested"})
@@ -574,6 +599,28 @@
        (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
        vec))
 
+(defn direct-story-packet-candidate [root {:keys [theme-id story-id]}]
+  (when (and (not (str/blank? theme-id))
+             (not (str/blank? story-id))
+             (not (story-packet-exists? root story-id)))
+    {:priority 26
+     :stage-order 1
+     :next-action "register_story_packet"
+     :theme-id theme-id
+     :story-id story-id
+     :assignment-id "squad-leader"
+     :reason "direct squad-leader story must be registered as an approved story before downstream workflow can continue"
+     :command (str "squad_packet.sh create " theme-id " " story-id
+                   " squad-leader master $(git rev-parse --short=10 HEAD)"
+                   " && squad_packet.sh approve " story-id " story approved-by-user")}))
+
+(defn direct-story-packet-candidates [root]
+  (->> (theme-story-ref-files root)
+       (map theme-story-ref-record)
+       (keep #(direct-story-packet-candidate root %))
+       (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
+       vec))
+
 (def artifact-assignment-rules
   {"gherkin-writer" {:kind "gherkin"
                      :prefix "features/"
@@ -625,6 +672,7 @@
   (let [assignments (assignment-records root)
         packets (packets root)]
     (vec (concat (analyst-story-registration-candidates root assignments)
+                 (direct-story-packet-candidates root)
                  (artifact-attachment-candidates root assignments packets)))))
 
 (defn packet-by-story [packets]

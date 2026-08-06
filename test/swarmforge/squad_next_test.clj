@@ -279,6 +279,36 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-registers-direct-theme-story-before-gherkin-work
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/alpha.md")
+                  "Story: alpha supplied directly to the squad leader.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "theme" "approved")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
+      (run {:dir root} "git" "add" "stories" ".squad")
+      (run {:dir root} "git" "commit" "-q" "-m" "Register direct story reference")
+      (let [register (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out register) "NEXT_ACTION: register_story_packet"))
+        (is (str/includes? (:out register) "STORY: alpha"))
+        (is (str/includes? (:out register) "COMMAND: squad_packet.sh create wumpus alpha squad-leader master $(git rev-parse --short=10 HEAD) && squad_packet.sh approve alpha story approved-by-user"))
+        (is (not (str/includes? (:out register) "TEMPLATE: gherkin-writer"))))
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "squad-leader" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved-by-user"))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
+        (is (str/includes? (:out next) "TEMPLATE: gherkin-writer"))
+        (is (not (str/includes? (:out next) "GATE: story"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-attaches-merged-qa-procedure-artifact-before-duplicate-assignment
   (let [root (tmp-dir)]
     (try
