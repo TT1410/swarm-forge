@@ -26,11 +26,12 @@
   (get-in (table root) [:roles role kind] []))
 
 (defn tool-spec [root tool-name]
-  (when-let [{:keys [source version purpose]} (tool-record root tool-name)]
+  (when-let [{:keys [source version purpose install-command]} (tool-record root tool-name)]
     {:name tool-name
      :source source
      :version version
-     :purpose purpose}))
+     :purpose purpose
+     :install-command install-command}))
 
 (defn role-tools [root role kind]
   (vec (keep #(tool-spec root %) (role-tool-names root role kind))))
@@ -47,6 +48,14 @@
 (defn require-command [{:keys [name source version]}]
   (str "squad_tool.sh require " name " " source " " version))
 
+(defn shell-quote [arg]
+  (str "'" (str/replace arg "'" "'\"'\"'") "'"))
+
+(defn ensure-command [{:keys [name source version install-command]}]
+  (when (seq install-command)
+    (str "squad_tool.sh ensure " name " " source " " version
+         " -- " (str/join " " (map shell-quote install-command)))))
+
 (defn startup-instructions [tools]
   (when (seq tools)
     (str "## Tool Startup\n\n"
@@ -55,7 +64,10 @@
          "- If a required tool is missing and no install command is authorized, record `blocked` and hand the blocker back to `squad-leader`.\n\n"
          (apply str
                 (for [tool tools]
-                  (str "- `" (require-command tool) "`\n")))
+                  (str "- `" (require-command tool) "`"
+                       (when-let [install (ensure-command tool)]
+                         (str "\n  If missing, run exactly: `" install "`"))
+                       "\n")))
          "\n")))
 
 (defn evidence-instructions [evidence]

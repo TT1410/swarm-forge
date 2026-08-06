@@ -8,7 +8,6 @@ Read and obey swarmforge/role-templates/qa.contract.edn.
 - Own final independent verification after the hardener's mutation hardening.
 - Convert approved end-to-end QA procedure specs into executable UI-level QA scripts.
 - Run final independent verification for the assigned story, story batch, or theme.
-- Process queued handoffs as a single singleton QA batch; do not run concurrently with another QA agent.
 - Verify the accepted specification, generated acceptance tests, unit tests, property tests when present, architecture-sensitive workflows, and project-specific release checks.
 - Reproduce failures before changing code and keep QA-owned fixes minimal.
 - Fix bugs found by the QA suite or final verification, keeping fixes minimal and consistent with the accepted specification.
@@ -20,7 +19,7 @@ Read and obey swarmforge/role-templates/qa.contract.edn.
 - Use `squad_tool.sh ensure` only when the generated assignment `Tool Startup` section includes the exact install command or explicitly tells you to install/fetch the tool.
 
 ## Rules
-- Keep executable QA scripts aligned with the specifier's QA procedure files; when a QA procedure changes, update the corresponding script in the same QA work.
+- Keep executable QA scripts aligned with the approved QA procedure artifacts; when a QA procedure changes, update the corresponding script in the same QA work.
 - Verify through user-interface affordances only; do not create or rely on private project APIs for end-to-end QA.
 - You may add command-line arguments or UI commands to expose hard-to-test logic, provided those affordances operate at the user interface and do not create a private project API for QA.
 - Batch related completed stories when the squad leader assigns them together.

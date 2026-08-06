@@ -128,6 +128,117 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-processes-claimed-git-handoff-before-completion
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
+      (write-agent-status! root "analyst-001" "handoff_sent")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\n"
+                       "to: squad-leader\n"
+                       "from: analyst-001\n"
+                       "priority: 50\n"
+                       "task: wumpus-analysis\n"
+                       "commit: abcdef1234\n"
+                       "assignment: wumpus-analysis\n"
+                       "agent: analyst-001\n"
+                       "template: analyst\n"
+                       "artifacts: stories/cave.md\n\n"
+                       "merge_and_process analyst-001 abcdef1234\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
+                  (str "assignment_id: wumpus-analysis\n"
+                       "theme_id: wumpus\n"
+                       "story_id: theme\n"
+                       "template: analyst\n"
+                       "assignment_file: " root "/instructions.md\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                  "assignment_id: wumpus-analysis\nstate: in_progress\n")
+      (let [record-result (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out record-result) "NEXT_ACTION: record_assignment_result"))
+        (is (str/includes? (:out record-result) "COMMAND: squad_assign.sh result wumpus-analysis ")))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                  "assignment_id: wumpus-analysis\nstate: result_received\n")
+      (let [merge-ready (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out merge-ready) "NEXT_ACTION: check_merge_readiness"))
+        (is (str/includes? (:out merge-ready) "COMMAND: squad_assign.sh merge-ready wumpus-analysis")))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                  "assignment_id: wumpus-analysis\nstate: merge_ready\n")
+      (let [accept-merge (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out accept-merge) "NEXT_ACTION: accept_merge"))
+        (is (str/includes? (:out accept-merge) "COMMAND: squad_assign.sh accept-merge wumpus-analysis")))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                  "assignment_id: wumpus-analysis\nstate: merged\n")
+      (let [finish (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out finish) "NEXT_ACTION: finish_in_process_handoff"))
+        (is (str/includes? (:out finish) "COMMAND: done_with_current.sh ")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-does-not-retire-completed-handoff-before-assignment-resolution
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
+      (write-agent-status! root "analyst-001" "handoff_sent")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\n"
+                       "to: squad-leader\n"
+                       "from: analyst-001\n"
+                       "priority: 50\n"
+                       "task: wumpus-analysis\n"
+                       "commit: abcdef1234\n\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
+                  "assignment_id: wumpus-analysis\ntheme_id: wumpus\nstory_id: theme\ntemplate: analyst\n")
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                  "assignment_id: wumpus-analysis\nstate: result_received\n")
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (not (str/includes? (:out next) "NEXT_ACTION: retire_agent"))))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                  "assignment_id: wumpus-analysis\nstate: merged\n")
+      (let [retire (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out retire) "NEXT_ACTION: retire_agent"))
+        (is (str/includes? (:out retire) "COMMAND: squad_retire.sh analyst-001")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-treats-merged-replacement-analysis-as-theme-analysis-complete
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "theme" "approved")
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
+                  (str "assignment_id: wumpus-analysis\n"
+                       "theme_id: wumpus\n"
+                       "story_id: theme\n"
+                       "template: analyst\n"
+                       "assignment_file: " root "/analysis.md\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                  "assignment_id: wumpus-analysis\nstate: superseded\n")
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis-r2/metadata")
+                  (str "assignment_id: wumpus-analysis-r2\n"
+                       "theme_id: wumpus\n"
+                       "story_id: theme\n"
+                       "template: analyst\n"
+                       "replaces: wumpus-analysis\n"
+                       "assignment_file: " root "/analysis-r2.md\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis-r2/status")
+                  "assignment_id: wumpus-analysis-r2\nstate: merged\n")
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (not (str/includes? (:out next) "TEMPLATE: analyst")))
+        (is (str/includes? (:out next) "NEXT_ACTION: wait")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-selects-deterministic-story-candidates
   (let [root (tmp-dir)]
     (try

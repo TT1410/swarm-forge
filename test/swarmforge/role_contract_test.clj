@@ -111,7 +111,7 @@
     (is (str/includes? hardener "generated assignment `Tool Startup` section"))
     (is (str/includes? hardener "swarmforge/tool-table.edn"))
     (is (str/includes? gherkin "generated assignment `Tool Startup` section"))
-    (is (str/includes? gherkin "required tool evidence headers"))))
+    (is (str/includes? gherkin "do not block handoff on special evidence header names"))))
 
 (deftest squad-analyst-prompt-includes-invest-story-guidance
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))]
@@ -132,6 +132,7 @@
   (let [startup (tools/startup-instructions (tools/required-tools repo-root "gherkin-writer"))]
     (is (str/includes? startup "## Tool Startup"))
     (is (str/includes? startup "squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest"))
+    (is (str/includes? startup "squad_tool.sh ensure gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest -- 'bash' 'swarmforge/scripts/install_bb_tool.sh' '/Users/unclebob/projects/Acceptance-Pipeline-Specification' 'gherkin-parser'"))
     (is (str/includes? startup "squad_tool.sh require ir-dry-checker github.com/unclebob/Acceptance-Pipeline-Specification latest"))
     (is (str/includes? startup "record `blocked`"))))
 

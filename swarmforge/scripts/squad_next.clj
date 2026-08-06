@@ -63,6 +63,9 @@
 (defn handoff-task [file]
   (get (file-map file) "task" "unknown"))
 
+(defn handoff-type [file]
+  (get (file-map file) "type" "unknown"))
+
 (defn print-handoff-action! [action file reason command]
   (let [headers (file-map file)]
     (println "NEXT_ACTION:" action)
@@ -463,12 +466,21 @@
         (assignment-spawn-candidate assignment theme-id "theme" template reason priority stage-order))
       (assignment-create-candidate theme-id "theme" template assignment-id reason priority stage-order requirement))))
 
+(defn theme-analysis-complete? [assignments theme-id]
+  (boolean
+   (some #(and (= theme-id (:theme-id %))
+               (= "theme" (:story-id %))
+               (= "analyst" (:template %))
+               (= "merged" (:state %)))
+         assignments)))
+
 (defn theme-candidates [root rows]
   (let [assignments (assignment-records root)
         agents (agent-records root rows)
         packet-themes (set (map #(get % "theme_id") (packets root)))]
     (->> (for [theme (theme-records root)
-               :when (not (contains? packet-themes (:theme-id theme)))
+               :when (not (or (contains? packet-themes (:theme-id theme))
+                              (theme-analysis-complete? assignments (:theme-id theme))))
                :let [approval-id (str "theme__" (:theme-id theme))
                      approval (when-not (approval-record-exists-for? root "theme" (:theme-id theme) "theme")
                                 {:priority 20
@@ -1111,6 +1123,16 @@
 (defn assignment-result-recorded? [root assignment-id]
   (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "result")))
 
+(defn assignment-status-state [root assignment-id]
+  (get (file-map (fs/path root ".squad" "assignments" assignment-id "status")) "state" "unknown"))
+
+(defn assignment-dir-exists? [root assignment-id]
+  (fs/directory? (fs/path root ".squad" "assignments" assignment-id)))
+
+(def resolved-handoff-assignment-states
+  #{"merged" "rejected" "blocked" "replacement_created" "superseded"
+    "review_accepted" "review_changes_requested"})
+
 (defn downstream-merger-result-recorded? [root assignment-id]
   (boolean
    (let [assignments-dir (fs/path root ".squad" "assignments")]
@@ -1125,8 +1147,43 @@
 
 (defn completed-handoff-retirable? [root {:keys [agent assignment-id]}]
   (and (not= "unknown" agent)
-       (or (not (assignment-merge-blocked? root assignment-id))
-           (downstream-merger-result-recorded? root assignment-id))))
+       (if (assignment-dir-exists? root assignment-id)
+         (let [state (assignment-status-state root assignment-id)]
+           (or (contains? resolved-handoff-assignment-states state)
+               (and (= "merge_blocked" state)
+                    (downstream-merger-result-recorded? root assignment-id))))
+         true)))
+
+(defn in-process-git-handoff-command [root file]
+  (let [assignment-id (handoff-task file)
+        state (assignment-status-state root assignment-id)]
+    (when (and (= "git_handoff" (handoff-type file))
+               (assignment-dir-exists? root assignment-id))
+      (case state
+        ("created" "assignment_created" "in_progress" "handoff_sent" "unknown")
+        {:action "record_assignment_result"
+         :reason "claimed git handoff must be recorded before completion"
+         :command (str "squad_assign.sh result " assignment-id " " file)}
+
+        "result_received"
+        {:action "check_merge_readiness"
+         :reason "recorded result must be checked for merge readiness before handoff completion"
+         :command (str "squad_assign.sh merge-ready " assignment-id)}
+
+        "merge_ready"
+        {:action "accept_merge"
+         :reason "merge-ready result must be accepted before handoff completion"
+         :command (str "squad_assign.sh accept-merge " assignment-id)}
+
+        nil))))
+
+(defn print-in-process-handoff-action! [root file]
+  (if-let [{:keys [action reason command]} (in-process-git-handoff-command root file)]
+    (print-handoff-action! action file reason command)
+    (print-handoff-action! "finish_in_process_handoff"
+                           file
+                           "handoff is already claimed and must be completed before new mail"
+                           (str "done_with_current.sh " file))))
 
 (defn visible-handoff-agents [root]
   (->> ["new" "in_process" "completed"]
@@ -1280,11 +1337,8 @@
 
 (def action-print-handlers
   {:finish-in-process
-   (fn [{:keys [in-process]}]
-     (print-handoff-action! "finish_in_process_handoff"
-                            in-process
-                            "handoff is already claimed and must be completed before new mail"
-                            (str "done_with_current.sh " in-process)))
+   (fn [{:keys [root in-process]}]
+     (print-in-process-handoff-action! root in-process))
    :process-handoff
    (fn [{:keys [new-handoff]}]
      (print-handoff-action! "process_handoff" new-handoff "new handoff mail is waiting" "ready_for_next.sh"))

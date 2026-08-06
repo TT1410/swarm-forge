@@ -262,35 +262,6 @@
        (remove #{"none"})
        vec))
 
-(defn commit-path-exists? [root commit path]
-  (zero? (:exit (sh-at root "git" "cat-file" "-e" (str commit ":" path)))))
-
-(defn required-evidence-missing [root commit headers artifact-set evidence]
-  (some (fn [{:keys [header description]}]
-          (let [value (get headers header)
-                paths (split-list value)]
-            (cond
-              (empty? paths)
-              (str "missing required tool evidence header " header
-                   " (" description ")")
-
-              (some #(not (contains? artifact-set %)) paths)
-              (str "required tool evidence header " header
-                   " references artifacts not listed in artifacts")
-
-              (some #(not (commit-path-exists? root commit %)) paths)
-              (str "required tool evidence artifact for " header
-                   " is not present in result commit"))))
-        evidence))
-
-(defn required-tool-evidence-error [root template handoff-file commit manifest]
-  (let [evidence (tools/required-evidence root template)]
-    (when (seq evidence)
-      (required-evidence-missing root commit
-                                 (header-map handoff-file)
-                                 (set (split-list (get manifest "artifacts")))
-                                 evidence))))
-
 (defn theme-scoped-assignment? [template story-id]
   (and (= "analyst" template)
        (= "theme" story-id)))
@@ -640,13 +611,10 @@
 (defn validate-sender-assignment-lineage! [root assignment-id from]
   (let [agent-metadata (fs/path root ".squad" "agents" from "metadata")]
     (when (fs/exists? agent-metadata)
-      (let [task-id (read-value agent-metadata "task_id")
-            worktree (read-value agent-metadata "worktree")]
+      (let [task-id (read-value agent-metadata "task_id")]
         (when-not (= assignment-id task-id)
           (exit! 2 (str "Result sender " from " is assigned to " task-id ", not " assignment-id)))
-        (when (and (not (str/blank? worktree))
-                   (not (fs/exists? worktree)))
-          (exit! 2 (str "Result sender worktree is missing: " worktree)))))))
+        true))))
 
 (defn validate-result-handoff!
   ([assignment-id template handoff-file]
@@ -667,10 +635,6 @@
      (validate-result-commit! commit)
      (validate-result-sender! from)
      (validate-result-manifest! assignment-id template from manifest)
-     (when-let [evidence-error (required-tool-evidence-error root template handoff-file commit manifest)]
-       (exit! 6
-              "SQUAD_REQUIRED_TOOL_EVIDENCE_MISSING"
-              evidence-error))
      {:from from
       :commit commit
       :manifest manifest
@@ -707,38 +671,6 @@
   (when-not (str/blank? body)
     (println "BODY_RECORDED: true")))
 
-(declare valid-result-commit?)
-
-(defn block-result! [root dir assignment-id detail now]
-  (write-atomic! (fs/path dir "blocker.md") (str detail "\n"))
-  (write-atomic! (fs/path dir "blocker")
-                 (str "assignment_id: " assignment-id "\n"
-                      "state: blocked\n"
-                      "kind: required-tool-evidence\n"
-                      "reason_file: " (fs/path dir "blocker.md") "\n"
-                      "updated_at: " now "\n"))
-  (write-atomic! (fs/path dir "status")
-                 (str "assignment_id: " assignment-id "\n"
-                      "state: blocked\n"
-                      "detail: " detail "\n"
-                      "updated_at: " now "\n"))
-  (append-line! (fs/path dir "events.log")
-                (str now "\tblocked\trequired-tool-evidence"))
-  (assignment-theme-event! root dir "blocked" assignment-id "required-tool-evidence")
-  (binding [*out* *err*]
-    (println "SQUAD_ASSIGNMENT:" assignment-id)
-    (println "STATE: blocked")
-    (println "BLOCKER:" (str (fs/path dir "blocker.md")))
-    (println "DETAIL:" detail))
-  (System/exit 6))
-
-(defn block-missing-tool-evidence! [root dir assignment-id template handoff-file now]
-  (let [commit (read-value handoff-file "commit")
-        manifest {"artifacts" (read-value handoff-file "artifacts")}]
-    (when (valid-result-commit? commit)
-      (when-let [detail (required-tool-evidence-error root template handoff-file commit manifest)]
-        (block-result! root dir assignment-id detail now)))))
-
 (defn record-result! [assignment-id handoff-path]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
@@ -749,7 +681,6 @@
         theme-id (or (read-value metadata "theme_id") "unknown")
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
-    (block-missing-tool-evidence! root dir assignment-id template handoff-file now)
     (let [{:keys [from commit body manifest]} (validate-result-handoff! root assignment-id template handoff-file)]
     (validate-sender-assignment-lineage! root assignment-id from)
     (ensure-result-reachable! root from commit)

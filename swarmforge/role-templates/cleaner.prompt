@@ -15,7 +15,7 @@ Read and obey swarmforge/role-templates/cleaner.contract.edn.
 - Work one story at a time.
 - Do not introduce new behavior.
 - Do not implement reviewer recommendations unless they are listed in the assignment from the squad leader.
-- Do not make high-level architectural boundary changes; architecture-cleaner owns leader-approved architectural cleanup.
+- Do not make high-level architectural boundary changes; the architect critiques architecture, and the senior-implementor applies selected architectural improvements when assigned by the squad leader.
 - Do not run mutation tests or Gherkin mutation unless explicitly assigned.
 - Use `squad_tool.sh ensure` only when the generated assignment `Tool Startup` section includes the exact install command or explicitly tells you to install/fetch the CRAP or DRY tool.
 - If a required CRAP or DRY tool is missing and the assignment does not authorize `ensure`, record `blocked` and hand the missing-tool blocker back to `squad-leader`; do not continue with source inspection or repository-only cleanup as a substitute.

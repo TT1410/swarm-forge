@@ -108,6 +108,12 @@
       slDraft = messageInput.value;
       localStorage.setItem(slDraftKey, slDraft);
     });
+    messageInput.addEventListener('keydown', event => {
+      if (event.key === 'Enter' && !event.shiftKey) {
+        event.preventDefault();
+        sendMessage();
+      }
+    });
     async function sendMessage() {
       const text = messageInput.value.trim();
       if (!text) return;
@@ -393,7 +399,8 @@
            (keep (fn [assignment-dir]
                    (let [blocker (fs/path assignment-dir "blocker")
                          status (parse-kv-file (fs/path assignment-dir "status"))]
-                     (when (fs/regular-file? blocker)
+                     (when (and (fs/regular-file? blocker)
+                                (= "blocked" (get status "state")))
                        (merge {"assignment_id" (fs/file-name assignment-dir)
                                "detail" (get status "detail" "")}
                               (parse-kv-file blocker))))))
@@ -524,8 +531,8 @@
   (let [metadata (fs/path root ".squad" "agents" agent-id "metadata")
         session (read-value metadata "session")
         socket (socket-value root)]
-    (or (when (and socket (not (str/blank? session)))
-          (capture-pane-tail socket session))
+    (or (not-empty (when (and socket (not (str/blank? session)))
+                     (capture-pane-tail socket session)))
         (tail-section (fs/path root ".squad" "agents" agent-id "liveness"))
         "")))
 
@@ -539,7 +546,7 @@
        "</head><body><header><h1>" (html-escape agent-id) "</h1></header><pre id=\"pane\"></pre>"
        "<script>const pane=document.getElementById('pane');async function refresh(){"
        "const r=await fetch('/api/agents/" (html-escape agent-id) "/pane',{cache:'no-store'});"
-       "pane.textContent=await r.text();window.scrollTo(0,document.body.scrollHeight)}"
+       "const text=await r.text();if(text.length>0){pane.textContent=text;window.scrollTo(0,document.body.scrollHeight)}}"
        "refresh();setInterval(refresh,1000);</script></body></html>"))
 
 (defn agent-pane-response [root path]

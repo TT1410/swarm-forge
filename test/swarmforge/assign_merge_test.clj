@@ -594,11 +594,12 @@
         (is (str/includes? assignment "## Required Tools"))
         (is (str/includes? assignment "## Tool Startup"))
         (is (str/includes? assignment "crap4clj (CRAP): `squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest`"))
-        (is (str/includes? assignment "dry4clj (DRY): `squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest`")))
+        (is (str/includes? assignment "dry4clj (DRY): `squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest`"))
+        (is (str/includes? assignment "If missing, run exactly: `squad_tool.sh ensure crap4clj github.com/unclebob/crap4clj latest -- 'bash' 'swarmforge/scripts/install_bb_tool.sh' '/Users/unclebob/projects/clojure/crap4clj' 'crap'`")))
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-assign-blocks-gherkin-results-missing-required-tool-evidence
+(deftest squad-assign-accepts-gherkin-results-without-formal-tool-evidence-headers
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -626,24 +627,23 @@
       (let [assignment (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/assignment.md")))]
         (is (str/includes? assignment "gherkin-parser (APS parsing): `squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest`"))
         (is (str/includes? assignment "ir-dry-checker (IR DRY): `squad_tool.sh require ir-dry-checker github.com/unclebob/Acceptance-Pipeline-Specification latest`"))
-        (is (str/includes? assignment "## Required Tool Evidence"))
-        (is (str/includes? assignment "`normalized_ir: <artifact-path-or-summary>`")))
+        (is (str/includes? assignment "If missing, run exactly: `squad_tool.sh ensure gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest -- 'bash' 'swarmforge/scripts/install_bb_tool.sh' '/Users/unclebob/projects/Acceptance-Pipeline-Specification' 'gherkin-parser'`"))
+        (is (not (str/includes? assignment "## Required Tool Evidence")))
+        (is (not (str/includes? assignment "`normalized_ir: <artifact-path-or-summary>`"))))
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "missing-evidence.handoff")
                     (result-handoff-text "1" "gherkin-writer-001" "wumpus-cave-gherkin"
                                          "gherkin-writer" commit
                                          "simulated gherkin result"))
-        (let [result (run {:dir root :ok? false}
+        (let [result (run {:dir root}
                           (script "squad_assign.sh")
                           "result"
                           "wumpus-cave-gherkin"
                           "missing-evidence.handoff")
-              status (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/status")))
-              blocker (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/blocker")))]
-          (is (= 6 (:exit result)))
-          (is (str/includes? (:err result) "STATE: blocked"))
-          (is (str/includes? status "state: blocked"))
-          (is (str/includes? blocker "kind: required-tool-evidence"))))
+              status (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/status")))]
+          (is (str/includes? (:out result) "STATE: result_received"))
+          (is (str/includes? status "state: result_received"))
+          (is (not (fs/exists? (fs/path root ".squad/assignments/wumpus-cave-gherkin/blocker"))))))
       (finally
         (fs/delete-tree root)))))
 
@@ -706,6 +706,49 @@
                           "wumpus-cave-gherkin"
                           "evidence.handoff")
               status (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/status")))]
+          (is (str/includes? (:out result) "STATE: result_received"))
+          (is (str/includes? status "state: result_received"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-records-result-after-sender-worktree-is-gone
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt")
+                  "analyze\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "instructions.md")
+                  "Write stories.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root}
+           (script "squad_assign.sh")
+           "create"
+           "wumpus"
+           "theme"
+           "analyst"
+           "wumpus-analysis"
+           "instructions.md")
+      (write-file (fs/path root ".squad/agents/analyst-001/metadata")
+                  (str "agent: analyst-001\n"
+                       "template: analyst\n"
+                       "task_id: wumpus-analysis\n"
+                       "worktree: " root "/.worktrees/analyst-001\n"))
+      (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root "result.handoff")
+                    (result-handoff-text "1" "analyst-001" "wumpus-analysis"
+                                         "analyst" commit
+                                         "stories are ready"))
+        (let [result (run {:dir root}
+                          (script "squad_assign.sh")
+                          "result"
+                          "wumpus-analysis"
+                          "result.handoff")
+              status (slurp (str (fs/path root ".squad/assignments/wumpus-analysis/status")))]
           (is (str/includes? (:out result) "STATE: result_received"))
           (is (str/includes? status "state: result_received"))))
       (finally

@@ -23,15 +23,10 @@ template: <role-template>
 artifacts: <comma-separated-paths-or-none>
 ```
 
-- Unless a local workflow rule or role prompt defines a coordinator-only return
-  path, when your role is an intermediate step in the pack pipeline, always
-  forward a `git_handoff` to the next role in the chain after completing the
-  inbound task, regardless of what changed. Formatting-only, manifest-only,
-  audit-only, generated metadata, and other non-functional churn still require a
-  forward down the chain.
-- When your role sends the end-of-chain handoff to multiple recipients, those
-  recipients merge only (`merge_and_process`). They do not forward that handoff
-  further. Only this terminal broadcast is merge-only without re-forwarding.
+- In the squad workflow, transient agents do not forward work to other
+  transient agents. Send completed assigned work only back to `squad-leader`.
+- The squad leader uses `squad_next.sh` to decide every downstream action after
+  a handoff is received.
 - Preserve the received task name when forwarding work for the same task. If the
   handoff starts new work, invent a short stable task name.
 - For `note`, write:
@@ -51,9 +46,12 @@ message: <one line, max 80 chars>
 - Do not hand-edit, merge, stage, or commit handoff runtime state.
 
 ## Receiving Handoffs
-- When notified, run `ready_for_next.sh`.
-- `ready_for_next.sh` dispatches to the task or batch helper configured for
-  your role.
+- When the squad leader is notified by handoff, web approval, status wakeup, or
+  user message, run `squad_next.sh`, execute its printed `COMMAND`, and repeat
+  until it prints a wait, blocked, or user-approval action.
+- When a transient agent is notified, run `ready_for_next.sh`.
+- `ready_for_next.sh` dispatches to the task or batch helper configured for a
+  transient role.
 - If it prints `NO_TASK`, stop waiting for work.
 - If it prints `TASK: <path>`, treat the printed `PAYLOAD` as the task.
 - If it prints `TASK_NAME: <name>`, use that as the stable task name for any
@@ -70,4 +68,5 @@ message: <one line, max 80 chars>
 - If `done_with_current.sh` prints `BATCH: <path>`, treat each printed
   `BATCH_ITEM` as part of the next batch in helper-delivered order.
 - If a done helper prints `NO_TASK`, stop waiting for work.
-- On restart, run `ready_for_next.sh` and follow its output.
+- On restart, the squad leader runs `squad_next.sh` and transient agents run
+  `ready_for_next.sh`; follow the helper output.

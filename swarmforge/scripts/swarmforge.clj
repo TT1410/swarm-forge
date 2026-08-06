@@ -295,7 +295,7 @@
    "squad_recover.clj" "squad_recover.sh"
    "squad_report.clj" "squad_report.sh"
    "squad_simulator.clj" "squad_simulator.sh"
-   "squad_tool.clj" "squad_tool.sh" "squad_tool_table.clj"
+   "squad_tool.clj" "squad_tool.sh" "squad_tool_table.clj" "install_bb_tool.sh"
    "squad_theme.clj" "squad_theme.sh"
    "squad_spawn_request.clj" "squad_spawn_request.sh"
    "swarm-cleanup.sh" "swarm-window-watchdog.sh" "swarm_window_watchdog.clj"

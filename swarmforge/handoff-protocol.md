@@ -154,38 +154,15 @@ The script validates the task name and canonicalizes the commit abbreviation
 before queuing the handoff. The task name is a short, stable human-readable
 name that follows the work through downstream git handoffs for the same task.
 
-#### Chain forwarding
+#### Squad return path
 
-Intermediate roles in a pack pipeline must always forward a `git_handoff` to
-the next role in the chain after completing the inbound task, regardless of
-what changed. Manifest-only, audit-only, generated metadata, formatting-only,
-and other non-functional churn still require a forward down the chain.
+In the squad workflow, transient roles send completed `git_handoff` results only
+back to `squad-leader`. The squad leader uses `squad_next.sh` to decide every
+downstream action after the result is recorded and merged.
 
-Examples:
-
-- `two-pack`: `coder` -> `cleaner` -> `coder`; `cleaner` always forwards to
-  `coder`.
-- `four-pack`: `specifier` -> `coder` -> `refactorer` -> `architect` ->
-  `specifier`; each intermediate role always forwards to the next role in the
-  chain.
-- `six-pack`: `specifier` -> `coder` -> `cleaner` -> `architect` -> `hardender`
-  -> `QA`; each intermediate role always forwards to the next role in the
-  chain.
-
-#### Terminal broadcast
-
-Only the end-of-chain handoff sent to multiple recipients is not forwarded
-further. Each recipient merges that commit (`merge_and_process`) and stops;
-recipients do not re-forward that handoff down the chain.
-
-Examples:
-
-- `two-pack`: when `cleaner` sends the return handoff to `coder`, `coder`
-  merges only.
-- `four-pack`: when `architect` sends the return handoff to `specifier`,
-  `specifier` merges only.
-- `six-pack`: when `QA` sends the completion handoff to the other roles, each
-  recipient merges only.
+Older pack-pipeline workflows may still define role-to-role forwarding in their
+own prompts, but squad transients must not infer such forwarding from queued
+handoffs.
 
 ### `note`
 
@@ -332,7 +309,7 @@ recipient toward one file and should force queue-order processing.
 Example tmux wake-up:
 
 ```text
-You have new handoff mail. If idle, run ready_for_next.sh.
+You have new handoff mail. If idle, run squad_next.sh and follow its COMMAND.
 ```
 
 ## Queue Helper Scripts
@@ -467,7 +444,7 @@ NO_TASK
 
 ## Agent Queue Rules
 
-Prompts should instruct agents to follow this loop:
+Prompts should instruct transient agents to follow this loop:
 
 1. When notified, run `ready_for_next.sh`.
 2. Let `ready_for_next.sh` dispatch according to the receive mode configured for
@@ -487,7 +464,8 @@ Prompts should instruct agents to follow this loop:
    part of the next batch in helper-delivered order.
 12. If a done helper prints `NO_TASK`, stop waiting for work.
 
-On restart, an agent should run `ready_for_next.sh` and follow its output.
+On restart, the squad leader should run `squad_next.sh`; transient agents should
+run `ready_for_next.sh` and follow its output.
 
 Tmux wake-ups are intentionally lossy. They only prompt an idle agent to check
 its durable inbox. A busy agent can ignore them because task completion also

@@ -33,6 +33,6 @@ Read and obey swarmforge/role-templates/gherkin-writer.contract.edn.
 
 ## Handoff
 - Commit only the assigned story's Gherkin feature files and concise notes.
-- Include the required tool evidence headers listed in the generated assignment before the blank line in the result handoff.
+- Include useful APS parser and IR DRY evidence artifacts when you create them, but do not block handoff on special evidence header names.
 - Do not hand off to another transient worker.
 - Send a `git_handoff` back to `squad-leader` using the received task name.

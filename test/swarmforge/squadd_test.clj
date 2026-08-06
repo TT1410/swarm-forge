@@ -246,7 +246,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squadd-reconciles-retired-transients-and-kills-leftover-tmux-session
+(deftest squadd-preserves-agent-authored-retired-state-for-workflow-retirement
   (let [root (tmp-dir)
         bin (fs/path root "bin")
         fake-state (fs/path root "fake-tmux-state")
@@ -293,28 +293,18 @@
                         "--once"
                         "--no-notify"
                         (str root))
-              twice (run {:dir root
-                          :env {"PATH" (str bin ":" (System/getenv "PATH"))
-                                "FAKE_TMUX_STATE" (str fake-state)}}
-                         (script "squadd.sh")
-                         "--once"
-                         "--no-notify"
-                         (str root))
               roles (slurp (str (fs/path root ".swarmforge/roles.tsv")))
               daemon-log (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))]
-          (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
-          (is (str/includes? (:out twice) "SQUAD_STATUS_OK"))
-          (is (fs/exists? (fs/path fake-state "killed")))
-          (is (not (str/includes? roles "specifier-001\t")))
-          (is (not (fs/exists? worktree)))
-          (is (not (git-worktree-registered? root worktree)))
-          (is (not (git-branch-exists? root "swarmforge-specifier-001")))
-          (is (str/includes? daemon-log "retired-session-killed specifier-001 swarmforge-specifier-001"))
-          (is (str/includes? daemon-log "git-worktree-removed specifier-001"))
-          (is (str/includes? daemon-log "git-branch-deleted specifier-001 swarmforge-specifier-001"))
-          (is (str/includes? daemon-log "role-retired-reconciled specifier-001"))
-          (is (= 1 (count (filter #(str/includes? % "git-worktree-removed specifier-001")
-                                   (str/split-lines daemon-log)))))))
+          (is (str/includes? (:out once) "SQUAD_STATUS_ALERT: agent specifier-001 reported retired"))
+          (is (not (fs/exists? (fs/path fake-state "killed"))))
+          (is (str/includes? roles "specifier-001\t"))
+          (is (fs/exists? worktree))
+          (is (git-worktree-registered? root worktree))
+          (is (git-branch-exists? root "swarmforge-specifier-001"))
+          (is (str/includes? daemon-log "agent-retired-awaiting-workflow specifier-001"))
+          (is (not (str/includes? daemon-log "retired-session-killed specifier-001")))
+          (is (not (str/includes? daemon-log "git-worktree-removed specifier-001")))
+          (is (not (str/includes? daemon-log "role-retired-reconciled specifier-001")))))
       (finally
         (fs/delete-tree root)))))
 

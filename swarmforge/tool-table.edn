@@ -1,37 +1,31 @@
 {:tools
  {"clj-mutate" {:source "github.com/unclebob/clj-mutate"
                 :version "latest"
-                :purpose "mutation"}
+                :purpose "mutation"
+                :install-command ["bash" "swarmforge/scripts/install_bb_tool.sh" "/Users/unclebob/projects/clojure/clj-mutate" "mutate"]}
   "crap4clj" {:source "github.com/unclebob/crap4clj"
               :version "latest"
-              :purpose "CRAP"}
+              :purpose "CRAP"
+              :install-command ["bash" "swarmforge/scripts/install_bb_tool.sh" "/Users/unclebob/projects/clojure/crap4clj" "crap"]}
   "dry4clj" {:source "github.com/unclebob/dry4clj"
              :version "latest"
-             :purpose "DRY"}
+             :purpose "DRY"
+             :install-command ["bash" "swarmforge/scripts/install_bb_tool.sh" "/Users/unclebob/projects/clojure/dry4clj" "deintroverter"]}
   "gherkin-parser" {:source "github.com/unclebob/Acceptance-Pipeline-Specification"
                     :version "latest"
-                    :purpose "APS parsing"}
+                    :purpose "APS parsing"
+                    :install-command ["bash" "swarmforge/scripts/install_bb_tool.sh" "/Users/unclebob/projects/Acceptance-Pipeline-Specification" "gherkin-parser"]}
   "gherkin-mutator" {:source "github.com/unclebob/Acceptance-Pipeline-Specification"
                      :version "latest"
-                     :purpose "Gherkin mutation"}
+                     :purpose "Gherkin mutation"
+                     :install-command ["bash" "swarmforge/scripts/install_bb_tool.sh" "/Users/unclebob/projects/Acceptance-Pipeline-Specification" "gherkin-mutator"]}
   "ir-dry-checker" {:source "github.com/unclebob/Acceptance-Pipeline-Specification"
                     :version "latest"
-                    :purpose "IR DRY"}}
+                    :purpose "IR DRY"
+                    :install-command ["bash" "swarmforge/scripts/install_bb_tool.sh" "/Users/unclebob/projects/Acceptance-Pipeline-Specification" "gherkin-ir-dry-checker"]}}
  :roles
  {"cleaner" {:required-tools ["crap4clj" "dry4clj"]}
   "hardener" {:required-tools ["clj-mutate" "crap4clj" "dry4clj"
                                "gherkin-parser" "gherkin-mutator"]}
   "qa" {:required-tools ["crap4clj" "dry4clj"]}
-  "gherkin-writer" {:required-tools ["gherkin-parser" "ir-dry-checker"]
-                    :required-evidence [{:kind "tool-transcript"
-                                         :header "tool_evidence"
-                                         :description "command transcript for gherkin-parser and ir-dry-checker"}
-                                        {:kind "normalized-ir"
-                                         :header "normalized_ir"
-                                         :description "normalized APS IR artifact"}
-                                        {:kind "ir-dry-report"
-                                         :header "ir_dry_report"
-                                         :description "IR DRY report artifact"}
-                                        {:kind "tool-metadata"
-                                         :header "tool_metadata"
-                                         :description "tool source/version metadata"}]}}}
+  "gherkin-writer" {:required-tools ["gherkin-parser" "ir-dry-checker"]}}}

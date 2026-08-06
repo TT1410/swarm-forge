@@ -680,12 +680,9 @@
         :tmux-health)))
 
 (defn retired-agent-alert! [root roles socket skip-tmux? dir {:keys [agent]}]
-  (reconcile-retired-agent! root
-                            (when-not skip-tmux? socket)
-                            roles
-                            agent
-                            dir)
-  nil)
+  (when (contains? roles agent)
+    (log! root "agent-retired-awaiting-workflow" agent)
+    (str "agent " agent " reported retired; run squad_retire.sh only after workflow resolves its handoff")))
 
 (defn unregistered-agent-alert [{:keys [agent]}]
   (str "agent " agent " is not registered in roles.tsv"))
