@@ -1,276 +1,147 @@
 # Bugs
 
-## Prompt Workflow Instructions Are Inconsistent
+## Agent Pane Viewer Shows Input Box Chrome
 
-`swarmforge/constitution/articles/handoffs.prompt` tells notified roles to run
-`ready_for_next.sh`. That is correct for transient agents, but it is wrong or
-ambiguous for the squad leader.
+In the tmux windows popped up by clicking an agent, do not render the input box
+at the bottom.
 
-The squad leader prompt and current squad behavior require the squad leader to
-run `squad_next.sh` when woken for handoff mail, status attention, web approval
-changes, recovery checks, or user redirection. `squad_next.sh` is the single
-source of workflow truth and direction for the squad leader.
+## Agent Pane Viewer Forces Scroll To Bottom While User Is Reading
 
-Expected behavior:
-
-1. Handoff receiving instructions distinguish persistent squad leader behavior
-   from transient agent behavior.
-2. Transient agents run `ready_for_next.sh` / `done_with_current.sh` for task
-   intake and completion.
-3. The squad leader runs `squad_next.sh`, executes the returned `COMMAND`, and
-   repeats until the advisor returns wait, blocked, or user-gated state.
-4. Generic `workflow.prompt`, `handoffs.prompt`, `local-workflow.prompt`, and
-   `roles/squad-leader.prompt` should describe the same effective workflow and
-   avoid conflicting wakeup instructions.
-
-Related prompt discrepancies found by scan:
-
-- `handoffs.prompt` still contains pack-pipeline language about forwarding a
-  `git_handoff` to the next role in the chain and terminal broadcast/merge-only
-  behavior. Current squad transients are not pipeline intermediates; every
-  transient result handoff returns to `squad-leader`.
-- `local-workflow.prompt` refers to an "artifact reviewer", but no current
-  `artifact-reviewer` template is listed for the squad. It should name the
-  actual artifact review roles or use "artifact review roles" generically.
-- `local-workflow.prompt` says the squad leader may make decisions after
-  "forwarding its artifacts"; "forwarding" is stale pipeline language. The squad
-  leader should record and assign the next step according to `squad_next.sh`.
-- `cleaner.prompt` says `architecture-cleaner` owns high-level architectural
-  cleanup. Current flow says `architect` critiques and `senior-implementor`
-  applies selected architectural improvements.
-- `architecture-cleaner.prompt` and `architecture-reviewer.prompt` still exist
-  as active-looking prompt files, but they are not listed in the current squad
-  leader template set. They should be marked legacy/deprecated or removed from
-  active prompt/config paths.
-- `specifier.prompt` is legacy relative to the current split flow. It owns both
-  Gherkin and QA procedure generation, while current squad workflow uses
-  `gherkin-writer` and `qa-procedure-writer`.
-- `hardener.prompt` and `qa.prompt` still refer to "specifier" outputs. Current
-  wording should refer to approved Gherkin and approved QA procedure artifacts.
-- `hardener.prompt` and `qa.prompt` say to process queued handoffs as a singleton
-  batch. Current squad batching should be explicit through batch assignments,
-  story packets, and `squad_batch.sh`; agents should not infer batch membership
-  from queued handoffs.
-
-## Completed Handoff Can Be Lost Before Merge And Result Recording
-
-In the `~/junk/squad` trial on 2026-08-05, the analyst handed off commit
-`5be412ab53` for assignment `hunt-the-wumpus-yob-analysis`. The squad leader
-processed the handoff with `ready_for_next.sh`, completed it with
-`done_with_current.sh`, and then retired `analyst-001`.
-
-The analyst did commit the story artifacts. `git show 5be412ab53` showed the
-four declared story files, but the commit was never merged into the squad leader
-worktree and the assignment result was never recorded. After the analyst branch
-and worktree were removed, the commit became unreachable except through the
-local object database. The assignment remained:
-
-- `state: in_progress`
-- `RESULT: none`
-- `MERGE: none`
-- `ACCEPTED_MERGE: none`
-
-After the analyst was retired, `squad_next.sh` returned `wait` with "no
-handoffs, pending approvals, active transient agents, or stale locks", leaving
-the workflow stuck. The durable state still showed unfinished assignment work,
-but the advisor no longer had any actionable next step and the committed
-artifacts were no longer reachable through an agent branch or worktree.
-
-This is a workflow bug. The FSM/advisor allowed an invalid transition:
-
-`handoff received -> handoff marked completed -> agent retired -> assignment
-still in_progress -> squad_next waits`
-
-The workflow must retain ownership of an unfinished assignment. Helper commands
-may provide guardrails, but the primary fix belongs in `squad_next.sh` and the
-workflow state rules.
+When a tmux window opened by clicking an agent is scrolled upward, new output
+should not immediately force the pane back to the bottom.
 
 Expected behavior:
 
-1. A completed `git_handoff` must not be marked done until the workflow has
-   merged the referenced commit or recorded an explicit merge-conflict/blockage
-   action.
-2. The workflow must verify that the referenced commit exists and contains every
-   declared artifact before allowing the source agent to be retired.
-3. If the referenced commit or declared artifacts are missing, the workflow must
-   leave the source agent recoverable and create an explicit blocked/retry action.
-4. The source agent branch or another durable ref must be preserved until the
-   handoff result has been merged or superseded.
-5. `squad_next.sh` must detect assignments that are `in_progress` with no live
-   agent, no result, and no pending recovery action, and return a repair/blockage
-   command instead of `wait`.
-6. The dashboard should surface this as a blocked workflow state rather than
-   showing an idle swarm.
+1. If the user is already at or near the bottom, new output may auto-scroll to
+   keep the live tail visible.
+2. If the user has scrolled away from the bottom, refreshes should preserve the
+   user's scroll position while continuing to poll for new output.
+3. The viewer may show an unobtrusive indication that new output is available,
+   but it should not interrupt reading by jumping to the bottom.
 
-## Agent Pane Viewer Clears When Agent Dies
+## Merged Analyst Stories Are Not Registered Into Workflow State
 
-In the dashboard, clicking an agent opens a separate view of that agent's tmux
-window activity. When the agent dies or its tmux session is removed, the viewer
-currently clears the pane contents.
+After an analyst assignment is merged, `squad_next.sh` can return `wait` even
+though the analyst created story files under `stories/`.
+
+In the observed swarm, the analyst handoff declared four `stories/*.md`
+artifacts, the squad leader recorded the result, verified merge readiness,
+accepted the merge, completed the handoff, and retired the analyst. The story
+files existed in the project, but no `.squad/stories/<story-id>/packet` records
+were created. With no story packets, the story FSM had no stories to approve or
+send to Gherkin/QA, so the advisor reported no work.
 
 Expected behavior:
 
-1. The viewer should preserve the last captured pane text after the agent dies.
-2. The view may indicate that the agent/session is no longer live, but it must
-   not discard the captured text.
-3. Refresh/polling should keep the stale final pane contents visible until the
-   user closes the viewer or selects a different agent.
+1. A merged analyst assignment for theme analysis should not be considered fully
+   consumed until its declared story artifacts are registered.
+2. `squad_next.sh` should emit deterministic commands to register each
+   analyst-created `stories/*.md` artifact with the theme and create the
+   corresponding story packet.
+3. Once registered, the normal story approval workflow should proceed for each
+   story.
+4. The workflow should not infer readiness by scanning arbitrary files, but it
+   may use the validated result manifest/artifacts from the merged analyst
+   handoff.
 
-## Replacement Assignment Merge Does Not Satisfy Original Workflow Step
+## Required Tool Installation Can Leave Stale Tool Cache Locks
 
-In the `~/junk/squad` trial on 2026-08-05, the squad leader correctly recovered
-from the earlier lost analyst handoff by creating a replacement analysis
-assignment, `hunt-the-wumpus-yob-analysis-commit-stories`.
+Gherkin writers attempted to install their required APS tools, but provisioning
+failed in ways that blocked later work.
 
-For `analyst-003`, the squad leader handled the handoff in the correct order:
+Observed behavior:
 
-1. Recorded the result with `squad_assign.sh result`.
-2. Checked merge readiness with `squad_assign.sh merge-ready`.
-3. Accepted the merge with `squad_assign.sh accept-merge`.
-4. Completed the handoff.
-5. Retired the analyst only after the merge was recorded.
-
-After that successful merge, `squad_next.sh` unexpectedly returned another
-`create_assignment` action for analysis instead of advancing the merged story
-artifacts into the next workflow stage. The squad leader noticed the duplicate
-analysis recommendation and paused to inspect state instead of blindly spawning
-another analyst.
-
-Expected behavior:
-
-1. A merged replacement assignment must satisfy the original workflow step it
-   supersedes.
-2. `squad_next.sh` should follow `replacement` / `replaces` links when deciding
-   whether theme analysis is complete.
-3. Once a replacement analysis result is merged, the workflow should advance the
-   resulting stories toward story approval / Gherkin / QA according to the
-   configured gates.
-4. The advisor should not recommend duplicate analysis merely because the
-   original superseded assignment is not itself merged.
-
-## APS Tools Are Not Provisioned Before Gherkin Writers Spawn
-
-In the `~/junk/squad` trial on 2026-08-05, Gherkin writer agents failed at
-startup because required APS tools were unavailable:
-
-- `gherkin-writer-001` blocked with missing `gherkin-parser` and
-  `ir-dry-checker` and no authorized `ensure` command.
-- `gherkin-writer-002` reported `squad_tool.sh require gherkin-parser` exit 3,
-  `squad_tool.sh require ir-dry-checker` exit 3, then blocked with missing APS
-  tool manifests.
-
-The agents behaved correctly by blocking instead of fetching or substituting
-informal inspection. The bug is in provisioning/workflow: roles that require
-tools must not be spawned into assignments that only contain failing `require`
-checks unless the shared tool cache has already been provisioned.
+1. `gherkin-writer-001` ran the required `squad_tool.sh require` checks and then
+   attempted `squad_tool.sh ensure`, but its worktree lacked
+   `swarmforge/scripts/install_bb_tool.sh`. The install failed with:
+   `bash: swarmforge/scripts/install_bb_tool.sh: No such file or directory`.
+2. `gherkin-writer-002` had `install_bb_tool.sh` in its worktree and attempted
+   `squad_tool.sh ensure gherkin-parser`, but timed out waiting for
+   `.swarmforge/tools/locks/gherkin-parser.lock`.
+3. The shared tool cache contained stale lock directories for
+   `gherkin-parser.lock` and `ir-dry-checker.lock`, with no visible live
+   `squad_tool` or installer process holding them.
+4. During the same trial, the squad leader appeared to resolve the lock
+   contention and later agents were able to proceed. This suggests manual or
+   workflow-directed repair is possible, but the stale-lock condition still
+   needs deterministic detection, reporting, and cleanup.
+5. The contention was caused by multiple concurrent Gherkin writers, not
+   analysts. After the first failed install left lock directories behind,
+   `gherkin-writer-002`, `gherkin-writer-003`, and `gherkin-writer-004`
+   overlapped while trying to `ensure` the same shared APS tools. One writer
+   also attempted both `gherkin-parser` and `ir-dry-checker` installs at the
+   same time.
+6. The squad leader resolved the situation by removing empty stale lock
+   directories and installing the APS tools sequentially with an absolute
+   installer path.
 
 Expected behavior:
 
-1. The squad leader or workflow must provision required APS tools before
-   spawning Gherkin writers, or the assignment must include exact authorized
-   `squad_tool.sh ensure ...` commands.
-2. Required tool metadata should come from `swarmforge/tool-table.edn`; agents
-   should not infer alternate repositories or commands.
-3. If provisioning fails, the workflow should show a blocking tool-provisioning
-   issue on the dashboard instead of repeatedly spawning doomed Gherkin writers.
-4. Tool-required roles should continue treating missing required tools as a
-   blocking issue.
+1. Spawned worktrees must consistently include helper scripts referenced by
+   generated tool-install commands.
+2. `squad_tool.sh ensure` must remove its lock on every failed install path,
+   including missing installer scripts and interrupted agent sessions.
+3. Stale tool-cache locks should be detected and cleared by the workflow or
+   reported as an explicit dashboard blockage with a safe repair command.
+4. A failed tool install should not leave later agents unable to install the same
+   required tool.
+5. Shared required tools should be provisioned once before spawning multiple
+   agents that require them, or `squad_tool.sh ensure` must provide robust
+   stale-lock ownership/expiry semantics for concurrent callers.
+6. Generated install commands should use an invocation path that works from the
+   tool install working directory, not only from the project root.
 
-## Missing Formal Tool Evidence Should Not Block Verified Tool Use
+## Agent Blocked Or Failed State Does Not Surface As Dashboard Blocker
 
-In the `~/junk/squad` trial on 2026-08-05, replacement Gherkin writers were able
-to load and use the required APS tools, but several Gherkin assignments were
-blocked because their handoff lacked the strict `tool_evidence` header:
+The dashboard can show no blockers even when an active assignment's agent is
+blocked or failed.
 
-- `hunt-the-wumpus-yob-001-cave-instructions-gherkin-r2`
-- `hunt-the-wumpus-yob-002-movement-and-hazards-gherkin-r2`
-- `hunt-the-wumpus-yob-003-crooked-arrows-and-wumpus-gherkin`
-- `hunt-the-wumpus-yob-004-replay-and-session-flow-gherkin`
+Observed behavior:
 
-The blocker detail was "missing required tool evidence header tool_evidence
-(command transcript for gherkin-parser and ir-dry-checker)". This rule is too
-strict when the workflow can verify or reasonably establish that the required
-tools were used through committed evidence artifacts, normalized IR files, DRY
-reports, agent event logs, or captured command output.
-
-Expected behavior:
-
-1. Required tool use should remain mandatory for roles that require those tools.
-2. A missing formal `tool_evidence` handoff header should not by itself block
-   the workflow if equivalent evidence is present in committed artifacts or
-   agent logs.
-3. The validator should accept multiple evidence sources, including declared
-   handoff headers, evidence artifact paths, parser/IR output artifacts, and
-   recorded command telemetry.
-4. Missing evidence should produce a warning or repair request when the tool use
-   is otherwise verifiable, and a blocker only when required tool use cannot be
-   verified.
-
-## Resolved Blockages Remain Visible On Dashboard
-
-When a blockage is resolved, the web dashboard can continue showing the old
-blockage even though the workflow has moved on. In the `~/junk/squad` trial on
-2026-08-05, APS tool blockages were repaired by provisioning the tools and
-spawning replacement Gherkin writers, but stale blockage information could still
-appear after the replacement work was active.
+1. `gherkin-writer-003` had agent status `state: blocked` with detail
+   `required APS tool installs timed out waiting for shared tool cache locks`.
+2. `gherkin-writer-004` had failed/retry status around APS tool installation.
+3. Their assignment status files still reported `state: in_progress`.
+4. `/api/state` returned `"blockers":[]`, so the dashboard did not show the
+   active tool-install blockage.
 
 Expected behavior:
 
-1. When a blocking condition is superseded, retried, repaired, merged, or
-   otherwise resolved, it should be removed from the active dashboard blockage
-   list.
-2. Historical blockage records may remain in logs, but the dashboard should only
-   show currently actionable blockages.
-3. Replacement assignments should clear or supersede blockers from the failed
-   assignment they replace.
-4. The workflow state should expose enough blocker lifecycle information for the
-   dashboard to distinguish active blockers from resolved history.
+1. When an agent assigned to an in-progress assignment reports `blocked` or
+   `failed`, the workflow should create or update an assignment blocker record,
+   or the dashboard should surface the agent blockage directly with the related
+   assignment.
+2. The blocker should include the agent id, assignment id, role/template, and
+   latest status detail.
+3. Once the assignment is retried, superseded, merged, or otherwise resolved,
+   the dashboard blocker should disappear from the active blocker list.
 
-## Agent-Authored Retired State Can Delete Worktree Before Handoff Processing
+## Merged QA Procedure Artifacts Are Not Recorded In Story Packets
 
-In the `~/junk/squad` trial on 2026-08-05, `qa-procedure-writer-003` sent a
-handoff for assignment
-`hunt-the-wumpus-yob-003-crooked-arrows-and-wumpus-qa-procedure` with commit
-`187500a449`. The commit existed locally and contained the expected QA artifact.
+The squad leader reported and repaired a workflow state bug where merged QA
+procedure artifacts existed in the repository but were not attached to their
+story packets.
 
-Before the squad leader processed the result, the agent status became:
+Observed behavior:
 
-- `state: retired`
-- `detail: qa-procedure-writer-003 completed handoff`
-
-`squadd` then reconciled that agent-authored retired state by killing the
-session, removing the worktree, and deleting the branch:
-
-- `retired-session-killed qa-procedure-writer-003`
-- `git-worktree-removed qa-procedure-writer-003`
-- `git-branch-deleted qa-procedure-writer-003`
-- `role-retired-reconciled qa-procedure-writer-003`
-
-When the squad leader later tried to record the handoff with
-`squad_assign.sh result`, the helper refused because the sender worktree was
-already gone.
+1. QA procedure writer assignments for Stories 1-3 were merged successfully.
+2. The accepted merge/result manifests declared artifacts such as
+   `qa/hunt-the-wumpus-01-startup-cave-and-turn-display.md`,
+   `qa/hunt-the-wumpus-02-movement-and-room-hazards.md`, and
+   `qa/hunt-the-wumpus-03-crooked-arrows-and-wumpus-wake.md`.
+3. The story packets still showed `QA_PROCEDURE: none`, so `squad_next.sh`
+   treated QA procedure work as missing and risked creating duplicate QA
+   assignments.
+4. The squad leader manually repaired the state with `squad_packet.sh attach`
+   for the merged QA procedure artifacts. After attachment, the advisor advanced
+   to QA procedure review.
 
 Expected behavior:
 
-1. Transient agents must not be able to trigger destructive cleanup by writing
-   `state: retired`.
-2. Destructive retirement cleanup should happen only after the squad leader or
-   workflow explicitly runs `squad_retire.sh`.
-3. `squadd` may display an agent-authored retired status as a request/claim that
-   the agent is done, but it must not remove the session, worktree, or branch
-   until the workflow confirms the handoff is merged, superseded, or otherwise
-   durably resolved.
-4. Handoff processing should be able to proceed from commit and handoff metadata
-   without requiring the sender worktree when the commit is present.
-
-## Squad Leader Message Box Does Not Submit On Return
-
-In the web dashboard, the squad leader message box should support chat-style
-submission behavior.
-
-Expected behavior:
-
-1. Pressing Return/Enter in the squad leader message box sends the message.
-2. Pressing Shift-Return/Shift-Enter inserts a line break without sending.
-3. The behavior should preserve the existing rule that sending text to the squad
-   leader wakes the SL correctly.
+1. After a `qa-procedure-writer` assignment is merged, the workflow should
+   deterministically attach the declared QA procedure artifact to the
+   corresponding story packet.
+2. The advisor should not recommend duplicate QA procedure writer assignments
+   when a merged QA procedure artifact is waiting only for packet attachment.
+3. The same post-merge artifact-to-packet recording rule likely applies to other
+   artifact-producing roles, including Gherkin writers.

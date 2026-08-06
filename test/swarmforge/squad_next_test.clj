@@ -239,6 +239,89 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-registers-merged-analyst-story-artifacts
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
+      (write-file (fs/path root "stories/beta.md") "Story: beta.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} "git" "add" "stories")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add analyst stories")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
+                    (str "assignment_id: wumpus-analysis\n"
+                         "theme_id: wumpus\n"
+                         "story_id: theme\n"
+                         "template: analyst\n"
+                         "assignment_file: " root "/analysis.md\n"))
+        (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                    "assignment_id: wumpus-analysis\nstate: merged\n")
+        (write-file (fs/path root ".squad/assignments/wumpus-analysis/result-manifest")
+                    (str "assignment_id: wumpus-analysis\n"
+                         "agent: analyst-001\n"
+                         "template: analyst\n"
+                         "commit: " sha "\n"
+                         "artifacts: stories/beta.md,stories/alpha.md\n"))
+        (write-file (fs/path root ".squad/assignments/wumpus-analysis/accepted-merge")
+                    (str "assignment_id: wumpus-analysis\n"
+                         "state: merged\n"
+                         "commit: " sha "\n"
+                         "merge_commit: " sha "\n")))
+      (let [register (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out register) "NEXT_ACTION: register_story_artifact"))
+        (is (str/includes? (:out register) "STORY: alpha"))
+        (is (str/includes? (:out register) "COMMAND: squad_theme.sh story wumpus alpha stories/alpha.md && squad_packet.sh create wumpus alpha wumpus-analysis master")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-attaches-merged-qa-procedure-artifact-before-duplicate-assignment
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
+      (write-file (fs/path root "qa/alpha.md") "# QA alpha\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
+      (run {:dir root} "git" "add" "stories" "qa")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add QA procedure")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "wumpus-analysis" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved")
+        (write-file (fs/path root ".squad/assignments/alpha-qa-procedure/metadata")
+                    (str "assignment_id: alpha-qa-procedure\n"
+                         "theme_id: wumpus\n"
+                         "story_id: alpha\n"
+                         "template: qa-procedure-writer\n"
+                         "assignment_file: " root "/qa-instructions.md\n"))
+        (write-file (fs/path root ".squad/assignments/alpha-qa-procedure/status")
+                    "assignment_id: alpha-qa-procedure\nstate: merged\n")
+        (write-file (fs/path root ".squad/assignments/alpha-qa-procedure/result-manifest")
+                    (str "assignment_id: alpha-qa-procedure\n"
+                         "agent: qa-procedure-writer-001\n"
+                         "template: qa-procedure-writer\n"
+                         "commit: " sha "\n"
+                         "artifacts: qa/alpha.md\n"))
+        (write-file (fs/path root ".squad/assignments/alpha-qa-procedure/accepted-merge")
+                    (str "assignment_id: alpha-qa-procedure\n"
+                         "state: merged\n"
+                         "commit: " sha "\n"
+                         "merge_commit: " sha "\n")))
+      (let [attach (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out attach) "NEXT_ACTION: attach_story_artifact"))
+        (is (str/includes? (:out attach) "TEMPLATE: qa-procedure-writer"))
+        (is (str/includes? (:out attach) "COMMAND: squad_packet.sh attach alpha qa-procedure alpha-qa-procedure master")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-selects-deterministic-story-candidates
   (let [root (tmp-dir)]
     (try

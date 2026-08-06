@@ -22,6 +22,17 @@
 (defn tool-record [root tool-name]
   (get-in (table root) [:tools tool-name]))
 
+(defn project-helper-path [root rel-path]
+  (str (fs/path root rel-path)))
+
+(defn resolve-install-arg [root arg]
+  (if (= arg "swarmforge/scripts/install_bb_tool.sh")
+    (project-helper-path root arg)
+    arg))
+
+(defn resolve-install-command [root install-command]
+  (mapv #(resolve-install-arg root %) install-command))
+
 (defn role-tool-names [root role kind]
   (get-in (table root) [:roles role kind] []))
 
@@ -31,7 +42,7 @@
      :source source
      :version version
      :purpose purpose
-     :install-command install-command}))
+     :install-command (resolve-install-command root install-command)}))
 
 (defn role-tools [root role kind]
   (vec (keep #(tool-spec root %) (role-tool-names root role kind))))

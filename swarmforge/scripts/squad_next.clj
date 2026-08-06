@@ -176,7 +176,9 @@
        (map (fn [dir]
               (let [assignment-id (fs/file-name dir)
                     metadata (file-map (fs/path dir "metadata"))
-                    status (file-map (fs/path dir "status"))]
+                    status (file-map (fs/path dir "status"))
+                    result-manifest (file-map (fs/path dir "result-manifest"))
+                    accepted-merge (file-map (fs/path dir "accepted-merge"))]
                 {:assignment-id assignment-id
                  :template (get metadata "template")
                  :theme-id (get metadata "theme_id")
@@ -185,8 +187,41 @@
                  :replaces (get metadata "replaces")
                  :assignment-file (get metadata "assignment_file")
                  :created-at (get metadata "created_at")
-                 :state (get status "state" "unknown")})))
+                 :state (get status "state" "unknown")
+                 :artifacts (get result-manifest "artifacts")
+                 :result-commit (get result-manifest "commit")
+                 :merge-commit (get accepted-merge "merge_commit")
+                 :accepted-commit (get accepted-merge "commit")})))
        vec))
+
+(defn split-list [value]
+  (->> (str/split (or value "") #",")
+       (map str/trim)
+       (remove str/blank?)
+       (remove #{"none"})
+       vec))
+
+(defn artifact-paths [assignment prefix suffix]
+  (->> (split-list (:artifacts assignment))
+       (filter #(and (str/starts-with? % prefix)
+                     (str/ends-with? % suffix)))
+       sort
+       vec))
+
+(defn artifact-story-id [path]
+  (-> (fs/file-name path)
+      (str/replace #"\.[^.]+$" "")))
+
+(defn artifact-sha [assignment]
+  (or (:merge-commit assignment)
+      (:accepted-commit assignment)
+      (:result-commit assignment)))
+
+(defn theme-story-ref-exists? [root theme-id story-id]
+  (fs/regular-file? (fs/path root ".squad" "themes" theme-id "stories" (str story-id ".ref"))))
+
+(defn story-packet-exists? [root story-id]
+  (fs/regular-file? (fs/path root ".squad" "stories" story-id "packet")))
 
 (def terminal-assignment-states
   #{"merged" "rejected" "blocked" "replacement_created" "superseded" "retired"
@@ -503,6 +538,94 @@
            candidate)
          (sort-by (juxt :priority :theme-id :stage-order :assignment-id))
          vec)))
+
+(defn analyst-story-registration-candidate [root assignment path]
+  (let [story-id (artifact-story-id path)
+        theme-id (:theme-id assignment)
+        sha (artifact-sha assignment)
+        ref-exists? (theme-story-ref-exists? root theme-id story-id)
+        packet-exists? (story-packet-exists? root story-id)]
+    (when (and (= "merged" (:state assignment))
+               (= "analyst" (:template assignment))
+               (= "theme" (:story-id assignment))
+               (not (str/blank? sha))
+               (or (not ref-exists?)
+                   (not packet-exists?)))
+      {:priority 25
+       :stage-order 1
+       :next-action "register_story_artifact"
+       :theme-id theme-id
+       :story-id story-id
+       :assignment-id (:assignment-id assignment)
+       :reason "merged analyst story artifact must be registered before story workflow can continue"
+       :command (str (when-not ref-exists?
+                       (str "squad_theme.sh story " theme-id " " story-id " " path
+                            " && "))
+                     (when-not packet-exists?
+                       (str "squad_packet.sh create " theme-id " " story-id " "
+                            (:assignment-id assignment) " master " sha)))})))
+
+(defn analyst-story-registration-candidates [root assignments]
+  (->> (for [assignment assignments
+             path (artifact-paths assignment "stories/" ".md")
+             :let [candidate (analyst-story-registration-candidate root assignment path)]
+             :when candidate]
+         candidate)
+       (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
+       vec))
+
+(def artifact-assignment-rules
+  {"gherkin-writer" {:kind "gherkin"
+                     :prefix "features/"
+                     :suffix ".feature"
+                     :packet-path-field "gherkin_path"}
+   "qa-procedure-writer" {:kind "qa-procedure"
+                          :prefix "qa/"
+                          :suffix ".md"
+                          :packet-path-field "qa_procedure_path"}})
+
+(defn packet-path-missing? [packets-by-story story-id field path]
+  (let [packet (get packets-by-story story-id)]
+    (and packet
+         (not= path (get packet field)))))
+
+(declare packet-by-story)
+
+(defn artifact-attachment-candidate [root packets-by-story assignment rule path]
+  (let [story-id (:story-id assignment)
+        sha (artifact-sha assignment)]
+    (when (and (= "merged" (:state assignment))
+               (not (str/blank? story-id))
+               (not (str/blank? sha))
+               (packet-path-missing? packets-by-story story-id (:packet-path-field rule) path))
+      {:priority 25
+       :stage-order 2
+       :next-action "attach_story_artifact"
+       :theme-id (:theme-id assignment)
+       :story-id story-id
+       :template (:template assignment)
+       :assignment-id (:assignment-id assignment)
+       :reason (str "merged " (:kind rule) " artifact must be attached to story packet")
+       :command (str "squad_packet.sh attach " story-id " " (:kind rule) " "
+                     (:assignment-id assignment) " master " sha " " path)})))
+
+(defn artifact-attachment-candidates [root assignments packets]
+  (let [packets-by-story (packet-by-story packets)]
+    (->> (for [assignment assignments
+               :let [rule (get artifact-assignment-rules (:template assignment))]
+               :when rule
+               path (artifact-paths assignment (:prefix rule) (:suffix rule))
+               :let [candidate (artifact-attachment-candidate root packets-by-story assignment rule path)]
+               :when candidate]
+           candidate)
+         (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
+         vec)))
+
+(defn packet-repair-candidates [root]
+  (let [assignments (assignment-records root)
+        packets (packets root)]
+    (vec (concat (analyst-story-registration-candidates root assignments)
+                 (artifact-attachment-candidates root assignments packets)))))
 
 (defn packet-by-story [packets]
   (into {}
@@ -1292,7 +1415,8 @@
 
 (defn ready-actions [root rows]
   (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id)
-           (concat (theme-candidates root rows)
+           (concat (packet-repair-candidates root)
+                   (theme-candidates root rows)
                    (story-candidates root rows)
                    (batch-candidates root rows)
                    (merger-candidates root rows)

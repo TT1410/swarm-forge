@@ -129,10 +129,11 @@
     (is (str/includes? prompt "individual well-named modules with single responsibilities"))))
 
 (deftest required-tool-startup-instructions-come-from-tool-table
-  (let [startup (tools/startup-instructions (tools/required-tools repo-root "gherkin-writer"))]
+  (let [helper (str (fs/path repo-root "swarmforge/scripts/install_bb_tool.sh"))
+        startup (tools/startup-instructions (tools/required-tools repo-root "gherkin-writer"))]
     (is (str/includes? startup "## Tool Startup"))
     (is (str/includes? startup "squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest"))
-    (is (str/includes? startup "squad_tool.sh ensure gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest -- 'bash' 'swarmforge/scripts/install_bb_tool.sh' '/Users/unclebob/projects/Acceptance-Pipeline-Specification' 'gherkin-parser'"))
+    (is (str/includes? startup (str "squad_tool.sh ensure gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest -- 'bash' '" helper "' '/Users/unclebob/projects/Acceptance-Pipeline-Specification' 'gherkin-parser'")))
     (is (str/includes? startup "squad_tool.sh require ir-dry-checker github.com/unclebob/Acceptance-Pipeline-Specification latest"))
     (is (str/includes? startup "record `blocked`"))))
 

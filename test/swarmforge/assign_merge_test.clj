@@ -590,12 +590,13 @@
            "cleaner"
            "wumpus-cave-clean"
            "instructions.md")
-      (let [assignment (slurp (str (fs/path root ".squad/assignments/wumpus-cave-clean/assignment.md")))]
+      (let [helper (str (fs/canonicalize (fs/path root "swarmforge/scripts/install_bb_tool.sh")))
+            assignment (slurp (str (fs/path root ".squad/assignments/wumpus-cave-clean/assignment.md")))]
         (is (str/includes? assignment "## Required Tools"))
         (is (str/includes? assignment "## Tool Startup"))
         (is (str/includes? assignment "crap4clj (CRAP): `squad_tool.sh require crap4clj github.com/unclebob/crap4clj latest`"))
         (is (str/includes? assignment "dry4clj (DRY): `squad_tool.sh require dry4clj github.com/unclebob/dry4clj latest`"))
-        (is (str/includes? assignment "If missing, run exactly: `squad_tool.sh ensure crap4clj github.com/unclebob/crap4clj latest -- 'bash' 'swarmforge/scripts/install_bb_tool.sh' '/Users/unclebob/projects/clojure/crap4clj' 'crap'`")))
+        (is (str/includes? assignment (str "If missing, run exactly: `squad_tool.sh ensure crap4clj github.com/unclebob/crap4clj latest -- 'bash' '" helper "' '/Users/unclebob/projects/clojure/crap4clj' 'crap'`"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -624,10 +625,11 @@
            "gherkin-writer"
            "wumpus-cave-gherkin"
            "instructions.md")
-      (let [assignment (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/assignment.md")))]
+      (let [helper (str (fs/canonicalize (fs/path root "swarmforge/scripts/install_bb_tool.sh")))
+            assignment (slurp (str (fs/path root ".squad/assignments/wumpus-cave-gherkin/assignment.md")))]
         (is (str/includes? assignment "gherkin-parser (APS parsing): `squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest`"))
         (is (str/includes? assignment "ir-dry-checker (IR DRY): `squad_tool.sh require ir-dry-checker github.com/unclebob/Acceptance-Pipeline-Specification latest`"))
-        (is (str/includes? assignment "If missing, run exactly: `squad_tool.sh ensure gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest -- 'bash' 'swarmforge/scripts/install_bb_tool.sh' '/Users/unclebob/projects/Acceptance-Pipeline-Specification' 'gherkin-parser'`"))
+        (is (str/includes? assignment (str "If missing, run exactly: `squad_tool.sh ensure gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest -- 'bash' '" helper "' '/Users/unclebob/projects/Acceptance-Pipeline-Specification' 'gherkin-parser'`")))
         (is (not (str/includes? assignment "## Required Tool Evidence")))
         (is (not (str/includes? assignment "`normalized_ir: <artifact-path-or-summary>`"))))
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]

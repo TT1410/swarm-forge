@@ -391,7 +391,10 @@
                                            (fs/path batch-dir "state")))))))
       [])))
 
-(defn blocker-state [root]
+(def blocking-agent-states
+  #{"blocked" "failed"})
+
+(defn assignment-blocker-state [root]
   (let [dir (fs/path root ".squad" "assignments")]
     (if (fs/exists? dir)
       (->> (fs/list-dir dir)
@@ -408,15 +411,45 @@
            vec)
       [])))
 
+(defn agent-by-id [agents]
+  (into {} (map (fn [agent] [(get agent "agent_id") agent]) agents)))
+
+(defn agent-assignment-blocker [agents-by-id assignment]
+  (let [agent-id (get assignment "agent_id")
+        agent (get agents-by-id agent-id)
+        state (get agent "state")]
+    (when (and (contains? #{"in_progress" "handoff_sent"} (get assignment "state"))
+               (contains? blocking-agent-states state))
+      {"assignment_id" (get assignment "assignment_id")
+       "kind" (str "agent-" state)
+       "state" "blocked"
+       "agent_id" agent-id
+       "template" (get assignment "template")
+       "detail" (get agent "detail" "")
+       "updated_at" (or (get agent "updated_at") (get assignment "updated_at") "")})))
+
+(defn agent-blocker-state [assignments agents]
+  (let [agents-by-id (agent-by-id agents)]
+    (->> assignments
+         (keep #(agent-assignment-blocker agents-by-id %))
+         (sort-by descending-value #(compare %2 %1))
+         vec)))
+
+(defn blocker-state [root assignments agents]
+  (vec (concat (assignment-blocker-state root)
+               (agent-blocker-state assignments agents))))
+
 (defn web-state [root]
-  {"generated_at" (now)
-   "project_root" (str root)
-   "stories" (story-state root)
-   "assignments" (assignment-state root)
-   "agents" (agent-state root)
-   "batches" (batch-state root)
-   "blockers" (blocker-state root)
-   "approvals" {"pending" (approval-state-for root "pending")}})
+  (let [assignments (assignment-state root)
+        agents (agent-state root)]
+    {"generated_at" (now)
+     "project_root" (str root)
+     "stories" (story-state root)
+     "assignments" assignments
+     "agents" agents
+     "batches" (batch-state root)
+     "blockers" (blocker-state root assignments agents)
+     "approvals" {"pending" (approval-state-for root "pending")}}))
 
 (defn response [status content-type body]
   {:status status :content-type content-type :body body})
@@ -542,11 +575,16 @@
        "<title>Agent " (html-escape agent-id) "</title>"
        "<style>:root{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color-scheme:light dark}"
        "body{margin:0;background:#111;color:#f4f4f4}header{padding:10px 12px;border-bottom:1px solid #333}"
-       "h1{font:inherit;margin:0}pre{margin:0;padding:12px;white-space:pre-wrap;min-height:calc(100vh - 42px)}</style>"
+       "h1{font:inherit;margin:0}pre{margin:0;padding:12px;white-space:pre-wrap;min-height:calc(100vh - 42px)}"
+       "#new-output{position:fixed;right:12px;bottom:12px;background:#2f6f4e;color:white;border:0;border-radius:6px;padding:6px 10px;display:none}</style>"
        "</head><body><header><h1>" (html-escape agent-id) "</h1></header><pre id=\"pane\"></pre>"
+       "<button id=\"new-output\" onclick=\"window.scrollTo(0,document.body.scrollHeight);this.style.display='none'\">New output</button>"
        "<script>const pane=document.getElementById('pane');async function refresh(){"
+       "const marker=document.getElementById('new-output');"
+       "const nearBottom=(window.innerHeight+window.scrollY)>=(document.body.scrollHeight-24);"
        "const r=await fetch('/api/agents/" (html-escape agent-id) "/pane',{cache:'no-store'});"
-       "const text=await r.text();if(text.length>0){pane.textContent=text;window.scrollTo(0,document.body.scrollHeight)}}"
+       "const text=await r.text();if(text.length>0&&text!==pane.textContent){pane.textContent=text;"
+       "if(nearBottom){window.scrollTo(0,document.body.scrollHeight);marker.style.display='none'}else{marker.style.display='block'}}}"
        "refresh();setInterval(refresh,1000);</script></body></html>"))
 
 (defn agent-pane-response [root path]

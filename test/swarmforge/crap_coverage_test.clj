@@ -615,7 +615,15 @@
              (tool/ensure-tool-state! "crap" {:state :available :executable "bin/crap"})))
       (let [lock (tool/acquire-lock! (:locks paths) "crap")]
         (is (fs/directory? lock))
+        (is (fs/regular-file? (tool/lock-owner-file lock)))
         (fs/delete-tree lock))
+      (let [stale-lock (fs/path (:locks paths) "stale.lock")]
+        (fs/create-dir stale-lock)
+        (with-redefs [tool/old-enough-no-owner-lock? (constantly true)]
+          (let [lock (tool/acquire-lock! (:locks paths) "stale")]
+            (is (fs/directory? lock))
+            (is (fs/regular-file? (tool/lock-owner-file lock)))
+            (fs/delete-tree lock))))
       (with-redefs [tool/lock-timeout? (constantly true)]
         (is (= 2 (exit-status #(tool/acquire-lock! (:locks paths) "stuck")))))))
   (let [root (tmp-dir)]

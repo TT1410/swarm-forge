@@ -77,11 +77,75 @@
 (defn lock-timeout? [deadline]
   (> (System/currentTimeMillis) deadline))
 
+(def stale-owner-grace-ms 1000)
+
+(defn current-pid []
+  (.pid (java.lang.ProcessHandle/current)))
+
+(defn lock-owner-file [lock-dir]
+  (fs/path lock-dir "owner.edn"))
+
+(defn write-lock-owner! [lock-dir]
+  (spit (str (lock-owner-file lock-dir))
+        (pr-str {:pid (current-pid)
+                 :created_at (timestamp)})))
+
 (defn try-create-lock! [lock-dir]
   (try
     (fs/create-dir lock-dir)
+    (write-lock-owner! lock-dir)
     true
     (catch java.nio.file.FileAlreadyExistsException _
+      false)))
+
+(defn maybe-parse-long [value]
+  (try
+    (Long/parseLong (str value))
+    (catch Exception _
+      nil)))
+
+(defn read-lock-owner [lock-dir]
+  (let [file (lock-owner-file lock-dir)]
+    (when (fs/regular-file? file)
+      (try
+        (read-string (slurp (str file)))
+        (catch Exception _
+          nil)))))
+
+(defn owner-pid [owner]
+  (maybe-parse-long (:pid owner)))
+
+(defn pid-alive? [pid]
+  (when pid
+    (let [handle (java.lang.ProcessHandle/of pid)]
+      (and (.isPresent handle)
+           (.isAlive (.get handle))))))
+
+(defn path-age-ms [path]
+  (try
+    (- (System/currentTimeMillis)
+       (.toMillis (java.nio.file.Files/getLastModifiedTime (.toPath (fs/file path)))))
+    (catch java.nio.file.NoSuchFileException _
+      0)))
+
+(defn old-enough-no-owner-lock? [lock-dir]
+  (> (path-age-ms lock-dir) stale-owner-grace-ms))
+
+(defn stale-lock? [lock-dir]
+  (let [owner (read-lock-owner lock-dir)
+        pid (owner-pid owner)]
+    (cond
+      (nil? owner) (old-enough-no-owner-lock? lock-dir)
+      (nil? pid) true
+      :else (not (pid-alive? pid)))))
+
+(defn clear-stale-lock! [lock-dir]
+  (try
+    (when (and (fs/directory? lock-dir)
+               (stale-lock? lock-dir))
+      (fs/delete-tree lock-dir)
+      true)
+    (catch java.nio.file.NoSuchFileException _
       false)))
 
 (defn wait-for-lock-retry! []
@@ -96,6 +160,7 @@
       (if (try-create-lock! lock-dir)
         lock-dir
         (do
+          (clear-stale-lock! lock-dir)
           (wait-for-lock-retry!)
           (recur))))))
 
