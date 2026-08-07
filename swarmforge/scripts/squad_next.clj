@@ -8,7 +8,10 @@
             [clojure.string :as str]))
 
 (def usage-text
-  "Usage: squad_next.sh")
+  "Usage: squad_next.sh [--apply-mechanical]")
+
+(def script-dir
+  (fs/parent *file*))
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -178,20 +181,25 @@
                     metadata (file-map (fs/path dir "metadata"))
                     status (file-map (fs/path dir "status"))
                     result-manifest (file-map (fs/path dir "result-manifest"))
-                    accepted-merge (file-map (fs/path dir "accepted-merge"))]
+                    accepted-merge (file-map (fs/path dir "accepted-merge"))
+                    review (file-map (fs/path dir "review"))]
                 {:assignment-id assignment-id
                  :template (get metadata "template")
                  :theme-id (get metadata "theme_id")
                  :story-id (get metadata "story_id")
                  :requires (get metadata "requires")
                  :replaces (get metadata "replaces")
+                 :merge-for (get metadata "merge_for")
                  :assignment-file (get metadata "assignment_file")
                  :created-at (get metadata "created_at")
                  :state (get status "state" "unknown")
                  :artifacts (get result-manifest "artifacts")
                  :result-commit (get result-manifest "commit")
                  :merge-commit (get accepted-merge "merge_commit")
-                 :accepted-commit (get accepted-merge "commit")})))
+                 :accepted-commit (get accepted-merge "commit")
+                 :resolved-by (get accepted-merge "resolved_by")
+                 :review-decision (get review "decision")
+                 :review-file (get review "review_file")})))
        vec))
 
 (defn split-list [value]
@@ -216,6 +224,9 @@
   (or (:merge-commit assignment)
       (:accepted-commit assignment)
       (:result-commit assignment)))
+
+(defn assignment-by-id [assignments assignment-id]
+  (some #(when (= assignment-id (:assignment-id %)) %) assignments))
 
 (defn theme-story-ref-exists? [root theme-id story-id]
   (fs/regular-file? (fs/path root ".squad" "themes" theme-id "stories" (str story-id ".ref"))))
@@ -284,7 +295,7 @@
           (recur (inc iteration))
           candidate)))))
 
-(declare agent-state transient-row? next-batch-id visible-handoff-agents capacity-counted-agent?)
+(declare agent-state transient-row? next-batch-id visible-handoff-agents capacity-counted-agent? ready-actions)
 
 (defn agent-files [root agent]
   (let [agent-dir (fs/path root ".squad" "agents" agent)]
@@ -423,7 +434,8 @@
          :reason (str gate " approval is not required by configuration")
          :command (str "squad_packet.sh approve " story-id " " gate " auto-approved-by-config")}))))
 
-(declare assignment-create-candidate assignment-spawn-candidate spawnable-assignment?)
+(declare assignment-create-candidate assignment-spawn-candidate spawnable-assignment?
+         architecture-gate-satisfied-for-final?)
 
 (defn assignment-candidate [root assignments agents packet template assignment-suffix reason priority stage-order requirement]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
@@ -510,8 +522,8 @@
         candidate))))
 
 (defn batch-assignment-candidate [root assignments agents theme-id template assignment-base reason priority stage-order]
-  (let [assignment-id (next-id-with-base assignments assignment-base)
-        assignment (assignment-for assignments theme-id "batch" template)]
+  (let [assignment-id assignment-base
+        assignment (assignment-by-id assignments assignment-id)]
     (if assignment
       (when (spawnable-assignment? root agents template assignment)
         (assignment-spawn-candidate assignment theme-id "batch" template reason priority stage-order))
@@ -668,12 +680,225 @@
          (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
          vec)))
 
+(def result-assignment-rules
+  {"implementer" "implementation"
+   "cleaner" "cleaner"
+   "hardener" "hardener"
+   "qa" "qa"
+   "senior-implementor" "senior-implementor"})
+
+(def review-assignment-rules
+  {"gherkin-reviewer" "gherkin"
+   "qa-procedure-reviewer" "qa-procedure"
+   "code-reviewer" "code"
+   "architect" "architecture"
+   "architecture-reviewer" "architecture"})
+
+(defn packet-result-missing? [packet kind]
+  (not (field-present? packet (str (gate-key kind) "_sha"))))
+
+(defn merged-assignment? [assignment]
+  (= "merged" (:state assignment)))
+
+(defn assignment-effective-sha [assignment]
+  (artifact-sha assignment))
+
+(defn result-record-candidate [packet assignment kind]
+  (let [story-id (get packet "story_id" (get packet "_story_id"))
+        sha (assignment-effective-sha assignment)]
+    (when (and (merged-assignment? assignment)
+               (= story-id (:story-id assignment))
+               (packet-result-missing? packet kind)
+               (not (str/blank? sha)))
+      {:priority 25
+       :stage-order 3
+       :next-action "record_merged_result"
+       :theme-id (:theme-id assignment)
+       :story-id story-id
+       :template (:template assignment)
+       :assignment-id (:assignment-id assignment)
+       :reason (str "merged " kind " assignment must be recorded in story packet")
+       :command (str "squad_packet.sh record " story-id " " kind " "
+                     (:assignment-id assignment) " master " sha)})))
+
+(defn direct-result-record-candidates [assignments packets]
+  (let [packets-by-story (packet-by-story packets)]
+    (->> (for [assignment assignments
+               :let [kind (get result-assignment-rules (:template assignment))
+                     packet (get packets-by-story (:story-id assignment))]
+               :when (and kind packet (not= "batch" (:story-id assignment)))
+               :let [candidate (result-record-candidate packet assignment kind)]
+               :when candidate]
+           candidate)
+         (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
+         vec)))
+
+(defn batch-manifest-rows [root batch-id]
+  (let [manifest (fs/path root ".squad" "batches" batch-id "manifest.tsv")]
+    (if (fs/regular-file? manifest)
+      (->> (rest (str/split-lines (slurp (str manifest))))
+           (map #(str/split % #"\t" -1))
+           (keep (fn [[story-id stage assignment-id branch sha]]
+                   (when-not (str/blank? story-id)
+                     {:story-id story-id
+                      :stage stage
+                      :assignment-id assignment-id
+                      :branch branch
+                      :sha sha})))
+           vec)
+      [])))
+
+(defn batch-result-record-candidate [root packets-by-story assignment kind member]
+  (let [story-id (:story-id member)
+        packet (get packets-by-story story-id)
+        sha (assignment-effective-sha assignment)]
+    (when (and packet
+               (merged-assignment? assignment)
+               (packet-result-missing? packet kind)
+               (not (str/blank? sha)))
+      {:priority 25
+       :stage-order 4
+       :next-action "record_merged_batch_result"
+       :theme-id (:theme-id assignment)
+       :story-id story-id
+       :template (:template assignment)
+       :assignment-id (:assignment-id assignment)
+       :batch-kind kind
+       :batch-id (:assignment-id assignment)
+       :reason (str "merged " kind " batch result must be recorded in story packet")
+       :command (str "squad_packet.sh record " story-id " " kind " "
+                     (:assignment-id assignment) " master " sha)})))
+
+(defn batch-result-record-candidates [root assignments packets]
+  (let [packets-by-story (packet-by-story packets)]
+    (->> (for [assignment assignments
+               :let [kind (get result-assignment-rules (:template assignment))]
+               :when (and kind (= "batch" (:story-id assignment)))
+               member (batch-manifest-rows root (:assignment-id assignment))
+               :let [candidate (batch-result-record-candidate root packets-by-story assignment kind member)]
+               :when candidate]
+           candidate)
+         (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
+         vec)))
+
+(def review-decision-lines
+  [["accepted" #{"accept" "accepted" "accept." "accepted."}]
+   ["changes-requested" #{"changes-requested" "changes requested" "request changes" "request changes."}]])
+
+(defn decision-line [line]
+  (let [line (-> line str/trim str/lower-case)]
+    (some (fn [[decision values]]
+            (when (contains? values line)
+              decision))
+          review-decision-lines)))
+
+(defn review-decision-from-content [content]
+  (some decision-line (str/split-lines (or content ""))))
+
+(defn review-content-paths [root assignment]
+  (concat
+   (when-not (str/blank? (:review-file assignment))
+     [(fs/path (:review-file assignment))])
+   [(fs/path root ".squad" "assignments" (:assignment-id assignment) "review.md")
+    (fs/path root ".squad" "reviews" (str (:assignment-id assignment) ".md"))]
+   (map #(fs/path root %) (artifact-paths assignment ".squad/reviews/" ".md"))))
+
+(defn review-decision [root assignment]
+  (or (:review-decision assignment)
+      (when (= "review_accepted" (:state assignment)) "accepted")
+      (when (= "review_changes_requested" (:state assignment)) "changes-requested")
+      (some (fn [file]
+              (when (fs/regular-file? file)
+                (review-decision-from-content (slurp (str file)))))
+            (review-content-paths root assignment))))
+
+(defn packet-review-current-for-assignment? [packet review-field assignment]
+  (and (= (:assignment-id assignment) (get packet (str review-field "_assignment")))
+       (contains? #{"accepted" "changes-requested"} (get packet review-field))
+       (squad-state/review-current? packet review-field)))
+
+(defn review-record-candidate-for-story [root packet assignment kind decision]
+  (let [story-id (get packet "story_id" (get packet "_story_id"))
+        review-field (str (gate-key kind) "_review")
+        sha (assignment-effective-sha assignment)]
+    (when (and (not (str/blank? sha))
+               decision
+               (not (packet-review-current-for-assignment? packet review-field assignment)))
+      {:priority 25
+       :stage-order 5
+       :next-action "record_review_result"
+       :theme-id (:theme-id assignment)
+       :story-id story-id
+       :template (:template assignment)
+       :assignment-id (:assignment-id assignment)
+       :reason (str "merged " kind " review must be recorded in story packet")
+       :command (str "squad_packet.sh review " story-id " " kind " " decision " "
+                     (:assignment-id assignment) " master " sha)})))
+
+(defn review-record-candidates [root assignments packets]
+  (let [packets-by-story (packet-by-story packets)]
+    (->> (for [assignment assignments
+               :let [kind (get review-assignment-rules (:template assignment))
+                     decision (review-decision root assignment)]
+               :when (and kind
+                          (contains? #{"merged" "review_accepted" "review_changes_requested"}
+                                     (:state assignment)))
+               story-id (if (= "batch" (:story-id assignment))
+                          (map :story-id (batch-manifest-rows root (:assignment-id assignment)))
+                          [(:story-id assignment)])
+               :let [packet (get packets-by-story story-id)
+                     candidate (when packet
+                                 (review-record-candidate-for-story root packet assignment kind decision))]
+               :when candidate]
+           candidate)
+         (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
+         vec)))
+
+(def one-cycle-review-kinds
+  {"gherkin" "gherkin_review"
+   "qa-procedure" "qa_procedure_review"})
+
+(defn stale-changes-requested? [packet review-field]
+  (and (= "changes-requested" (get packet review-field))
+       (not (squad-state/review-current? packet review-field))))
+
+(defn post-revision-acceptance-candidate [packet kind review-field]
+  (let [story-id (get packet "story_id" (get packet "_story_id"))
+        kind-key (gate-key kind)
+        assignment (get packet (str kind-key "_assignment"))
+        sha (get packet (str kind-key "_sha"))]
+    (when (and (stale-changes-requested? packet review-field)
+               (not (str/blank? assignment))
+               (not (str/blank? sha)))
+      {:priority 25
+       :stage-order 6
+       :next-action "record_post_revision_review_acceptance"
+       :theme-id (get packet "theme_id")
+       :story-id story-id
+       :assignment-id assignment
+       :reason (str kind " revision after changes-requested completes the one-review cycle")
+       :command (str "squad_packet.sh review " story-id " " kind " accepted "
+                     assignment " master " sha)})))
+
+(defn post-revision-acceptance-candidates [packets]
+  (->> (for [packet packets
+             [kind review-field] one-cycle-review-kinds
+             :let [candidate (post-revision-acceptance-candidate packet kind review-field)]
+             :when candidate]
+         candidate)
+       (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
+       vec))
+
 (defn packet-repair-candidates [root]
   (let [assignments (assignment-records root)
         packets (packets root)]
     (vec (concat (analyst-story-registration-candidates root assignments)
                  (direct-story-packet-candidates root)
-                 (artifact-attachment-candidates root assignments packets)))))
+                 (artifact-attachment-candidates root assignments packets)
+                 (direct-result-record-candidates assignments packets)
+                 (batch-result-record-candidates root assignments packets)
+                 (review-record-candidates root assignments packets)
+                 (post-revision-acceptance-candidates packets)))))
 
 (defn packet-by-story [packets]
   (into {}
@@ -950,8 +1175,7 @@
     :priority 30
     :stage-order 190
     :candidate (fn [ctx packet]
-                 (when (and (field-accepted? packet "architecture_review")
-                            (approval-satisfied? (:root ctx) packet "architecture"))
+                 (when (architecture-gate-satisfied-for-final? (:root ctx) packet)
                    (approval-candidate (:root ctx) packet "final" "Approve_final"
                                        "story-ready-for-final-acceptance" 30 190)))}])
 
@@ -995,7 +1219,9 @@
 (defn architecture-member-ready? [root packet]
   (and (approval-satisfied? root packet "qa")
        (field-present? packet "qa_sha")
-       (not (field-accepted? packet "architecture_review"))))
+       (not (field-present? packet "senior_implementor_sha"))
+       (not (or (field-accepted? packet "architecture_review")
+                (field-changes-requested? packet "architecture_review")))))
 
 (defn architecture-stage-clear? [root packet]
   (or (field-accepted? packet "architecture_review")
@@ -1021,7 +1247,20 @@
           packets))))
 
 (defn any-architecture-needs-senior? [packets]
-  (boolean (some #(field-changes-requested? % "architecture_review") packets)))
+  (boolean (some #(and (field-changes-requested? % "architecture_review")
+                       (not (field-present? % "senior_implementor_sha")))
+                 packets)))
+
+(defn architecture-complete? [packet]
+  (or (field-accepted? packet "architecture_review")
+      (and (field-changes-requested? packet "architecture_review")
+           (field-present? packet "senior_implementor_sha"))))
+
+(defn architecture-gate-satisfied-for-final? [root packet]
+  (or (and (field-accepted? packet "architecture_review")
+           (approval-satisfied? root packet "architecture"))
+      (and (field-changes-requested? packet "architecture_review")
+           (field-present? packet "senior_implementor_sha"))))
 
 (defn any-hardener-member-ready? [root packets]
   (boolean (some #(hardener-member-ready? root %) packets)))
@@ -1031,6 +1270,27 @@
 
 (defn any-architecture-member-ready? [root packets]
   (boolean (some #(architecture-member-ready? root %) packets)))
+
+(defn unbatched-hardener-member-ready? [root packet]
+  (and (hardener-member-ready? root packet)
+       (not (field-present? packet "hardener_batch"))))
+
+(defn unbatched-qa-member-ready? [root packet]
+  (and (qa-member-ready? root packet)
+       (not (field-present? packet "qa_batch"))))
+
+(defn unbatched-architecture-member-ready? [root packet]
+  (and (architecture-member-ready? root packet)
+       (not (field-present? packet "architecture_batch"))))
+
+(defn any-unbatched-hardener-member-ready? [root packets]
+  (boolean (some #(unbatched-hardener-member-ready? root %) packets)))
+
+(defn any-unbatched-qa-member-ready? [root packets]
+  (boolean (some #(unbatched-qa-member-ready? root %) packets)))
+
+(defn any-unbatched-architecture-member-ready? [root packets]
+  (boolean (some #(unbatched-architecture-member-ready? root %) packets)))
 
 (defn all-batched-or-done? [packets batch-field done?]
   (every? #(or (field-present? % batch-field)
@@ -1118,13 +1378,16 @@
         batches (batch-records root)]
     {:hardener-ready? (and (seq theme-packets)
                            (or (batch-id-needing-result theme-packets "hardener_batch" "hardener_sha")
-                               (open-batch-with-members batches "hardener" (str theme-id "-hardener"))))
+                               (when-not (any-unbatched-hardener-member-ready? root theme-packets)
+                                 (open-batch-with-members batches "hardener" (str theme-id "-hardener")))))
      :qa-ready? (and (seq theme-packets)
                      (or (batch-id-needing-result theme-packets "qa_batch" "qa_sha")
-                         (open-batch-with-members batches "qa" (str theme-id "-qa"))))
+                         (when-not (any-unbatched-qa-member-ready? root theme-packets)
+                           (open-batch-with-members batches "qa" (str theme-id "-qa")))))
      :architecture-ready? (and (seq theme-packets)
                                (or (architecture-batch-needing-review theme-packets)
-                                   (open-batch-with-members batches "architecture" (str theme-id "-architecture"))))
+                                   (when-not (any-unbatched-architecture-member-ready? root theme-packets)
+                                     (open-batch-with-members batches "architecture" (str theme-id "-architecture")))))
    :senior-ready? (and (seq theme-packets)
                        (any-architecture-needs-senior? theme-packets))}))
 
@@ -1226,6 +1489,60 @@
     (print-candidate-field! candidate field))
   (println "CANDIDATES:" total)
   (println "COMMAND:" (:command candidate)))
+
+(def mechanical-actions
+  #{"register_story_artifact"
+    "register_story_packet"
+    "attach_story_artifact"
+    "record_merged_result"
+    "record_merged_batch_result"
+    "record_review_result"
+    "record_post_revision_review_acceptance"
+    "record_auto_approval"
+    "record_batch_membership"})
+
+(defn mechanical-action? [candidate]
+  (contains? mechanical-actions (:next-action candidate)))
+
+(defn shell-command! [root command]
+  (process/sh {:dir (str root) :continue true}
+              "bash" "-c" (str "PATH=" script-dir ":$PATH; " command)))
+
+(defn apply-candidate! [root candidate]
+  (let [result (shell-command! root (:command candidate))]
+    (assoc candidate
+           :exit (:exit result)
+           :out (:out result)
+           :err (:err result))))
+
+(defn print-applied-transition! [{:keys [next-action story-id assignment-id batch-id exit err]}]
+  (println "APPLIED_TRANSITION:" next-action
+           (str "story=" (or story-id "none"))
+           (str "assignment=" (or assignment-id "none"))
+           (str "batch=" (or batch-id "none"))
+           (str "exit=" exit))
+  (when (and (not= 0 exit) (not (str/blank? err)))
+    (println "APPLIED_ERROR:" (str/trim err))))
+
+(defn print-applied-transitions! [applied]
+  (when (seq applied)
+    (println "APPLIED_TRANSITIONS:" (count applied))
+    (doseq [transition applied]
+      (print-applied-transition! transition))))
+
+(defn apply-mechanical-ready-actions! [root rows]
+  (loop [applied []
+         remaining 100]
+    (let [actions (ready-actions root rows)
+          mechanical (filter mechanical-action? actions)]
+      (if (or (zero? remaining) (empty? mechanical))
+        applied
+        (let [results (mapv #(apply-candidate! root %) mechanical)
+              failed (some #(when-not (zero? (:exit %)) %) results)
+              applied (into applied results)]
+          (if failed
+            applied
+            (recur applied (dec remaining))))))))
 
 (defn lock-owner-pid [lock-dir]
   (let [owner (fs/path lock-dir "owner")]
@@ -1462,7 +1779,7 @@
   (println "COMMAND: sleep 30 && squad_next.sh"))
 
 (defn ready-actions [root rows]
-  (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id)
+  (sort-by (juxt :priority :theme-id :stage-order :story-id :assignment-id)
            (concat (packet-repair-candidates root)
                    (theme-candidates root rows)
                    (story-candidates root rows)
@@ -1528,10 +1845,19 @@
 (defn next-action! []
   (print-selected-action! (next-action-context)))
 
+(defn apply-mechanical-and-print-next! []
+  (let [{:keys [root rows]} (next-action-context)
+        applied (apply-mechanical-ready-actions! root rows)]
+    (print-applied-transitions! applied)
+    (print-selected-action! (next-action-context))))
+
 (defn -main [& args]
-  (when (seq args)
-    (exit! 1 usage-text))
-  (next-action!))
+  (case (count args)
+    0 (next-action!)
+    1 (if (= "--apply-mechanical" (first args))
+        (apply-mechanical-and-print-next!)
+        (exit! 1 usage-text))
+    (exit! 1 usage-text)))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))

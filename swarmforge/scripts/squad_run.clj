@@ -6,7 +6,7 @@
             [clojure.string :as str]))
 
 (def usage-text
-  "Usage: squad_run.sh <phase> <detail> -- <command...>")
+  "Usage: squad_run.sh [--expect-failure] <phase> <detail> -- <command...>")
 
 (def script-dir (-> *file* fs/path fs/parent))
 
@@ -25,15 +25,20 @@
       (exit! (:exit result) (str/trim (str (:err result)))))))
 
 (defn split-args [args]
-  (let [[before after] (split-with #(not= "--" %) args)]
+  (let [[flags args] (split-with #(str/starts-with? % "--") args)
+        expected-failure? (contains? (set flags) "--expect-failure")]
+    (when (some #(not= "--expect-failure" %) flags)
+      (exit! 1 usage-text))
+    (let [[before after] (split-with #(not= "--" %) args)]
     (when (or (empty? before) (< (count before) 2) (empty? after) (empty? (rest after)))
       (exit! 1 usage-text))
     {:phase (first before)
      :detail (str/join " " (rest before))
-     :command (vec (rest after))}))
+     :expected-failure? expected-failure?
+     :command (vec (rest after))})))
 
 (defn -main [& args]
-  (let [{:keys [phase detail command]} (split-args args)
+  (let [{:keys [phase detail command expected-failure?]} (split-args args)
         event-detail (str phase ": " detail)]
     (event! "running" event-detail)
     (let [result (apply process/sh
@@ -43,7 +48,12 @@
                                 command))]
       (if (zero? (:exit result))
         (event! "running" (str phase " passed: " detail))
-        (event! "failed" (str phase " failed: " detail " exit " (:exit result))))
+        (event! (if expected-failure? "running" "failed")
+                (str phase
+                     (if expected-failure? " expected failure: " " failed: ")
+                     detail
+                     " exit "
+                     (:exit result))))
       (System/exit (:exit result)))))
 
 (when (= *file* (System/getProperty "babashka.file"))

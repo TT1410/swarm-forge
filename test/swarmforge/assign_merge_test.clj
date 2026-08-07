@@ -405,6 +405,8 @@
       (write-file (fs/path root "instructions.md")
                   "Harden all batch members.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus-cli" "theme.md")
+      (run {:dir root} (script "squad_batch.sh") "create" "hardener" "wumpus-cli-hardener")
+      (run {:dir root} (script "squad_batch.sh") "add" "wumpus-cli-hardener" "cave" "code_reviewed" "review-1" "master" "abcdef1234")
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
                         "create-batch"

@@ -469,8 +469,32 @@
     (print-create-result! context
                           (write-assignment-records! context (assignment-text context)))))
 
+(def batch-template-kinds
+  {"hardener" "hardener"
+   "qa" "qa"
+   "architect" "architecture"})
+
+(defn manifest-story-count [manifest]
+  (if (fs/regular-file? manifest)
+    (max 0 (dec (count (str/split-lines (slurp (str manifest))))))
+    0))
+
+(defn ensure-batch-manifest! [root template assignment-id]
+  (when-let [kind (get batch-template-kinds template)]
+    (let [batch-dir (fs/path root ".squad" "batches" assignment-id)
+          metadata (fs/path batch-dir "metadata")
+          manifest (fs/path batch-dir "manifest.tsv")]
+      (when-not (fs/directory? batch-dir)
+        (exit! 2 (str "Batch record is missing: " assignment-id)))
+      (when-not (= kind (read-value metadata "kind"))
+        (exit! 2 (str "Batch " assignment-id " is not a " kind " batch.")))
+      (when-not (pos? (manifest-story-count manifest))
+        (exit! 2 (str "Batch manifest is missing or empty: " manifest))))))
+
 (defn create-batch-assignment! [args]
-  (create-assignment! args))
+  (let [root (fs/absolutize (project-root))]
+    (ensure-batch-manifest! root (:template args) (:assignment-id args))
+    (create-assignment! args)))
 
 (defn merge-source-text [{:keys [merge-for conflicting-template conflicting-agent conflicting-commit]}]
   (str "blocked_assignment_id: " merge-for "\n"

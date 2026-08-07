@@ -352,6 +352,124 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-records-merged-direct-result-before-downstream-work
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "story_approval: approved\n"
+                       "gherkin_review: accepted\n"
+                       "qa_procedure_review: accepted\n"
+                       "implementation_approval: approved\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/metadata")
+                  (str "assignment_id: alpha-implementation\n"
+                       "theme_id: wumpus\n"
+                       "story_id: alpha\n"
+                       "template: implementer\n"
+                       "assignment_file: " root "/instructions.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/status")
+                  "assignment_id: alpha-implementation\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/accepted-merge")
+                  (str "assignment_id: alpha-implementation\n"
+                       "state: merged\n"
+                       "commit: 1111111111\n"
+                       "merge_commit: abcdef1234\n"))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: record_merged_result"))
+        (is (str/includes? (:out next) "COMMAND: squad_packet.sh record alpha implementation alpha-implementation master abcdef1234")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-apply-mechanical-records-safe-repairs-before-next-action
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/metadata")
+                  (str "assignment_id: alpha-implementation\n"
+                       "theme_id: wumpus\n"
+                       "story_id: alpha\n"
+                       "template: implementer\n"
+                       "assignment_file: " root "/instructions.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/status")
+                  "assignment_id: alpha-implementation\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/accepted-merge")
+                  (str "assignment_id: alpha-implementation\n"
+                       "state: merged\n"
+                       "commit: 1111111111\n"
+                       "merge_commit: abcdef1234\n"))
+      (let [next (run {:dir root} (script "squad_next.sh") "--apply-mechanical")
+            packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
+        (is (str/includes? (:out next) "APPLIED_TRANSITIONS: 1"))
+        (is (str/includes? (:out next) "APPLIED_TRANSITION: record_merged_result story=alpha assignment=alpha-implementation batch=none exit=0"))
+        (is (str/includes? packet "implementation_sha: abcdef1234")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-records-merged-review-result-from-durable-review
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "gherkin_path: features/alpha.feature\n"
+                       "gherkin_assignment: alpha-gherkin\n"
+                       "gherkin_sha: 1111111111\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/metadata")
+                  (str "assignment_id: alpha-gherkin-review\n"
+                       "theme_id: wumpus\n"
+                       "story_id: alpha\n"
+                       "template: gherkin-reviewer\n"
+                       "assignment_file: " root "/instructions.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/status")
+                  "assignment_id: alpha-gherkin-review\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/accepted-merge")
+                  (str "assignment_id: alpha-gherkin-review\n"
+                       "state: merged\n"
+                       "commit: 2222222222\n"
+                       "merge_commit: abcdef1234\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/review.md")
+                  "## Recommendation\n\nAccept.\n")
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: record_review_result"))
+        (is (str/includes? (:out next) "COMMAND: squad_packet.sh review alpha gherkin accepted alpha-gherkin-review master abcdef1234")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-auto-accepts-revised-gherkin-after-one-review-cycle
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "gherkin_path: features/alpha.feature\n"
+                       "gherkin_assignment: alpha-gherkin-r2\n"
+                       "gherkin_sha: 2222222222\n"
+                       "gherkin_review: changes-requested\n"
+                       "gherkin_review_assignment: alpha-gherkin-review\n"
+                       "gherkin_review_sha: 1111111111\n"
+                       "gherkin_review_target_sha: 1111111111\n"))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: record_post_revision_review_acceptance"))
+        (is (str/includes? (:out next) "COMMAND: squad_packet.sh review alpha gherkin accepted alpha-gherkin-r2 master 2222222222"))
+        (is (not (str/includes? (:out next) "TEMPLATE: gherkin-reviewer"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-selects-deterministic-story-candidates
   (let [root (tmp-dir)]
     (try
@@ -753,5 +871,63 @@
           (is (str/includes? (:out next) "TEMPLATE: hardener"))
           (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-batch wumpus hardener wumpus-hardener <instructions-file>"))
           (is (not (str/includes? (:out next) "squad_assign.sh create wumpus batch")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-fills-open-batch-before-creating-batch-assignment
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required code_review false\n")
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
+      (doseq [story ["alpha" "beta"]]
+        (write-file (fs/path root "stories" (str story ".md")) (str "Story: " story ".\n")))
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (doseq [story ["alpha" "beta"]]
+        (run {:dir root} (script "squad_theme.sh") "story" "wumpus" story (str "stories/" story ".md"))
+        (let [sha (prepare-implementation-packet! root "wumpus" story)]
+          (run {:dir root} (script "squad_packet.sh") "approve" story "implementation" "approved")
+          (run {:dir root} (script "squad_packet.sh") "record" story "implementation" (str story "-impl") "master" sha)
+          (run {:dir root} (script "squad_packet.sh") "record" story "cleaner" (str story "-clean") "master" sha)
+          (run {:dir root} (script "squad_packet.sh") "review" story "code" "accepted" (str story "-review") "master" sha)
+          (run {:dir root} (script "squad_packet.sh") "approve" story "code-review" "approved")))
+      (let [first-next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out first-next) "NEXT_ACTION: record_batch_membership"))
+        (is (str/includes? (:out first-next) "STORY: alpha")))
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root} (script "squad_batch_story.sh") "add" "alpha" "hardener" "wumpus-hardener" "code_reviewed" "alpha-review" "master" sha))
+      (let [second-next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out second-next) "NEXT_ACTION: record_batch_membership"))
+        (is (str/includes? (:out second-next) "STORY: beta"))
+        (is (not (str/includes? (:out second-next) "TEMPLATE: hardener"))))
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root} (script "squad_batch_story.sh") "add" "beta" "hardener" "wumpus-hardener" "code_reviewed" "beta-review" "master" sha))
+      (let [third-next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out third-next) "NEXT_ACTION: create_assignment"))
+        (is (str/includes? (:out third-next) "STORY: batch"))
+        (is (str/includes? (:out third-next) "COMMAND: squad_assign.sh create-batch wumpus hardener wumpus-hardener <instructions-file>")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-create-batch-refuses-missing-batch-manifest
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (fs/create-dirs (fs/path root "swarmforge"))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "instructions.md") "Harden the batch.\n")
+      (let [result (run {:dir root :ok? false}
+                        (script "squad_assign.sh")
+                        "create-batch"
+                        "wumpus"
+                        "hardener"
+                        "wumpus-hardener"
+                        "instructions.md")]
+        (is (= 2 (:exit result)))
+        (is (str/includes? (:err result) "Batch record is missing: wumpus-hardener")))
       (finally
         (fs/delete-tree root)))))

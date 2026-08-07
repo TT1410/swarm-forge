@@ -33,6 +33,7 @@
     th { background: #f0f0ea; color: #3b413d; }
     textarea { width: 100%; min-height: 90px; resize: vertical; box-sizing: border-box; border: 1px solid #c6cbc5; padding: 8px; font: inherit; }
     button { border: 1px solid #9aa59e; background: #fff; color: #202124; padding: 5px 9px; border-radius: 6px; cursor: pointer; }
+    button:active { background: #202124; color: #fff; transform: translateY(1px); }
     button + button { margin-left: 6px; }
     .muted { color: #68726c; }
     .pill { display: inline-block; padding: 2px 6px; border-radius: 999px; background: #e8eee9; }
@@ -130,8 +131,8 @@
         error.textContent = '';
         blockersPanel.innerHTML = blockers(data.blockers);
         approvalsPanel.innerHTML = approvals(data.approvals.pending);
-        storiesPanel.innerHTML = table(['Story','State','Gherkin','QA Procedure','Implementation','Final'], data.stories.map(s => row([
-          artifactLink('story', s.story_id, s.story_id), '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.gherkin_review_state), esc(s.qa_procedure_review_state), esc(s.implementation_assignment_state), esc(s.final_state)
+        storiesPanel.innerHTML = table(['Story','State','Substate'], data.stories.map(s => row([
+          artifactLink('story', s.story_id, s.story_id), '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.stage_detail || s.final_state)
         ])));
         agentsPanel.innerHTML = table(['Agent','Template','Task','State','Detail'], data.agents.map(a => row([
           `<a target=\"_blank\" href=\"/agent/${encodeURIComponent(a.agent_id)}\">${esc(a.agent_id)}</a>`, esc(a.template), esc(a.task_id), esc(a.state), esc(a.detail)
@@ -152,7 +153,7 @@
 (def web-active-agent-states
   #{"starting" "running" "blocked" "handoff_ready" "handoff_sent"})
 (def web-active-assignment-states
-  #{"created" "assignment_created" "in_progress" "handoff_sent" "result_received" "merge_ready" "review_changes_requested" "blocked"})
+  #{"created" "assignment_created" "in_progress" "handoff_sent" "result_received" "merge_ready" "blocked"})
 (def status-reasons
   {200 "OK"
    404 "Not Found"
@@ -319,13 +320,43 @@
 (defn stage-label [state]
   (get stage-labels state state))
 
+(def stage-detail-rules
+  [["final_approved" (fn [_] "final approved")]
+   ["architecture_approved" (fn [_] "architecture approved")]
+   ["architecture_reviewed" (fn [p] (str "architecture review " (get p "architecture_review" "accepted")))]
+   ["architecture_revision_returned" (fn [_] "senior implementer complete")]
+   ["architecture_returned" (fn [_] "architecture returned")]
+   ["qa_approved" (fn [_] "QA approved")]
+   ["qa_returned" (fn [_] "QA complete")]
+   ["hardening_approved" (fn [_] "hardening approved")]
+   ["hardener_returned" (fn [_] "hardener complete")]
+   ["code_review_approved" (fn [_] "code review approved")]
+   ["code_reviewed" (fn [p] (str "code review " (get p "code_review" "accepted")))]
+   ["cleaned" (fn [_] "cleaner complete")]
+   ["implemented" (fn [_] "implementation complete")]
+   ["implementation_approved" (fn [_] "implementation approved")]
+   ["implementation_approval_ready" (fn [_] "Gherkin and QA procedure approved")]
+   ["specification_in_progress" (fn [p]
+                                  (str "Gherkin " (get p "gherkin_review_state" "pending")
+                                       "; QA procedure " (get p "qa_procedure_review_state" "pending")))]
+   ["story_approved" (fn [_] "story approved")]
+   ["story_recorded" (fn [_] "story recorded")]])
+
+(defn stage-detail [packet state]
+  (if-let [f (some (fn [[match f]]
+                    (when (= match state) f))
+                  stage-detail-rules)]
+    (f packet)
+    state))
+
 (defn canonical-story-row [story-id packet-file]
   (let [packet (assoc (squad-state/read-kv-file packet-file) "story_id" story-id)
         state (squad-state/recompute-state packet)]
     (merge packet
            (squad-state/derived-stage-fields packet state)
            {"state" state
-            "stage_label" (stage-label state)})))
+            "stage_label" (stage-label state)
+            "stage_detail" (stage-detail packet state)})))
 
 (defn story-state [root]
   (let [dir (fs/path root ".squad" "stories")]
@@ -520,9 +551,31 @@
 (defn theme-content [root theme-id]
   (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md")))
 
+(defn section [title content]
+  (when-not (str/blank? content)
+    (str "## " title "\n\n" content "\n")))
+
+(defn packet-review-sections [root packet]
+  (apply str
+         (keep (fn [[title field]]
+                 (when-let [assignment (get packet field)]
+                   (section title (review-content root assignment))))
+               [["Gherkin Review" "gherkin_review_assignment"]
+                ["QA Procedure Review" "qa_procedure_review_assignment"]
+                ["Code Review" "code_review_assignment"]
+                ["Architecture Review" "architecture_review_assignment"]])))
+
 (defn story-content [root story-id]
-  (or (artifact-project-content root (get (packet-for root story-id) "story_path"))
-      (slurp-if-exists (packet-file-for root story-id))))
+  (let [packet (packet-for root story-id)
+        story (artifact-project-content root (get packet "story_path"))
+        gherkin (artifact-project-content root (get packet "gherkin_path"))
+        qa-procedure (artifact-project-content root (get packet "qa_procedure_path"))
+        packet-text (slurp-if-exists (packet-file-for root story-id))]
+    (str (section "Story" story)
+         (section "Story Packet" packet-text)
+         (section "Gherkin" gherkin)
+         (section "QA Procedure" qa-procedure)
+         (packet-review-sections root packet))))
 
 (def artifact-readers
   {"theme" theme-content

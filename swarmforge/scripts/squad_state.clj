@@ -60,14 +60,7 @@
               "senior_implementor_assignment"
               "senior_implementor_branch" "senior_implementor_sha"
               "final_approval" "final_approval_detail"]
-   "senior-implementor" ["architecture_batch" "architecture_batch_stage"
-                         "architecture_batch_assignment" "architecture_batch_branch"
-                         "architecture_batch_sha"
-                         "architecture_review" "architecture_review_assignment"
-                         "architecture_review_branch" "architecture_review_sha"
-                         "architecture_review_target_sha"
-                         "architecture_approval" "architecture_approval_detail"
-                         "final_approval" "final_approval_detail"]})
+   "senior-implementor" ["final_approval" "final_approval_detail"]})
 
 (defn parse-kv-lines [text]
   (into {}

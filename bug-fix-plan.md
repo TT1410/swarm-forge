@@ -1,248 +1,338 @@
 # Bug Fix Plan
 
-This plan fixes the swarm issues in dependency order. Each phase should leave
-the system internally consistent before the next phase starts. Do not mix phases
-unless a later phase exposes a defect in an earlier phase's contract.
+Scope: fix the bugs recorded in `bugs.md` from the August 7, 2026 swarm trial.
+Each phase should be completed with focused automated tests before moving to the
+next phase. No phase should leave a known half-fixed workflow path.
 
-## Phase 1: Canonical Workflow State And Helper Contracts
+## Phase 1: Deterministic Packet Propagation
 
-Fixes:
+Status: implemented in this pass.
 
-- `FSM Must Be The Workflow Authority`
-- `Approval Requests Must Be Idempotent By Semantic Gate`
-- `Squad Next Emits Invalid Batch Assignment Commands`
-- `Bulk Operations Are Missing`
-- `Direct SL-Created Stories Are Not Supported`
-- `Generic Ready Assignments Are Not Spawned Reliably`
-- `Finish-Current Recommendations Can Be Stale`
+Addresses:
 
-Work:
+- `Merged Results Are Not Propagated To Story Packets`
+- `FSM Does Not Record Merged Review Results`
 
-1. Define the helper/FSM contract in code and docs: `squad_next.sh` recommends
-   workflow actions, while helpers validate and mutate durable state.
-2. Preserve the clarified SL exception: the SL may create workflow records
-   directly only for explicit user instruction or artifact quality-control
-   decisions.
-3. Make approval requests idempotent by `(target_kind, target_id, gate)`.
-4. Add `squad_assign.sh create-batch ...` and stop emitting story-shaped
-   `batch` commands.
-5. Add explicit-id bulk helpers for repeated story and approval operations.
-6. Add helper support for direct SL-authored stories as already approved.
-7. Add a generic ready-assignment scan to `squad_next.sh`; explicit ready
-   assignments outrank ordinary stage-derived spawn candidates.
-8. Require `finish_in_process_handoff` recommendations to include a concrete
-   handoff id/path. Do not emit bare `done_with_current.sh`.
+Goal:
 
-Validation:
+Make `squad_next` the deterministic source of all post-merge packet updates so
+the Squad Leader cannot accidentally drop a completed artifact, review, or
+batch result.
 
-- Unit tests for approval dedupe by semantic gate.
-- Unit tests for `create-batch` command shape.
-- FSM/simulator cases for direct story creation, explicit ready assignments, and
-  stale `done_with_current` prevention.
+Implementation steps:
 
-## Phase 2: Assignment Lifecycle, Result Manifests, And Handoff Integrity
+1. Add packet-repair candidates for merged direct result assignments:
+   implementation, cleaner, hardener, QA, architecture, and senior implementer.
+2. Add packet-repair candidates for merged batch assignments by reading the
+   batch manifest and emitting one packet update per member.
+3. Add packet-repair candidates for merger-resolved assignments. The repair must
+   identify the original assignment phase and record the effective merge commit.
+4. Add review-result repair candidates for merged review assignments:
+   Gherkin review, QA procedure review, code review, and architecture review.
+5. Parse or validate review decisions from durable review artifacts under
+   `.squad/reviews/`.
+6. Use the accepted merge commit as the story packet SHA for all post-merge
+   packet updates.
+7. Close or complete batch state after all member packet updates have been
+   applied.
+8. Ensure these repair actions run before downstream eligibility checks.
 
-Fixes:
+Verification:
 
-- `Lifecycle States Are Used For Step Telemetry`
-- `Assignment And Agent State Are Not Synchronized`
-- `Handoff Sending Is Not Cleanly Idempotent`
-- `Result Handoff Validation Is Too Weak`
-- `Retry Loops Do Not Reset Downstream State`
+1. Unit tests for direct merged assignment repair.
+2. Unit tests for batch merged assignment repair with multiple members.
+3. Unit tests for merger-resolved assignment repair.
+4. Unit tests for accepted and changes-requested review repair.
+5. Simulator scenario proving Story 1 QA and Story 6 QA procedure review do not
+   remain stuck after merge.
 
-Work:
+## Phase 2: Architecture End-State Semantics
 
-1. Enforce canonical assignment states: `created`, `in_progress`,
-   `handoff_sent`, `result_received`, `merged`, `blocked`, `superseded`, and
-   `retired`.
-2. Remove `complete` from transient agent lifecycle. Agents use
-   `handoff_ready` when work is ready to hand off.
-3. Treat `failed` as terminal. Recoverable command failures stay in
-   `running` detail or `squad_run` telemetry.
-4. Update spawn fulfillment to mark assignments `in_progress` with agent id and
-   session.
-5. Make handoff send idempotent by `(task, sender, recipient, commit)`.
-6. Require every handoff to include a result manifest tying assignment, agent,
-   template, commit, and artifacts together.
-7. Validate result handoffs by both branch/worktree lineage and result manifest.
-8. Implement supersession semantics for retries: downstream artifacts from the
-   prior chain are marked `superseded`, not erased.
+Status: implemented in this pass.
 
-Validation:
+Addresses:
 
-- Tests proving wrong-assignment reachable commits cannot advance a story.
-- Tests proving duplicate handoff sends return the existing handoff identity.
-- FSM/simulator retry loops for reviewer changes and implementer fixes.
-- Tests for terminal `failed` and absence of transient `complete`.
+- `Architecture Review Flow Must End The Story`
+- `FSM Does Not Record Merged Review Results`
 
-## Phase 3: Throughput, Capacity, Cleanup, And Recovery
+Goal:
 
-Fixes:
+Make architecture the final review stage, with no accidental extra architect
+loop after senior implementer.
 
-- `Capacity And Throughput Are Poorly Scheduled`
-- `Handoff-Sent Agents Are Not Retired Promptly`
-- `Swarm Shutdown Leaves In-Flight Worktrees Behind`
-- `Stall Recovery Is Too Sensitive And SL Wakeups Are Weak`
+Implementation steps:
 
-Work:
+1. Treat explicit accepted architecture disposition as eligible for done after
+   configured architecture/final approval gates.
+2. Treat non-blocking architecture recommendations as accepted, not as
+   changes-requested.
+3. Treat explicit blocking architecture changes-requested as the only trigger
+   for senior implementer.
+4. After senior implementer output is merged and recorded, route the story to
+   done after configured final approval, not back through another architect
+   pass.
+5. Update state derivation so dashboard and status APIs report the same final
+   phase/substate.
 
-1. Count live tmux sessions against `max_transient_agents`; agents in
-   `handoff_sent` do not count once their handoff has actually been sent.
-2. Prioritize actions to free completed slots, then fill empty slots with ready
-   work.
-3. Retire agents promptly after merged handoffs unless merge-blocked preservation
-   applies.
-4. On swarm kill, delete all non-merge-blocked transient worktrees and branches
-   unconditionally.
-5. Use a 60 second SL idle threshold based on no pane/status activity, not raw
-   elapsed time alone.
-6. Treat busy pane tails as liveness even when no `squad_event` heartbeat is
-   written.
-7. Tighten SL wakeup text: run `squad_next.sh`, execute its `COMMAND`, then
-   continue the advisor loop until waiting, blocked, or user-gated.
+Verification:
 
-Validation:
+1. FSM tests for `architect -> done`.
+2. FSM tests for `architect -> senior implementer -> done`.
+3. Tests proving optional recommendations do not spawn senior implementer.
+4. Simulator scenario covering both architecture outcomes.
 
-- Monte Carlo simulator runs that demonstrate full slot usage without exceeding
-  capacity.
-- Shutdown tests proving worktrees/branches are removed except preserved
-  merge-blocked cases.
-- Watchdog tests for active pane tail suppression and SL wakeup wording.
+## Phase 3: Batch Formation Correctness
 
-## Phase 4: Tool Provisioning And Required Tool Enforcement
+Status: implemented in this pass.
 
-Fixes:
+Addresses:
 
-- `Tool Installation Policy Is Contradictory`
-- `APS Tool Source Identity Is Inconsistent`
-- `APS Tool Usage Is Not Enforced`
-- `Required Tool Failures Are Hidden`
-- `Role Prompts Must Require Tool Loading Up Front`
+- `Batch Agents Start With Singleton Batches`
+- `Batch Assignments Can Spawn Without Backing Batch Records`
 
-Work:
+Goal:
 
-1. Make the constitution/tool table the only source of required tool identities.
-2. Generate role startup tool instructions from that table.
-3. Let agents run `squad_tool.sh ensure` as needed for required tools.
-4. Canonicalize APS tools to
-   `github.com/unclebob/Acceptance-Pipeline-Specification`.
-5. Make `squad_tool.sh require` reject source mismatches clearly.
-6. Block merge when required tool evidence is missing.
-7. Require Gherkin handoffs to include both command transcript evidence and
-   normalized IR artifacts, including IR DRY reports and tool metadata.
-8. Make missing/install-failed tools canonical assignment blockers and dashboard
-   blockers.
+Ensure batch phases collect all currently eligible stories and never spawn a
+batch agent without a valid backing batch manifest.
 
-Validation:
+Implementation steps:
 
-- Tests for tool table driven prompt generation.
-- Tests for APS source mismatch rejection.
-- Handoff validation tests that reject missing Gherkin parser/IR evidence.
-- Dashboard data tests for tool blockers.
+1. Change batch action selection so open batch membership additions outrank
+   spawning the batch agent when eligible stories remain.
+2. Add an explicit "batch is closed" transition before spawning the singleton
+   batch agent.
+3. Ensure `hardener`, `qa`, and `architect` use the same closed-batch rule.
+4. Validate that `squad_assign.sh create-batch` refuses missing or empty batch
+   manifests.
+5. Teach `squad_next` to repair missing batch records before recommending
+   assignment creation or spawn.
+6. Preserve singleton capacity for hardener, QA, and architect agents without
+   forcing singleton member lists.
 
-## Phase 5: Late-Stage Workflow And Merger Role
+Verification:
 
-Fixes:
+1. FSM tests where three stories become hardener-ready before spawn.
+2. FSM tests where two stories become QA-ready close together.
+3. FSM tests where architecture batches collect multiple QA-approved stories.
+4. Negative tests for missing and empty batch manifests.
+5. Simulator scenario showing one batch per phase when multiple stories are
+   ready.
 
-- `Architect And Batch Flow Ordering Is Wrong Or Incomplete`
-- `Merge Conflicts Need A Merger Workflow`
-- remaining late-stage portions of `Retry Loops Do Not Reset Downstream State`
+## Phase 4: Concurrent Safe Action Batching
 
-Work:
+Status: implemented in this pass.
 
-1. Encode the late-stage FSM as `QA -> architect <-> senior-implementer -> done`.
-2. Ensure ready batches do not wait for unrelated stories or batches.
-3. Route senior-implementer output back to architect until the architect accepts.
-4. Add the special merger role outside normal transient-agent capacity.
-5. On merge conflict, preserve required branches/worktrees and assign merger.
-6. Have merger merge against the SL current integration state, run required test
-   suites, and hand back an unconflicted result.
+Addresses:
 
-Validation:
+- `Workflow Should Batch Independent Actions`
+- `Automated Workflow Transitions Need Clear Reporting`
 
-- FSM/simulator cases for QA-to-architect, architect rejection, senior
-  implementation, architect acceptance, and done.
-- Merge-conflict integration test that spawns merger and preserves required
-  worktrees/branches.
+Goal:
 
-## Phase 6: Dashboard Canonical Rendering And Controls
+Reduce Squad Leader serialization by allowing the workflow tool or daemon to
+apply safe independent mechanical transitions and report them clearly.
 
-Fixes:
+Implementation steps:
 
-- `Dashboard Refresh Destroys SL Message Drafts`
-- `Dashboard Needs Artifact Links And Renderers`
-- `Dashboard Needs Live Agent Pane Windows`
-- `Dashboard Agent And Assignment Filtering Uses Stale State`
-- `Dashboard Story State Labels Are Confusing`
-- `User Messages From Web Dashboard Need Correct SL Delivery`
-- `Blockers Must Be First-Class Dashboard Items`
+1. Classify workflow actions as mechanical, SL-mediated, user-gated, blocking,
+   or wait.
+2. Add dependency keys so independent actions can be grouped while ordered
+   chains stay serialized.
+3. Apply safe mechanical action batches inside the workflow daemon or an
+   explicit workflow command.
+4. Report completed mechanical work as `APPLIED_TRANSITIONS`, never as
+   `AUTO_ACTIONS`.
+5. Keep exactly one imperative `NEXT_ACTION` for work that the SL must perform.
+6. Update the SL prompt/contract to treat `APPLIED_TRANSITIONS` as
+   informational.
+7. Stop batching at approval gates, blockers, merge conflicts, capacity limits,
+   or true wait.
 
-Work:
+Verification:
 
-1. Preserve unsent SL message textarea content in browser memory across polling;
-   clear it only after successful submit.
-2. Keep polling active while typing and preserve text on backend failure.
-3. Deliver SL messages with the required two returns and 100 ms delay.
-4. Wake the SL after message delivery.
-5. Add Tier 1 artifact renderers: theme, story, Gherkin, QA procedure, review,
-   and blocker.
-6. Make pending approval artifact names link to the renderer.
-7. Add read-only live tmux pane windows for active agents.
-8. Show only current canonical assignments in active views; hide superseded
-   assignments by default.
-9. Sort assignment lists newest first and remove approval history from the normal
-   dashboard.
-10. Add a top-level blockers section.
-11. Use stage labels: `specified`, `gherkin approved`, `qa approved`,
-    `implemented`, `cleaned`, `code reviewed`, `architect approved`, `hardened`,
-    and `done`.
+1. Tests proving independent packet repairs are batched.
+2. Tests proving handoff lifecycle ordering is preserved.
+3. Tests proving approval gates are not bypassed.
+4. Tests proving output wording cannot be confused with commands for the SL.
+5. Simulator scenario showing higher slot utilization than one-action-at-a-time
+   processing.
 
-Validation:
+## Phase 5: Review Cycle Policy
 
-- Browser tests for textarea preservation, submit success clearing, and submit
-  failure retention.
-- Browser tests for approval links, Tier 1 renderers, newest-first assignment
-  ordering, hidden superseded assignments, and blocker section.
-- Live pane endpoint/UI tests with mocked tmux output.
+Status: implemented in this pass.
 
-## Phase 7: Role Prompt Quality
+Addresses:
 
-Fixes:
+- `Reviewed Artifacts Should Have One Review Cycle`
 
-- `Analyst Prompt Lacks Story Writing Principles`
-- `Architect Prompt Needs Review-Oriented Principles`
-- `Role Prompts Must Require Tool Loading Up Front`
+Goal:
 
-Work:
+Prevent repeated reviewer loops for Gherkin and QA procedure artifacts.
 
-1. Add I.N.V.E.S.T. story guidance to the analyst prompt.
-2. Rephrase architect principles as advisory review criteria only.
-3. Include the Dependency Rule in architect review guidance.
-4. Include "low level is close to IO; high level is far from IO".
-5. Strengthen architect guidance to recommend splitting large multi-responsibility
-   modules into individual well-named modules with single responsibilities.
-6. Generate standard required-tool startup blocks for every role prompt from the
-   constitution/tool table.
+Implementation steps:
 
-Validation:
+1. Encode the review-cycle rule for Gherkin and QA procedure:
+   `author -> reviewer -> {accept, or changes-requested -> author revision -> accept}`.
+2. After a revision is merged following changes-requested, record the review
+   gate as accepted instead of spawning another reviewer.
+3. Prevent reviewer `r2`, `r3`, and later loops for the same artifact class
+   after a completed revision.
+4. Leave code review and architecture review policy explicit and separate until
+   the desired rule is decided for those stages.
+5. Add packet fields or iteration interpretation needed to distinguish initial
+   review from post-review revision.
 
-- Prompt snapshot or content tests for analyst, architect, cleaner, hardener,
-  Gherkin, QA, and other tool-using roles.
+Verification:
 
-## Phase 8: End-To-End Trial Readiness
+1. Tests for Gherkin accept on first review.
+2. Tests for Gherkin changes-requested then one author revision then accepted.
+3. Tests for QA procedure changes-requested then one author revision then
+   accepted.
+4. Regression test proving no reviewer r2/r3 loop is recommended after the
+   revision path.
 
-Work:
+## Phase 6: Cleanup And Liveness Reconciliation
 
-1. Run focused unit and simulator suites from the prior phases.
-2. Run at least ten Monte Carlo simulator scenarios with varied story counts,
-   handoff delays, approval delays, and stall behaviors.
-3. Verify at least one scenario fills all available slots, frees slots
-   continuously, and starts pending work as slots free.
-4. Run one HTW-style dry trial and confirm:
-   - no duplicate approvals,
-   - no invalid batch commands,
-   - no hidden tool blockers,
-   - no stale dashboard assignments,
-   - no over-capacity transient agents,
-   - no orphaned non-preserved worktrees after kill.
-5. Update `bugs.md` with any new findings before another live swarm trial.
+Status: verified in this pass; existing cleanup paths already covered this behavior.
+
+Addresses:
+
+- `Retired Agent Tmux Sessions Leak`
+- `Swarm Kill Leaves Active Statuses Stale`
+
+Goal:
+
+Make swarm kill and agent retirement leave no misleading live sessions or stale
+active state.
+
+Implementation steps:
+
+1. Make agent retirement kill/remove the corresponding tmux session
+   idempotently.
+2. Make swarm kill remove all remaining transient-agent tmux sessions for that
+   swarm.
+3. Reconcile non-retired agent status files against tmux/process liveness during
+   kill.
+4. Reconcile assignment status files whose only active agent disappeared during
+   kill.
+5. Decide and document the terminal state name for killed work, such as
+   `killed`, `terminated`, `failed`, or `retired`.
+6. Ensure dashboards and status APIs filter or annotate stale historical state
+   correctly.
+
+Verification:
+
+1. Tests for retiring one agent with an existing tmux session.
+2. Tests for retiring one agent whose tmux session is already gone.
+3. Tests for swarm kill with active agents and assignments.
+4. Tests proving status/dashboard APIs do not show killed work as active.
+
+## Phase 7: Telemetry Semantics
+
+Status: implemented in this pass.
+
+Addresses:
+
+- `Command Telemetry Uses Failed For Expected Probe Failures`
+
+Goal:
+
+Separate command exit telemetry from lifecycle failure so expected red tests and
+tool probes do not confuse humans or recovery logic.
+
+Implementation steps:
+
+1. Define lifecycle states as terminal/non-terminal and reserve `failed` for
+   terminal assignment failure or handed-off blockers.
+2. Extend `squad_run.sh` or its callers to mark expected-failure commands.
+3. Record expected red tests, negative probes, and help/usage probes as
+   non-terminal command results.
+4. Keep unexpected command failures visible without changing lifecycle state
+   unless the agent explicitly declares terminal failure or blockage.
+5. Update dashboard and recovery logic to use lifecycle state, not raw command
+   exit event labels.
+
+Verification:
+
+1. Tests for expected red test telemetry.
+2. Tests for unexpected command failure telemetry.
+3. Tests proving active agents that log expected failures are not treated as
+   terminally failed.
+4. Dashboard/state API tests for failed versus active-with-failing-command.
+
+## Phase 8: Dashboard Usability And Story Dossiers
+
+Status: implemented in this pass.
+
+Addresses:
+
+- `Approval Buttons Need Press Feedback`
+- `Story Links Should Show Full Story Packet`
+- `Story State Display Needs Phase And Substate`
+
+Goal:
+
+Make the dashboard accurately explain workflow state and make approvals/artifact
+review safer to use.
+
+Implementation steps:
+
+1. Add press-state feedback to approval buttons and fire approvals on mouse up.
+2. Replace story markdown-only links with a full story packet/dossier view.
+3. Include packet fields, story artifact, Gherkin, QA procedure, review
+   comments, blockers, assignment history, and iteration history in the dossier.
+4. Derive a story phase, substate, and comment from the packet/state machine.
+5. Show later workflow phases clearly: hardened, QA complete, architected, done,
+   and blocked.
+6. Ensure dashboard state uses the same derived state logic as CLI status.
+
+Verification:
+
+1. Browser/UI tests for approval mouse down/up behavior.
+2. API tests for story dossier payloads.
+3. Rendering tests for story packet/dossier links.
+4. State derivation tests for representative story packets across all phases.
+
+## Phase 9: Prompt Load Brainstorming And Cleanup
+
+Status: deferred until after bug repair validation.
+
+Addresses:
+
+- `Worker Startup Prompt Load Is Too Heavy`
+
+Goal:
+
+Reduce worker startup context without weakening required protocol, role
+behavior, or tool setup.
+
+Implementation steps:
+
+1. Inventory files each transient role reads at startup.
+2. Separate universal transient protocol from role-specific guidance.
+3. Remove workflow orchestration language from worker prompts when `squad_next`
+   owns that decision.
+4. Move broad project or engineering context behind explicit on-demand
+   instructions.
+5. Keep required tool startup instructions local to each role assignment.
+6. Add fixtures or tests that show the startup context list for each role.
+
+Verification:
+
+1. Snapshot tests for generated assignment prompt structure.
+2. Role prompt tests proving required protocol and tool instructions remain.
+3. Manual review of one generated assignment per role.
+
+## Completion Criteria
+
+The bug-fix effort is complete when:
+
+1. Every bug section in `bugs.md` is covered by tests or an explicit
+   documented decision.
+2. The simulator covers merged result propagation, review result propagation,
+   batch formation, architecture completion, kill cleanup, and action batching.
+3. A fresh HTW swarm trial does not require manual packet repairs, does not
+   spawn missing-manifest batch agents, does not loop reviewer revisions, and
+   does not leave stale active sessions/statuses after kill.
+4. The dashboard accurately shows pending approvals, story phase/substate,
+   blockers, and story dossiers.
