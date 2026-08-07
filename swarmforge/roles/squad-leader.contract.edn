@@ -24,5 +24,7 @@
  :theme-approval-before-analyst true
  :story-packet-source-of-truth true
  :implementation-readiness-source "squad_next.sh"
+ :concurrent-action-source "squad_next.sh"
+ :applied-transitions-informational true
  :singleton-roles ["hardener" "qa" "architect"]
  :transient-slot-config "max_transient_agents"}
