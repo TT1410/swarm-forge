@@ -846,6 +846,86 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-concurrent-actions-retire-before-spawn-when-capacity-full
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 1\n")
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
+      (write-agent-status! root "implementer-001" "handoff_sent")
+      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                  "template: implementer\ntask_id: alpha-implementation\n")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_implementer-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\n"
+                       "to: squad-leader\n"
+                       "from: implementer-001\n"
+                       "priority: 50\n"
+                       "task: alpha-implementation\n"
+                       "commit: abcdef1234\n\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/metadata")
+                  (str "assignment_id: alpha-implementation\n"
+                       "theme_id: wumpus\n"
+                       "story_id: alpha\n"
+                       "template: implementer\n"
+                       "assignment_file: " root "/impl.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/status")
+                  "assignment_id: alpha-implementation\nstate: merged\n")
+      (write-file (fs/path root "clean.md") "Clean alpha.\n")
+      (write-file (fs/path root ".squad/assignments/alpha-cleaner/metadata")
+                  (str "assignment_id: alpha-cleaner\n"
+                       "theme_id: wumpus\n"
+                       "story_id: alpha\n"
+                       "template: cleaner\n"
+                       "assignment_file: " root "/clean.md\n"
+                       "created_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-cleaner/status")
+                  "assignment_id: alpha-cleaner\nstate: created\n")
+      (let [first-next (run {:dir root} (script "squad_next.sh"))
+            second-next (run {:dir root} (script "squad_next.sh"))]
+        (doseq [next [first-next second-next]]
+          (is (str/includes? (:out next) "NEXT_ACTION: retire_agent"))
+          (is (str/includes? (:out next) "CONCURRENT_ACTIONS: 2"))
+          (is (str/includes? (:out next) "CONCURRENT_ACTION_NAME: retire_agent"))
+          (is (str/includes? (:out next) "COMMAND: squad_retire.sh implementer-001"))
+          (is (str/includes? (:out next) "CONCURRENT_ACTION_NAME: request_spawn"))
+          (is (str/includes? (:out next) "CONCURRENT_COMMAND: squad_spawn_request.sh cleaner alpha-cleaner"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-concurrent-actions-respect-remaining-agent-capacity
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 2\n")
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
+      (write-agent-status! root "implementer-001" "running")
+      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                  "template: implementer\ntask_id: busy-implementation\n")
+      (doseq [assignment ["alpha-cleaner" "beta-cleaner"]]
+        (write-file (fs/path root (str assignment ".md")) "Clean.\n")
+        (write-file (fs/path root ".squad/assignments" assignment "metadata")
+                    (str "assignment_id: " assignment "\n"
+                         "theme_id: wumpus\n"
+                         "story_id: " (first (str/split assignment #"-")) "\n"
+                         "template: cleaner\n"
+                         "assignment_file: " root "/" assignment ".md\n"
+                         "created_at: 2026-08-03T00:00:00Z\n"))
+        (write-file (fs/path root ".squad/assignments" assignment "status")
+                    (str "assignment_id: " assignment "\nstate: created\n")))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: request_spawn"))
+        (is (str/includes? (:out next) "CONCURRENT_ACTIONS: 1"))
+        (is (str/includes? (:out next) "COMMAND: squad_spawn_request.sh cleaner alpha-cleaner"))
+        (is (not (str/includes? (:out next) "CONCURRENT_COMMAND: squad_spawn_request.sh cleaner beta-cleaner"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-emits-create-batch-for-batch-assignments
   (let [root (tmp-dir)]
     (try

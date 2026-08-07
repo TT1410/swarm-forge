@@ -5,6 +5,7 @@
             [babashka.process :as process]
             [squad-config :as cfg]
             [squad-state :as squad-state]
+            [clojure.set]
             [clojure.string :as str]))
 
 (def usage-text
@@ -1490,6 +1491,30 @@
   (println "CANDIDATES:" total)
   (println "COMMAND:" (:command candidate)))
 
+(def concurrent-action-fields
+  [["CONCURRENT_ACTION_NAME" :next-action true]
+   ["CONCURRENT_THEME" :theme-id false]
+   ["CONCURRENT_STORY" :story-id false]
+   ["CONCURRENT_GATE" :gate false]
+   ["CONCURRENT_TEMPLATE" :template false]
+   ["CONCURRENT_AGENT" :agent false]
+   ["CONCURRENT_ASSIGNMENT" :assignment-id false]
+   ["CONCURRENT_BATCH_KIND" :batch-kind false]
+   ["CONCURRENT_BATCH" :batch-id false]
+   ["CONCURRENT_REASON" :reason false]
+   ["CONCURRENT_COMMAND" :command true]])
+
+(defn print-concurrent-action! [index candidate]
+  (println "CONCURRENT_ACTION:" index)
+  (doseq [field concurrent-action-fields]
+    (print-candidate-field! candidate field)))
+
+(defn print-concurrent-actions! [actions]
+  (println "CONCURRENT_ACTIONS:" (count actions))
+  (println "CONCURRENT_ACTION_ORDER: execute listed order when capacity changes depend on prior actions; otherwise independent commands may run concurrently")
+  (doseq [[index action] (map-indexed vector actions)]
+    (print-concurrent-action! (inc index) action)))
+
 (def mechanical-actions
   #{"register_story_artifact"
     "register_story_packet"
@@ -1680,19 +1705,29 @@
        (remove #{"unknown"})
        set))
 
-(defn retirement-candidate [root rows]
+(defn retirement-candidates [root rows]
   (let [completed (->> (completed-handoff-records root)
                        (filter #(completed-handoff-retirable? root %))
                        (map :agent)
                        set)]
-    (some (fn [row]
-            (let [agent (first row)
-                  state (agent-state root agent)]
-              (when (and (transient-row? row)
-                         (or (contains? completed agent)
-                             (= "retired" state)))
-                {:agent agent :state state})))
-          rows)))
+    (->> rows
+         (keep (fn [row]
+                 (let [agent (first row)
+                       state (agent-state root agent)]
+                   (when (and (transient-row? row)
+                              (or (contains? completed agent)
+                                  (= "retired" state)))
+                     {:priority 5
+                      :stage-order 0
+                      :next-action "retire_agent"
+                      :agent agent
+                      :state state
+                      :reason "completed handoff has been processed and role is still registered"
+                      :command (str "squad_retire.sh " agent)}))))
+         vec)))
+
+(defn retirement-candidate [root rows]
+  (first (retirement-candidates root rows)))
 
 (defn print-retirement-action! [{:keys [agent state]}]
   (println "NEXT_ACTION: retire_agent")
@@ -1787,20 +1822,113 @@
                    (merger-candidates root rows)
                    (generic-ready-assignment-candidates root rows))))
 
+(defn rows-without-agents [rows agents]
+  (remove #(contains? agents (first %)) rows))
+
+(defn capacity-used [root agents]
+  (count (filter #(capacity-counted-agent? root %) agents)))
+
+(defn active-singleton-templates [root agents]
+  (->> agents
+       (filter #(capacity-counted-agent? root %))
+       (keep :template)
+       (filter singleton-templates)
+       set))
+
+(defn spawn-action? [action]
+  (= "request_spawn" (:next-action action)))
+
+(defn merger-spawn-action? [action]
+  (and (spawn-action? action)
+       (= "merger" (:template action))))
+
+(defn singleton-spawn-blocked? [active-singletons action]
+  (and (contains? singleton-templates (:template action))
+       (contains? active-singletons (:template action))))
+
+(defn spawn-fits? [used max-agents active-singletons action]
+  (or (merger-spawn-action? action)
+      (and (< used max-agents)
+           (not (singleton-spawn-blocked? active-singletons action)))))
+
+(defn account-spawn [used active-singletons action]
+  (if (merger-spawn-action? action)
+    [used active-singletons]
+    [(inc used)
+     (cond-> active-singletons
+       (contains? singleton-templates (:template action))
+       (conj (:template action)))]))
+
+(defn action-dependency-keys [{:keys [story-id assignment-id batch-id agent]}]
+  (set
+   (concat
+    (when (and story-id (not= "batch" story-id))
+      [[:story story-id]])
+    (when assignment-id
+      [[:workflow-id assignment-id]])
+    (when batch-id
+      [[:workflow-id batch-id]])
+    (when agent
+      [[:agent agent]]))))
+
+(defn dependency-conflict? [state action]
+  (boolean (seq (clojure.set/intersection (:dependency-keys state)
+                                          (action-dependency-keys action)))))
+
+(defn account-dependencies [state action]
+  (update state :dependency-keys into (action-dependency-keys action)))
+
+(defn include-concurrent-action [state action]
+  (if (dependency-conflict? state action)
+    state
+    (if-not (spawn-action? action)
+      (-> state
+          (update :actions conj action)
+          (account-dependencies action))
+    (let [{:keys [used max-agents active-singletons]} state]
+      (if-not (spawn-fits? used max-agents active-singletons action)
+        state
+        (let [[used active-singletons] (account-spawn used active-singletons action)]
+          (-> state
+              (assoc :used used :active-singletons active-singletons)
+              (update :actions conj action)
+              (account-dependencies action))))))))
+
+(defn schedule-concurrent-actions [root rows retire-actions ready-actions]
+  (let [retired-agents (set (keep :agent retire-actions))
+        adjusted-rows (rows-without-agents rows retired-agents)
+        agents (agent-records root adjusted-rows)
+        initial {:used (capacity-used root agents)
+                 :max-agents (cfg/squad-max-transient-agents root)
+                 :active-singletons (active-singleton-templates root agents)
+                 :dependency-keys (set (mapcat action-dependency-keys retire-actions))
+                 :actions (vec retire-actions)}]
+    (:actions (reduce include-concurrent-action initial ready-actions))))
+
+(defn concurrent-action-context [root rows]
+  (let [retire-actions (retirement-candidates root rows)
+        adjusted-rows (rows-without-agents rows (set (keep :agent retire-actions)))
+        ready (ready-actions root adjusted-rows)]
+    {:retire-actions retire-actions
+     :ready-actions ready
+     :concurrent-actions (schedule-concurrent-actions root rows retire-actions ready)}))
+
 (defn next-action-context []
   (let [root (fs/absolutize (project-root))
         inbox (fs/path root ".swarmforge" "handoffs" "inbox")
-        rows (role-rows root)]
-    {:root root
-     :rows rows
-     :in-process (first (files-with-extension (fs/path inbox "in_process") ".handoff"))
-     :new-handoff (first (files-with-extension (fs/path inbox "new") ".handoff"))
-     :stale-lock-info (stale-lock root)
-     :pending-spawn-file (pending-spawn-request root)
-     :retire-candidate (retirement-candidate root rows)
-     :recover-candidate (recovery-candidate root rows)
-     :ready-actions (ready-actions root rows)
-     :pending-approval-file (pending-approval root)}))
+        rows (role-rows root)
+        concurrent (concurrent-action-context root rows)]
+    (merge
+     {:root root
+      :rows rows
+      :in-process (first (files-with-extension (fs/path inbox "in_process") ".handoff"))
+      :new-handoff (first (files-with-extension (fs/path inbox "new") ".handoff"))
+      :stale-lock-info (stale-lock root)
+      :pending-spawn-file (pending-spawn-request root)
+      :retire-candidate (first (:retire-actions concurrent))
+      :recover-candidate (recovery-candidate root rows)
+      :pending-approval-file (pending-approval root)}
+     concurrent)))
 
 (def action-rules
   [[:finish-in-process :in-process]
@@ -1833,9 +1961,13 @@
      (print-handoff-action! "process_handoff" new-handoff "new handoff mail is waiting" "ready_for_next.sh"))
    :stale-lock (fn [{:keys [stale-lock-info]}] (print-stale-lock-action! stale-lock-info))
    :pending-spawn (fn [{:keys [pending-spawn-file]}] (print-spawn-wait-action! pending-spawn-file))
-   :retire (fn [{:keys [retire-candidate]}] (print-retirement-action! retire-candidate))
+   :retire (fn [{:keys [retire-candidate concurrent-actions]}]
+             (print-retirement-action! retire-candidate)
+             (print-concurrent-actions! concurrent-actions))
    :recover (fn [{:keys [recover-candidate]}] (print-recovery-action! recover-candidate))
-   :ready-action (fn [{:keys [ready-actions]}] (print-story-candidate! (first ready-actions) (count ready-actions)))
+   :ready-action (fn [{:keys [ready-actions concurrent-actions]}]
+                   (print-story-candidate! (first ready-actions) (count ready-actions))
+                   (print-concurrent-actions! concurrent-actions))
    :pending-approval (fn [{:keys [pending-approval-file]}] (print-approval-action! pending-approval-file))
    :wait (fn [{:keys [root rows]}] (print-wait-action! (active-transients root rows)))})
 
