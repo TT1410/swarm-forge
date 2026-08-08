@@ -275,7 +275,15 @@
       (let [register (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out register) "NEXT_ACTION: register_story_artifact"))
         (is (str/includes? (:out register) "STORY: alpha"))
-        (is (str/includes? (:out register) "COMMAND: squad_theme.sh story wumpus alpha stories/alpha.md && squad_packet.sh create wumpus alpha wumpus-analysis master")))
+        (is (str/includes? (:out register) "COMMAND: squad_theme.sh story wumpus alpha stories/alpha.md && squad_packet.sh create wumpus alpha wumpus-analysis master"))
+        (is (str/includes? (:out register) "CONCURRENT_ACTIONS: 2"))
+        (is (str/includes? (:out register) "CONCURRENT_STORY: alpha"))
+        (is (str/includes? (:out register) "CONCURRENT_STORY: beta")))
+      (let [applied (run {:dir root} (script "squad_next.sh") "--apply-mechanical")]
+        (is (str/includes? (:out applied) "APPLIED_TRANSITIONS: 2"))
+        (is (str/includes? (:out applied) "APPLIED_TRANSITION: register_story_artifact story=alpha assignment=wumpus-analysis batch=none exit=0"))
+        (is (str/includes? (:out applied) "APPLIED_TRANSITION: register_story_artifact story=beta assignment=wumpus-analysis batch=none exit=0"))
+        (is (str/includes? (:out applied) "NEXT_ACTION: create_approval_request")))
       (finally
         (fs/delete-tree root)))))
 
@@ -305,6 +313,9 @@
       (let [next (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out next) "TEMPLATE: gherkin-writer"))
+        (is (str/includes? (:out next) "CONCURRENT_ACTIONS: 2"))
+        (is (str/includes? (:out next) "CONCURRENT_TEMPLATE: gherkin-writer"))
+        (is (str/includes? (:out next) "CONCURRENT_TEMPLATE: qa-procedure-writer"))
         (is (not (str/includes? (:out next) "GATE: story"))))
       (finally
         (fs/delete-tree root)))))
@@ -466,7 +477,7 @@
       (let [next (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out next) "NEXT_ACTION: record_post_revision_review_acceptance"))
         (is (str/includes? (:out next) "COMMAND: squad_packet.sh review alpha gherkin accepted alpha-gherkin-r2 master 2222222222"))
-        (is (not (str/includes? (:out next) "TEMPLATE: gherkin-reviewer"))))
+        (is (not (str/includes? (:out next) "\nTEMPLATE: gherkin-reviewer"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -982,7 +993,7 @@
       (let [second-next (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out second-next) "NEXT_ACTION: record_batch_membership"))
         (is (str/includes? (:out second-next) "STORY: beta"))
-        (is (not (str/includes? (:out second-next) "TEMPLATE: hardener"))))
+        (is (not (str/includes? (:out second-next) "\nTEMPLATE: hardener"))))
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (run {:dir root} (script "squad_batch_story.sh") "add" "beta" "hardener" "wumpus-hardener" "code_reviewed" "beta-review" "master" sha))
       (let [third-next (run {:dir root} (script "squad_next.sh"))]

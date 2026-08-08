@@ -522,7 +522,7 @@
                        "  capture-pane) printf 'ready for command>\\n' ; exit 0 ;;\n"
                        "  send-keys)\n"
                        "    case \"$*\" in\n"
-                       "      *\"Run squad_next.sh, execute its COMMAND\"*) touch \"$FAKE_TMUX_STATE/sl-wake\" ;;\n"
+                      "      *\"Run squad_next.sh --apply-mechanical\"*) touch \"$FAKE_TMUX_STATE/sl-wake\" ;;\n"
                        "      *\" C-m\") count_file=\"$FAKE_TMUX_STATE/returns\"; count=0; test -f \"$count_file\" && read count < \"$count_file\"; count=$((count + 1)); echo \"$count\" > \"$count_file\" ;;\n"
                        "    esac\n"
                        "    exit 0\n"

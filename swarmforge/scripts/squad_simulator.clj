@@ -67,6 +67,52 @@
                   [(str/lower-case k) v])))
 	        (str/split-lines text)))
 
+(def concurrent-field-map
+  {"concurrent_action_name" "next_action"
+   "concurrent_theme" "theme"
+   "concurrent_story" "story"
+   "concurrent_gate" "gate"
+   "concurrent_template" "template"
+   "concurrent_agent" "agent"
+   "concurrent_assignment" "assignment"
+   "concurrent_batch_kind" "batch_kind"
+   "concurrent_batch" "batch"
+   "concurrent_reason" "reason"
+   "concurrent_command" "command"})
+
+(defn concurrent-action-line [line]
+  (when-let [[_ k v] (re-matches #"CONCURRENT_([A-Z_]+):\s*(.*)" line)]
+    (let [key (str/lower-case (str "concurrent_" k))]
+      (when (contains? concurrent-field-map key)
+        [key v]))))
+
+(defn finish-concurrent-action [actions current]
+  (cond-> actions
+    (seq current) (conj current)))
+
+(defn normalize-concurrent-action [action]
+  (into {}
+        (map (fn [[k v]]
+               [(get concurrent-field-map k k) v]))
+        action))
+
+(defn concurrent-actions [text]
+  (->> (reduce (fn [{:keys [actions current]} line]
+                 (if (re-matches #"CONCURRENT_ACTION:\s*[0-9]+" line)
+                   {:actions (finish-concurrent-action actions current)
+                    :current {}}
+                   (if-let [[k v] (when current
+                                    (concurrent-action-line line))]
+                     {:actions actions
+                      :current (assoc current k v)}
+                     {:actions actions
+                      :current current})))
+               {:actions [] :current nil}
+               (str/split-lines text))
+       ((fn [{:keys [actions current]}]
+          (finish-concurrent-action actions current)))
+       (mapv normalize-concurrent-action)))
+
 (defn parse-long! [label value]
   (try
     (Long/parseLong value)
@@ -421,11 +467,23 @@
 
 (defn process-analyst! [root assignment agent stories]
   (doseq [[story text] stories]
-    (write-file! (fs/path root "stories" (str story ".md")) text)
-    (git-commit! root (str "Add story " story))
-    (run-script! root "squad_theme.sh" "story" "hunt-the-wumpus" story (str "stories/" story ".md"))
-    (let [sha (str/trim (:out (sh! root "git" "rev-parse" "--short=10" "HEAD")))]
-      (run-script! root "squad_packet.sh" "create" "hunt-the-wumpus" story assignment agent sha))))
+    (write-file! (fs/path root "stories" (str story ".md")) text))
+  (let [sha (git-commit! root (str "Add analyst stories for " assignment))
+        artifacts (str/join "," (map (fn [[story _]]
+                                        (str "stories/" story ".md"))
+                                      stories))
+        dir (fs/path root ".squad" "assignments" assignment)]
+    (write-file! (fs/path dir "result-manifest")
+                 (str "assignment_id: " assignment "\n"
+                      "agent: " agent "\n"
+                      "template: analyst\n"
+                      "commit: " sha "\n"
+                      "artifacts: " artifacts "\n"))
+    (write-file! (fs/path dir "accepted-merge")
+                 (str "assignment_id: " assignment "\n"
+                      "state: merged\n"
+                      "commit: " sha "\n"
+                      "merge_commit: " sha "\n"))))
 
 (defn process-writer! [root assignment agent template story]
   (let [kind (story-kind template)
@@ -926,15 +984,25 @@
   (print-block! tick out)
   (apply-sim-action! ctx tick action m))
 
+(defn action-maps [out primary]
+  (let [concurrent (concurrent-actions out)]
+    (if (seq concurrent)
+      concurrent
+      [primary])))
+
 (defn run-sim-tick! [ctx tick]
   (set-sim-now! tick)
   (due-events! (:root ctx) (:scheduled ctx) tick)
-  (let [out (:out (run-script! (:root ctx) "squad_next.sh"))
+  (let [out (:out (run-script! (:root ctx) "squad_next.sh" "--apply-mechanical"))
         m (command-map out)
         action (get m "next_action")]
     (if (= "wait" action)
       (record-wait! (:pending-wait ctx) tick out)
-      (print-and-apply-action! ctx tick out action m))
+      (do
+        (flush-wait! (:pending-wait ctx))
+        (print-block! tick out)
+        (doseq [action-map (action-maps out m)]
+          (apply-sim-action! ctx tick (get action-map "next_action") action-map))))
     action))
 
 (defn ensure-sim-within-limit! [ctx tick story-count story-ids]

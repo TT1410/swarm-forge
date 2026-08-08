@@ -1859,15 +1859,27 @@
        (contains? singleton-templates (:template action))
        (conj (:template action)))]))
 
-(defn action-dependency-keys [{:keys [story-id assignment-id batch-id agent]}]
+(defn action-dependency-keys [{:keys [next-action story-id assignment-id batch-id agent gate template batch-kind]}]
   (set
    (concat
-    (when (and story-id (not= "batch" story-id))
-      [[:story story-id]])
-    (when assignment-id
-      [[:workflow-id assignment-id]])
-    (when batch-id
-      [[:workflow-id batch-id]])
+    (when (and story-id
+               (not= "batch" story-id)
+               (contains? #{"register_story_packet"
+                            "attach_story_artifact"
+                            "record_merged_result"
+                            "record_merged_batch_result"
+                            "record_review_result"
+                            "record_post_revision_review_acceptance"
+                            "record_auto_approval"
+                            "record_batch_membership"
+                            "create_approval_request"} next-action))
+      [[:story-action story-id next-action gate template batch-kind]])
+    (when (and assignment-id
+               (contains? #{"create_assignment" "request_spawn"} next-action))
+      [[:assignment-action assignment-id next-action]])
+    (when (and batch-id
+               (contains? #{"create_assignment" "request_spawn"} next-action))
+      [[:batch-action batch-id next-action]])
     (when agent
       [[:agent agent]]))))
 

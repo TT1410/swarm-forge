@@ -25,13 +25,17 @@
     (is (str/includes? out "handoff_ticks=3..3"))
     (is (str/includes? out "approval_ticks=5..5"))
     (is (str/includes? out "NEXT_ACTION: create_approval_request"))
+    (is (str/includes? out "APPLIED_TRANSITIONS:"))
+    (is (str/includes? out "CONCURRENT_ACTIONS:"))
+    (is (str/includes? out "CONCURRENT_COMMAND: squad_assign.sh create"))
+    (is (str/includes? out "CONCURRENT_COMMAND: squad_spawn_request.sh"))
     (is (str/includes? out "USER_APPROVES: theme__hunt-the-wumpus"))
     (is (str/includes? out "WAIT_TICKS:"))
     (is (str/includes? out "AGENT_HANDOFF: analyst-001"))
     (is (str/includes? out "decision=changes-requested"))
     (is (str/includes? out "decision=accepted"))
-	    (is (str/includes? out "NEXT_ACTION: record_auto_approval"))
-	    (is (str/includes? out "NEXT_ACTION: record_batch_membership"))
+	    (is (str/includes? out "APPLIED_TRANSITION: record_auto_approval"))
+	    (is (str/includes? out "APPLIED_TRANSITION: record_batch_membership"))
 	    (is (str/includes? out "STORY: batch"))
 	    (is (str/includes? out "TEMPLATE: hardener"))
 	    (is (str/includes? out "TEMPLATE: qa"))
@@ -118,6 +122,33 @@
     (is (str/includes? dark-out "NEXT_ACTION: recover_agent"))
     (is (str/includes? dark-out "QUIET_FOR_SECONDS: 5"))
     (is (str/includes? dark-out "RECOVERY_STATE: failed_no_work"))))
+
+(deftest ^:simulation squad-simulator-monte-carlo-stresses-concurrent-and-applied-transitions
+  (let [result (run {:dir repo-root}
+                    (script "squad_simulator.sh")
+                    "htw"
+                    "--seed"
+                    "42"
+                    "--runs"
+                    "3"
+                    "--stories"
+                    "2..4"
+                    "--handoff-ticks"
+                    "1..4"
+                    "--approval-ticks"
+                    "1..3"
+                    "--stall-percent"
+                    "0"
+                    "--max-ticks"
+                    "700")
+        out (:out result)]
+    (is (= 3 (count (re-seq #"SIM_START theme=hunt-the-wumpus" out))))
+    (is (= 3 (count (re-seq #"state=workflow_idle" out))))
+    (is (>= (count (re-seq #"APPLIED_TRANSITIONS:" out)) 3))
+    (is (>= (count (re-seq #"CONCURRENT_ACTIONS:" out)) 3))
+    (is (str/includes? out "CONCURRENT_COMMAND: squad_assign.sh create"))
+    (is (str/includes? out "CONCURRENT_COMMAND: squad_spawn_request.sh"))
+    (is (str/includes? out "APPLIED_TRANSITION: register_story_artifact"))))
 
 (deftest ^:simulation squad-simulator-routes-merge-failure-through-merger-before-retiring-source-agent
   (let [result (run {:dir repo-root}

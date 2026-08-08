@@ -14,11 +14,11 @@
 (def poll-ms 1000)
 (def status-poll-ms 5000)
 (def handoff-wake-message
-  "You have new handoff mail. If idle, run squad_next.sh, execute its COMMAND, then repeat until waiting, blocked, or user-gated.")
+  "You have new handoff mail. If idle, run squad_next.sh --apply-mechanical, execute its COMMAND and CONCURRENT_COMMAND entries, then repeat until waiting, blocked, or user-gated.")
 (def status-wake-message
-  "Squad status needs attention. If idle, run squad_next.sh, execute its COMMAND, then repeat until waiting, blocked, or user-gated.")
+  "Squad status needs attention. If idle, run squad_next.sh --apply-mechanical, execute its COMMAND and CONCURRENT_COMMAND entries, then repeat until waiting, blocked, or user-gated.")
 (def sl-watchdog-message
-  "Run squad_next.sh, execute its COMMAND, then repeat until waiting, blocked, or user-gated.")
+  "Run squad_next.sh --apply-mechanical, execute its COMMAND and CONCURRENT_COMMAND entries, then repeat until waiting, blocked, or user-gated.")
 (def script-dir (fs/parent *file*))
 (def stopping? (atom false))
 (def last-status-poll (atom 0))
