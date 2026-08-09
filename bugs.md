@@ -1,264 +1,326 @@
 # Bugs
 
-Current scope: throughput gaps observed during the August 8, 2026 swarm trial.
-
-## Workflow Throughput
-
-### Handoff Merge Processing Is Still Serial
-
-The workflow now uses `APPLIED_TRANSITIONS` for safe bookkeeping and
-`CONCURRENT_ACTIONS` for independent work, but git handoff intake remains a
-single-file pipeline.
-
-Observed behavior:
-
-1. Eight specification agents handed off work: four Gherkin writers and four QA
-   procedure writers.
-2. The Squad Leader processed each handoff through the same serial sequence:
-   `record_assignment_result -> merge-ready -> accept-merge -> attach_story_artifact`.
-3. Each artifact attachment was applied automatically, but only after its
-   individual merge completed.
-4. The log showed repeated `APPLIED_TRANSITIONS: 1` blocks for
-   `attach_story_artifact`, rather than one larger post-merge batch.
-5. This appears correct for current git safety, but it is now the main
-   throughput bottleneck after concurrent spawn and assignment creation.
-
-Goal:
-
-Improve throughput without corrupting the integration branch. Options to
-investigate include a deterministic merge queue, a merger-agent pipeline, or a
-tool-owned batch merge planner that can identify independent non-conflicting
-handoffs while keeping conflicting merges serialized.
-
-### Retirements Lag After Completed Handoffs
-
-After all eight specification handoffs were merged and their artifacts attached,
-the transient agents still remained registered.
-
-Observed behavior:
-
-1. `squad_next.sh --apply-mechanical` correctly emitted a concurrent batch with
-   eight `retire_agent` commands plus eight reviewer assignment creation
-   commands.
-2. The old specification agents still appeared in `.swarmforge/roles.tsv`.
-3. Their assignments were already `merged` and their story packets were already
-   updated.
-4. Until retirements execute, the dashboard and role registry carry stale
-   completed agents and the system is harder to scan.
-
-Goal:
-
-Favor throughput by making completed-agent retirement happen promptly. Consider
-whether retirements can be daemon-applied mechanical transitions once the
-handoff is completed, merged, and reflected in durable story state.
-
-Additional live observation:
-
-1. A later run had 25 completed handoff files in
-   `.swarmforge/handoffs/inbox/completed`.
-2. The corresponding old agents had been removed from `.swarmforge/roles.tsv`,
-   so those historical completed handoffs were not directly consuming capacity.
-3. The same run showed a failed `gherkin-writer` still listed in the workflow
-   wait report even though failed agents are excluded from capacity accounting.
-4. Wait-state liveness and capacity accounting should use the same definition
-   of an active transient worker, so failed workers do not make the Squad Leader
-   wait instead of retrying, reporting a blocker, or retiring stale state.
-
-### Assignment Creation Still Requires Squad Leader Instruction Synthesis
-
-The workflow advisor now batches reviewer assignment creation in
-`CONCURRENT_ACTIONS`, but the Squad Leader still has to create instruction files
-before running each `squad_assign.sh create ... <instructions-file>` command.
-
-Observed behavior:
-
-1. The advisor emitted all reviewer assignment creation commands together.
-2. The commands still contained `<instructions-file>`.
-3. The Squad Leader had to synthesize the instruction files before executing
-   the batch.
-4. This prevents reviewer assignment creation from becoming a fully automatic
-   `APPLIED_TRANSITIONS` step.
-
-Goal:
-
-Improve throughput by moving deterministic assignment-instruction generation
-into a helper or workflow-owned renderer. Then assignment creation for standard
-roles could become either auto-applied or at least a direct concurrent command
-without manual file preparation by the Squad Leader.
-
-### Assignment Creation Does Not Queue Spawn Requests
-
-Creating an assignment does not automatically queue the corresponding worker
-spawn request.
-
-Observed behavior:
-
-1. `squad_assign.sh create ...` writes the assignment and marks it `created`.
-2. A later `squad_next.sh` call must notice the created assignment and emit a
-   separate `squad_spawn_request.sh ...` command.
-3. `squad_spawn_request.sh` writes a request under `.squad/spawn-requests/new/`.
-4. `squadd` then polls that queue and calls `squad_spawn.sh` after checking
-   capacity and singleton limits.
-5. The separation preserves daemon-owned spawning, but it creates an avoidable
-   extra Squad Leader action for every assignment.
-
-Expected behavior:
-
-Assignment creation should be able to enqueue the spawn request mechanically
-when the assignment is immediately eligible. The request should still go through
-`.squad/spawn-requests/new/`, and `squadd` should remain the component that
-actually calls `squad_spawn.sh` so capacity and singleton rules remain
-centralized.
-
-### Successful Work Can Leave Misleading Failed Agent Status
-
-One QA procedure writer showed a terminal-looking failure status even though its
-assignment was merged and the artifact was attached to the story packet.
-
-Observed behavior:
-
-1. `qa-procedure-writer-004` status was:
-   `state: failed`
-2. The detail was:
-   `handoff failed: complete current task exit 1`
-3. Its assignment was nevertheless `merged`.
-4. Its QA procedure artifact was attached to the story packet.
-5. The workflow correctly treated the agent as retirable, but the status could
-   mislead dashboards, humans, or future recovery logic.
-
-Goal:
-
-Keep lifecycle state consistent with durable workflow outcome. If a handoff is
-eventually merged and packet-applied, the agent should not remain displayed as
-failed except perhaps as historical telemetry. The active/current status should
-communicate that the work was accepted and the agent is ready for retirement.
-
-## Review Cycle Correctness
-
-### Merged Review Results Can Be Skipped Before Spawning A Second Reviewer
-
-The one-review-cycle policy is only partially enforced. Some reviewed artifacts
-received a second reviewer assignment while the first reviewer result was
-already merged but not reflected in the story packet.
-
-Observed behavior:
-
-1. Story `hunt-the-wumpus-02-turn-loop-movement-and-hazards` has:
-   - `hunt-the-wumpus-02-turn-loop-movement-and-hazards-qa-procedure-review`
-     in `state: merged`
-   - `hunt-the-wumpus-02-turn-loop-movement-and-hazards-qa-procedure-review-r2`
-     also in `state: merged`
-   - `hunt-the-wumpus-02-turn-loop-movement-and-hazards-qa-procedure-review-r3`
-     in `state: result_received`
-   - packet field `qa_procedure_review_state: pending`
-2. Story `hunt-the-wumpus-04-game-end-and-same-setup-replay` has:
-   - `hunt-the-wumpus-04-game-end-and-same-setup-replay-qa-procedure-review`
-     in `state: merged`
-   - `hunt-the-wumpus-04-game-end-and-same-setup-replay-qa-procedure-review-r2`
-     also in `state: merged`
-   - `hunt-the-wumpus-04-game-end-and-same-setup-replay-qa-procedure-review-r3`
-     also in `state: merged`
-   - packet field `qa_procedure_review_state: pending`
-3. The workflow therefore spawned a second QA procedure reviewer before
-   recording the first merged review decision.
-4. This wastes agent capacity and violates the intended review cycle:
-   `author -> reviewer -> {accept, or request changes -> author revision -> accept}`.
-
-Expected behavior:
-
-1. Merged review assignments must be recorded into the story packet before any
-   downstream eligibility check can create another reviewer assignment.
-2. If the first review accepted the artifact, the workflow should proceed to the
-   approval gate.
-3. If the first review requested changes, the workflow should send the artifact
-   back to the author for one revision.
-4. After the author revision is merged, the workflow should auto-accept that
-   artifact for the reviewed gate under the one-review-cycle policy.
-5. The FSM must not create `*-review-r2` reviewer assignments just because the
-   packet is missing a review result that already exists in merged assignment
-   state.
-
-Goal:
-
-Improve throughput and correctness by making review-result recording a required
-mechanical repair that runs before reviewer-assignment eligibility. This should
-eliminate redundant reviewer agents and unblock stories as soon as durable
-review results exist.
-
-### Artifacts Can Loop Through Revisions Or Reviews Up To R11
-
-The workflow did not merely create one extra review. Some artifacts were sent
-through repeated writer/reviewer rounds up to `r11`.
-
-Observed behavior:
-
-1. Story `hunt-the-wumpus-01-startup-and-cave` had QA procedure writer
-   assignments from the original through `qa-procedure-r11`, with `r11` still
-   `in_progress` at teardown.
-2. Story `hunt-the-wumpus-02-turn-loop-movement-and-hazards` had QA procedure
-   reviewer assignments from the original through `qa-procedure-review-r11`,
-   with `r11` still `in_progress` at teardown.
-3. Story `hunt-the-wumpus-03-crooked-arrows` had Gherkin writer assignments
-   from the original through `gherkin-r11`, with `r11` still `in_progress` at
-   teardown.
-4. Story `hunt-the-wumpus-04-game-end-and-same-setup-replay` had Gherkin writer
-   assignments from the original through `gherkin-r11`, with `r11` still
-   `in_progress` at teardown, and QA procedure review reached `r5`.
-5. Story `hunt-the-wumpus-05-compact-command-syntax` had Gherkin writer
-   assignments from the original through `gherkin-r9`, with `r9` still
-   `in_progress` at teardown.
-6. The story packets generally recorded only the original review iteration or a
-   later accepted result, not the full repeated loop history.
-
-Expected behavior:
-
-The workflow should enforce the one-review-cycle rule for reviewed artifacts:
-`author -> reviewer -> {accept, or request changes -> author revision -> accept}`.
-It should not keep spawning new writer or reviewer revisions after the allowed
-cycle is complete. If a review result cannot be recorded into packet state, that
-should become a blocker rather than an unbounded revision/review loop.
+Current scope: issues observed during the August 9, 2026 swarm trial.
 
 ## Dashboard
 
-### Agent Tmux Viewer Shows Input Box And Pending Input
+### Agents Disappear Before Retirement
 
-Clicking an agent in the web dashboard opens a tmux window viewer that displays
-the command input box at the bottom.
-
-Observed behavior:
-
-1. The rendered tmux viewer included the input area from the agent session.
-2. The viewer also exposed pending input text, such as `Explain this codebase`.
-3. This makes the dashboard look like an interactive terminal and can expose
-   stale or accidental prompt text that is not part of the agent's useful
-   output history.
-
-Expected behavior:
-
-The dashboard agent tmux viewer should be read-only output. It should not render
-the input box, and it should not render the contents of pending input.
-
-## Cleanup
-
-### Squad Teardown Leaves Active Metadata Behind
-
-After the squad was torn down, the live processes were gone but the durable
-metadata still described active workers.
+An agent disappeared from the web dashboard and later reappeared.
 
 Observed behavior:
 
-1. The tmux socket reported no server running.
-2. No active `squadd`, Squad Leader, or worker agent processes were found.
-3. `.swarmforge/roles.tsv` still listed the Squad Leader and five transient
-   agents.
-4. Agent status files still showed four agents as `running` and one as
-   `handoff_sent`.
-5. `.swarmforge/handoffs/inbox/new/` still contained one handoff.
+1. `gherkin-writer-003` briefly reported `state: failed` with detail:
+   `inspect failed: gherkin parser help exit 2`.
+2. During that period, the agent appeared to disappear from the dashboard.
+3. The same agent later reported `state: running` again and reappeared.
+4. The assignment remained active throughout this period.
 
 Expected behavior:
 
-Squad teardown should leave the system in a coherent terminal state. If the
-processes are killed, active role records and agent statuses should be marked or
-cleaned consistently, and any unprocessed handoffs should be either preserved
-with explicit recovery metadata or moved to a clearly named cleanup/recovery
-location.
+An agent should remain visible on the web dashboard until it is explicitly
+retired. Temporary states such as `starting`, `running`, `blocked`,
+`handoff_ready`, `handoff_sent`, or `failed` should not remove the agent from
+the active display while the role is still registered and the assignment has not
+been resolved.
+
+Only `retired` agents should fall out of the active agent list.
+
+## Agent Lifecycle
+
+### Agents Self-Retire Before Workflow Resolution
+
+An agent reported `retired` before the Squad Leader had resolved its handoff
+through the workflow.
+
+Observed behavior:
+
+1. `gherkin-writer-002` reported `state: retired`.
+2. Its handoff was still pending workflow processing.
+3. `squadd` repeatedly logged:
+   `agent-retired-awaiting-workflow gherkin-writer-002`.
+4. The daemon also warned:
+   `agent gherkin-writer-002 reported retired; run squad_retire.sh only after workflow resolves its handoff`.
+
+Expected behavior:
+
+Transient agents should not self-retire after sending a handoff. After an agent
+sends its handoff, it may report `handoff_sent`, but final retirement should be
+performed only by `squad_retire.sh` after the Squad Leader has resolved the
+handoff, merged or otherwise recorded the result, and updated durable workflow
+state.
+
+### Concurrent Retirements Hit Registry Lock Contention
+
+The Squad Leader attempted to execute multiple advisor-issued retirements in
+parallel, and some of them failed because the retirement helper contended on the
+shared squad registry lock.
+
+Observed behavior:
+
+1. `squad_next.sh --apply-mechanical` emitted multiple `retire_agent` commands
+   in one concurrent action batch.
+2. The Squad Leader executed retirements in parallel.
+3. Two parallel retirements hit a registry lock race in the helper.
+4. `squad_next.sh` later reissued the still-needed retirements.
+5. The Squad Leader recovered by running the retirements sequentially.
+
+Expected behavior:
+
+Retirement should not depend on the Squad Leader discovering that parallel
+retire commands are unsafe. A better solution is likely to make retirement
+processing explicitly serialized, daemon-owned, or otherwise lock-aware so
+completed agents can be drained promptly without registry lock races.
+
+### Swarm Teardown Leaks Worktrees And Stale Agent State
+
+After the swarm was killed, the live processes were gone but cleanup left stale
+git worktree and agent status state behind.
+
+Observed behavior:
+
+1. No tmux server remained on the squad socket.
+2. No `squadd` process remained.
+3. No live swarm agent processes remained.
+4. `git worktree list` still showed many agent worktrees as `prunable`.
+5. One physical worktree still existed:
+   `~/junk/squad/.worktrees/merger-003`.
+6. `merger-003` still appeared as a non-prunable git worktree.
+7. Agent status files still contained stale active-looking states, including
+   `code-reviewer-085` and `code-reviewer-086` as `running`, and `merger-003` as
+   `handoff_sent`, despite there being no live processes.
+
+Expected behavior:
+
+Swarm teardown should leave no live tmux sessions, no `squadd` process, no agent
+processes, no stale physical worktrees, no stale git worktree registrations, and
+no active-looking agent status records. Any unmerged or intentionally preserved
+worktree should be reported explicitly as a preserved artifact rather than left
+as an ambiguous cleanup leak.
+
+## Review Workflow
+
+### Reviewer Handoffs Use Ambiguous Free-Form Decisions
+
+Reviewers wrote review artifacts with free-form recommendation language, and the
+workflow could not reliably classify the review result.
+
+Observed behavior:
+
+1. Review artifacts used phrases such as `Recommendation: accept`,
+   `Recommendation: Revise`, `Revise before approval`, and
+   `No blocking findings`.
+2. `squad_next.sh` only recognized strict decision values such as `accepted` and
+   `changes-requested`.
+3. Merged review assignments were not recorded into story packets.
+4. The workflow reached `NEXT_ACTION: wait` even though several reviewed
+   artifacts still needed approval or revision.
+
+Expected behavior:
+
+All reviewer roles should use a dedicated review handoff tool with exactly two
+outcome options:
+
+1. `accepted`
+2. `changes-requested`
+
+This applies to all review roles, including Gherkin reviewers, QA procedure
+reviewers, code reviewers, and architects. The reviewer role prompts should
+explicitly instruct reviewers to use that tool for handoff, so the workflow
+records a deterministic decision instead of parsing review prose.
+
+Implementation notes:
+
+1. Do not fix this by making `squad_next.sh` better at parsing prose.
+2. Review outcome is workflow state and should be written through a deterministic
+   workflow helper with a closed vocabulary.
+3. The spelling should be `changes-requested`, not `changed-requested`, matching
+   the existing FSM vocabulary.
+4. The reviewer should still write normal review comments in the artifact.
+5. The handoff helper should validate that the assignment exists, the assignment
+   template is a reviewer role, the outcome is one of the two allowed values, the
+   expected artifact exists, and a commit is present.
+6. The handoff or result manifest should carry
+   `review_decision: accepted|changes-requested`.
+7. `squad_next.sh` should trust that structured field, not infer the review
+   decision from review artifact prose.
+
+### Revised Artifacts With The Same Path Are Not Attached To Packets
+
+The workflow stalled after r2 writer assignments were merged because packet
+repair only noticed artifact path changes, not assignment or commit changes.
+
+Observed behavior:
+
+1. Several reviews requested changes.
+2. The Squad Leader spawned r2 Gherkin and QA procedure writers.
+3. The r2 writer handoffs were merged successfully.
+4. The revised artifacts used the same paths as the original artifacts.
+5. Story packets still pointed at the original assignment ids and shas.
+6. The old `changes-requested` review states remained current because the packet
+   target shas were never updated.
+7. `squad_next.sh --apply-mechanical` returned `NEXT_ACTION: wait` with no
+   active agents, handoffs, spawn requests, or approvals.
+
+Expected behavior:
+
+When a merged artifact assignment has the same artifact path as the current
+packet entry but a newer assignment id or sha, `squad_next.sh` should still emit
+an `attach_story_artifact` repair action. After the revised artifact is attached,
+the one-review-cycle rule should mark the stale review as accepted and allow the
+workflow to continue to approval or the next stage.
+
+### Mechanical Repair Replays Stale Reviews After R2 Acceptance
+
+After r2 packet repairs were applied, `squad_next.sh --apply-mechanical`
+accepted the revised artifacts under the one-review-cycle rule and then replayed
+the original failed review decisions against the revised artifact shas.
+
+Observed behavior:
+
+1. The Squad Leader manually attached r2 artifacts to the story packets.
+2. `squad_next.sh --apply-mechanical` applied post-revision acceptance
+   transitions.
+3. The same run also emitted/applied stale `record_review_result` transitions
+   from the original review assignments.
+4. Those stale transitions rewrote packet review state back to
+   `changes-requested` while pointing at the revised artifact shas.
+5. The workflow stalled again or required manual repair.
+
+Expected behavior:
+
+Once a revised artifact has been accepted under the one-review-cycle rule, old
+review assignments must not be re-recorded against the revised artifact sha.
+Mechanical repair should be ordered and idempotent so stale review decisions
+cannot undo accepted r2 state.
+
+### Implementation-Ready Stories Do Not Produce Implementer Assignments
+
+Stories reached the implementation-ready state, but the workflow advisor did not
+create or spawn implementer assignments.
+
+Observed behavior:
+
+1. Stories 1, 2, 3, and 5 reached `state: implementation_approved`.
+2. Their packets showed `implementation_assignment_state: ready`.
+3. No implementer assignments existed for those stories.
+4. No implementer spawn requests existed.
+5. `squad_next.sh` returned `NEXT_ACTION: wait`.
+
+Expected behavior:
+
+If a story is implementation-approved, has satisfied story/Gherkin/QA approvals,
+has accepted Gherkin and QA review state, has no `implementation_sha`, and has
+no existing active implementer assignment, `squad_next.sh` must emit a
+`create_assignment` action, preferably with queued spawn. It should never return
+`wait` while implementation-ready stories are unassigned.
+
+### Code Review Loop Spawns Unbounded Repeat Reviewers
+
+The workflow created dozens of repeated code-review assignments for the same
+stories instead of stopping after one review cycle or routing the review result
+to the correct next actor.
+
+Observed behavior:
+
+1. Assignment records showed 84 merged `code-reviewer` assignments and two more
+   `code-reviewer` assignments still `in_progress` at teardown.
+2. Story 2 had code review assignments from
+   `hunt-the-wumpus-002-text-start-and-turn-ui-code-review` through at least
+   `hunt-the-wumpus-002-text-start-and-turn-ui-code-review-r43`.
+3. Story 5 had code review assignments from
+   `hunt-the-wumpus-005-end-state-and-replay-code-review` through at least
+   `hunt-the-wumpus-005-end-state-and-replay-code-review-r42`.
+4. The daemon log shows repeated code-reviewer spawn completions and handoff
+   deliveries from about 15:28 through 17:57.
+5. Representative later review reports still said `Recommendation: revise`,
+   showing the workflow was repeating review rather than routing the
+   changes-requested result back to implementation/cleanup once.
+
+Expected behavior:
+
+Reviewed artifacts should follow the one-review-cycle rule. A code review should
+produce a deterministic `accepted` or `changes-requested` result. If accepted,
+the workflow should advance. If changes are requested, the workflow should route
+back to the author path (`implementer -> cleaner -> code-reviewer`) without
+spawning repeated reviewers for the same unchanged artifact. There should be an
+explicit invariant preventing unbounded `*-code-review-rN` creation.
+
+### Batch Records Remain Open After Batch Assignments Merge
+
+Batch assignment results were merged, but the underlying batch records remained
+open and contained only the first story admitted to the batch.
+
+Observed behavior:
+
+1. `hunt-the-wumpus-hardener` assignment was merged at 15:46.
+2. `.squad/batches/hunt-the-wumpus-hardener/status` still said `state: open`.
+3. `hunt-the-wumpus-qa` assignment was merged at 15:55.
+4. `.squad/batches/hunt-the-wumpus-qa/status` still said `state: open`.
+5. `hunt-the-wumpus-architecture` assignment was merged at 15:58.
+6. `.squad/batches/hunt-the-wumpus-architecture/status` still said
+   `state: open`.
+7. Each of those batch manifests contained only Story 1, even though later
+   stories were moving through adjacent stages.
+
+Expected behavior:
+
+Once a batch assignment is created/spawned, the batch should be closed to new
+members. Once the batch result is merged and recorded, the batch record should
+move to a terminal completed state. Additional eligible stories should create a
+new batch rather than leaving old merged batches open or ambiguously reusable.
+
+### Packet State Does Not Reflect Downstream Batch Progress
+
+Story packets did not advance their top-level state consistently after hardener,
+QA, and architecture batch results were merged.
+
+Observed behavior:
+
+1. Story 1 had hardener fields populated:
+   `hardener_assignment: hunt-the-wumpus-hardener`,
+   `hardener_sha: 0581ba8c49`, and `hardener_review_state: approved`.
+2. Story 1 also belonged to the QA and architecture batch sequence, with
+   `hunt-the-wumpus-qa` and `hunt-the-wumpus-architecture` merged.
+3. The Story 1 packet still showed `state: qa_approved` and
+   `final_state: qa_approved`.
+4. Stories 2 and 5 had cleaner results recorded, but remained at
+   `state: cleaned` with `cleaner_review_state: pending` while repeated code
+   review assignments existed outside the packet's apparent current state.
+
+Expected behavior:
+
+Packet top-level state and dashboard state should be derived from the most
+advanced durable stage actually recorded in the packet and batch records. A story
+with merged hardener/QA/architecture outputs should not display as merely
+`qa_approved`. A story with active or completed code-review work should not
+appear stuck at an earlier cleaned state without explaining the pending review
+or blocker.
+
+### Chained Merger Assignments Can Remain Merge-Blocked Indefinitely
+
+Merge recovery produced a chain of merger assignments, and the chain still had
+blocked/in-progress state at teardown.
+
+Observed behavior:
+
+1. Story 3 implementation merge was blocked:
+   `hunt-the-wumpus-003-movement-hazards-and-wumpus-wake-implementation`
+   had `state: merge_blocked`.
+2. The first merger assignment,
+   `hunt-the-wumpus-003-movement-hazards-and-wumpus-wake-implementation-merge`,
+   also ended `merge_blocked`.
+3. The second merger assignment,
+   `...-implementation-merge-merge`, also ended `merge_blocked`.
+4. A third merger assignment,
+   `...-implementation-merge-merge-merge`, remained `in_progress` at teardown,
+   despite its agent status later being stale/retired after the swarm was
+   killed.
+
+Expected behavior:
+
+The merger workflow should have a bounded, explicit recovery policy. If a merger
+handoff still cannot be merged, the workflow should either create the next
+merger with clear lineage and preserve required worktrees, or declare a
+dashboard-visible blocker after a configured limit. It should not leave an
+ambiguous chain of blocked merger assignments and stale in-progress state.

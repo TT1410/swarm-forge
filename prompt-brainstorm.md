@@ -134,3 +134,42 @@ rules. The first cleanup should consolidate duplicated protocol rather than
 delete behavior. Required tool instructions, worktree boundaries, commit rules,
 and handoff format should remain explicit in generated assignments until tests
 prove another representation is reliable.
+
+## Stall Detection And SL Repair
+
+The Squad Leader is smart enough to repair many inconsistent workflow states,
+but it should not be responsible for discovering every stall from scratch.
+
+Possible division of responsibility:
+
+1. `squadd` detects operational idleness and suspicious inactivity:
+   - SL pane idle too long.
+   - No active workers.
+   - Handoff queues not draining.
+   - Spawn requests stuck.
+   - Agents dark after an activity timeout.
+2. `squad_next` detects logical workflow contradictions:
+   - implementation-ready stories with no implementer assignment.
+   - merged assignments not reflected in packets.
+   - approvals satisfied but no next stage emitted.
+   - stale review state blocking progress.
+   - `wait` would be returned while eligible or inconsistent work remains.
+3. The Squad Leader acts as the repair agent:
+   - reads the invariant violation and evidence.
+   - decides whether to run suggested commands, inspect further, or report a
+     blocker to the user.
+   - uses judgment for cases deterministic tools cannot yet repair safely.
+
+Instead of returning `wait` in an inconsistent state, `squad_next` could return
+a structured blocker such as:
+
+```text
+NEXT_ACTION: blocked
+BLOCKER: implementation_ready_without_assignment
+STORY: hunt-the-wumpus-001-cave-setup
+EVIDENCE: implementation_assignment_state=ready, implementation_sha missing, no implementer assignment found
+SUGGESTED_COMMAND: squad_assign.sh create ...
+```
+
+This preserves the SL as the intelligent repair actor while making stall
+detection deterministic and visible.
