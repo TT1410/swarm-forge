@@ -128,6 +128,23 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-does-not-wait-on-failed-transients
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "gherkin-writer-001\tgherkin-writer-001\t" root "/.worktrees/gherkin-writer-001\tswarmforge-gherkin-writer-001\tGherkin Writer 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/agents/gherkin-writer-001/metadata")
+                  "template: gherkin-writer\ntask_id: alpha-gherkin\n")
+      (write-agent-status! root "gherkin-writer-001" "failed")
+      (let [wait (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out wait) "NEXT_ACTION: wait"))
+        (is (str/includes? (:out wait) "REASON: no handoffs, pending approvals, active transient agents, or stale locks"))
+        (is (not (str/includes? (:out wait) "ACTIVE: gherkin-writer-001"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-processes-claimed-git-handoff-before-completion
   (let [root (tmp-dir)]
     (try
@@ -481,6 +498,64 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-auto-accepts-after-revised-artifact-is-attached
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
+      (write-file (fs/path root "features/alpha.feature") "Feature: alpha\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
+      (run {:dir root} "git" "add" "stories" "features")
+      (run {:dir root} "git" "commit" "-q" "-m" "Prepare alpha")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "analysis-alpha" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "attach" "alpha" "gherkin" "alpha-gherkin" "master" sha "features/alpha.feature")
+        (run {:dir root} (script "squad_packet.sh") "review" "alpha" "gherkin" "changes-requested" "alpha-gherkin-review" "master" sha))
+      (write-file (fs/path root "features/alpha.feature") "Feature: alpha revised\n")
+      (run {:dir root} "git" "add" "features/alpha.feature")
+      (run {:dir root} "git" "commit" "-q" "-m" "Revise alpha gherkin")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root} (script "squad_packet.sh") "attach" "alpha" "gherkin" "alpha-gherkin-r2" "master" sha "features/alpha.feature")
+        (let [next (run {:dir root} (script "squad_next.sh"))]
+          (is (str/includes? (:out next) "NEXT_ACTION: record_post_revision_review_acceptance"))
+          (is (str/includes? (:out next) "COMMAND: squad_packet.sh review alpha gherkin accepted alpha-gherkin-r2 master"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-does-not-create-second-reviewer-when-review-history-exists
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "gherkin_path: features/alpha.feature\n"
+                       "gherkin_assignment: alpha-gherkin\n"
+                       "gherkin_sha: 1111111111\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/metadata")
+                  (str "assignment_id: alpha-gherkin-review\n"
+                       "theme_id: wumpus\n"
+                       "story_id: alpha\n"
+                       "template: gherkin-reviewer\n"
+                       "assignment_file: " root "/instructions.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/status")
+                  "assignment_id: alpha-gherkin-review\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/accepted-merge")
+                  "assignment_id: alpha-gherkin-review\nstate: merged\ncommit: 2222222222\nmerge_commit: abcdef1234\n")
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/review.md")
+                  "accepted\n")
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: record_review_result"))
+        (is (not (str/includes? (:out next) "alpha-gherkin-review-r2"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-selects-deterministic-story-candidates
   (let [root (tmp-dir)]
     (try
@@ -519,7 +594,7 @@
         (is (str/includes? (:out create-assignment) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out create-assignment) "STORY: alpha"))
         (is (str/includes? (:out create-assignment) "TEMPLATE: gherkin-writer"))
-        (is (str/includes? (:out create-assignment) "COMMAND: squad_assign.sh create wumpus alpha gherkin-writer alpha-gherkin <instructions-file>")))
+        (is (str/includes? (:out create-assignment) "COMMAND: squad_assign.sh create wumpus alpha gherkin-writer alpha-gherkin --auto-instructions --queue-spawn")))
       (write-file (fs/path root "instructions.md")
                   "Write Gherkin.\n")
       (write-file (fs/path root ".squad/assignments/alpha-gherkin/metadata")
@@ -714,7 +789,7 @@
         (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out next) "TEMPLATE: merger"))
         (is (str/includes? (:out next) "ASSIGNMENT: cave-impl-merge"))
-        (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-merger cave-impl cave-impl-merge <instructions-file>"))
+        (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-merger cave-impl cave-impl-merge --auto-instructions --queue-spawn"))
         (is (str/includes? (:out next) "merge-blocked assignment needs merger")))
       (finally
         (fs/delete-tree root)))))
@@ -798,7 +873,7 @@
         (is (not (str/includes? (:out next) "NEXT_ACTION: retire_agent")))
         (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out next) "TEMPLATE: merger"))
-        (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-merger cave-impl cave-impl-merge <instructions-file>")))
+        (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-merger cave-impl cave-impl-merge --auto-instructions --queue-spawn")))
       (finally
         (fs/delete-tree root)))))
 
@@ -960,7 +1035,7 @@
           (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
           (is (str/includes? (:out next) "STORY: batch"))
           (is (str/includes? (:out next) "TEMPLATE: hardener"))
-          (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-batch wumpus hardener wumpus-hardener <instructions-file>"))
+          (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-batch wumpus hardener wumpus-hardener --auto-instructions --queue-spawn"))
           (is (not (str/includes? (:out next) "squad_assign.sh create wumpus batch")))))
       (finally
         (fs/delete-tree root)))))
@@ -999,7 +1074,7 @@
       (let [third-next (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out third-next) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out third-next) "STORY: batch"))
-        (is (str/includes? (:out third-next) "COMMAND: squad_assign.sh create-batch wumpus hardener wumpus-hardener <instructions-file>")))
+        (is (str/includes? (:out third-next) "COMMAND: squad_assign.sh create-batch wumpus hardener wumpus-hardener --auto-instructions --queue-spawn")))
       (finally
         (fs/delete-tree root)))))
 

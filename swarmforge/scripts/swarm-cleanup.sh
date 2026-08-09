@@ -67,11 +67,12 @@ if [[ -d "$agents_dir" ]]; then
   for agent_dir in "$agents_dir"/*; do
     [[ -d "$agent_dir" ]] || continue
     agent_id="${agent_dir:t}"
-    [[ "$agent_id" == "squad-leader" ]] && continue
     status_file="$agent_dir/status"
     heartbeat_file="$agent_dir/heartbeat"
     old_state="$(awk -F': ' '$1 == "state" { print $2; exit }' "$status_file" 2>/dev/null || true)"
-    if [[ "$old_state" == "handoff_sent" ]]; then
+    if [[ "$agent_id" == "squad-leader" ]]; then
+      detail="squad leader terminated by cleanup"
+    elif [[ "$old_state" == "handoff_sent" ]]; then
       detail="swarm terminated after handoff_sent; inspect handoff inbox/outbox for recovery"
     else
       detail="swarm terminated by cleanup"

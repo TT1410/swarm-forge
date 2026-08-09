@@ -227,8 +227,21 @@
          (zero? (:exit send-return))
          (zero? (:exit send-second-return)))))
 
+(defn strip-input-region [text]
+  (let [lines (vec (str/split-lines (or text "")))
+        input-index (last (keep-indexed (fn [idx line]
+                                          (when (str/starts-with? line "› ")
+                                            idx))
+                                        lines))
+        kept (if input-index
+               (subvec lines 0 input-index)
+               lines)]
+    (str (str/join "\n" kept)
+         (when (seq kept) "\n"))))
+
 (defn capture-pane-tail [socket session]
-  (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-200")))
+  (strip-input-region
+   (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-200"))))
 
 (defn parse-kv-file [file]
   (into {}

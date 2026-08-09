@@ -372,7 +372,7 @@
           (is (str/includes? packet "gherkin_path: features/cave-topology-v2.feature"))
           (is (str/includes? packet "gherkin_iterations: wumpus-cave-gherkin=attached,wumpus-cave-gherkin-r2=attached"))
           (is (str/includes? packet "gherkin_review_iterations: wumpus-cave-gherkin-review=changes-requested"))
-          (is (str/includes? packet "gherkin_review_state: pending"))))
+          (is (str/includes? packet "gherkin_review_state: changes-requested"))))
       (finally
         (fs/delete-tree root)))))
 

@@ -261,22 +261,33 @@
   (let [{:keys [prefixes message]} (artifact-path-rules kind)]
     (relative-project-file! root file prefixes message)))
 
-(defn artifact-reset-fields [prefix]
+(defn artifact-review-fields [prefix]
   [(str prefix "_review")
    (str prefix "_review_assignment")
    (str prefix "_review_branch")
    (str prefix "_review_sha")
-   (str prefix "_approval")
+   (str prefix "_review_target_sha")])
+
+(defn artifact-approval-fields [prefix]
+  [(str prefix "_approval")
    (str prefix "_approval_detail")])
 
+(defn preserve-one-cycle-review? [packet prefix]
+  (and (contains? #{"gherkin" "qa_procedure"} prefix)
+       (= "changes-requested" (get packet (str prefix "_review")))
+       (squad-state/review-current? packet (str prefix "_review"))))
+
 (defn packet-with-artifact [packet prefix relative assignment-id branch sha]
-  (append-iteration
-   (assoc (apply dissoc packet (artifact-reset-fields prefix))
-          (str prefix "_path") relative
-          (str prefix "_assignment") assignment-id
-          (str prefix "_branch") branch
-          (str prefix "_sha") sha)
-   prefix assignment-id "attached"))
+  (let [reset-fields (concat (artifact-approval-fields prefix)
+                             (when-not (preserve-one-cycle-review? packet prefix)
+                               (artifact-review-fields prefix)))]
+    (append-iteration
+     (assoc (apply dissoc packet reset-fields)
+            (str prefix "_path") relative
+            (str prefix "_assignment") assignment-id
+            (str prefix "_branch") branch
+            (str prefix "_sha") sha)
+     prefix assignment-id "attached")))
 
 (defn print-artifact-attached! [story-id packet kind relative packet-file]
   (println "SQUAD_PACKET:" story-id)

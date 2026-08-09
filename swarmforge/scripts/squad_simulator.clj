@@ -867,6 +867,27 @@
           (println "DUE_TICK:" (format "%03d" due))))
       (println "DUE_TICK:" (format "%03d" due)))))
 
+(defn request-file-map [file]
+  (into {}
+        (for [line (str/split-lines (slurp (str file)))
+              :let [[k v] (str/split line #": " 2)]
+              :when (and k v)]
+          [k v])))
+
+(defn complete-spawn-request! [request]
+  (let [completed (fs/path (fs/parent (fs/parent request)) "completed")]
+    (fs/create-dirs completed)
+    (fs/move request (fs/path completed (fs/file-name request)) {:replace-existing true})))
+
+(defn process-queued-spawn! [root counters scheduled tick options rng command-map]
+  (let [request (fs/path (get command-map "request"))
+        data (request-file-map request)
+        spawn-map {"template" (get data "template")
+                   "assignment" (get data "task_id")}]
+    (process-spawn! root counters scheduled tick options rng spawn-map)
+    (complete-spawn-request! request)
+    (println "SIM_APPLIED: queued spawn processed")))
+
 (defn process-recovery! [root command]
   (let [recovery (:out (run-command! root command))]
     (println "SIM_RECOVERY_RESULT:")
@@ -927,8 +948,9 @@
      (process-recovery! (:root ctx) (get command-map "command")))
 
    "wait_for_spawn"
-   (fn [_ _ _]
-     (println "SIM_WAIT: spawn daemon not used by simulator"))})
+   (fn [ctx tick command-map]
+     (process-queued-spawn! (:root ctx) (:counters ctx) (:scheduled ctx)
+                            tick (:options ctx) (:rng ctx) command-map))})
 
 (defn apply-sim-action! [ctx tick action command-map]
   (if-let [handler (sim-action-handlers action)]

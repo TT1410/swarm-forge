@@ -30,7 +30,7 @@
 	                       "    exit 0\n"
                        "    ;;\n"
                        "  capture-pane)\n"
-                       "    printf '%s\\n' 'active pane line 1' 'active pane line 2'\n"
+                       "    printf '%s\\n' 'active pane line 1' 'active pane line 2' '› Explain this codebase' '  gpt-5.5 medium · ~/junk/squad'\n"
                        "    exit 0\n"
                        "    ;;\n"
                        "  *) exit 0 ;;\n"
@@ -185,6 +185,8 @@
 	          (is (str/includes? agent-page "New output"))
 	          (is (not (str/includes? agent-page "› Improve documentation")))
 	          (is (str/includes? pane-tail "active pane line 2"))
+	          (is (not (str/includes? pane-tail "Explain this codebase")))
+	          (is (not (str/includes? pane-tail "gpt-5.5 medium")))
 	          (is (= 200 (:status approve)))
 	          (is (= 200 (:status message)))
 	          (is (str/includes? approved "\"approved\""))

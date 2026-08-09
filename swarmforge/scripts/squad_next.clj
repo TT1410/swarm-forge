@@ -283,6 +283,18 @@
 (defn active-or-created-assignment-for? [assignments story-id template]
   (boolean (assignment-for assignments story-id template)))
 
+(defn assignment-ever-for? [assignments story-id template]
+  (boolean
+   (some #(and (= story-id (:story-id %))
+               (= template (:template %)))
+         assignments)))
+
+(defn assignment-count-for [assignments story-id template]
+  (count
+   (filter #(and (= story-id (:story-id %))
+                 (= template (:template %)))
+           assignments)))
+
 (defn assignment-exists? [assignments assignment-id]
   (boolean (some #(= assignment-id (:assignment-id %)) assignments)))
 
@@ -436,6 +448,7 @@
          :command (str "squad_packet.sh approve " story-id " " gate " auto-approved-by-config")}))))
 
 (declare assignment-create-candidate assignment-spawn-candidate spawnable-assignment?
+         stale-changes-requested?
          architecture-gate-satisfied-for-final?)
 
 (defn assignment-candidate [root assignments agents packet template assignment-suffix reason priority stage-order requirement]
@@ -448,6 +461,29 @@
         (assignment-spawn-candidate assignment theme-id story-id template reason priority stage-order))
       (assignment-create-candidate theme-id story-id template assignment-id reason priority stage-order requirement))))
 
+(defn one-cycle-revision-candidate [root assignments agents packet template assignment-suffix review-field reason priority stage-order]
+  (let [story-id (get packet "story_id" (get packet "_story_id"))]
+    (when (and (field-changes-requested? packet review-field)
+               (not (stale-changes-requested? packet review-field))
+               (not (active-or-created-assignment-for? assignments story-id (str (str/replace review-field #"_" "-") "er"))))
+      (if-let [assignment (assignment-for assignments (get packet "theme_id") story-id template)]
+        (when (spawnable-assignment? root agents template assignment)
+          (assignment-spawn-candidate assignment (get packet "theme_id") story-id template reason priority stage-order))
+        (when (<= (assignment-count-for assignments story-id template) 1)
+          (assignment-create-candidate (get packet "theme_id") story-id template
+                                       (next-assignment-id assignments story-id assignment-suffix)
+                                       reason priority stage-order nil))))))
+
+(defn one-cycle-review-candidate [root assignments agents packet template assignment-suffix review-field reason priority stage-order]
+  (let [story-id (get packet "story_id" (get packet "_story_id"))]
+    (if-let [assignment (assignment-for assignments (get packet "theme_id") story-id template)]
+      (when (spawnable-assignment? root agents template assignment)
+        (assignment-spawn-candidate assignment (get packet "theme_id") story-id template reason priority stage-order))
+      (when-not (assignment-ever-for? assignments story-id template)
+        (assignment-create-candidate (get packet "theme_id") story-id template
+                                     (next-assignment-id assignments story-id assignment-suffix)
+                                     reason priority stage-order nil)))))
+
 (defn assignment-create-candidate [theme-id story-id template assignment-id reason priority stage-order requirement]
   {:priority priority
    :stage-order stage-order
@@ -458,9 +494,11 @@
    :assignment-id assignment-id
    :reason reason
    :command (str "squad_assign.sh create " theme-id " " story-id " " template " "
-                 assignment-id " <instructions-file>"
+                 assignment-id " --auto-instructions"
                  (when requirement
-                   (str " --requires approval:" requirement)))})
+                   (str " --requires approval:" requirement))
+                 (when-not requirement
+                   " --queue-spawn"))})
 
 (defn batch-assignment-create-candidate [theme-id template assignment-id reason priority stage-order requirement]
   {:priority priority
@@ -472,9 +510,11 @@
    :assignment-id assignment-id
    :reason reason
    :command (str "squad_assign.sh create-batch " theme-id " " template " "
-                 assignment-id " <instructions-file>"
+                 assignment-id " --auto-instructions"
                  (when requirement
-                   (str " --requires approval:" requirement)))})
+                   (str " --requires approval:" requirement))
+                 (when-not requirement
+                   " --queue-spawn"))})
 
 (defn assignment-spawn-candidate [assignment theme-id story-id template reason priority stage-order]
   {:priority priority
@@ -988,13 +1028,9 @@
     :priority 60
     :stage-order 21
     :candidate (fn [ctx packet]
-                 (when (and (field-changes-requested? packet "gherkin_review")
-                            (not (active-or-created-assignment-for? (:assignments ctx)
-                                                                    (get packet "story_id" (get packet "_story_id"))
-                                                                    "gherkin-reviewer")))
-                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                         "gherkin-writer" "gherkin"
-                                         "Gherkin review requested changes" 60 21 nil)))}
+                 (one-cycle-revision-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
+                                               "gherkin-writer" "gherkin" "gherkin_review"
+                                               "Gherkin review requested changes" 60 21))}
    {:id :qa-procedure-assignment
     :priority 60
     :stage-order 30
@@ -1008,13 +1044,9 @@
     :priority 60
     :stage-order 31
     :candidate (fn [ctx packet]
-                 (when (and (field-changes-requested? packet "qa_procedure_review")
-                            (not (active-or-created-assignment-for? (:assignments ctx)
-                                                                    (get packet "story_id" (get packet "_story_id"))
-                                                                    "qa-procedure-reviewer")))
-                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                         "qa-procedure-writer" "qa-procedure"
-                                         "QA procedure review requested changes" 60 31 nil)))}
+                 (one-cycle-revision-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
+                                               "qa-procedure-writer" "qa-procedure" "qa_procedure_review"
+                                               "QA procedure review requested changes" 60 31))}
    {:id :gherkin-review-assignment
     :priority 60
     :stage-order 40
@@ -1025,9 +1057,9 @@
                                 (active-or-created-assignment-for? (:assignments ctx)
                                                                    (get packet "story_id" (get packet "_story_id"))
                                                                    "gherkin-reviewer")))
-                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                         "gherkin-reviewer" "gherkin-review"
-                                         "Gherkin artifact needs review" 60 40 nil)))}
+                   (one-cycle-review-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
+                                               "gherkin-reviewer" "gherkin-review" "gherkin_review"
+                                               "Gherkin artifact needs review" 60 40)))}
    {:id :qa-procedure-review-assignment
     :priority 60
     :stage-order 50
@@ -1038,9 +1070,9 @@
                                 (active-or-created-assignment-for? (:assignments ctx)
                                                                    (get packet "story_id" (get packet "_story_id"))
                                                                    "qa-procedure-reviewer")))
-                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                         "qa-procedure-reviewer" "qa-procedure-review"
-                                         "QA procedure artifact needs review" 60 50 nil)))}
+                   (one-cycle-review-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
+                                               "qa-procedure-reviewer" "qa-procedure-review" "qa_procedure_review"
+                                               "QA procedure artifact needs review" 60 50)))}
    {:id :gherkin-approval
     :priority 30
     :stage-order 60
@@ -1447,7 +1479,7 @@
    :assignment-id merger-id
    :reason "merge-blocked assignment needs merger"
    :command (str "squad_assign.sh create-merger " blocked-assignment-id " "
-                 merger-id " <instructions-file>")})
+                 merger-id " --auto-instructions --queue-spawn")})
 
 (defn merger-candidate [root assignments agents {:keys [assignment-id theme-id story-id]}]
   (let [base (str assignment-id "-merge")
@@ -1798,7 +1830,7 @@
     (->> (agent-records root rows)
          (map (fn [agent]
                 (assoc agent :quiet-for (seconds-between (:last-activity-at agent) now))))
-       (remove #(= "retired" (:state %)))
+         (filter active-agent?)
          vec)))
 
 (defn print-wait-action! [active]

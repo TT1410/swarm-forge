@@ -10,9 +10,9 @@
 
 (def usage-text
   (str "Usage:\n"
-       "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file> [--requires approval:<gate>]\n"
-       "  squad_assign.sh create-batch <theme-id> <template> <assignment-id> <instructions-file> [--requires approval:<gate>]\n"
-       "  squad_assign.sh create-merger <blocked-assignment-id> <merger-assignment-id> <instructions-file>\n"
+       "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
+       "  squad_assign.sh create-batch <theme-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
+       "  squad_assign.sh create-merger <blocked-assignment-id> <merger-assignment-id> <instructions-file|--auto-instructions> [--queue-spawn]\n"
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
        "  squad_assign.sh merge-ready <assignment-id>\n"
        "  squad_assign.sh review <assignment-id> <accepted|changes-requested> <review-file>\n"
@@ -63,6 +63,9 @@
       (exit! 1 (str "Source file not found: " file)))
     file))
 
+(defn auto-instructions? [path]
+  (= "--auto-instructions" path))
+
 (defn write-atomic! [file content]
   (fs/create-dirs (fs/parent file))
   (let [tmp (fs/create-temp-file {:dir (fs/parent file)
@@ -110,39 +113,55 @@
 (defn validate-template-requirement! [template story-id requirement]
   nil)
 
+(defn parse-create-options! [tokens]
+  (loop [tokens tokens
+         options {:requirement nil :queue-spawn? false}]
+    (if (empty? tokens)
+      options
+      (case (first tokens)
+        "--requires"
+        (let [requirement (second tokens)]
+          (when-not requirement
+            (exit! 1 usage-text))
+          (recur (nnext tokens)
+                 (assoc options :requirement (parse-requirement! requirement))))
+
+        "--queue-spawn"
+        (recur (rest tokens) (assoc options :queue-spawn? true))
+
+        (exit! 1 usage-text)))))
+
 (defn parse-create-args! [args]
-  (when-not (#{6 8} (count args))
+  (when-not (>= (count args) 6)
     (exit! 1 usage-text))
-  (let [[_ theme-id story-id template assignment-id instructions-file flag requirement] args]
-    (when (and flag (not= "--requires" flag))
-      (exit! 1 usage-text))
-    {:theme-id theme-id
-     :story-id story-id
-     :template template
-     :assignment-id assignment-id
-     :instructions-file instructions-file
-     :requirement (parse-requirement! requirement)}))
+  (let [[_ theme-id story-id template assignment-id instructions-file & option-tokens] args]
+    (merge {:theme-id theme-id
+            :story-id story-id
+            :template template
+            :assignment-id assignment-id
+            :instructions-file instructions-file}
+           (parse-create-options! option-tokens))))
 
 (defn parse-create-batch-args! [args]
-  (when-not (#{5 7} (count args))
+  (when-not (>= (count args) 5)
     (exit! 1 usage-text))
-  (let [[_ theme-id template assignment-id instructions-file flag requirement] args]
-    (when (and flag (not= "--requires" flag))
-      (exit! 1 usage-text))
-    {:theme-id theme-id
-     :story-id "batch"
-     :template template
-     :assignment-id assignment-id
-     :instructions-file instructions-file
-     :scope "batch"
-     :requirement (parse-requirement! requirement)}))
+  (let [[_ theme-id template assignment-id instructions-file & option-tokens] args]
+    (merge {:theme-id theme-id
+            :story-id "batch"
+            :template template
+            :assignment-id assignment-id
+            :instructions-file instructions-file
+            :scope "batch"}
+           (parse-create-options! option-tokens))))
 
 (defn parse-create-merger-args! [args]
-  (when-not (= 4 (count args))
+  (when-not (>= (count args) 4)
     (exit! 1 usage-text))
-  {:blocked-assignment-id (second args)
-   :assignment-id (nth args 2)
-   :instructions-file (nth args 3)})
+  (let [[_ blocked-assignment-id assignment-id instructions-file & option-tokens] args]
+    (merge {:blocked-assignment-id blocked-assignment-id
+            :assignment-id assignment-id
+            :instructions-file instructions-file}
+           (parse-create-options! option-tokens))))
 
 (def valid-review-decisions
   {"accepted" "review_accepted"
@@ -353,11 +372,12 @@
   {:theme-scoped? (= "theme" scope)
    :batch-scoped? (= "batch" scope)})
 
-(defn assignment-create-context [{:keys [theme-id story-id template assignment-id instructions-file requirement scope]}]
+(defn assignment-create-context [{:keys [theme-id story-id template assignment-id instructions-file requirement scope queue-spawn?]}]
   (let [root (fs/absolutize (project-root))
         theme (theme-dir root theme-id)
         resolved-scope (assignment-scope {:template template :story-id story-id :scope scope})
-        scope-flags (assignment-scope-flags resolved-scope)]
+        scope-flags (assignment-scope-flags resolved-scope)
+        auto-instructions? (auto-instructions? instructions-file)]
     {:root root
      :theme theme
      :theme-id theme-id
@@ -365,6 +385,7 @@
      :template template
      :assignment-id assignment-id
      :requirement requirement
+     :queue-spawn? queue-spawn?
      :theme-scoped? (:theme-scoped? scope-flags)
      :batch-scoped? (:batch-scoped? scope-flags)
      :scope resolved-scope
@@ -372,7 +393,9 @@
      :story-file (when (story-file-required? resolved-scope)
                    (assignment-story-file root theme story-id false))
      :template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
-     :instructions (source-file! instructions-file)
+     :instructions (when-not auto-instructions?
+                     (source-file! instructions-file))
+     :auto-instructions? auto-instructions?
      :dir (assignment-dir root assignment-id)
      :contract (role-contract root template)
      :packet (optional-story-packet root story-id)
@@ -393,12 +416,22 @@
   (when (fs/exists? dir)
     (exit! 2 (str "Assignment already exists: " (:assignment-id context)))))
 
+(defn default-instructions [{:keys [template story-id scope]}]
+  (str "Follow the " template " role contract for this " scope " assignment.\n"
+       "Use the provided theme, story packet, and role prompt as the source of truth.\n"
+       "Produce the required artifact for " story-id ", commit the work, and hand it off with the provided draft.\n"))
+
+(defn assignment-instructions-text [context]
+  (if (:auto-instructions? context)
+    (default-instructions context)
+    (slurp (str (:instructions context)))))
+
 (defn assignment-text [context]
   (render-assignment (merge context
                             {:theme-text (slurp (str (:theme-file context)))
                              :story-text (when-let [story-file (:story-file context)]
                                            (slurp (str story-file)))
-                             :instructions-text (slurp (str (:instructions context)))
+                             :instructions-text (assignment-instructions-text context)
                              :packet-text (when-let [packet (:packet context)]
                                             (slurp (str packet)))
                              :required-tools (tools/required-tools (:root context) (:template context))
@@ -454,7 +487,28 @@
     (println "REQUIRES:" (:text requirement)))
   (println "ASSIGNMENT:" (str assignment-file)))
 
-(defn create-assignment! [{:keys [theme-id story-id template assignment-id instructions-file requirement scope]}]
+(defn spawn-request-id [template assignment-id]
+  (str (str/replace (timestamp) #"[^\dTZ]" "")
+       "_" template "_" assignment-id "_"
+       (.toString (java.util.UUID/randomUUID))))
+
+(defn queue-spawn-request! [root template assignment-id assignment-file]
+  (let [request-dir (fs/path root ".squad" "spawn-requests" "new")
+        request (fs/path request-dir (str (spawn-request-id template assignment-id) ".request"))]
+    (write-atomic! request
+                   (str "template: " template "\n"
+                        "task_id: " assignment-id "\n"
+                        "assignment: " assignment-file "\n"
+                        "requested_at: " (timestamp) "\n"))
+    request))
+
+(defn maybe-queue-spawn! [{:keys [root template assignment-id requirement queue-spawn?]} assignment-file]
+  (when (and queue-spawn? (nil? requirement))
+    (let [request (queue-spawn-request! root template assignment-id assignment-file)]
+      (println "SQUAD_SPAWN_REQUEST:" (fs/file-name request))
+      (println "STATE: requested"))))
+
+(defn create-assignment! [{:keys [theme-id story-id template assignment-id instructions-file requirement scope] :as args}]
   (validate-create-ids! theme-id story-id assignment-id)
   (validate-template! template)
   (validate-template-requirement! template story-id requirement)
@@ -464,10 +518,12 @@
                                             :assignment-id assignment-id
                                             :instructions-file instructions-file
                                             :scope scope
-                                            :requirement requirement})]
+                                            :requirement requirement
+                                            :queue-spawn? (:queue-spawn? args)})]
     (ensure-create-context! context)
-    (print-create-result! context
-                          (write-assignment-records! context (assignment-text context)))))
+    (let [assignment-file (write-assignment-records! context (assignment-text context))]
+      (print-create-result! context assignment-file)
+      (maybe-queue-spawn! context assignment-file))))
 
 (def batch-template-kinds
   {"hardener" "hardener"
@@ -519,7 +575,7 @@
      :conflicting-agent (read-value result "from")
      :conflicting-commit (read-value result "commit")}))
 
-(defn create-merger-assignment! [{:keys [blocked-assignment-id assignment-id instructions-file]}]
+(defn create-merger-assignment! [{:keys [blocked-assignment-id assignment-id instructions-file queue-spawn?]}]
   (validate-id! "Merger assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
         original (original-merge-context root blocked-assignment-id)
@@ -527,7 +583,8 @@
                                             :story-id (:story-id original)
                                             :template "merger"
                                             :assignment-id assignment-id
-                                            :instructions-file instructions-file})
+                                            :instructions-file instructions-file
+                                            :queue-spawn? queue-spawn?})
         context (merge context
                        {:merge-for blocked-assignment-id
                         :conflicting-template (:conflicting-template original)
@@ -539,8 +596,9 @@
                                       :conflicting-agent (:conflicting-agent original)
                                       :conflicting-commit (:conflicting-commit original)})})]
     (ensure-create-context! context)
-    (print-create-result! context
-                          (write-assignment-records! context (assignment-text context)))))
+    (let [assignment-file (write-assignment-records! context (assignment-text context))]
+      (print-create-result! context assignment-file)
+      (maybe-queue-spawn! context assignment-file))))
 
 (defn assignment-status-paths [dir]
   {:metadata (fs/path dir "metadata")

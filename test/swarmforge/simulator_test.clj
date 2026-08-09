@@ -205,7 +205,7 @@
         out (:out result)
         original-block-index (str/index-of out "SIM_MERGE_BLOCKED: cave-topology-implementation agent=implementer-001")
         first-merger-block-index (str/index-of out "SIM_MERGE_BLOCKED: cave-topology-implementation-merge agent=merger-001")
-        second-merger-create-index (str/index-of out "COMMAND: squad_assign.sh create-merger cave-topology-implementation-merge cave-topology-implementation-merge-merge <instructions-file>")
+        second-merger-create-index (str/index-of out "COMMAND: squad_assign.sh create-merger cave-topology-implementation-merge cave-topology-implementation-merge-merge --auto-instructions --queue-spawn")
         upstream-resolved-index (str/index-of out "SIM_MERGER_RESOLVED: cave-topology-implementation merger=cave-topology-implementation-merge")
         first-merger-resolved-index (str/index-of out "SIM_MERGER_RESOLVED: cave-topology-implementation-merge merger=cave-topology-implementation-merge-merge")
         implementer-retired-index (str/index-of out "COMMAND: squad_retire.sh implementer-001")

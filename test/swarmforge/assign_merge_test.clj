@@ -239,6 +239,39 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-assign-can-queue-spawn-request-when-creating-assignment
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
+      (write-file (fs/path root "swarmforge/role-templates/gherkin-writer.prompt")
+                  "write gherkin\n")
+      (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md") "Story: cave topology and setup.\n")
+      (write-file (fs/path root "instructions.md") "Write Gherkin.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (let [create (run {:dir root}
+                        (script "squad_assign.sh")
+                        "create"
+                        "wumpus"
+                        "cave-topology"
+                        "gherkin-writer"
+                        "cave-gherkin"
+                        "instructions.md"
+                        "--queue-spawn")
+            requests (fs/list-dir (fs/path root ".squad/spawn-requests/new"))
+            request (first requests)]
+        (is (str/includes? (:out create) "SQUAD_SPAWN_REQUEST:"))
+        (is (= 1 (count requests)))
+        (is (str/includes? (slurp (str request)) "template: gherkin-writer"))
+        (is (str/includes? (slurp (str request)) "task_id: cave-gherkin"))
+        (is (str/includes? (slurp (str request)) ".squad/assignments/cave-gherkin/assignment.md")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-assign-merge-ready-uses-isolated-worktree-for-review-files
   (let [root (tmp-dir)]
     (try

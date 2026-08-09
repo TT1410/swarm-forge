@@ -154,6 +154,10 @@
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
                        "reviewer-001\treviewer-001\t" root "/.worktrees/reviewer-001\tswarmforge-reviewer-001\tReviewer 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/agents/squad-leader/status")
+                  "state: running\ndetail: active\nupdated_at: 2026-08-03T00:00:00Z\n")
+      (write-file (fs/path root ".squad/agents/reviewer-001/status")
+                  "state: running\ndetail: active\nupdated_at: 2026-08-03T00:00:00Z\n")
       (write-file (fs/path root ".swarmforge/window-ids") "win-a\nwin-b\n")
       (write-file squadd-pid-file (str squadd-pid "\n"))
       (write-file pid-file (str pid "\n"))
@@ -182,6 +186,10 @@
         (is (not (git-branch-exists? root "swarmforge-reviewer-001")))
         (is (= [(str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask")]
                (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/squad-leader/status")))
+                           "state: retired"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/reviewer-001/status")))
+                           "state: retired"))
         (is (false? (.isAlive squadd)))
         (is (false? (.isAlive daemon))))
       (finally
