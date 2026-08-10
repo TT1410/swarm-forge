@@ -547,10 +547,19 @@
       (when-not (pos? (manifest-story-count manifest))
         (exit! 2 (str "Batch manifest is missing or empty: " manifest))))))
 
+(defn close-batch-for-assignment! [root assignment-id]
+  (let [script (str (fs/path (fs/parent *file*) "squad_batch.sh"))
+        result (sh-at root script "close" assignment-id)]
+    (when-not (zero? (:exit result))
+      (exit! (or (:exit result) 2)
+             (str "Failed to close batch " assignment-id " after create-batch.")
+             (str/trim (or (:err result) ""))))))
+
 (defn create-batch-assignment! [args]
   (let [root (fs/absolutize (project-root))]
     (ensure-batch-manifest! root (:template args) (:assignment-id args))
-    (create-assignment! args)))
+    (create-assignment! args)
+    (close-batch-for-assignment! root (:assignment-id args))))
 
 (defn merge-source-text [{:keys [merge-for conflicting-template conflicting-agent conflicting-commit]}]
   (str "blocked_assignment_id: " merge-for "\n"

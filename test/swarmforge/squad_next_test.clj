@@ -1350,6 +1350,56 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-batch-closes-on-assignment-create-and-completes-after-result
+  ;; Lifecycle: open -> add members -> create-batch closes admission ->
+  ;; result_received -> packet projection -> complete. New stories need a new batch.
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/role-templates/hardener.prompt") "Harden.\n")
+      (write-file (fs/path root "swarmforge/role-templates/hardener.contract.edn")
+                  "{:handoff-targets [\"squad-leader\"]}\n")
+      (write-file (fs/path root "theme.md") "Theme\n")
+      (write-file (fs/path root "stories/alpha.md") "Story alpha\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
+      (run {:dir root} (script "squad_batch.sh") "create" "hardener" "wumpus-hardener")
+      (run {:dir root} (script "squad_batch.sh") "add" "wumpus-hardener" "alpha"
+           "code_reviewed" "alpha-review" "master" "abcdef1111")
+      (write-file (fs/path root "instructions.md") "Harden the batch.\n")
+      (run {:dir root} (script "squad_assign.sh") "create-batch" "wumpus" "hardener"
+           "wumpus-hardener" "instructions.md")
+      (let [status (slurp (str (fs/path root ".squad/batches/wumpus-hardener/status")))]
+        (is (str/includes? status "state: closed")
+            "batch assignment create must close admission"))
+      (let [blocked (run {:dir root :ok? false}
+                         (script "squad_batch.sh") "add" "wumpus-hardener" "beta"
+                         "code_reviewed" "beta-review" "master" "abcdef1111")]
+        (is (= 2 (:exit blocked)))
+        (is (str/includes? (:err blocked) "not open for new members")))
+      (run {:dir root} (script "squad_batch.sh") "result" "wumpus-hardener"
+           "wumpus-hardener" "master" "aa11bb22cc")
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "hardener_batch: wumpus-hardener\n"
+                       "code_review: accepted\n"
+                       "cleaner_sha: abcdef1111\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-hardener/status")
+                  "assignment_id: wumpus-hardener\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/wumpus-hardener/accepted-merge")
+                  "merge_commit: aa11bb22cc\ncommit: aa11bb22cc\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            batch-status (slurp (str (fs/path root ".squad/batches/wumpus-hardener/status")))
+            packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
+        (is (str/includes? packet "hardener_sha: aa11bb22cc"))
+        (is (str/includes? out "complete_batch"))
+        (is (str/includes? batch-status "state: complete")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-projects-batch-result-sha-onto-all-member-packets
   ;; Given a hardener batch with two stories and a durable batch result SHA
   ;; (assignment merged without accepted-merge/result-manifest on the assignment)

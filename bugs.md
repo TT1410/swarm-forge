@@ -13,7 +13,6 @@ Open bugs:
 | # | Title |
 |---|--------|
 | 3 | Reviewer handoffs use ambiguous free-form decisions |
-| 8 | Batch records remain open after batch assignments merge |
 | 9 | Chained merger assignments can remain merge-blocked indefinitely |
 | 10 | Agents self-retire before workflow resolution |
 | 11 | Concurrent retirements hit registry lock contention |
@@ -79,44 +78,6 @@ Architecture notes:
   reliably from agents.
 - Root cause for several stalls: no packet review → wrong stage → wrong spawn or
   `wait`. Do not make the prose parser smarter.
-
-## Batch Workflow
-
-### Bug 8: Batch Records Remain Open After Batch Assignments Merge
-
-Batch assignment results were merged, but the underlying batch records remained
-open and contained only the first story admitted to the batch.
-
-Observed behavior:
-
-1. `hunt-the-wumpus-hardener` assignment was merged at 15:46.
-2. `.squad/batches/hunt-the-wumpus-hardener/status` still said `state: open`.
-3. `hunt-the-wumpus-qa` assignment was merged at 15:55.
-4. `.squad/batches/hunt-the-wumpus-qa/status` still said `state: open`.
-5. `hunt-the-wumpus-architecture` assignment was merged at 15:58.
-6. `.squad/batches/hunt-the-wumpus-architecture/status` still said
-   `state: open`.
-7. Each of those batch manifests contained only Story 1, even though later
-   stories were moving through adjacent stages.
-
-Expected behavior:
-
-Once a batch assignment is created/spawned, the batch should be closed to new
-members. Once the batch result is merged and recorded, the batch record should
-move to a terminal completed state. Additional eligible stories should create a
-new batch rather than leaving old merged batches open or ambiguously reusable.
-
-Architecture notes:
-
-- `squad_batch` `result!` sets `result_received`. Terminal set includes `closed` /
-  `complete`, but the merge path may not force a final close.
-- Two related concerns: (1) lifecycle open → closed-to-admission →
-  result_received → completed; (2) membership admission before spawn.
-- Earlier work improved “don’t spawn without a real batch,” but post-merge batch
-  identity is still fuzzy. Open singleton batches while other stories advance
-  means admission never collected peers, or result recording never closed the
-  batch so later logic could not form a fresh one cleanly. Batch state should be
-  as strict as assignment state.
 
 ## Merge Recovery
 

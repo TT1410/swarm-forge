@@ -14,6 +14,7 @@
        "  squad_batch.sh create <batch-kind> <batch-id>\n"
        "  squad_batch.sh add <batch-id> <story-id> <stage> <assignment-id> <branch> <sha>\n"
        "  squad_batch.sh result <batch-id> <assignment-id> <branch> <sha>\n"
+       "  squad_batch.sh close <batch-id>\n"
        "  squad_batch.sh complete <batch-id>\n"
        "  squad_batch.sh status <batch-id>\n"
        "  squad_batch.sh ready <batch-kind>"))
@@ -159,6 +160,16 @@
   (println "STORY:" story-id)
   (println "STATE: story_added"))
 
+(defn batch-admission-state [dir]
+  (or (read-value (fs/path dir "status") "state")
+      (read-value (fs/path dir "state") "state")
+      "unknown"))
+
+(defn ensure-batch-open-for-membership! [dir batch-id]
+  (let [state (batch-admission-state dir)]
+    (when-not (= "open" state)
+      (exit! 2 (str "Batch " batch-id " is not open for new members (state: " state ").")))))
+
 (defn add-story! [batch-id story-id stage assignment-id branch sha]
   (validate-add-story-args! batch-id story-id stage assignment-id branch sha)
   (let [root (fs/absolutize (project-root))
@@ -168,6 +179,7 @@
         now (timestamp)]
     (ensure-batch! dir batch-id)
     (validate-kind! kind)
+    (ensure-batch-open-for-membership! dir batch-id)
     (ensure-no-active-batch-conflict! root batch-id story-id kind)
     (append-batch-story! root dir batch-id story-id stage assignment-id branch sha kind now)
     (print-story-added! batch-id kind story-id)))
@@ -200,6 +212,24 @@
     (println "ASSIGNMENT:" assignment-id)
     (println "BRANCH:" branch)
     (println "SHA:" sha)))
+
+(defn close! [batch-id]
+  "Close batch to new membership once its assignment is created/spawned."
+  (validate-id! "Batch id" batch-id)
+  (let [root (fs/absolutize (project-root))
+        dir (batch-dir root batch-id)
+        kind (read-value (fs/path dir "metadata") "kind")
+        state (batch-admission-state dir)
+        now (timestamp)]
+    (ensure-batch! dir batch-id)
+    (when-not (contains? #{"open" "closed"} state)
+      (exit! 2 (str "Batch " batch-id " cannot be closed from state: " state)))
+    (write-batch-status! dir batch-id kind "closed")
+    (append-line! (fs/path dir "events.log")
+                  (str now "\tclosed"))
+    (println "SQUAD_BATCH:" batch-id)
+    (println "KIND:" kind)
+    (println "STATE: closed")))
 
 (defn complete! [batch-id]
   (validate-id! "Batch id" batch-id)
@@ -271,6 +301,9 @@
    "result" (fn [args]
               (exact-count! args 5)
               (result! (second args) (nth args 2) (nth args 3) (nth args 4)))
+   "close" (fn [args]
+             (exact-count! args 2)
+             (close! (second args)))
    "complete" (fn [args]
                 (exact-count! args 2)
                 (complete! (second args)))

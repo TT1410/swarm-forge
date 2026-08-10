@@ -896,7 +896,7 @@
 
 (def batch-completion-states
   "Batch statuses that still need completion after member packet projection."
-  #{"open" "result_received" "unknown"})
+  #{"open" "closed" "result_received" "unknown"})
 
 (defn batch-complete-candidate [root packets-by-story assignment kind]
   (let [batch-id (:assignment-id assignment)
