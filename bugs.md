@@ -13,7 +13,6 @@ Open bugs:
 | # | Title |
 |---|--------|
 | 3 | Reviewer handoffs use ambiguous free-form decisions |
-| 12 | Swarm teardown leaks worktrees and stale agent state |
 | 13 | No per-worker agent-tool configuration for squad transients |
 
 ## Review Result Contract
@@ -75,44 +74,6 @@ Architecture notes:
   reliably from agents.
 - Root cause for several stalls: no packet review → wrong stage → wrong spawn or
   `wait`. Do not make the prose parser smarter.
-
-## Agent Lifecycle And Cleanup
-
-### Bug 12: Swarm Teardown Leaks Worktrees And Stale Agent State
-
-After the swarm was killed, the live processes were gone but cleanup left stale
-git worktree and agent status state behind.
-
-Observed behavior:
-
-1. No tmux server remained on the squad socket.
-2. No `squadd` process remained.
-3. No live swarm agent processes remained.
-4. `git worktree list` still showed many agent worktrees as `prunable`.
-5. One physical worktree still existed:
-   `~/junk/squad/.worktrees/merger-003`.
-6. `merger-003` still appeared as a non-prunable git worktree.
-7. Agent status files still contained stale active-looking states, including
-   `code-reviewer-085` and `code-reviewer-086` as `running`, and `merger-003` as
-   `handoff_sent`, despite there being no live processes.
-
-Expected behavior:
-
-Swarm teardown should leave no live tmux sessions, no `squadd` process, no agent
-processes, no stale physical worktrees, no stale git worktree registrations, and
-no active-looking agent status records. Any unmerged or intentionally preserved
-worktree should be reported explicitly as a preserved artifact rather than left
-as an ambiguous cleanup leak.
-
-Architecture notes:
-
-- Cleanup is split across processes. Killing tmux/`squadd` does not guarantee the
-  same path as graceful `squad_retire` (status → retired, remove worktree, prune
-  registration).
-- Merger worktrees especially can remain after merge-blocked chains. Kill path ≠
-  retire path.
-- Needs one teardown reconciler: no process ⇒ no active-looking status, no orphan
-  worktree unless explicitly preserved and listed.
 
 ## Worker Backend Configuration
 

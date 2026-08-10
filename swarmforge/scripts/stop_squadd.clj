@@ -10,8 +10,12 @@
 
 (defn usage []
   (binding [*out* *err*]
-    (println "Usage: stop_squadd.clj <project-root>"))
+    (println "Usage: stop_squadd.clj <project-root> [--full-teardown]"))
   (System/exit 1))
+
+(defn timestamp []
+  (.format java.time.format.DateTimeFormatter/ISO_INSTANT
+           (java.time.Instant/now)))
 
 (defn process-alive? [pid]
   (zero? (:exit (process/sh {:continue true} "kill" "-0" pid))))
@@ -117,7 +121,104 @@
     (remove-worktree! project-root role worktree)
     (delete-branch! project-root role)))
 
-(defn stop! [project-root & {:keys [timeout-ms] :or {timeout-ms default-timeout-ms}}]
+(defn write-retired-agent-status! [project-root agent-id detail]
+  (let [agent-dir (fs/path project-root ".squad" "agents" agent-id)
+        now (timestamp)
+        task-id (or (read-value (fs/path agent-dir "metadata") "task_id") "unknown")]
+    (fs/create-dirs agent-dir)
+    (spit (str (fs/path agent-dir "status"))
+          (str "state: retired\n"
+               "detail: " detail "\n"
+               "updated_at: " now "\n"))
+    (spit (str (fs/path agent-dir "heartbeat"))
+          (str "agent: " agent-id "\n"
+               "task_id: " task-id "\n"
+               "state: retired\n"
+               "detail: " detail "\n"
+               "updated_at: " now "\n"))))
+
+(defn agent-ids-on-disk [project-root]
+  (let [dir (fs/path project-root ".squad" "agents")]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/directory?)
+           (map #(fs/file-name %))
+           sort
+           vec)
+      [])))
+
+(defn retire-all-agents! [project-root detail]
+  (doseq [agent-id (agent-ids-on-disk project-root)]
+    (write-retired-agent-status! project-root agent-id detail)))
+
+(defn registered-managed-worktrees [project-root]
+  (let [root (str (fs/absolutize project-root))
+        prefix (str root "/.worktrees/")]
+    (->> (str/split-lines (:out (git! project-root "worktree" "list" "--porcelain")))
+         (keep (fn [line]
+                 (when (str/starts-with? line "worktree ")
+                   (let [path (subs line (count "worktree "))]
+                     (when (str/starts-with? path prefix)
+                       path)))))
+         vec)))
+
+(defn filesystem-managed-worktrees [project-root]
+  (let [dir (fs/path project-root ".worktrees")]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/directory?)
+           (map str)
+           vec)
+      [])))
+
+(defn force-remove-worktree-path! [project-root worktree-path]
+  (let [path (str worktree-path)
+        result (git! project-root "worktree" "remove" "--force" path)]
+    (when (fs/exists? path)
+      (fs/delete-tree path))
+    (when-not (zero? (:exit result))
+      (git! project-root "worktree" "prune"))
+    (let [agent-id (fs/file-name path)]
+      (delete-branch! project-root agent-id))))
+
+(defn force-cleanup-all-managed-worktrees! [project-root]
+  (let [paths (distinct (concat (registered-managed-worktrees project-root)
+                                (filesystem-managed-worktrees project-root)))]
+    (doseq [path paths]
+      (force-remove-worktree-path! project-root path))
+    (git! project-root "worktree" "prune")
+    paths))
+
+(defn keep-only-squad-leader-roles! [project-root]
+  (let [roles-file (fs/path project-root ".swarmforge" "roles.tsv")
+        lines (read-lines roles-file)
+        kept (filter #(str/starts-with? % "squad-leader\t") lines)]
+    (when (fs/exists? roles-file)
+      (spit (str roles-file)
+            (if (seq kept)
+              (str (str/join "\n" kept) "\n")
+              "")))))
+
+(defn remaining-managed-worktrees [project-root]
+  (distinct (concat (registered-managed-worktrees project-root)
+                    (filesystem-managed-worktrees project-root))))
+
+(defn report-remaining-worktrees! [project-root]
+  (doseq [path (remaining-managed-worktrees project-root)]
+    (println "PRESERVED_WORKTREE:" path)))
+
+(defn full-teardown-reconcile!
+  "After processes are dead: no active-looking agent status, no orphan worktrees,
+  roles reduced to squad-leader. Leftover worktrees are reported explicitly."
+  [project-root]
+  (retire-all-agents! project-root "swarm terminated by cleanup")
+  (force-cleanup-all-managed-worktrees! project-root)
+  (keep-only-squad-leader-roles! project-root)
+  (report-remaining-worktrees! project-root))
+
+(defn stop! [project-root & {:keys [timeout-ms full-teardown?]
+                             :or {timeout-ms default-timeout-ms
+                                  full-teardown? false}}]
   (let [daemon-dir (fs/path project-root ".swarmforge" "daemon")
         pid-file (fs/path daemon-dir "squadd.pid")
         stop-file (fs/path daemon-dir "squadd.stop")]
@@ -129,13 +230,19 @@
       (fs/delete-if-exists pid-file))
     (doseq [pid (matching-orphan-pids project-root)]
       (terminate-pid! pid timeout-ms))
-    (cleanup-transient-git! project-root)
+    (if full-teardown?
+      (full-teardown-reconcile! project-root)
+      (cleanup-transient-git! project-root))
     (fs/delete-if-exists (fs/path daemon-dir "squad-web-url"))
     (fs/delete-if-exists stop-file)))
 
 (defn -main [& args]
-  (stop! (or (first args) (usage)))
-  (System/exit 0))
+  (when (or (empty? args) (= "-h" (first args)) (= "--help" (first args)))
+    (usage))
+  (let [project-root (first args)
+        full-teardown? (some #{"--full-teardown"} (rest args))]
+    (stop! project-root :full-teardown? full-teardown?)
+    (System/exit 0)))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))
