@@ -16,14 +16,15 @@
        "commit: <10-char-commit-abbrev>\n"
        "assignment: <assignment-id>\n"
        "template: <role-template>\n"
-       "artifacts: <comma-separated-paths-or-none>\n\n"
+       "artifacts: <comma-separated-paths-or-none>\n"
+       "review_decision: <accepted|changes-requested> # review assignments only\n\n"
        "type: note\n"
        "to: <role>[,<role>...]\n"
        "priority: NN\n"
        "message: <one line, max 80 chars>"))
 
 (def reserved-fields #{"id" "from" "role" "recipient" "created_at" "enqueued_at" "dequeued_at" "completed_at"})
-(def allowed-fields #{"type" "to" "priority" "task" "commit" "assignment" "template" "artifacts" "message"})
+(def allowed-fields #{"type" "to" "priority" "task" "commit" "assignment" "template" "artifacts" "review_decision" "message"})
 (def allowed-types #{"git_handoff" "note"})
 
 (defn usage []
@@ -180,7 +181,7 @@
           [nil (format "Header 'commit' must resolve to a commit; '%s' resolves to '%s'." commit object-type)])))))
 
 (def fields-by-type
-  {"git_handoff" #{"type" "to" "priority" "task" "commit" "assignment" "template" "artifacts"}
+  {"git_handoff" #{"type" "to" "priority" "task" "commit" "assignment" "template" "artifacts" "review_decision"}
    "note" #{"type" "to" "priority" "message"}})
 
 (defn allowed-for-type? [type field]
@@ -378,6 +379,9 @@
                       (str "agent: " sender)
                       (str "template: " (get headers "template"))
                       (str "artifacts: " (get headers "artifacts")))
+                (and (= "git_handoff" type)
+                     (not (str/blank? (get headers "review_decision"))))
+                (conj (str "review_decision: " (get headers "review_decision")))
                 (= "note" type)
                 (conj (str "message: " (get headers "message")))
                 true

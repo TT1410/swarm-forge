@@ -167,6 +167,15 @@
   {"accepted" "review_accepted"
    "changes-requested" "review_changes_requested"})
 
+(def reviewer-templates
+  #{"gherkin-reviewer"
+    "qa-procedure-reviewer"
+    "code-reviewer"
+    "architect"})
+
+(defn reviewer-template? [template]
+  (contains? reviewer-templates template))
+
 (defn review-state! [decision]
   (or (valid-review-decisions decision)
       (exit! 2 "Review decision must be accepted or changes-requested.")))
@@ -272,7 +281,9 @@
        "commit: <10-char-commit>\n"
        "assignment: " assignment-id "\n"
        "template: " template "\n"
-       "artifacts: <comma-separated-paths-or-none>\n"))
+       "artifacts: <comma-separated-paths-or-none>\n"
+       (when (reviewer-template? template)
+         "review_decision: <accepted|changes-requested>\n")))
 
 (defn split-list [value]
   (->> (str/split (or value "") #",")
@@ -684,11 +695,26 @@
   (when (= "squad-leader" from)
     (exit! 2 "Transient result handoff may not be from: squad-leader.")))
 
+(defn validate-result-review-decision! [template review-decision]
+  (cond
+    (and (reviewer-template? template)
+         (str/blank? review-decision))
+    (exit! 2 "Review result handoff must include review_decision: accepted or changes-requested.")
+
+    (and (not (reviewer-template? template))
+         (not (str/blank? review-decision)))
+    (exit! 2 "Only reviewer assignments may include review_decision.")
+
+    (and (not (str/blank? review-decision))
+         (not (contains? valid-review-decisions review-decision)))
+    (exit! 2 "Review decision must be accepted or changes-requested.")))
+
 (defn validate-result-manifest! [assignment-id template from manifest]
   (let [{handoff-assignment "assignment"
          handoff-agent "agent"
          handoff-template "template"
-         artifacts "artifacts"} manifest]
+         artifacts "artifacts"
+         review-decision "review_decision"} manifest]
     (when-not (= assignment-id handoff-assignment)
       (exit! 2 (str "Result manifest assignment must match assignment id: " assignment-id)))
     (when-not (= from handoff-agent)
@@ -697,6 +723,7 @@
       (exit! 2 (str "Result manifest template must match assignment template: " template)))
     (when (str/blank? artifacts)
       (exit! 2 "Result manifest must include artifacts, or artifacts: none."))
+    (validate-result-review-decision! template review-decision)
     manifest))
 
 (defn validate-sender-assignment-lineage! [root assignment-id from]
@@ -719,7 +746,8 @@
          manifest {"assignment" (read-value handoff-file "assignment")
                    "agent" (read-value handoff-file "agent")
                    "template" (read-value handoff-file "template")
-                   "artifacts" (read-value handoff-file "artifacts")}]
+                   "artifacts" (read-value handoff-file "artifacts")
+                   "review_decision" (read-value handoff-file "review_decision")}]
      (validate-result-type! type)
      (validate-result-recipient! to)
      (validate-result-task! assignment-id task)
@@ -783,6 +811,8 @@
                         "template: " template "\n"
                         "commit: " commit "\n"
                         "artifacts: " (get manifest "artifacts") "\n"
+                        (when-let [decision (not-empty (get manifest "review_decision"))]
+                          (str "review_decision: " decision "\n"))
                         "received_at: " now "\n"))
     (write-result-record! dir assignment-id from commit now)
     (when-not (= "unknown" theme-id)
@@ -937,10 +967,9 @@
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
     (ensure-file! "Assignment result not found" result-file)
-    (when-not (#{"reviewer" "architecture-reviewer"} template)
-      (when-not (:durable? review-source)
-        (exit! 2
-               "Review decisions for worker assignments must use a durable reviewer report under .squad/reviews/.")))
+    (when-not (:durable? review-source)
+      (exit! 2
+             "Review decisions for worker assignments must use a durable review report under .squad/reviews/."))
     (write-atomic! (fs/path dir "review.md")
                    (:content review-source))
     (write-atomic! (fs/path dir "review")

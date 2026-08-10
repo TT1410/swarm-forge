@@ -264,9 +264,10 @@
   (for [dir ["outbox/tmp" "sent" "failed" "inbox/new" "inbox/in_process" "inbox/completed"]]
     (fs/path worktree ".swarmforge" "handoffs" dir)))
 
-(defn render-prompt [{:keys [agent-id template task-id assignment template-text assignment-text root worktree tool-cache-dir]}]
-  (str "Read swarmforge/constitution.prompt, then read every file it refers to recursively, and obey all of those instructions.\n"
-       "Read the transient role template and assignment below, and follow them exactly.\n\n"
+(defn render-prompt [{:keys [agent-id template task-id assignment assignment-text root worktree tool-cache-dir]}]
+  (str "Read swarmforge/worker-common.prompt.\n"
+       "Read swarmforge/role-templates/" template ".prompt.\n"
+       "Then follow the runtime facts and assignment below.\n\n"
        "# Transient Agent\n\n"
        "agent_id: " agent-id "\n"
        "template: " template "\n"
@@ -274,16 +275,6 @@
        "project_root: " root "\n"
        "assigned_worktree: " worktree "\n"
        "tool_cache_dir: " tool-cache-dir "\n\n"
-       "You are a transient squad agent. Communicate through handoffs only. Do not talk directly to the user. Do not spawn other agents. Do not broaden this assignment without a squad-leader handoff.\n\n"
-       "Your agent process starts from the assigned worktree. Before task work, verify that the shell current directory is the assigned worktree. Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree. Do not create or edit project-root files directly except through approved squad helper commands and shared tool-cache helpers.\n\n"
-       (if (= "analyst" template)
-         "As an analyst, you may search the web to augment the approved theme when source material is needed. Any stories you produce must be self-contained and must not require downstream agents to do further research.\n"
-         "Do not search the web unless the assignment explicitly asks you to. The squad leader or analyst-provided artifacts should provide the reference facts you need.\n")
-       "Do not fetch, clone, install, update, or check remote versions of external tools unless the assignment explicitly asks for that exact operation. Use already-present project scripts and the shared tool cache first.\n\n"
-       "Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent. Do not self-retire; after handoff report handoff_sent and leave retirement to squad_retire.sh after the Squad Leader resolves the workflow. Put phase names and progress wording in the detail argument, not the state.\n\n"
-       "If a command triggers an approval or escalation prompt, stop that command path, record `blocked` with `squad_event.sh`, and hand the blocker back to `squad-leader`. Do not wait indefinitely at an invisible approval prompt.\n\n"
-       "# Role Template\n\n"
-       template-text "\n\n"
        "# Assignment\n\n"
        "Source file: " assignment "\n\n"
        assignment-text))

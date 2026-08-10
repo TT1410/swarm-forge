@@ -44,10 +44,9 @@
       (is (str/includes? prompt (str template ".contract.edn")) template))))
 
 (deftest squad-role-prompts-confine-artifacts-to-worktrees
-  (doseq [template current-squad-templates]
-    (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
-      (is (str/includes? prompt "Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree.")
-          template))))
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/worker-common.prompt")))]
+    (is (str/includes? prompt "Use the assigned worktree for all file inspection, edits, staging, commits, and local verification."))
+    (is (str/includes? prompt "Do not create or edit project-root files directly"))))
 
 (deftest squad-role-contracts-encode-worker-boundaries
   (doseq [c (contracts)]
@@ -56,10 +55,18 @@
     (is (false? (:may-talk-to-user c)) (:role c))
     (is (false? (:may-fetch-tools c)) (:role c)))
   (doseq [c (contracts)]
-    (if (= "analyst" (:role c))
+    (cond
+      (= "analyst" (:role c))
       (do
         (is (true? (:may-web-search c)))
         (is (true? (:self-contained-output c))))
+
+      (= "cleaner" (:role c))
+      (do
+        (is (true? (:may-web-search c)))
+        (is (= "property-testing-framework-discovery" (:web-search-scope c))))
+
+      :else
       (is (false? (:may-web-search c)) (:role c)))))
 
 (deftest squad-role-contracts-separate-artifact-ownership
@@ -87,19 +94,20 @@
            (:required-tool-ids (by-role "hardener"))))
     (is (= ["crap4clj" "dry4clj"] (:required-tool-ids (by-role "qa"))))
     (is (= ["gherkin-parser" "ir-dry-checker"] (:required-tool-ids (by-role "gherkin-writer"))))
+    (is (= ["gherkin-parser" "ir-dry-checker"] (:required-tool-ids (by-role "gherkin-reviewer"))))
     (is (= #{"crap4clj" "dry4clj"} (required-tool-names "cleaner")))
     (is (= #{"clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator"}
            (required-tool-names "hardener")))
     (is (= #{"crap4clj" "dry4clj"} (required-tool-names "qa")))
-    (is (= #{"gherkin-parser" "ir-dry-checker"} (required-tool-names "gherkin-writer")))))
+    (is (= #{"gherkin-parser" "ir-dry-checker"} (required-tool-names "gherkin-writer")))
+    (is (= #{"gherkin-parser" "ir-dry-checker"} (required-tool-names "gherkin-reviewer")))))
 
 (deftest squad-role-prompts-include-valid-helper-examples
-  (doseq [template ["cleaner" "hardener" "gherkin-writer" "qa"]]
-    (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
-      (is (str/includes? prompt "squad_event.sh running") template)
-      (is (str/includes? prompt "squad_event.sh blocked") template)
-      (is (not (re-find #"squad_event\.sh\s+[a-z][a-z0-9-]*-\d{3}\s+" prompt)) template)
-      (is (not (re-find #"squad_tool\.sh require [A-Za-z0-9._-]+(?:`|\n)" prompt)) template)))
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/worker-common.prompt")))]
+    (is (str/includes? prompt "squad_event.sh running"))
+    (is (str/includes? prompt "squad_event.sh blocked"))
+    (is (not (re-find #"squad_event\.sh\s+[a-z][a-z0-9-]*-\d{3}\s+" prompt)))
+    (is (not (re-find #"squad_tool\.sh require [A-Za-z0-9._-]+(?:`|\n)" prompt))))
   (let [cleaner (slurp (str (fs/path repo-root "swarmforge/role-templates/cleaner.prompt")))
         hardener (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))
         gherkin (slurp (str (fs/path repo-root "swarmforge/role-templates/gherkin-writer.prompt")))
@@ -107,11 +115,17 @@
     (doseq [prompt [cleaner qa]]
       (is (str/includes? prompt "generated assignment `Tool Startup` section"))
       (is (str/includes? prompt "swarmforge/tool-table.edn"))
-      (is (str/includes? prompt "record `blocked`")))
+      (is (not (str/includes? prompt "record `blocked`"))))
     (is (str/includes? hardener "generated assignment `Tool Startup` section"))
     (is (str/includes? hardener "swarmforge/tool-table.edn"))
     (is (str/includes? gherkin "generated assignment `Tool Startup` section"))
-    (is (str/includes? gherkin "do not block handoff on special evidence header names"))))
+    (is (str/includes? gherkin "Acceptance Pipeline Specification"))))
+
+(deftest squad-reviewer-prompts-use-deterministic-review-helper
+  (doseq [template ["gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"]]
+    (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
+      (is (str/includes? prompt "squad_review.sh <assignment-id> <accepted|changes-requested> <review-file>")
+          template))))
 
 (deftest squad-analyst-prompt-includes-invest-story-guidance
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))]
@@ -121,12 +135,19 @@
 
 (deftest squad-architect-prompt-frames-principles-as-review-advice
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))]
-    (is (str/includes? prompt "Produce architectural critique only"))
-    (is (str/includes? prompt "The Dependency Rule"))
+    (is (str/includes? prompt "Make recommendations; do not directly rewrite the system."))
     (is (str/includes? prompt "Low level is close to IO"))
     (is (str/includes? prompt "high level is far from IO"))
-    (is (str/includes? prompt "large modules with many responsibilities"))
-    (is (str/includes? prompt "individual well-named modules with single responsibilities"))))
+    (is (str/includes? prompt "Dependencies should point from lower-level functions and modules"))
+    (is (str/includes? prompt "Large modules with many responsibilities"))
+    (is (str/includes? prompt "well-named modules with single responsibilities"))))
+
+(deftest squad-senior-implementor-runs-full-verification-before-handoff
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/senior-implementor.prompt")))
+        contract (contract "senior-implementor")]
+    (is (str/includes? prompt "Run the full verification suite before handoff."))
+    (is (not (str/includes? prompt "Run relevant verification before handoff.")))
+    (is (true? (:may-run-broad-tests contract)))))
 
 (deftest required-tool-startup-instructions-come-from-tool-table
   (let [helper (str (fs/path repo-root "swarmforge/scripts/install_bb_tool.sh"))

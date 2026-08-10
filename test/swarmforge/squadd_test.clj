@@ -34,11 +34,11 @@
       (run {:dir root} "chmod" "+x" (str fake-tmux))
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
       (write-file (fs/path root ".swarmforge/tmux-socket")
                   "/tmp/swarmforge-test.sock\n")
-      (write-agent-status! root "specifier-001" "running" "2000-01-01T00:00:00Z")
-      (write-file (fs/path root ".squad/agents/specifier-001/liveness")
+      (write-agent-status! root "analyst-001" "running" "2000-01-01T00:00:00Z")
+      (write-file (fs/path root ".squad/agents/analyst-001/liveness")
                   (str "state: running_pane_idle\n"
                        "observed_at: 2000-01-01T00:00:00Z\n"
                        "pane_changed: false\n"
@@ -77,14 +77,14 @@
                   "window squad-leader codex master task\n")
       (write-file (fs/path root "swarmforge/roles/squad-leader.prompt")
                   "leader\n")
-      (write-file (fs/path root "swarmforge/role-templates/specifier.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt")
                   "specify\n")
       (write-file (fs/path root "assignment.md")
                   "Find the original rules.\n")
       (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
       (let [request (run {:dir root}
                          (script "squad_spawn_request.sh")
-                         "specifier"
+                         "analyst"
                          "wumpus-theme"
                          "assignment.md")]
         (is (str/includes? (:out request) "STATE: requested"))
@@ -100,10 +100,10 @@
             completed (fs/list-dir (fs/path root ".squad/spawn-requests/completed"))]
         (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
         (is (= 2 (count roles)))
-        (is (some #(str/starts-with? % "specifier-001\t") roles))
+        (is (some #(str/starts-with? % "analyst-001\t") roles))
         (is (some #(str/ends-with? (fs/file-name %) ".request") completed))
         (is (some #(str/ends-with? (fs/file-name %) ".request.out") completed))
-        (is (fs/exists? (fs/path root ".squad/agents/specifier-001/status")))
+        (is (fs/exists? (fs/path root ".squad/agents/analyst-001/status")))
         (is (str/includes? (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))
                            "spawn-request-completed")))
       (finally
@@ -115,24 +115,24 @@
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"
-                       "specifier-002\tspecifier-002\t" root "/.worktrees/specifier-002\tswarmforge-specifier-002\tSpecifier 002\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"
+                       "analyst-002\tanalyst-002\t" root "/.worktrees/analyst-002\tswarmforge-analyst-002\tAnalyst 002\tcodex\ttask\n"
                        "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"
-                       "reviewer-001\treviewer-001\t" root "/.worktrees/reviewer-001\tswarmforge-reviewer-001\tReviewer 001\tcodex\ttask\n"
+                       "code-reviewer-001\tcode-reviewer-001\t" root "/.worktrees/code-reviewer-001\tswarmforge-code-reviewer-001\tCode Reviewer 001\tcodex\ttask\n"
                        "qa-001\tqa-001\t" root "/.worktrees/qa-001\tswarmforge-qa-001\tQa 001\tcodex\ttask\n"))
       (write-file (fs/path root ".swarmforge/tmux-socket")
                   "/tmp/swarmforge-test.sock\n")
       (write-file (fs/path root "swarmforge/squad.conf")
                   "max_transient_agents 5\n")
-      (doseq [agent-id ["specifier-001" "specifier-002" "implementer-001" "reviewer-001" "qa-001"]]
+      (doseq [agent-id ["analyst-001" "analyst-002" "implementer-001" "code-reviewer-001" "qa-001"]]
         (write-agent-status! root agent-id "running"))
-      (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/code-reviewer.prompt")
                   "review\n")
       (write-file (fs/path root "assignment.md")
                   "Review the story implementation.\n")
       (run {:dir root}
            (script "squad_spawn_request.sh")
-           "reviewer"
+           "code-reviewer"
            "next-review"
            "assignment.md")
       (let [once (run {:dir root
@@ -160,19 +160,19 @@
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
                        "qa-001\tqa-001\t" root "/.worktrees/qa-001\tswarmforge-qa-001\tQa 001\tcodex\ttask\n"
-                       "architecture-reviewer-001\tarchitecture-reviewer-001\t" root "/.worktrees/architecture-reviewer-001\tswarmforge-architecture-reviewer-001\tArchitecture Reviewer 001\tcodex\ttask\n"))
+                       "architect-001\tarchitect-001\t" root "/.worktrees/architect-001\tswarmforge-architect-001\tArchitect 001\tcodex\ttask\n"))
       (write-file (fs/path root ".swarmforge/tmux-socket")
                   "/tmp/swarmforge-test.sock\n")
       (write-agent-status! root "qa-001" "running")
-      (write-agent-status! root "architecture-reviewer-001" "running")
+      (write-agent-status! root "architect-001" "running")
       (write-file (fs/path root "swarmforge/squad.conf")
                   (str "max_transient_agents 5\n"
                        "max_active_template hardener 1\n"
                        "max_active_template qa 1\n"
-                       "max_active_group architecture 1 architecture-reviewer architecture-cleaner architect\n"))
+                       "max_active_group architecture 1 architect senior-implementor\n"))
       (write-file (fs/path root "swarmforge/role-templates/qa.prompt")
                   "qa\n")
-      (write-file (fs/path root "swarmforge/role-templates/architecture-cleaner.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/senior-implementor.prompt")
                   "clean architecture\n")
       (write-file (fs/path root "qa-assignment.md")
                   "Run QA.\n")
@@ -185,7 +185,7 @@
            "qa-assignment.md")
       (run {:dir root}
            (script "squad_spawn_request.sh")
-           "architecture-cleaner"
+           "senior-implementor"
            "architecture-cleanup"
            "architecture-assignment.md")
       (let [once (run {:dir root
@@ -213,22 +213,22 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root ".swarmforge/tmux-socket")
                   "/tmp/swarmforge-test.sock\n")
-      (let [worktree (fs/path root ".worktrees/specifier-001")
-            agent-dir (fs/path root ".squad/agents/specifier-001")]
+      (let [worktree (fs/path root ".worktrees/analyst-001")
+            agent-dir (fs/path root ".squad/agents/analyst-001")]
         (fs/create-dirs worktree)
         (write-file (fs/path agent-dir "metadata")
-                    (str "agent_id: specifier-001\n"
-                         "template: specifier\n"
+                    (str "agent_id: analyst-001\n"
+                         "template: analyst\n"
                          "task_id: wumpus-spec\n"
                          "project_root: " root "\n"
                          "worktree: " worktree "\n"
-                         "session: swarmforge-specifier-001\n"
-                         "display: Specifier 001\n"
+                         "session: swarmforge-analyst-001\n"
+                         "display: Analyst 001\n"
                          "backend: codex\n"))
         (write-file (fs/path agent-dir "status")
                     "state: running\ndetail: writing specs\nupdated_at: 2026-07-31T16:00:00Z\n")
         (write-file (fs/path agent-dir "heartbeat")
-                    "agent: specifier-001\ntask_id: wumpus-spec\nstate: running\ndetail: writing specs\nupdated_at: 2026-07-31T16:00:00Z\n")
+                    "agent: analyst-001\ntask_id: wumpus-spec\nstate: running\ndetail: writing specs\nupdated_at: 2026-07-31T16:00:00Z\n")
         (let [once (run {:dir root
                          :env {"SWARMFORGE_SQUADD_SKIP_TMUX" "1"
                                "SWARMFORGE_SQUAD_STALE_SECONDS" "999999999"}}
@@ -239,9 +239,9 @@
               roles (slurp (str (fs/path root ".swarmforge/roles.tsv")))
               daemon-log (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))]
           (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
-          (is (str/includes? roles "specifier-001\tspecifier-001\t"))
-          (is (str/includes? roles "swarmforge-specifier-001\tSpecifier 001\tcodex\ttask"))
-          (is (str/includes? daemon-log "role-recovered specifier-001"))
+          (is (str/includes? roles "analyst-001\tanalyst-001\t"))
+          (is (str/includes? roles "swarmforge-analyst-001\tAnalyst 001\tcodex\ttask"))
+          (is (str/includes? daemon-log "role-recovered analyst-001"))
           (is (not (str/includes? (:out once) "is not registered in roles.tsv")))))
       (finally
         (fs/delete-tree root)))))
@@ -268,24 +268,24 @@
       (run {:dir root} "chmod" "+x" (str fake-tmux))
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
       (write-file (fs/path root ".swarmforge/tmux-socket")
                   "/tmp/swarmforge-test.sock\n")
-      (let [worktree (fs/path root ".worktrees/specifier-001")]
-        (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-specifier-001" (str worktree) "HEAD")
-        (write-file (fs/path root ".squad/agents/specifier-001/metadata")
-                    (str "agent_id: specifier-001\n"
-                         "template: specifier\n"
+      (let [worktree (fs/path root ".worktrees/analyst-001")]
+        (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-analyst-001" (str worktree) "HEAD")
+        (write-file (fs/path root ".squad/agents/analyst-001/metadata")
+                    (str "agent_id: analyst-001\n"
+                         "template: analyst\n"
                          "task_id: wumpus-spec\n"
                          "project_root: " root "\n"
                          "worktree: " worktree "\n"
-                       "session: swarmforge-specifier-001\n"
-                       "display: Specifier 001\n"
+                       "session: swarmforge-analyst-001\n"
+                       "display: Analyst 001\n"
                        "backend: codex\n"))
-        (write-file (fs/path root ".squad/agents/specifier-001/status")
+        (write-file (fs/path root ".squad/agents/analyst-001/status")
                     "state: retired\ndetail: done\nupdated_at: 2026-07-31T16:00:00Z\n")
-        (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
-                    "agent: specifier-001\ntask_id: wumpus-spec\nstate: retired\ndetail: done\nupdated_at: 2026-07-31T16:00:00Z\n")
+        (write-file (fs/path root ".squad/agents/analyst-001/heartbeat")
+                    "agent: analyst-001\ntask_id: wumpus-spec\nstate: retired\ndetail: done\nupdated_at: 2026-07-31T16:00:00Z\n")
         (let [once (run {:dir root
                          :env {"PATH" (str bin ":" (System/getenv "PATH"))
                                "FAKE_TMUX_STATE" (str fake-state)}}
@@ -295,16 +295,16 @@
                         (str root))
               roles (slurp (str (fs/path root ".swarmforge/roles.tsv")))
               daemon-log (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))]
-          (is (str/includes? (:out once) "SQUAD_STATUS_ALERT: agent specifier-001 reported retired"))
+          (is (str/includes? (:out once) "SQUAD_STATUS_ALERT: agent analyst-001 reported retired"))
           (is (not (fs/exists? (fs/path fake-state "killed"))))
-          (is (str/includes? roles "specifier-001\t"))
+          (is (str/includes? roles "analyst-001\t"))
           (is (fs/exists? worktree))
           (is (git-worktree-registered? root worktree))
-          (is (git-branch-exists? root "swarmforge-specifier-001"))
-          (is (str/includes? daemon-log "agent-retired-awaiting-workflow specifier-001"))
-          (is (not (str/includes? daemon-log "retired-session-killed specifier-001")))
-          (is (not (str/includes? daemon-log "git-worktree-removed specifier-001")))
-          (is (not (str/includes? daemon-log "role-retired-reconciled specifier-001")))))
+          (is (git-branch-exists? root "swarmforge-analyst-001"))
+          (is (str/includes? daemon-log "agent-retired-awaiting-workflow analyst-001"))
+          (is (not (str/includes? daemon-log "retired-session-killed analyst-001")))
+          (is (not (str/includes? daemon-log "git-worktree-removed analyst-001")))
+          (is (not (str/includes? daemon-log "role-retired-reconciled analyst-001")))))
       (finally
         (fs/delete-tree root)))))
 
@@ -314,24 +314,24 @@
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
       (write-file (fs/path root ".swarmforge/tmux-socket")
                   "/tmp/swarmforge-test.sock\n")
-      (let [worktree (fs/path root ".worktrees/specifier-001")]
-        (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-specifier-001" (str worktree) "HEAD")
-        (write-file (fs/path root ".squad/agents/specifier-001/metadata")
-                    (str "agent_id: specifier-001\n"
-                         "template: specifier\n"
+      (let [worktree (fs/path root ".worktrees/analyst-001")]
+        (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-analyst-001" (str worktree) "HEAD")
+        (write-file (fs/path root ".squad/agents/analyst-001/metadata")
+                    (str "agent_id: analyst-001\n"
+                         "template: analyst\n"
                          "task_id: wumpus-spec\n"
                          "project_root: " root "\n"
                          "worktree: " worktree "\n"
-                         "session: swarmforge-specifier-001\n"
-                         "display: Specifier 001\n"
+                         "session: swarmforge-analyst-001\n"
+                         "display: Analyst 001\n"
                          "backend: codex\n"))
-        (write-file (fs/path root ".squad/agents/specifier-001/status")
+        (write-file (fs/path root ".squad/agents/analyst-001/status")
                     "state: failed\ndetail: verification failed\nupdated_at: 2026-07-31T16:00:00Z\n")
-        (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
-                    "agent: specifier-001\ntask_id: wumpus-spec\nstate: failed\ndetail: verification failed\nupdated_at: 2026-07-31T16:00:00Z\n")
+        (write-file (fs/path root ".squad/agents/analyst-001/heartbeat")
+                    "agent: analyst-001\ntask_id: wumpus-spec\nstate: failed\ndetail: verification failed\nupdated_at: 2026-07-31T16:00:00Z\n")
         (write-file (fs/path worktree "stories/preserved.md") "dirty story\n")
         (let [once (run {:dir root
                          :env {"SWARMFORGE_SQUADD_SKIP_TMUX" "1"}}
@@ -345,13 +345,13 @@
                            (slurp (str daemon-log-file))
                            "")]
           (is (str/includes? (:out once) "SQUAD_STATUS_OK"))
-          (is (str/includes? roles "specifier-001\t"))
+          (is (str/includes? roles "analyst-001\t"))
           (is (fs/exists? worktree))
           (is (git-worktree-registered? root worktree))
-          (is (git-branch-exists? root "swarmforge-specifier-001"))
+          (is (git-branch-exists? root "swarmforge-analyst-001"))
           (is (fs/exists? (fs/path worktree "stories/preserved.md")))
-          (is (not (str/includes? daemon-log "git-worktree-removed specifier-001")))
-          (is (not (str/includes? daemon-log "role-retired-reconciled specifier-001")))))
+          (is (not (str/includes? daemon-log "git-worktree-removed analyst-001")))
+          (is (not (str/includes? daemon-log "role-retired-reconciled analyst-001")))))
     (finally
       (fs/delete-tree root)))))
 
@@ -367,7 +367,7 @@
                        "cmd=\"$3\"\n"
                        "case \"$cmd\" in\n"
                        "  has-session) exit 0 ;;\n"
-                       "  list-sessions) printf 'swarmforge-specifier-001\\n' ; exit 0 ;;\n"
+                       "  list-sessions) printf 'swarmforge-analyst-001\\n' ; exit 0 ;;\n"
                        "  list-panes) printf '0\\n' ; exit 0 ;;\n"
                        "  capture-pane) printf 'line 1\\nline 2\\nline 3\\n' ; exit 0 ;;\n"
                        "  send-keys) exit 0 ;;\n"
@@ -376,22 +376,22 @@
       (run {:dir root} "chmod" "+x" (str fake-tmux))
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
       (write-file (fs/path root ".swarmforge/tmux-socket")
                   "/tmp/swarmforge-test.sock\n")
-      (write-file (fs/path root ".squad/agents/specifier-001/metadata")
-                  (str "agent_id: specifier-001\n"
-                       "template: specifier\n"
+      (write-file (fs/path root ".squad/agents/analyst-001/metadata")
+                  (str "agent_id: analyst-001\n"
+                       "template: analyst\n"
                        "task_id: wumpus-spec\n"
                        "project_root: " root "\n"
-                       "worktree: " root "/.worktrees/specifier-001\n"
-                       "session: swarmforge-specifier-001\n"
-                       "display: Specifier 001\n"
+                       "worktree: " root "/.worktrees/analyst-001\n"
+                       "session: swarmforge-analyst-001\n"
+                       "display: Analyst 001\n"
                        "backend: codex\n"))
-      (write-file (fs/path root ".squad/agents/specifier-001/status")
+      (write-file (fs/path root ".squad/agents/analyst-001/status")
                   "state: running\ndetail: drafting\nupdated_at: 2000-01-01T00:00:00Z\n")
-      (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
-                  "agent: specifier-001\ntask_id: wumpus-spec\nstate: running\ndetail: drafting\nupdated_at: 2000-01-01T00:00:00Z\n")
+      (write-file (fs/path root ".squad/agents/analyst-001/heartbeat")
+                  "agent: analyst-001\ntask_id: wumpus-spec\nstate: running\ndetail: drafting\nupdated_at: 2000-01-01T00:00:00Z\n")
       (let [first-pass (run {:dir root
                              :env {"PATH" (str bin ":" (System/getenv "PATH"))
                                    "SWARMFORGE_SQUAD_STALE_SECONDS" "1"}}
@@ -399,12 +399,12 @@
                             "--once"
                             "--no-notify"
                             (str root))
-            liveness-file (fs/path root ".squad/agents/specifier-001/liveness")
+            liveness-file (fs/path root ".squad/agents/analyst-001/liveness")
             first-liveness (slurp (str liveness-file))
             status (run {:dir root
                          :env {"PATH" (str bin ":" (System/getenv "PATH"))}}
                         (script "squad_status.sh")
-                        "specifier-001")
+                        "analyst-001")
             second-pass (run {:dir root
                               :env {"PATH" (str bin ":" (System/getenv "PATH"))
                                     "SWARMFORGE_SQUAD_STALE_SECONDS" "1"}}
@@ -442,22 +442,22 @@
       (run {:dir root} "chmod" "+x" (str fake-tmux))
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
       (write-file (fs/path root ".swarmforge/tmux-socket")
                   "/tmp/swarmforge-test.sock\n")
-      (write-file (fs/path root ".squad/agents/specifier-001/metadata")
-                  (str "agent_id: specifier-001\n"
-                       "template: specifier\n"
+      (write-file (fs/path root ".squad/agents/analyst-001/metadata")
+                  (str "agent_id: analyst-001\n"
+                       "template: analyst\n"
                        "task_id: wumpus-spec\n"
                        "project_root: " root "\n"
-                       "worktree: " root "/.worktrees/specifier-001\n"
-                       "session: swarmforge-specifier-001\n"
-                       "display: Specifier 001\n"
+                       "worktree: " root "/.worktrees/analyst-001\n"
+                       "session: swarmforge-analyst-001\n"
+                       "display: Analyst 001\n"
                        "backend: codex\n"))
-      (write-file (fs/path root ".squad/agents/specifier-001/status")
+      (write-file (fs/path root ".squad/agents/analyst-001/status")
                   "state: running\ndetail: starting\nupdated_at: 2000-01-01T00:00:00Z\n")
-      (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
-                  "agent: specifier-001\ntask_id: wumpus-spec\nstate: running\ndetail: starting\nupdated_at: 2000-01-01T00:00:00Z\n")
+      (write-file (fs/path root ".squad/agents/analyst-001/heartbeat")
+                  "agent: analyst-001\ntask_id: wumpus-spec\nstate: running\ndetail: starting\nupdated_at: 2000-01-01T00:00:00Z\n")
       (let [first-pass (run {:dir root
                              :env {"PATH" (str bin ":" (System/getenv "PATH"))
                                    "SWARMFORGE_SQUAD_STALE_SECONDS" "1"
@@ -466,7 +466,7 @@
                             "--once"
                             "--no-notify"
                             (str root))
-            missing-file (fs/path root ".squad/agents/specifier-001/missing-session")
+            missing-file (fs/path root ".squad/agents/analyst-001/missing-session")
             second-pass (run {:dir root
                               :env {"PATH" (str bin ":" (System/getenv "PATH"))
                                     "SWARMFORGE_SQUAD_STALE_SECONDS" "1"
@@ -476,7 +476,7 @@
                              "--no-notify"
                              (str root))]
         (is (str/includes? (:out first-pass) "SQUAD_STATUS_OK"))
-        (is (str/includes? (slurp (str missing-file)) "session: swarmforge-specifier-001"))
+        (is (str/includes? (slurp (str missing-file)) "session: swarmforge-analyst-001"))
         (is (str/includes? (:out second-pass) "tmux session missing for")))
     (finally
       (fs/delete-tree root)))))

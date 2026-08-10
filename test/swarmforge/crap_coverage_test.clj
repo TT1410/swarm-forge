@@ -168,20 +168,20 @@
         draft (fs/path root "draft.handoff")]
     (write-file draft
                 (str "type: git_handoff\n"
-                     "to: reviewer\n"
+                     "to: code-reviewer\n"
                      "priority: 05\n"
                      "task: story-one\n"
                      "commit: 0123456789\n"
                      "assignment: story-one\n"
-                     "template: reviewer\n"
+                     "template: code-reviewer\n"
                      "artifacts: none\n"))
-    (with-redefs [handoff/role-known? #{"reviewer"}
+    (with-redefs [handoff/role-known? #{"code-reviewer"}
                   handoff/canonical-commit (fn [commit] [commit nil])]
       (let [{:keys [headers ordered errors]} (handoff/parse-draft draft)
             validated (handoff/validate headers ordered)]
         (is (= [] errors))
         (is (= ["type" "to" "priority" "task" "commit" "assignment" "template" "artifacts"] ordered))
-        (is (= ["reviewer"] (:recipients validated)))
+        (is (= ["code-reviewer"] (:recipients validated)))
         (is (= "0123456789" (:canonical-commit validated)))
         (is (= [] (:errors validated)))))))
 
@@ -190,7 +190,7 @@
         draft (fs/path root "bad.handoff")]
     (write-file draft
                 (str "type: note\n"
-                     "to: reviewer,,reviewer,bad_role,missing\n"
+                     "to: code-reviewer,,code-reviewer,bad_role,missing\n"
                      "priority: high\n"
                      "commit: 0123456789\n"
                      "message: " (apply str (repeat 81 "x")) "\n"
@@ -199,7 +199,7 @@
                      "unknown: nope\n"
                      "\n"
                      "payload\n"))
-    (with-redefs [handoff/role-known? #{"reviewer"}]
+    (with-redefs [handoff/role-known? #{"code-reviewer"}]
       (let [{:keys [headers ordered errors]} (handoff/parse-draft draft)
             validated (handoff/validate headers ordered)
             all-errors (concat errors (:errors validated))]
@@ -1580,9 +1580,10 @@
     (is (= {:from "implementer-001"
             :commit "abcdef1234"
             :manifest {"assignment" "a1"
-                       "agent" "implementer-001"
-                       "template" "implementer"
-                       "artifacts" "none"}
+	                       "agent" "implementer-001"
+	                       "template" "implementer"
+	                       "artifacts" "none"
+	                       "review_decision" nil}
             :body "body\n"}
            (assign/validate-result-handoff! "a1" "implementer" handoff-file)))
     (write-file review-file "review\n")

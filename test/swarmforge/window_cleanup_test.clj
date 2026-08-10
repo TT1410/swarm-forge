@@ -143,9 +143,9 @@
         pid (str (.pid daemon))]
     (try
       (init-repo! root)
-      (let [reviewer-worktree (fs/path root ".worktrees/reviewer-001")
+      (let [code-reviewer-worktree (fs/path root ".worktrees/code-reviewer-001")
             merger-worktree (fs/path root ".worktrees/merger-003")]
-        (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-reviewer-001" (str reviewer-worktree) "HEAD")
+        (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-code-reviewer-001" (str code-reviewer-worktree) "HEAD")
         (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-merger-003" (str merger-worktree) "HEAD")
         (fs/create-dirs (fs/path root ".worktrees/orphan-001"))
         (write-file (fs/path root ".worktrees/orphan-001/leftover.txt") "leftover\n"))
@@ -155,12 +155,12 @@
                        "2\tcleaner\tswarmforge-cleaner\tCleaner\tcodex\n"))
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "reviewer-001\treviewer-001\t" root "/.worktrees/reviewer-001\tswarmforge-reviewer-001\tReviewer 001\tcodex\ttask\n"
+                       "code-reviewer-001\tcode-reviewer-001\t" root "/.worktrees/code-reviewer-001\tswarmforge-code-reviewer-001\tCode Reviewer 001\tcodex\ttask\n"
                        "merger-003\tmerger-003\t" root "/.worktrees/merger-003\tswarmforge-merger-003\tMerger 003\tcodex\ttask\n"
                        "code-reviewer-085\tcode-reviewer-085\t" root "/.worktrees/code-reviewer-085\tswarmforge-code-reviewer-085\tCR 085\tcodex\ttask\n"))
       (write-file (fs/path root ".squad/agents/squad-leader/status")
                   "state: running\ndetail: active\nupdated_at: 2026-08-03T00:00:00Z\n")
-      (write-file (fs/path root ".squad/agents/reviewer-001/status")
+      (write-file (fs/path root ".squad/agents/code-reviewer-001/status")
                   "state: running\ndetail: active\nupdated_at: 2026-08-03T00:00:00Z\n")
       (write-file (fs/path root ".squad/agents/merger-003/status")
                   "state: handoff_sent\ndetail: waiting\nupdated_at: 2026-08-03T00:00:00Z\n")
@@ -179,7 +179,7 @@
                   "http://127.0.0.1:9999/\n")
       (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-coder" "sleep" "120")
       (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-cleaner" "sleep" "120")
-      (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-reviewer-001" "sleep" "120")
+      (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" "swarmforge-code-reviewer-001" "sleep" "120")
       (let [result (run {:dir root
                          :env {"SWARMFORGE_TERMINAL_BACKEND" "none"}}
                         (close-swarm)
@@ -190,23 +190,23 @@
         (is (not= 0 (:exit (run {:dir root :ok? false}
                                 "tmux" "-S" sock "has-session" "-t" "swarmforge-cleaner"))))
         (is (not= 0 (:exit (run {:dir root :ok? false}
-                                "tmux" "-S" sock "has-session" "-t" "swarmforge-reviewer-001"))))
+                                "tmux" "-S" sock "has-session" "-t" "swarmforge-code-reviewer-001"))))
         (is (not (fs/exists? pid-file)))
         (is (not (fs/exists? squadd-pid-file)))
         (is (not (fs/exists? (fs/path root ".swarmforge/daemon/squad-web-url"))))
-        (is (not (fs/exists? (fs/path root ".worktrees/reviewer-001"))))
+        (is (not (fs/exists? (fs/path root ".worktrees/code-reviewer-001"))))
         (is (not (fs/exists? (fs/path root ".worktrees/merger-003")))
             "merge-blocked merger worktrees must be force-removed on full teardown")
         (is (not (fs/exists? (fs/path root ".worktrees/orphan-001"))))
-        (is (not (git-worktree-registered? root (fs/path root ".worktrees/reviewer-001"))))
+        (is (not (git-worktree-registered? root (fs/path root ".worktrees/code-reviewer-001"))))
         (is (not (git-worktree-registered? root (fs/path root ".worktrees/merger-003"))))
-        (is (not (git-branch-exists? root "swarmforge-reviewer-001")))
+        (is (not (git-branch-exists? root "swarmforge-code-reviewer-001")))
         (is (not (git-branch-exists? root "swarmforge-merger-003")))
         (is (= [(str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask")]
                (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))))
         (is (str/includes? (slurp (str (fs/path root ".squad/agents/squad-leader/status")))
                            "state: retired"))
-        (is (str/includes? (slurp (str (fs/path root ".squad/agents/reviewer-001/status")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/code-reviewer-001/status")))
                            "state: retired"))
         (is (str/includes? (slurp (str (fs/path root ".squad/agents/merger-003/status")))
                            "state: retired"))

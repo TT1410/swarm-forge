@@ -71,8 +71,8 @@
   (when (seq tools)
     (str "## Tool Startup\n\n"
          "- At startup, before artifact work, run each required tool check listed below.\n"
-         "- If a required tool is missing and the assignment includes an install command, run `squad_tool.sh ensure` with that exact command.\n"
-         "- If a required tool is missing and no install command is authorized, record `blocked` and hand the blocker back to `squad-leader`.\n\n"
+         "- If a required tool is missing and an install command is listed below, run `squad_tool.sh ensure` with that exact command.\n"
+         "- If a required tool is missing and no listed install command can install it, record `blocked` and hand the blocker back to `squad-leader`.\n\n"
          (apply str
                 (for [tool tools]
                   (str "- `" (require-command tool) "`"

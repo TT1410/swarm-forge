@@ -28,4 +28,5 @@
   "hardener" {:required-tools ["clj-mutate" "crap4clj" "dry4clj"
                                "gherkin-parser" "gherkin-mutator"]}
   "qa" {:required-tools ["crap4clj" "dry4clj"]}
-  "gherkin-writer" {:required-tools ["gherkin-parser" "ir-dry-checker"]}}}
+  "gherkin-writer" {:required-tools ["gherkin-parser" "ir-dry-checker"]}
+  "gherkin-reviewer" {:required-tools ["gherkin-parser" "ir-dry-checker"]}}}

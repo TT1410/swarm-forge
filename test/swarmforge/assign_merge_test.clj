@@ -5,7 +5,14 @@
             [clojure.test :refer [deftest is testing]]
             [swarmforge.test-support :refer :all]))
 
-(defn result-handoff-text [id from task template commit body]
+(defn review-template? [template]
+  (#{"gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"} template))
+
+(defn result-handoff-text
+  ([id from task template commit body]
+   (result-handoff-text id from task template commit body
+                        (when (review-template? template) "accepted")))
+  ([id from task template commit body review-decision]
   (str "id: " id "\n"
        "from: " from "\n"
        "to: squad-leader\n"
@@ -17,8 +24,10 @@
        "agent: " from "\n"
        "template: " template "\n"
        "artifacts: none\n"
+       (when review-decision
+         (str "review_decision: " review-decision "\n"))
        "\n"
-       body "\n"))
+       body "\n")))
 
 (deftest squad-assign-generates-durable-assignment-from-theme-story
   (let [root (tmp-dir)]
@@ -168,7 +177,7 @@
           (is (str/includes? (:out merge-status) "STATE: merge_ready"))
           (is (str/includes? (:out merge-status) "MERGE:"))
           (is (= 2 (:exit ad-hoc-review)))
-          (is (str/includes? (:err ad-hoc-review) "durable reviewer report under .squad/reviews"))
+          (is (str/includes? (:err ad-hoc-review) "durable review report under .squad/reviews"))
           (is (str/includes? (:out review) "STATE: review_changes_requested"))
           (is (str/includes? (:out reject) "STATE: rejected"))
           (is (str/includes? (:out replace) "SQUAD_ASSIGNMENT: wumpus-cave-impl-2"))
@@ -279,7 +288,7 @@
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (fs/create-dirs (fs/path root "swarmforge/role-templates"))
-      (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/code-reviewer.prompt")
                   "review\n")
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
@@ -294,14 +303,14 @@
            "create"
            "wumpus"
            "cave-topology"
-           "reviewer"
+           "code-reviewer"
            "wumpus-cave-gherkin-review"
            "instructions.md")
       (run {:dir root} "git" "add" ".squad" "stories")
       (run {:dir root} "git" "commit" "-q" "-m" "Create review assignment")
-      (run {:dir root} "git" "checkout" "-q" "-b" "swarmforge-reviewer-001")
+      (run {:dir root} "git" "checkout" "-q" "-b" "swarmforge-code-reviewer-001")
       (write-file (fs/path root ".squad/reviews/wumpus-cave-gherkin-review.md")
-                  "Review: accepted by transient reviewer.\n")
+                  "Review: accepted by transient code-reviewer.\n")
       (run {:dir root} "git" "add" ".squad/reviews/wumpus-cave-gherkin-review.md")
       (run {:dir root} "git" "commit" "-q" "-m" "Add review report")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
@@ -309,8 +318,8 @@
         (write-file (fs/path root ".squad/reviews/wumpus-cave-gherkin-review.md")
                     "SL scratch note at colliding review path.\n")
         (write-file (fs/path root "result.handoff")
-                    (result-handoff-text "1" "reviewer-001" "wumpus-cave-gherkin-review"
-                                         "reviewer" commit "review complete"))
+                    (result-handoff-text "1" "code-reviewer-001" "wumpus-cave-gherkin-review"
+                                         "code-reviewer" commit "review complete"))
         (run {:dir root}
              (script "squad_assign.sh")
              "result"
@@ -1055,7 +1064,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-assign-review-can-extract-report-from-reviewer-handoff
+(deftest squad-assign-review-can-extract-report-from-code-reviewer-handoff
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -1095,9 +1104,10 @@
       (run {:dir root} "git" "commit" "-q" "-m" "Add cave topology review")
       (let [review-commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "review-result.handoff")
-                    (result-handoff-text "2" "reviewer-001" "wumpus-cave-review"
-                                         "reviewer" review-commit
-                                         (str "merge_and_process reviewer-001 " review-commit)))
+                    (result-handoff-text "2" "code-reviewer-001" "wumpus-cave-review"
+                                         "code-reviewer" review-commit
+                                         (str "merge_and_process code-reviewer-001 " review-commit)
+                                         "changes-requested"))
         (let [review (run {:dir root}
                           (script "squad_assign.sh")
                           "review"
@@ -1113,13 +1123,13 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-assign-accepts-changes-requested-reviewer-report-merge
+(deftest squad-assign-accepts-changes-requested-code-reviewer-report-merge
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/code-reviewer.prompt")
                   "review\n")
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
@@ -1134,18 +1144,19 @@
            "create"
            "wumpus"
            "cave-topology"
-           "reviewer"
+           "code-reviewer"
            "wumpus-cave-review"
            "review-instructions.md")
       (write-file (fs/path root ".squad/reviews/wumpus-cave-review.md")
                   "Review: changes requested, but merge this report for leader disposition.\n")
       (run {:dir root} "git" "add" ".squad/reviews/wumpus-cave-review.md")
-      (run {:dir root} "git" "commit" "-q" "-m" "Add reviewer report")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add code-reviewer report")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "review-result.handoff")
-                    (result-handoff-text "1" "reviewer-001" "wumpus-cave-review"
-                                         "reviewer" commit
-                                         (str "merge_and_process reviewer-001 " commit)))
+                    (result-handoff-text "1" "code-reviewer-001" "wumpus-cave-review"
+                                         "code-reviewer" commit
+                                         (str "merge_and_process code-reviewer-001 " commit)
+                                         "changes-requested"))
         (run {:dir root} (script "squad_assign.sh") "result" "wumpus-cave-review" "review-result.handoff")
         (run {:dir root} (script "squad_assign.sh") "merge-ready" "wumpus-cave-review")
         (run {:dir root} (script "squad_assign.sh") "review" "wumpus-cave-review" "changes-requested" "review-result.handoff")
@@ -1154,5 +1165,56 @@
           (is (str/includes? (:out accepted) "STATE: merged"))
           (is (str/includes? (:out accepted) "commit already reachable from HEAD"))
           (is (str/includes? (:out status) "STATE: merged"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-review-helper-queues-structured-review-decision
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "code-reviewer-001\tcode-reviewer-001\t" root "/.worktrees/code-reviewer-001\tswarmforge-code-reviewer-001\tCode Reviewer 001\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/role-templates/code-reviewer.prompt")
+                  "review\n")
+      (write-file (fs/path root "theme.md")
+                  "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "stories/cave-topology.md")
+                  "Story: cave topology and setup.\n")
+      (write-file (fs/path root "review-instructions.md")
+                  "Review the cave topology implementation.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (run {:dir root}
+           (script "squad_assign.sh")
+           "create"
+           "wumpus"
+           "cave-topology"
+           "code-reviewer"
+           "wumpus-cave-review"
+           "review-instructions.md")
+      (write-file (fs/path root ".squad/agents/code-reviewer-001/metadata")
+                  "agent_id: code-reviewer-001\ntemplate: code-reviewer\ntask_id: wumpus-cave-review\n")
+      (run {:dir root} "git" "add" ".squad" "stories")
+      (run {:dir root} "git" "commit" "-q" "-m" "Create code review assignment")
+      (run {:dir root} "git" "checkout" "-q" "-b" "swarmforge-code-reviewer-001")
+      (write-file (fs/path root ".squad/reviews/wumpus-cave-review.md")
+                  "No blocking findings.\n")
+      (run {:dir root} "git" "add" ".squad/reviews/wumpus-cave-review.md")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add code review report")
+      (let [queued (run {:dir root
+                         :env {"SWARMFORGE_ROLE" "code-reviewer-001"}}
+                        (script "squad_review.sh")
+                        "wumpus-cave-review"
+                        "accepted"
+                        ".squad/reviews/wumpus-cave-review.md")
+            handoff-file (first (filter #(str/ends-with? (fs/file-name %) ".handoff")
+                                        (fs/list-dir (fs/path root ".swarmforge/handoffs/outbox"))))]
+        (is (str/includes? (:out queued) "HANDOFF QUEUED"))
+        (is (str/includes? (slurp (str handoff-file)) "review_decision: accepted"))
+        (run {:dir root} "git" "checkout" "-q" "master")
+        (run {:dir root} (script "squad_assign.sh") "result" "wumpus-cave-review" (str handoff-file))
+        (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-review/result-manifest")))
+                           "review_decision: accepted")))
       (finally
         (fs/delete-tree root)))))

@@ -199,7 +199,8 @@
                  :merge-commit (get accepted-merge "merge_commit")
                  :accepted-commit (get accepted-merge "commit")
                  :resolved-by (get accepted-merge "resolved_by")
-                 :review-decision (get review "decision")
+                 :review-decision (or (get result-manifest "review_decision")
+                                      (get review "decision"))
                  :review-file (get review "review_file")})))
        vec))
 
@@ -789,8 +790,7 @@
   {"gherkin-reviewer" "gherkin"
    "qa-procedure-reviewer" "qa-procedure"
    "code-reviewer" "code"
-   "architect" "architecture"
-   "architecture-reviewer" "architecture"})
+   "architect" "architecture"})
 
 (defn packet-result-missing? [packet kind]
   (not (field-present? packet (str (gate-key kind) "_sha"))))

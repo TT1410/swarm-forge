@@ -17,7 +17,7 @@
                   "transient_agent squad-leader\n")
       (write-file (fs/path root "swarmforge/roles/squad-leader.prompt")
                   "leader\n")
-      (write-file (fs/path root "swarmforge/role-templates/specifier.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt")
                   "specify\n")
       (write-file (fs/path root "assignment.md")
                   "Find the original rules.\n")
@@ -26,7 +26,7 @@
       (let [result (run {:dir root
                          :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                         (script "squad_spawn.sh")
-                        "specifier"
+                        "analyst"
                         "wumpus-theme"
                         "assignment.md")
             out (:out result)
@@ -34,21 +34,22 @@
             transient-row (second roles)
             fields (str/split transient-row #"\t" -1)
             worktree (fs/path (nth fields 2))
-            agent-dir (fs/path root ".squad/agents/specifier-001")
+            agent-dir (fs/path root ".squad/agents/analyst-001")
             prompt-file (fs/path agent-dir "prompt.md")
             launch-script (fs/path agent-dir "launch.sh")
             metadata-file (fs/path agent-dir "metadata")
             expected-root (.getCanonicalPath (fs/file root))
             expected-worktree (.getCanonicalPath (fs/file worktree))
-            expected-launch-script (.getCanonicalPath (fs/file launch-script))]
-        (is (str/includes? out "SQUAD_AGENT: specifier-001"))
+            expected-launch-script (.getCanonicalPath (fs/file launch-script))
+            prompt (slurp (str prompt-file))]
+        (is (str/includes? out "SQUAD_AGENT: analyst-001"))
         (is (= 2 (count roles)))
         (is (= 7 (count fields)))
-        (is (= "specifier-001" (nth fields 0)))
-        (is (= "specifier-001" (nth fields 1)))
-        (is (str/ends-with? (nth fields 2) "/.worktrees/specifier-001"))
-        (is (= "swarmforge-specifier-001" (nth fields 3)))
-        (is (= "Specifier 001" (nth fields 4)))
+        (is (= "analyst-001" (nth fields 0)))
+        (is (= "analyst-001" (nth fields 1)))
+        (is (str/ends-with? (nth fields 2) "/.worktrees/analyst-001"))
+        (is (= "swarmforge-analyst-001" (nth fields 3)))
+        (is (= "Analyst 001" (nth fields 4)))
         (is (= "codex" (nth fields 5)))
         (is (= "task" (nth fields 6)))
         (is (fs/exists? (fs/path worktree ".git")))
@@ -74,13 +75,13 @@
         (is (str/includes? (slurp (str metadata-file)) (str "project_root: " expected-root)))
         (is (str/includes? (slurp (str metadata-file)) (str "tool_cache_dir: " expected-root "/.swarmforge/tools")))
         (is (str/includes? (slurp (str metadata-file)) (str "launch_script: " expected-launch-script)))
-        (is (str/includes? (slurp (str prompt-file)) "assigned_worktree:"))
-        (is (str/includes? (slurp (str prompt-file)) "tool_cache_dir:"))
-        (is (str/includes? (slurp (str prompt-file)) "Your agent process starts from the assigned worktree."))
-        (is (str/includes? (slurp (str prompt-file)) "Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree."))
-        (is (str/includes? (slurp (str prompt-file)) "Do not search the web unless the assignment explicitly asks you to."))
-        (is (str/includes? (slurp (str prompt-file)) "Do not fetch, clone, install, update, or check remote versions of external tools"))
-        (is (str/includes? (slurp (str prompt-file)) "If a command triggers an approval or escalation prompt"))
+        (is (str/includes? prompt "Read swarmforge/worker-common.prompt."))
+        (is (str/includes? prompt "Read swarmforge/role-templates/analyst.prompt."))
+        (is (not (str/includes? prompt "Read swarmforge/constitution.prompt")))
+        (is (not (str/includes? prompt "read every file it refers to recursively")))
+        (is (str/includes? prompt "assigned_worktree:"))
+        (is (str/includes? prompt "tool_cache_dir:"))
+        (is (str/includes? prompt "Find the original rules."))
         (let [launcher (slurp (str launch-script))]
           (is (str/includes? launcher "export SWARMFORGE_PROJECT_ROOT="))
           (is (str/includes? launcher "export SWARMFORGE_WORKTREE="))
@@ -91,11 +92,9 @@
           (is (not (str/includes? launcher "codex -C")))
           (is (not (str/includes? launcher (str "codex -C '\"'\"'" expected-root "'\"'\"'"))))
           (is (not (str/includes? launcher (str "codex -C '\"'\"'" expected-worktree "'\"'\"'")))))
-        (is (str/includes? (slurp (str prompt-file))
-                           "Find the original rules."))
-        (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/status")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/analyst-001/status")))
                            "state: starting"))
-        (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/heartbeat")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/analyst-001/heartbeat")))
                            "state: starting"))
         (let [squadd (run {:dir root
                             :env {"SWARMFORGE_SQUADD_SKIP_TMUX" "1"}}
@@ -105,41 +104,41 @@
                            (str root))]
           (is (str/includes? (:out squadd) "SQUAD_STATUS_OK")))
         (let [event (run {:dir root
-                          :env {"SWARMFORGE_ROLE" "specifier-001"}}
+                          :env {"SWARMFORGE_ROLE" "analyst-001"}}
                          (script "squad_event.sh")
                          "running"
                          "reading original rules")
-              status (run {:dir root} (script "squad_status.sh") "specifier-001")]
+              status (run {:dir root} (script "squad_status.sh") "analyst-001")]
         (is (str/includes? (:out event) "SQUAD_EVENT: running"))
           (is (str/includes? (:out status) "STATE: running"))
           (is (str/includes? (:out status) "TASK_ID: wumpus-theme"))
-          (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/heartbeat")))
+          (is (str/includes? (slurp (str (fs/path root ".squad/agents/analyst-001/heartbeat")))
                              "state: running"))
           (is (str/includes? (slurp (str (fs/path root ".squad/tasks/wumpus-theme/events.log")))
-                             "specifier-001\trunning\treading original rules")))
+                             "analyst-001\trunning\treading original rules")))
         (let [event (run {:dir worktree
-                          :env {"SWARMFORGE_ROLE" "specifier-001"
+                          :env {"SWARMFORGE_ROLE" "analyst-001"
                                 "SWARMFORGE_PROJECT_ROOT" (str root)}}
                          (str (fs/path worktree "swarmforge/scripts/squad_event.sh"))
                          "running"
                          "worktree helper lookup")
-              status (run {:dir root} (script "squad_status.sh") "specifier-001")]
+              status (run {:dir root} (script "squad_status.sh") "analyst-001")]
           (is (str/includes? (:out event) "SQUAD_EVENT: running"))
           (is (str/includes? (:out status) "DETAIL: worktree helper lookup"))
           (is (str/includes? (slurp (str (fs/path root ".squad/tasks/wumpus-theme/events.log")))
-                             "specifier-001\trunning\tworktree helper lookup")))
+                             "analyst-001\trunning\tworktree helper lookup")))
         (let [bad-event (run {:dir root
-                              :env {"SWARMFORGE_ROLE" "specifier-001"}
+                              :env {"SWARMFORGE_ROLE" "analyst-001"}
                               :ok? false}
                              (script "squad_event.sh")
-                             "specifier-001"
+                             "analyst-001"
                              "running"
                              "wrong argument order")]
           (is (= 2 (:exit bad-event)))
           (is (str/includes? (:err bad-event)
                              "first argument is the state, not the agent id.")))
         (let [run-result (run {:dir root
-                               :env {"SWARMFORGE_ROLE" "specifier-001"}}
+                               :env {"SWARMFORGE_ROLE" "analyst-001"}}
                               (script "squad_run.sh")
                               "verifying"
                               "quick command"
@@ -147,14 +146,14 @@
                               "sh"
                               "-c"
                               "exit 0")
-              status (run {:dir root} (script "squad_status.sh") "specifier-001")]
+              status (run {:dir root} (script "squad_status.sh") "analyst-001")]
           (is (= 0 (:exit run-result)))
           (is (str/includes? (:out status) "STATE: running"))
           (is (str/includes? (:out status) "DETAIL: verifying passed: quick command"))
           (is (str/includes? (slurp (str (fs/path root ".squad/tasks/wumpus-theme/events.log")))
-                             "specifier-001\trunning\tverifying passed: quick command")))
+                             "analyst-001\trunning\tverifying passed: quick command")))
         (let [bad-state (run {:dir root
-                              :env {"SWARMFORGE_ROLE" "specifier-001"}
+                              :env {"SWARMFORGE_ROLE" "analyst-001"}
                               :ok? false}
                              (script "squad_event.sh")
                              "verifying_passed"
@@ -165,7 +164,7 @@
           (is (str/includes? (:err bad-state)
                              "Allowed states: starting, running, blocked, failed, handoff_ready, handoff_sent")))
         (let [self-retire (run {:dir root
-                                :env {"SWARMFORGE_ROLE" "specifier-001"}
+                                :env {"SWARMFORGE_ROLE" "analyst-001"}
                                 :ok? false}
                                (script "squad_event.sh")
                                "retired"
@@ -174,10 +173,10 @@
           (is (str/includes? (:err self-retire) "must not self-retire"))
           (is (str/includes? (:err self-retire) "handoff_sent"))
           (is (str/includes? (:err self-retire) "squad_retire.sh"))
-          (is (not (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/status")))
+          (is (not (str/includes? (slurp (str (fs/path root ".squad/agents/analyst-001/status")))
                                   "state: retired"))))
-        (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
-                    (str "agent: specifier-001\n"
+        (write-file (fs/path root ".squad/agents/analyst-001/heartbeat")
+                    (str "agent: analyst-001\n"
                          "task_id: wumpus-theme\n"
                          "state: running\n"
                          "detail: stale for test\n"
@@ -189,15 +188,15 @@
                            "--once"
                            "--no-notify"
                            (str root))]
-          (is (str/includes? (:out squadd) "SQUAD_STATUS_ALERT: agent specifier-001 heartbeat stale"))
+          (is (str/includes? (:out squadd) "SQUAD_STATUS_ALERT: agent analyst-001 heartbeat stale"))
           (is (str/includes? (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))
-                             "status-alert agent specifier-001 heartbeat stale")))
+                             "status-alert agent analyst-001 heartbeat stale")))
         (fs/create-dirs (fs/path root ".swarmforge/squad/spawn.lock"))
         (let [retire (run {:dir root}
                           (script "squad_retire.sh")
-                          "specifier-001")
+                          "analyst-001")
               retired-roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))]
-          (is (str/includes? (:out retire) "SQUAD_AGENT_RETIRED: specifier-001"))
+          (is (str/includes? (:out retire) "SQUAD_AGENT_RETIRED: analyst-001"))
           (is (str/includes? (:out retire) "SESSION_STOPPED: false"))
           (is (str/includes? (:out retire) "WORKTREE_REMOVED: true"))
           (is (str/includes? (:out retire) "BRANCH_DELETED: true"))
@@ -205,10 +204,10 @@
           (is (str/starts-with? (first retired-roles) "squad-leader\t"))
           (is (not (fs/exists? worktree)))
           (is (not (git-worktree-registered? root worktree)))
-          (is (not (git-branch-exists? root "swarmforge-specifier-001")))
-          (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/status")))
+          (is (not (git-branch-exists? root "swarmforge-analyst-001")))
+          (is (str/includes? (slurp (str (fs/path root ".squad/agents/analyst-001/status")))
                              "state: retired"))
-        (is (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/heartbeat")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/analyst-001/heartbeat")))
                              "state: retired"))))
       (finally
         (fs/delete-tree root)))))
@@ -426,16 +425,16 @@
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"
-                       "specifier-002\tspecifier-002\t" root "/.worktrees/specifier-002\tswarmforge-specifier-002\tSpecifier 002\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"
+                       "analyst-002\tanalyst-002\t" root "/.worktrees/analyst-002\tswarmforge-analyst-002\tAnalyst 002\tcodex\ttask\n"
                        "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"
-                       "reviewer-001\treviewer-001\t" root "/.worktrees/reviewer-001\tswarmforge-reviewer-001\tReviewer 001\tcodex\ttask\n"
+                       "code-reviewer-001\tcode-reviewer-001\t" root "/.worktrees/code-reviewer-001\tswarmforge-code-reviewer-001\tCode Reviewer 001\tcodex\ttask\n"
                        "qa-001\tqa-001\t" root "/.worktrees/qa-001\tswarmforge-qa-001\tQa 001\tcodex\ttask\n"))
       (write-file (fs/path root "swarmforge/squad.conf")
                   "max_transient_agents 5\n")
-      (doseq [agent-id ["specifier-001" "specifier-002" "implementer-001" "reviewer-001" "qa-001"]]
+      (doseq [agent-id ["analyst-001" "analyst-002" "implementer-001" "code-reviewer-001" "qa-001"]]
         (write-agent-status! root agent-id "running"))
-      (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/code-reviewer.prompt")
                   "review\n")
       (write-file (fs/path root "assignment.md")
                   "Review the story implementation.\n")
@@ -443,7 +442,7 @@
                          :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}
                          :ok? false}
                         (script "squad_spawn.sh")
-                        "reviewer"
+                        "code-reviewer"
                         "another-review"
                         "assignment.md")]
         (is (= 3 (:exit result)))
@@ -459,11 +458,11 @@
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "specifier-001\tspecifier-001\t" root "/.worktrees/specifier-001\tswarmforge-specifier-001\tSpecifier 001\tcodex\ttask\n"))
-      (write-agent-status! root "specifier-001" "running")
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
+      (write-agent-status! root "analyst-001" "running")
       (write-file (fs/path root "swarmforge/squad.conf")
                   "max_transient_agents 1\n")
-      (write-file (fs/path root "swarmforge/role-templates/reviewer.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/code-reviewer.prompt")
                   "review\n")
       (write-file (fs/path root "assignment.md")
                   "Review the story implementation.\n")
@@ -471,7 +470,7 @@
                          :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}
                          :ok? false}
                         (script "squad_spawn.sh")
-                        "reviewer"
+                        "code-reviewer"
                         "another-review"
                         "assignment.md")]
         (is (= 3 (:exit result)))
@@ -513,17 +512,17 @@
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
                        "hardener-001\thardener-001\t" root "/.worktrees/hardener-001\tswarmforge-hardener-001\tHardener 001\tcodex\ttask\n"
-                       "architecture-reviewer-001\tarchitecture-reviewer-001\t" root "/.worktrees/architecture-reviewer-001\tswarmforge-architecture-reviewer-001\tArchitecture Reviewer 001\tcodex\ttask\n"))
+                       "architect-001\tarchitect-001\t" root "/.worktrees/architect-001\tswarmforge-architect-001\tArchitect 001\tcodex\ttask\n"))
       (write-agent-status! root "hardener-001" "running")
-      (write-agent-status! root "architecture-reviewer-001" "running")
+      (write-agent-status! root "architect-001" "running")
       (write-file (fs/path root "swarmforge/squad.conf")
                   (str "max_transient_agents 5\n"
                        "max_active_template hardener 1\n"
                        "max_active_template qa 1\n"
-                       "max_active_group architecture 1 architecture-reviewer architecture-cleaner architect\n"))
+                       "max_active_group architecture 1 architect senior-implementor\n"))
       (write-file (fs/path root "swarmforge/role-templates/hardener.prompt")
                   "harden\n")
-      (write-file (fs/path root "swarmforge/role-templates/architecture-cleaner.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/senior-implementor.prompt")
                   "clean architecture\n")
       (write-file (fs/path root "assignment.md")
                   "Run a quality gate.\n")
@@ -534,18 +533,18 @@
                                  "hardener"
                                  "second-hardening"
                                  "assignment.md")
-            architecture-cleaner (run {:dir root
+            senior-implementor (run {:dir root
                                        :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}
                                        :ok? false}
                                       (script "squad_spawn.sh")
-                                      "architecture-cleaner"
+                                      "senior-implementor"
                                       "architecture-cleanup"
                                       "assignment.md")]
         (is (= 3 (:exit second-hardener)))
         (is (str/includes? (:err second-hardener) "SQUAD_SPAWN_TEMPLATE_CAPACITY_FULL"))
         (is (str/includes? (:err second-hardener) "TEMPLATE: hardener"))
-        (is (= 3 (:exit architecture-cleaner)))
-        (is (str/includes? (:err architecture-cleaner) "SQUAD_SPAWN_GROUP_CAPACITY_FULL"))
-        (is (str/includes? (:err architecture-cleaner) "GROUP: architecture")))
+        (is (= 3 (:exit senior-implementor)))
+        (is (str/includes? (:err senior-implementor) "SQUAD_SPAWN_GROUP_CAPACITY_FULL"))
+        (is (str/includes? (:err senior-implementor) "GROUP: architecture")))
       (finally
         (fs/delete-tree root)))))

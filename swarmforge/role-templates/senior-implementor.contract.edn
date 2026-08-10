@@ -4,6 +4,7 @@
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
+ :may-run-broad-tests true
  :writes ["architectural-improvement" "verification-updates"]
  :artifact-roots ["src/" "test/"]
  :behavior-preserving true}
