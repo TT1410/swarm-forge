@@ -14,6 +14,7 @@
        "  squad_batch.sh create <batch-kind> <batch-id>\n"
        "  squad_batch.sh add <batch-id> <story-id> <stage> <assignment-id> <branch> <sha>\n"
        "  squad_batch.sh result <batch-id> <assignment-id> <branch> <sha>\n"
+       "  squad_batch.sh complete <batch-id>\n"
        "  squad_batch.sh status <batch-id>\n"
        "  squad_batch.sh ready <batch-kind>"))
 
@@ -200,6 +201,20 @@
     (println "BRANCH:" branch)
     (println "SHA:" sha)))
 
+(defn complete! [batch-id]
+  (validate-id! "Batch id" batch-id)
+  (let [root (fs/absolutize (project-root))
+        dir (batch-dir root batch-id)
+        kind (read-value (fs/path dir "metadata") "kind")
+        now (timestamp)]
+    (ensure-batch! dir batch-id)
+    (write-batch-status! dir batch-id kind "complete")
+    (append-line! (fs/path dir "events.log")
+                  (str now "\tcomplete"))
+    (println "SQUAD_BATCH:" batch-id)
+    (println "KIND:" kind)
+    (println "STATE: complete")))
+
 (defn batch-status-file [dir]
   (let [status-file (fs/path dir "status")]
     (if (fs/exists? status-file) status-file (fs/path dir "state"))))
@@ -256,6 +271,9 @@
    "result" (fn [args]
               (exact-count! args 5)
               (result! (second args) (nth args 2) (nth args 3) (nth args 4)))
+   "complete" (fn [args]
+                (exact-count! args 2)
+                (complete! (second args)))
    "status" (fn [args]
               (exact-count! args 2)
               (status! (second args)))

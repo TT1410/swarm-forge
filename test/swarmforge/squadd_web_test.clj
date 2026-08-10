@@ -38,6 +38,25 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest dashboard-links-assignments-to-assignment-documents
+  ;; Given an assignment with assignment.md
+  ;; When the dashboard serves artifact/assignment/<id> and the main page
+  ;; Then the document content is available and the assignments table links to it
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad" "assignments" "story-1-implementer" "assignment.md")
+                  "# Squad Assignment\n\nassignment_id: story-1-implementer\nLeader instructions for implementer.\n")
+      (write-file (fs/path root ".squad" "assignments" "story-1-implementer" "metadata")
+                  "assignment_id: story-1-implementer\ntemplate: implementer\nstory_id: story-1\n")
+      (write-file (fs/path root ".squad" "assignments" "story-1-implementer" "status")
+                  "state: created\ndetail: active\nupdated_at: 2026-08-10T00:00:00Z\n")
+      (is (str/includes? (web/artifact-content root "assignment" "story-1-implementer")
+                         "Leader instructions for implementer"))
+      (is (str/includes? web/dashboard-html
+                         "artifactLink('assignment', a.assignment_id, a.assignment_id)"))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squadd-serves-web-status-and-registers-approvals
   (let [root (tmp-dir)
         bin (fs/path root "bin")
@@ -126,6 +145,8 @@
                   "assignment_id: active-assignment\ntemplate: implementer\nstory_id: cave-topology\n")
 	      (write-file (fs/path root ".squad/assignments/active-assignment/status")
 	                  "state: created\ndetail: active\nupdated_at: 2026-08-03T00:00:00Z\n")
+	      (write-file (fs/path root ".squad/assignments/active-assignment/assignment.md")
+	                  "# Squad Assignment\n\nassignment_id: active-assignment\nImplement cave topology.\n")
 	      (write-file (fs/path root ".squad/assignments/blocked-assignment/metadata")
 	                  "assignment_id: blocked-assignment\ntemplate: gherkin-writer\nstory_id: cave-topology\n")
 	      (write-file (fs/path root ".squad/assignments/blocked-assignment/status")
@@ -166,6 +187,7 @@
 	              gherkin-page (slurp (str base-url "artifact/gherkin/cave-topology"))
 	              qa-page (slurp (str base-url "artifact/qa-procedure/cave-topology"))
 	              review-page (slurp (str base-url "artifact/review/active-assignment"))
+	              assignment-page (slurp (str base-url "artifact/assignment/active-assignment"))
 	              blocker-page (slurp (str base-url "artifact/blocker/newer-assignment"))
 	              agent-page (slurp (str base-url "agent/active-001"))
 	              pane-tail (slurp (str base-url "api/agents/active-001/pane"))
@@ -204,12 +226,14 @@
 	          (is (str/includes? page "const messageInput = document.getElementById('sl-message')"))
 	          (is (not (str/includes? page "app.innerHTML")))
 	          (is (str/includes? page "/artifact/${encodeURIComponent(kind)}/${encodeURIComponent(id)}"))
+	          (is (str/includes? page "artifactLink('assignment', a.assignment_id, a.assignment_id)"))
 	          (is (str/includes? page "/agent/${encodeURIComponent(a.agent_id)}"))
 	          (is (str/includes? theme-page "faithful Hunt the Wumpus"))
 	          (is (str/includes? story-page "cave topology and setup"))
 	          (is (str/includes? gherkin-page "Feature: Cave topology"))
 	          (is (str/includes? qa-page "QA Procedure"))
 	          (is (str/includes? review-page "accepted"))
+	          (is (str/includes? assignment-page "Implement cave topology"))
 	          (is (str/includes? blocker-page "crap4clj"))
 	          (is (str/includes? agent-page "/api/agents/active-001/pane"))
 	          (is (str/includes? agent-page "text!==pane.textContent"))

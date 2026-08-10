@@ -12,11 +12,7 @@ Open bugs:
 
 | # | Title |
 |---|--------|
-| 1 | Assignment rows lack links to assignment documents |
-| 2 | Packet state does not reflect downstream batch progress |
 | 3 | Reviewer handoffs use ambiguous free-form decisions |
-| 4 | Mechanical repair replays stale reviews after r2 acceptance |
-| 5 | Revised artifacts with the same path are not attached to packets |
 | 6 | Implementation-ready stories do not produce implementer assignments |
 | 7 | Code review loop spawns unbounded repeat reviewers |
 | 8 | Batch records remain open after batch assignments merge |
@@ -25,76 +21,6 @@ Open bugs:
 | 11 | Concurrent retirements hit registry lock contention |
 | 12 | Swarm teardown leaks worktrees and stale agent state |
 | 13 | No per-worker agent-tool configuration for squad transients |
-
-## Dashboard And Visibility
-
-### Bug 1: Assignment Rows Lack Links To Assignment Documents
-
-Each assignment is stored with a durable description document
-(`.squad/assignments/<assignment-id>/assignment.md`), but the web dashboard
-does not expose that document.
-
-Observed behavior:
-
-1. The Assignments table shows assignment id, template, story, and state as plain
-   text.
-2. Story, agent, review, and blocker rows already link to detail views.
-3. There is no link from an assignment row to its `assignment.md` content.
-
-Expected behavior:
-
-Each assignment listed on the web dashboard should have a link that opens a
-window (or dedicated page) showing that assignment's document
-(`assignment.md`), so operators can inspect leader instructions, packet
-snapshot, tools, and protocol without leaving the dashboard.
-
-Architecture notes:
-
-- Assignment documents are written by `squad_assign` as `assignment.md` under
-  `.squad/assignments/<id>/`, with a theme copy under
-  `.squad/themes/<theme>/assignments/<id>.md`.
-- Dashboard rendering in `squadd/web.clj` uses `artifactLink` for stories and
-  agents, but assignment ids are only `esc(a.assignment_id)`.
-- Natural fit: add an `/artifact/assignment/<id>` (or similar) route that reads
-  the assignment directory's `assignment.md`, matching existing artifact pages.
-
-### Bug 2: Packet State Does Not Reflect Downstream Batch Progress
-
-Story packets and dashboard-level state did not advance consistently after
-hardener, QA, and architecture batch results were merged.
-
-Observed behavior:
-
-1. Story 1 had hardener fields populated:
-   `hardener_assignment: hunt-the-wumpus-hardener`,
-   `hardener_sha: 0581ba8c49`, and `hardener_review_state: approved`.
-2. Story 1 also belonged to the QA and architecture batch sequence, with
-   `hunt-the-wumpus-qa` and `hunt-the-wumpus-architecture` merged.
-3. The Story 1 packet still showed `state: qa_approved` and
-   `final_state: qa_approved`.
-4. Stories 2 and 5 had cleaner results recorded, but remained at
-   `state: cleaned` with `cleaner_review_state: pending` while repeated code
-   review assignments existed outside the packet's apparent current state.
-
-Expected behavior:
-
-Packet top-level state and dashboard state should be derived from the most
-advanced durable stage actually recorded in the packet and batch records. A story
-with merged hardener/QA/architecture outputs should not display as merely
-`qa_approved`. A story with active or completed code-review work should not
-appear stuck at an earlier cleaned state without explaining the pending review
-or blocker.
-
-Architecture notes:
-
-- Display uses `squad_state/recompute-state` (first matching stage wins). The
-  ladder is not the primary defect: stuck `qa_approved` / `cleaned` usually means
-  later SHAs or review fields were never written onto the packet.
-- This is dual-write eventual consistency: merge assignment ≠ update packet.
-  `squad_next` owns post-merge repair candidates (direct results, batch members,
-  reviews), but the trial shows repair still misses paths.
-- Dashboard and CLI share the same derivation, so a wrong packet makes
-  everything look wrong. Fix repair completeness and tests, not prettier labels.
 
 ## Review Result Contract
 
@@ -156,77 +82,7 @@ Architecture notes:
 - Root cause for several stalls: no packet review → wrong stage → wrong spawn or
   `wait`. Do not make the prose parser smarter.
 
-### Bug 4: Mechanical Repair Replays Stale Reviews After R2 Acceptance
-
-After r2 packet repairs were applied, `squad_next.sh --apply-mechanical`
-accepted the revised artifacts under the one-review-cycle rule and then replayed
-the original failed review decisions against the revised artifact shas.
-
-Observed behavior:
-
-1. The Squad Leader manually attached r2 artifacts to the story packets.
-2. `squad_next.sh --apply-mechanical` applied post-revision acceptance
-   transitions.
-3. The same run also emitted/applied stale `record_review_result` transitions
-   from the original review assignments.
-4. Those stale transitions rewrote packet review state back to
-   `changes-requested` while pointing at the revised artifact shas.
-5. The workflow stalled again or required manual repair.
-
-Expected behavior:
-
-Once a revised artifact has been accepted under the one-review-cycle rule, old
-review assignments must not be re-recorded against the revised artifact sha.
-Mechanical repair should be ordered and idempotent so stale review decisions
-cannot undo accepted r2 state.
-
-Architecture notes:
-
-- Mechanical apply runs both `post-revision-acceptance-candidates` and
-  `review-record-candidates` in one pass. Ordering and idempotency fight each
-  other.
-- After a revised SHA is attached, historical merged reviews still look “not
-  current for this assignment” and can re-apply `changes-requested` onto the new
-  SHA.
-- Needed causal rule: a review result is only valid for its target SHA and
-  assignment; accepted r2 state supersedes older reviews for that gate;
-  mechanical apply must be ordered so supersession wins once.
-
 ## Packet Repair And FSM Progress
-
-### Bug 5: Revised Artifacts With The Same Path Are Not Attached To Packets
-
-The workflow stalled after r2 writer assignments were merged because packet
-repair only noticed artifact path changes, not assignment or commit changes.
-
-Observed behavior:
-
-1. Several reviews requested changes.
-2. The Squad Leader spawned r2 Gherkin and QA procedure writers.
-3. The r2 writer handoffs were merged successfully.
-4. The revised artifacts used the same paths as the original artifacts.
-5. Story packets still pointed at the original assignment ids and shas.
-6. The old `changes-requested` review states remained current because the packet
-   target shas were never updated.
-7. `squad_next.sh --apply-mechanical` returned `NEXT_ACTION: wait` with no
-   active agents, handoffs, spawn requests, or approvals.
-
-Expected behavior:
-
-When a merged artifact assignment has the same artifact path as the current
-packet entry but a newer assignment id or sha, `squad_next.sh` should still emit
-an `attach_story_artifact` repair action. After the revised artifact is attached,
-the one-review-cycle rule should mark the stale review as accepted and allow the
-workflow to continue to approval or the next stage.
-
-Architecture notes:
-
-- `artifact-attachment-candidate` gates on `packet-path-missing?`, which compares
-  path equality only, not assignment id or SHA.
-- Artifact identity is treated as path; in this workflow it should be
-  `(path, assignment, sha)`. Same path after r2 is the normal case.
-- Easy unit test, high impact: without attach, target SHAs stay stale, one-cycle
-  logic never fires, FSM waits forever.
 
 ### Bug 6: Implementation-Ready Stories Do Not Produce Implementer Assignments
 

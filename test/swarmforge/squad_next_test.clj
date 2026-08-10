@@ -380,6 +380,61 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-attaches-revised-artifact-when-path-unchanged
+  ;; Given a packet already pointing at features/alpha.feature from the first writer
+  ;; And a merged r2 writer with the same path but a new assignment id and sha
+  ;; When squad_next runs
+  ;; Then it emits attach_story_artifact for the r2 assignment
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "features/alpha.feature") "Feature: alpha revised\n")
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "gherkin_path: features/alpha.feature\n"
+                       "gherkin_assignment: alpha-gherkin\n"
+                       "gherkin_sha: 1111111111\n"
+                       "gherkin_review: changes-requested\n"
+                       "gherkin_review_assignment: alpha-gherkin-review\n"
+                       "gherkin_review_sha: 1111111111\n"
+                       "gherkin_review_target_sha: 1111111111\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-r2/metadata")
+                  (str "assignment_id: alpha-gherkin-r2\n"
+                       "theme_id: wumpus\n"
+                       "story_id: alpha\n"
+                       "template: gherkin-writer\n"
+                       "assignment_file: " root "/instructions.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-r2/status")
+                  "assignment_id: alpha-gherkin-r2\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-r2/result-manifest")
+                  (str "assignment_id: alpha-gherkin-r2\n"
+                       "agent: gherkin-writer-002\n"
+                       "template: gherkin-writer\n"
+                       "commit: 2222222222\n"
+                       "artifacts: features/alpha.feature\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-r2/accepted-merge")
+                  (str "assignment_id: alpha-gherkin-r2\n"
+                       "state: merged\n"
+                       "commit: 2222222222\n"
+                       "merge_commit: abcdef2222\n"))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: attach_story_artifact"))
+        (is (str/includes? (:out next) "ASSIGNMENT: alpha-gherkin-r2"))
+        (is (str/includes? (:out next)
+                           "COMMAND: squad_packet.sh attach alpha gherkin alpha-gherkin-r2 master abcdef2222 features/alpha.feature")))
+      (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
+        (is (str/includes? applied "attach_story_artifact"))
+        (is (str/includes? packet "gherkin_assignment: alpha-gherkin-r2"))
+        (is (str/includes? packet "gherkin_sha: abcdef2222"))
+        (is (str/includes? packet "gherkin_review: accepted")
+            "one-review-cycle acceptance should follow same-path r2 attach"))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-records-merged-direct-result-before-downstream-work
   (let [root (tmp-dir)]
     (try
@@ -495,6 +550,51 @@
         (is (str/includes? (:out next) "NEXT_ACTION: record_post_revision_review_acceptance"))
         (is (str/includes? (:out next) "COMMAND: squad_packet.sh review alpha gherkin accepted alpha-gherkin-r2 master 2222222222"))
         (is (not (str/includes? (:out next) "\nTEMPLATE: gherkin-reviewer"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-does-not-replay-stale-review-after-post-revision-acceptance
+  ;; Given an r2 artifact with stale changes-requested and the original merged review
+  ;; When mechanical repair runs
+  ;; Then one-cycle acceptance wins and the old changes-requested is not re-applied
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "gherkin_path: features/alpha.feature\n"
+                       "gherkin_assignment: alpha-gherkin-r2\n"
+                       "gherkin_sha: 2222222222\n"
+                       "gherkin_review: changes-requested\n"
+                       "gherkin_review_assignment: alpha-gherkin-review\n"
+                       "gherkin_review_sha: 1111111111\n"
+                       "gherkin_review_target_sha: 1111111111\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/metadata")
+                  (str "assignment_id: alpha-gherkin-review\n"
+                       "theme_id: wumpus\n"
+                       "story_id: alpha\n"
+                       "template: gherkin-reviewer\n"
+                       "assignment_file: " root "/review.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/status")
+                  "assignment_id: alpha-gherkin-review\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/accepted-merge")
+                  (str "assignment_id: alpha-gherkin-review\n"
+                       "state: merged\n"
+                       "commit: 1111111111\n"
+                       "merge_commit: abcdef1111\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/review.md")
+                  "changes-requested\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
+        (is (str/includes? out "record_post_revision_review_acceptance"))
+        (is (not (str/includes? out "APPLIED_TRANSITION: record_review_result story=alpha assignment=alpha-gherkin-review"))
+            "stale original review must not be re-recorded against the revised sha")
+        (is (str/includes? packet "gherkin_review: accepted"))
+        (is (str/includes? packet "gherkin_review_target_sha: 2222222222"))
+        (is (not (str/includes? packet "gherkin_review: changes-requested"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -1095,5 +1195,102 @@
                         "instructions.md")]
         (is (= 2 (:exit result)))
         (is (str/includes? (:err result) "Batch record is missing: wumpus-hardener")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-projects-batch-result-sha-onto-all-member-packets
+  ;; Given a hardener batch with two stories and a durable batch result SHA
+  ;; (assignment merged without accepted-merge/result-manifest on the assignment)
+  ;; When mechanical repair runs
+  ;; Then both story packets receive hardener_sha and the batch becomes complete
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "approval_required code_review false\n"
+                       "approval_required hardening false\n"))
+      (doseq [story ["alpha" "beta"]]
+        (write-file (fs/path root ".squad/stories" story "packet")
+                    (str "story_id: " story "\n"
+                         "theme_id: wumpus\n"
+                         "cleaner_sha: abcdef1234\n"
+                         "code_review: accepted\n"
+                         "code_review_sha: abcdef1234\n"
+                         "hardener_batch: wumpus-hardener\n"
+                         "hardener_batch_stage: code_reviewed\n")))
+      (write-file (fs/path root ".squad/batches/wumpus-hardener/metadata")
+                  "batch_id: wumpus-hardener\nkind: hardener\ncreated_at: 2026-08-10T00:00:00Z\n")
+      (write-file (fs/path root ".squad/batches/wumpus-hardener/status")
+                  "batch_id: wumpus-hardener\nkind: hardener\nstate: result_received\nupdated_at: 2026-08-10T00:00:00Z\n")
+      (write-file (fs/path root ".squad/batches/wumpus-hardener/result")
+                  (str "batch_id: wumpus-hardener\n"
+                       "kind: hardener\n"
+                       "assignment_id: wumpus-hardener\n"
+                       "branch: master\n"
+                       "sha: aa11bb22cc\n"
+                       "received_at: 2026-08-10T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/batches/wumpus-hardener/manifest.tsv")
+                  (str "story_id\tstage\tassignment_id\tbranch\tsha\tadded_at\n"
+                       "alpha\tcode_reviewed\talpha-review\tmaster\tabcdef1234\t2026-08-10T00:00:00Z\n"
+                       "beta\tcode_reviewed\tbeta-review\tmaster\tabcdef1234\t2026-08-10T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-hardener/metadata")
+                  (str "assignment_id: wumpus-hardener\n"
+                       "theme_id: wumpus\n"
+                       "story_id: batch\n"
+                       "template: hardener\n"
+                       "assignment_file: " root "/hardener.md\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-hardener/status")
+                  "assignment_id: wumpus-hardener\nstate: merged\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            alpha (slurp (str (fs/path root ".squad/stories/alpha/packet")))
+            beta (slurp (str (fs/path root ".squad/stories/beta/packet")))
+            batch-status (slurp (str (fs/path root ".squad/batches/wumpus-hardener/status")))]
+        (is (str/includes? out "record_merged_batch_result"))
+        (is (str/includes? alpha "hardener_sha: aa11bb22cc"))
+        (is (str/includes? beta "hardener_sha: aa11bb22cc"))
+        (is (or (str/includes? alpha "state: hardener_returned")
+                (str/includes? alpha "state: hardening_approved"))
+            "stage advances from durable hardener result on the packet")
+        (is (or (str/includes? beta "state: hardener_returned")
+                (str/includes? beta "state: hardening_approved")))
+        (is (str/includes? batch-status "state: complete")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-projects-batch-result-even-when-assignment-not-yet-merged
+  ;; Durable batch result alone is enough to project onto member packets
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\ntheme_id: wumpus\n"
+                       "hardener_batch: wumpus-qa\n"
+                       "hardener_sha: abcdef1234\n"
+                       "hardening_approval: approved\n"
+                       "qa_batch: wumpus-qa\n"))
+      (write-file (fs/path root ".squad/batches/wumpus-qa/metadata")
+                  "batch_id: wumpus-qa\nkind: qa\n")
+      (write-file (fs/path root ".squad/batches/wumpus-qa/status")
+                  "batch_id: wumpus-qa\nkind: qa\nstate: result_received\n")
+      (write-file (fs/path root ".squad/batches/wumpus-qa/result")
+                  "batch_id: wumpus-qa\nkind: qa\nassignment_id: wumpus-qa\nbranch: master\nsha: dd11ee22ff\n")
+      (write-file (fs/path root ".squad/batches/wumpus-qa/manifest.tsv")
+                  (str "story_id\tstage\tassignment_id\tbranch\tsha\tadded_at\n"
+                       "alpha\thardening_approved\twumpus-hardener\tmaster\tabcdef1234\tt\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-qa/metadata")
+                  "assignment_id: wumpus-qa\ntheme_id: wumpus\nstory_id: batch\ntemplate: qa\n")
+      (write-file (fs/path root ".squad/assignments/wumpus-qa/status")
+                  "assignment_id: wumpus-qa\nstate: handoff_sent\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
+        (is (str/includes? out "record_merged_batch_result"))
+        (is (str/includes? packet "qa_sha: dd11ee22ff"))
+        (is (or (str/includes? packet "state: qa_returned")
+                (str/includes? packet "state: qa_approved"))
+            "stage advances once the batch QA result is on the packet"))
       (finally
         (fs/delete-tree root)))))

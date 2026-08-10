@@ -138,7 +138,7 @@
           `<a target=\"_blank\" href=\"/agent/${encodeURIComponent(a.agent_id)}\">${esc(a.agent_id)}</a>`, esc(a.template), esc(a.task_id), esc(a.state), esc(a.detail)
         ])));
         assignmentsPanel.innerHTML = table(['Assignment','Template','Story','State'], data.assignments.map(a => row([
-          esc(a.assignment_id), esc(a.template), esc(a.story_id), esc(a.state)
+          artifactLink('assignment', a.assignment_id, a.assignment_id), esc(a.template), esc(a.story_id), esc(a.state)
         ])));
       } catch (err) {
         error.textContent = err.message;
@@ -594,6 +594,9 @@
          (section "QA Procedure" qa-procedure)
          (packet-review-sections root packet))))
 
+(defn assignment-document-content [root assignment-id]
+  (assignment-artifact-content root assignment-id "assignment.md"))
+
 (def artifact-readers
   {"theme" theme-content
    "story" story-content
@@ -604,6 +607,7 @@
                     (or (artifact-project-content root (get (packet-for root id) "qa_procedure_path"))
                         (slurp-if-exists (packet-file-for root id))))
    "review" review-content
+   "assignment" assignment-document-content
    "blocker" (fn [root id]
                (or (assignment-artifact-content root id "blocker.md")
                    (assignment-artifact-content root id "blocker")))})

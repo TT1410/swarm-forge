@@ -684,20 +684,29 @@
                           :suffix ".md"
                           :packet-path-field "qa_procedure_path"}})
 
-(defn packet-path-missing? [packets-by-story story-id field path]
-  (let [packet (get packets-by-story story-id)]
-    (and packet
-         (not= path (get packet field)))))
+(defn packet-artifact-stale?
+  "True when the packet lacks this artifact identity. Same path with a newer
+  assignment id or sha still needs attach (r2 revisions reuse paths)."
+  [packet rule path assignment sha]
+  (let [kind-key (gate-key (:kind rule))
+        path-field (or (:packet-path-field rule) (str kind-key "_path"))
+        assignment-field (str kind-key "_assignment")
+        sha-field (str kind-key "_sha")]
+    (or (not= path (get packet path-field))
+        (not= (:assignment-id assignment) (get packet assignment-field))
+        (not= sha (get packet sha-field)))))
 
 (declare packet-by-story)
 
 (defn artifact-attachment-candidate [root packets-by-story assignment rule path]
   (let [story-id (:story-id assignment)
-        sha (artifact-sha assignment)]
+        sha (artifact-sha assignment)
+        packet (get packets-by-story story-id)]
     (when (and (= "merged" (:state assignment))
+               packet
                (not (str/blank? story-id))
                (not (str/blank? sha))
-               (packet-path-missing? packets-by-story story-id (:packet-path-field rule) path))
+               (packet-artifact-stale? packet rule path assignment sha))
       {:priority 25
        :stage-order 2
        :next-action "attach_story_artifact"
@@ -743,6 +752,17 @@
 
 (defn assignment-effective-sha [assignment]
   (artifact-sha assignment))
+
+(defn batch-result-map [root batch-id]
+  (file-map (fs/path root ".squad" "batches" batch-id "result")))
+
+(defn batch-effective-sha [root assignment]
+  (or (assignment-effective-sha assignment)
+      (get (batch-result-map root (:assignment-id assignment)) "sha")))
+
+(defn batch-result-available? [root assignment]
+  (or (merged-assignment? assignment)
+      (not (str/blank? (get (batch-result-map root (:assignment-id assignment)) "sha")))))
 
 (defn result-record-candidate [packet assignment kind]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
@@ -792,9 +812,9 @@
 (defn batch-result-record-candidate [root packets-by-story assignment kind member]
   (let [story-id (:story-id member)
         packet (get packets-by-story story-id)
-        sha (assignment-effective-sha assignment)]
+        sha (batch-effective-sha root assignment)]
     (when (and packet
-               (merged-assignment? assignment)
+               (batch-result-available? root assignment)
                (packet-result-missing? packet kind)
                (not (str/blank? sha)))
       {:priority 25
@@ -817,6 +837,48 @@
                :when (and kind (= "batch" (:story-id assignment)))
                member (batch-manifest-rows root (:assignment-id assignment))
                :let [candidate (batch-result-record-candidate root packets-by-story assignment kind member)]
+               :when candidate]
+           candidate)
+         (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
+         vec)))
+
+(defn batch-status-value [root batch-id]
+  (or (get (file-map (fs/path root ".squad" "batches" batch-id "status")) "state")
+      (get (file-map (fs/path root ".squad" "batches" batch-id "state")) "state")))
+
+(def batch-completion-states
+  "Batch statuses that still need completion after member packet projection."
+  #{"open" "result_received" "unknown"})
+
+(defn batch-complete-candidate [root packets-by-story assignment kind]
+  (let [batch-id (:assignment-id assignment)
+        members (batch-manifest-rows root batch-id)
+        state (or (batch-status-value root batch-id) "unknown")]
+    (when (and (seq members)
+               (batch-result-available? root assignment)
+               (contains? batch-completion-states state)
+               (every? (fn [member]
+                         (let [packet (get packets-by-story (:story-id member))]
+                           (and packet (not (packet-result-missing? packet kind)))))
+                       members))
+      {:priority 24
+       :stage-order 4
+       :next-action "complete_batch"
+       :theme-id (:theme-id assignment)
+       :story-id "batch"
+       :template (:template assignment)
+       :assignment-id batch-id
+       :batch-kind kind
+       :batch-id batch-id
+       :reason (str kind " batch results are recorded on all member packets")
+       :command (str "squad_batch.sh complete " batch-id)})))
+
+(defn batch-complete-candidates [root assignments packets]
+  (let [packets-by-story (packet-by-story packets)]
+    (->> (for [assignment assignments
+               :let [kind (get result-assignment-rules (:template assignment))]
+               :when (and kind (= "batch" (:story-id assignment)))
+               :let [candidate (batch-complete-candidate root packets-by-story assignment kind)]
                :when candidate]
            candidate)
          (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
@@ -858,13 +920,21 @@
        (contains? #{"accepted" "changes-requested"} (get packet review-field))
        (squad-state/review-current? packet review-field)))
 
+(defn review-record-superseded?
+  "True when re-recording this review would undo one-cycle acceptance or apply an
+  old decision after the artifact target has moved past the review."
+  [packet review-field]
+  (or (squad-state/current-accepted? packet review-field)
+      (stale-changes-requested? packet review-field)))
+
 (defn review-record-candidate-for-story [root packet assignment kind decision]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         review-field (str (gate-key kind) "_review")
         sha (assignment-effective-sha assignment)]
     (when (and (not (str/blank? sha))
                decision
-               (not (packet-review-current-for-assignment? packet review-field assignment)))
+               (not (packet-review-current-for-assignment? packet review-field assignment))
+               (not (review-record-superseded? packet review-field)))
       {:priority 25
        :stage-order 5
        :next-action "record_review_result"
@@ -938,6 +1008,7 @@
                  (artifact-attachment-candidates root assignments packets)
                  (direct-result-record-candidates assignments packets)
                  (batch-result-record-candidates root assignments packets)
+                 (batch-complete-candidates root assignments packets)
                  (review-record-candidates root assignments packets)
                  (post-revision-acceptance-candidates packets)))))
 
@@ -1553,6 +1624,7 @@
     "attach_story_artifact"
     "record_merged_result"
     "record_merged_batch_result"
+    "complete_batch"
     "record_review_result"
     "record_post_revision_review_acceptance"
     "record_auto_approval"
