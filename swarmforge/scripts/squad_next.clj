@@ -1681,7 +1681,10 @@
 
 (defn print-concurrent-actions! [actions]
   (println "CONCURRENT_ACTIONS:" (count actions))
-  (println "CONCURRENT_ACTION_ORDER: execute listed order when capacity changes depend on prior actions; otherwise independent commands may run concurrently")
+  (println "CONCURRENT_ACTION_ORDER:"
+           (if (some #(= "retire_agent" (:next-action %)) actions)
+             "retire_agent commands share the registry lock and must run one at a time; other independent commands may run concurrently"
+             "execute listed order when capacity changes depend on prior actions; otherwise independent commands may run concurrently"))
   (doseq [[index action] (map-indexed vector actions)]
     (print-concurrent-action! (inc index) action)))
 
@@ -1898,6 +1901,24 @@
                       :command (str "squad_retire.sh " agent)}))))
          vec)))
 
+(defn apply-retirement-actions!
+  "Retire completed agents one at a time under spawn.lock — never in parallel."
+  [root rows]
+  (loop [applied []
+         remaining 50
+         current-rows rows]
+    (let [candidates (retirement-candidates root current-rows)]
+      (if (or (zero? remaining) (empty? candidates))
+        applied
+        (let [candidate (first candidates)
+              result (apply-candidate! root candidate)
+              applied (conj applied result)]
+          (if (zero? (:exit result))
+            (recur applied
+                   (dec remaining)
+                   (remove #(= (:agent candidate) (first %)) current-rows))
+            applied))))))
+
 (defn retirement-candidate [root rows]
   (first (retirement-candidates root rows)))
 
@@ -2052,6 +2073,9 @@
     (when (and batch-id
                (contains? #{"create_assignment" "request_spawn"} next-action))
       [[:batch-action batch-id next-action]])
+    ;; Retirements share spawn.lock; never schedule more than one concurrent retire.
+    (when (= "retire_agent" next-action)
+      [[:registry-lock]])
     (when agent
       [[:agent agent]]))))
 
@@ -2082,12 +2106,14 @@
   (let [retired-agents (set (keep :agent retire-actions))
         adjusted-rows (rows-without-agents rows retired-agents)
         agents (agent-records root adjusted-rows)
+        ;; Retirements share the registry lock — schedule at most one, then ready work.
         initial {:used (capacity-used root agents)
                  :max-agents (cfg/squad-max-transient-agents root)
                  :active-singletons (active-singleton-templates root agents)
-                 :dependency-keys (set (mapcat action-dependency-keys retire-actions))
-                 :actions (vec retire-actions)}]
-    (:actions (reduce include-concurrent-action initial ready-actions))))
+                 :dependency-keys #{}
+                 :actions []}
+        with-retires (reduce include-concurrent-action initial retire-actions)]
+    (:actions (reduce include-concurrent-action with-retires ready-actions))))
 
 (defn concurrent-action-context [root rows]
   (let [retire-actions (retirement-candidates root rows)
@@ -2163,7 +2189,9 @@
 
 (defn apply-mechanical-and-print-next! []
   (let [{:keys [root rows]} (next-action-context)
-        applied (apply-mechanical-ready-actions! root rows)]
+        applied-repairs (apply-mechanical-ready-actions! root rows)
+        applied-retires (apply-retirement-actions! root rows)
+        applied (into applied-repairs applied-retires)]
     (print-applied-transitions! applied)
     (print-selected-action! (next-action-context))))
 

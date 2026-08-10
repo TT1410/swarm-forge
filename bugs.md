@@ -13,7 +13,6 @@ Open bugs:
 | # | Title |
 |---|--------|
 | 3 | Reviewer handoffs use ambiguous free-form decisions |
-| 11 | Concurrent retirements hit registry lock contention |
 | 12 | Swarm teardown leaks worktrees and stale agent state |
 | 13 | No per-worker agent-tool configuration for squad transients |
 
@@ -78,36 +77,6 @@ Architecture notes:
   `wait`. Do not make the prose parser smarter.
 
 ## Agent Lifecycle And Cleanup
-
-### Bug 11: Concurrent Retirements Hit Registry Lock Contention
-
-The Squad Leader attempted to execute multiple advisor-issued retirements in
-parallel, and some of them failed because the retirement helper contended on the
-shared squad registry lock.
-
-Observed behavior:
-
-1. `squad_next.sh --apply-mechanical` emitted multiple `retire_agent` commands
-   in one concurrent action batch.
-2. The Squad Leader executed retirements in parallel.
-3. Two parallel retirements hit a registry lock race in the helper.
-4. `squad_next.sh` later reissued the still-needed retirements.
-5. The Squad Leader recovered by running the retirements sequentially.
-
-Expected behavior:
-
-Retirement should not depend on the Squad Leader discovering that parallel
-retire commands are unsafe. A better solution is likely to make retirement
-processing explicitly serialized, daemon-owned, or otherwise lock-aware so
-completed agents can be drained promptly without registry lock races.
-
-Architecture notes:
-
-- Concurrent mechanical batching optimized throughput without classifying
-  registry mutations as serial-only. `squad_retire` takes exclusive `spawn.lock`.
-- Either mark retirements non-concurrent / single-threaded in apply, or queue
-  retire through the daemon under one lock owner.
-- Asking the Squad Leader to discover sequential retirement is the wrong layer.
 
 ### Bug 12: Swarm Teardown Leaks Worktrees And Stale Agent State
 

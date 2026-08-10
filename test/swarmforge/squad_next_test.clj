@@ -1294,7 +1294,48 @@
           (is (str/includes? (:out next) "CONCURRENT_ACTION_NAME: retire_agent"))
           (is (str/includes? (:out next) "COMMAND: squad_retire.sh implementer-001"))
           (is (str/includes? (:out next) "CONCURRENT_ACTION_NAME: request_spawn"))
-          (is (str/includes? (:out next) "CONCURRENT_COMMAND: squad_spawn_request.sh cleaner alpha-cleaner"))))
+          (is (str/includes? (:out next) "CONCURRENT_COMMAND: squad_spawn_request.sh cleaner alpha-cleaner"))
+          (is (str/includes? (:out next) "registry lock"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-serializes-multiple-retirements
+  ;; Multiple completed agents must not all be concurrent retire commands.
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tI1\tcodex\ttask\n"
+                       "cleaner-001\tcleaner-001\t" root "/.worktrees/cleaner-001\tswarmforge-cleaner-001\tC1\tcodex\ttask\n"))
+      (doseq [[agent task] [["implementer-001" "alpha-implementation"]
+                            ["cleaner-001" "alpha-cleaner"]]]
+        (write-agent-status! root agent "handoff_sent")
+        (write-file (fs/path root ".squad/agents" agent "metadata")
+                    (str "template: " (first (str/split agent #"-")) "\ntask_id: " task "\n"))
+        (write-file (fs/path root ".swarmforge/handoffs/inbox/completed"
+                             (str "50_20260803T000000Z_00000" (if (= agent "implementer-001") "1" "2")
+                                  "_from_" agent "_to_squad-leader.handoff"))
+                    (str "type: git_handoff\nto: squad-leader\nfrom: " agent "\npriority: 50\n"
+                         "task: " task "\ncommit: abcdef1234\n\n"))
+        (write-file (fs/path root ".squad/assignments" task "metadata")
+                    (str "assignment_id: " task "\ntheme_id: wumpus\nstory_id: alpha\n"
+                         "template: " (first (str/split agent #"-")) "\n"))
+        (write-file (fs/path root ".squad/assignments" task "status")
+                    (str "assignment_id: " task "\nstate: merged\n")))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))
+            retire-cmds (re-seq #"CONCURRENT_COMMAND: squad_retire\.sh \S+" out)]
+        (is (str/includes? out "NEXT_ACTION: retire_agent"))
+        (is (= 1 (count retire-cmds))
+            "only one retire_agent may be concurrent; registry lock is exclusive")
+        (is (str/includes? out "registry lock")))
+      (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
+        (is (str/includes? applied "APPLIED_TRANSITION: retire_agent"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/implementer-001/status")))
+                           "state: retired")
+            "mechanical apply retires sequentially without lock races")
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/cleaner-001/status")))
+                           "state: retired")))
       (finally
         (fs/delete-tree root)))))
 
