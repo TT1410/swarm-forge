@@ -77,7 +77,7 @@
     (doseq [artifact-role ["gherkin-writer" "qa-procedure-writer" "gherkin-reviewer" "qa-procedure-reviewer"]]
       (is (false? (:may-run-broad-tests (by-role artifact-role))) artifact-role))
     (doseq [review-role ["gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"]]
-      (is (= [".squad/reviews/"] (:artifact-roots (by-role review-role))) review-role))
+      (is (= ["reviews/"] (:artifact-roots (by-role review-role))) review-role))
     (is (= ["src/" "test/" "features/" "qa/"] (:artifact-roots (by-role "implementer"))))
     (is (= ["src/" "test/" "features/" "qa/" ".squad/"] (:artifact-roots (by-role "merger"))))
     (is (= "squad_next.sh" (:workflow-readiness-source (by-role "implementer"))))

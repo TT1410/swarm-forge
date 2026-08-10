@@ -203,16 +203,53 @@
   (distinct (concat (registered-managed-worktrees project-root)
                     (filesystem-managed-worktrees project-root))))
 
+(defn agent-worktree [project-root agent-id]
+  (or (not-empty (read-value (fs/path project-root ".squad" "agents" agent-id "metadata")
+                             "worktree"))
+      (str (fs/path project-root ".worktrees" agent-id))))
+
+(defn merge-blocked-worktree-paths
+  "Discover merge_blocked recovery worktrees from agent metadata + assignment
+  status so paths survive after roles.tsv is reduced to squad-leader."
+  [project-root]
+  (set
+   (for [agent-id (agent-ids-on-disk project-root)
+         :when (not= "squad-leader" agent-id)
+         :let [assignment (assignment-id project-root agent-id)
+               worktree (agent-worktree project-root agent-id)]
+         :when (and (assignment-merge-blocked? project-root assignment)
+                    (not (str/blank? worktree)))]
+     (str (fs/absolutize worktree)))))
+
+(defn cleanup-non-merge-blocked-worktrees!
+  "Remove managed worktrees except those held for merge_blocked recovery."
+  [project-root]
+  (let [preserve (merge-blocked-worktree-paths project-root)
+        paths (distinct (concat (registered-managed-worktrees project-root)
+                                (filesystem-managed-worktrees project-root)))]
+    (doseq [path paths
+            :when (not (contains? preserve (str (fs/absolutize path))))]
+      (force-remove-worktree-path! project-root path))
+    (git! project-root "worktree" "prune")
+    (doseq [path (sort preserve)]
+      (println "PRESERVED_FOR_RECOVERY:" path
+               "reason=merge_blocked"))
+    preserve))
+
 (defn report-remaining-worktrees! [project-root]
-  (doseq [path (remaining-managed-worktrees project-root)]
-    (println "PRESERVED_WORKTREE:" path)))
+  (let [preserve (merge-blocked-worktree-paths project-root)]
+    (doseq [path (remaining-managed-worktrees project-root)]
+      (if (contains? preserve (str (fs/absolutize path)))
+        (println "PRESERVED_FOR_RECOVERY:" path "reason=merge_blocked")
+        (println "PRESERVED_WORKTREE:" path "reason=cleanup_residue")))))
 
 (defn full-teardown-reconcile!
-  "After processes are dead: no active-looking agent status, no orphan worktrees,
-  roles reduced to squad-leader. Leftover worktrees are reported explicitly."
+  "After processes are dead: retire agents, remove worktrees that are not held
+  for merge_blocked recovery, prune, reduce roles to squad-leader, and report
+  intentionally preserved vs residual worktrees."
   [project-root]
   (retire-all-agents! project-root "swarm terminated by cleanup")
-  (force-cleanup-all-managed-worktrees! project-root)
+  (cleanup-non-merge-blocked-worktrees! project-root)
   (keep-only-squad-leader-roles! project-root)
   (report-remaining-worktrees! project-root))
 

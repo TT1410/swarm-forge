@@ -7,5 +7,5 @@
  :may-run-broad-tests false
  :required-tool-ids ["gherkin-parser" "ir-dry-checker"]
  :writes ["review-report"]
- :artifact-roots [".squad/reviews/"]
+ :artifact-roots ["reviews/"]
  :forbidden-artifact-roots ["stories/" "features/" "qa/" "src/" "test/"]}

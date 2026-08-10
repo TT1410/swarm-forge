@@ -6,5 +6,5 @@
  :may-talk-to-user false
  :writes ["stories"]
  :artifact-roots ["stories/"]
- :forbidden-artifact-roots ["features/" "qa/" "src/" "test/" ".squad/reviews/"]
+ :forbidden-artifact-roots ["features/" "qa/" "src/" "test/" "reviews/"]
  :self-contained-output true}

@@ -203,10 +203,15 @@
     (when (.startsWith file-path root-path)
       (str/replace (str (.relativize root-path file-path)) "\\" "/"))))
 
+(defn durable-review-relative? [relative]
+  (and relative
+       (str/ends-with? relative ".md")
+       (or (str/starts-with? relative "reviews/")
+           (str/starts-with? relative ".squad/reviews/"))))
+
 (defn durable-review-file? [root file]
   (when-let [relative (relative-to-root root file)]
-    (str/starts-with? relative ".squad/reviews/")))
-
+    (durable-review-relative? relative)))
 (defn read-header [file field]
   (let [prefix (str field ": ")]
     (some (fn [line]
@@ -224,11 +229,9 @@
 (defn review-paths-in-commit [root commit]
   (let [paths-result (sh-at root "git" "show" "--name-only" "--format=" commit)]
     (->> (str/split-lines (:out paths-result))
-         (filter #(and (str/starts-with? % ".squad/reviews/")
-                       (str/ends-with? % ".md")))
+         (filter durable-review-relative?)
          distinct
          vec)))
-
 (defn review-content-in-commit [root commit path]
   (let [content (sh-at root "git" "show" (str commit ":" path))]
     (when (zero? (:exit content))
@@ -969,8 +972,7 @@
     (ensure-file! "Assignment result not found" result-file)
     (when-not (:durable? review-source)
       (exit! 2
-             "Review decisions for worker assignments must use a durable review report under .squad/reviews/."))
-    (write-atomic! (fs/path dir "review.md")
+             "Review decisions for worker assignments must use a durable review report under reviews/ (or legacy .squad/reviews/)."))    (write-atomic! (fs/path dir "review.md")
                    (:content review-source))
     (write-atomic! (fs/path dir "review")
                    (str "assignment_id: " assignment-id "\n"
@@ -1114,6 +1116,22 @@
   (println "MERGE_COMMIT:" merge-commit)
   (println "DETAIL:" detail))
 
+(defn untracked-path? [root path]
+  (let [tracked (sh-at root "git" "ls-files" "--error-unmatch" "--" path)]
+    (not (zero? (:exit tracked)))))
+
+(defn clear-colliding-untracked-reviews!
+  "Remove untracked local review artifacts that match the incoming commit so
+  git merge is not blocked by materialised review copies in the root worktree."
+  [root commit]
+  (doseq [path (review-paths-in-commit root commit)]
+    (let [file (fs/path root path)]
+      (when (and (fs/regular-file? file) (untracked-path? root path))
+        (let [incoming (sh-at root "git" "show" (str commit ":" path))]
+          (when (and (zero? (:exit incoming))
+                     (= (slurp (str file)) (:out incoming)))
+            (fs/delete-if-exists file)))))))
+
 (defn accept-merge! [assignment-id]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
@@ -1129,6 +1147,7 @@
       (try
         (when (tracked-dirty? root)
           (block-merge! root dir assignment-id nil "tracked checkout dirty" commit now nil))
+        (clear-colliding-untracked-reviews! root commit)
         (let [detail (merge-detail! root dir assignment-id commit now)
               merge-commit (record-accepted-merge! root dir assignment-id commit detail now)]
           (mark-original-resolved-by-merger! root dir assignment-id commit merge-commit now)

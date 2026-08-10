@@ -102,6 +102,23 @@ if has_command git && [[ -d "$WORKING_DIR/.git" ]]; then
     [[ "$worktree_path" == "$WORKING_DIR/.worktrees/"* ]] || continue
     agent_id="${worktree_path:t}"
     branch="swarmforge-$agent_id"
+    assignment_id=""
+    if [[ -f "$WORKING_DIR/.squad/agents/$agent_id/metadata" ]]; then
+      assignment_id="$(awk -F': ' '$1 == "task_id" { print $2; exit }' "$WORKING_DIR/.squad/agents/$agent_id/metadata" 2>/dev/null || true)"
+    fi
+    merge_state=""
+    if [[ -n "$assignment_id" ]]; then
+      if [[ -f "$WORKING_DIR/.squad/assignments/$assignment_id/status" ]]; then
+        merge_state="$(awk -F': ' '$1 == "state" { print $2; exit }' "$WORKING_DIR/.squad/assignments/$assignment_id/status" 2>/dev/null || true)"
+      fi
+      if [[ "$merge_state" != "merge_blocked" && -f "$WORKING_DIR/.squad/assignments/$assignment_id/merge" ]]; then
+        merge_state="$(awk -F': ' '$1 == "state" { print $2; exit }' "$WORKING_DIR/.squad/assignments/$assignment_id/merge" 2>/dev/null || true)"
+      fi
+    fi
+    if [[ "$merge_state" == "merge_blocked" ]]; then
+      echo "PRESERVED_FOR_RECOVERY: $worktree_path reason=merge_blocked"
+      continue
+    fi
     git -C "$WORKING_DIR" worktree remove --force "$worktree_path" 2>/dev/null || rm -rf "$worktree_path"
     git -C "$WORKING_DIR" branch -D "$branch" 2>/dev/null || true
   done

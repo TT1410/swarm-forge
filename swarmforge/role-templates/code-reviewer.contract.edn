@@ -5,5 +5,5 @@
  :may-spawn false
  :may-talk-to-user false
  :writes ["review-report"]
- :artifact-roots [".squad/reviews/"]
+ :artifact-roots ["reviews/"]
  :forbidden-artifact-roots ["stories/" "features/" "qa/" "src/" "test/"]}

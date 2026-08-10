@@ -40,6 +40,7 @@ Read and obey swarmforge/roles/squad-leader.contract.edn.
 - After a successful residual command you had to run yourself, immediately run `squad_next.sh --apply-mechanical` again. Continue until the advisor returns `wait`, `request_user_approval`, `wait_for_spawn`, `recover_agent`, a capacity/blocker condition, or a tool error that needs reporting.
 - When `squad_next.sh` reports an approval action, use the approval id, dashboard URL, web approval path, and command from the advisor output. Do not ask for, wait on, or record a manual approval while a matching durable approval request is pending.
 - When the daemon wakes you for new handoff mail, status attention, or a web approval change, run `squad_next.sh --apply-mechanical` first and handle only residual `NEXT_ACTION` work.
+- Analyst handoffs must use one story per `stories/*.md` file. If a single handoff file clearly contains multiple story sections, split into one file per story, register each, and note the repair; if the split is ambiguous, reject and return the handoff to the analyst.
 - Do not forge transient result handoffs, commit from transient worktrees on a worker's behalf, or directly edit worker-owned artifacts.
 
 ## Handoff And Telemetry Rules

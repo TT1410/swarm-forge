@@ -67,14 +67,21 @@
     (when (.startsWith file-path root-path)
       (str/replace (str (.relativize root-path file-path)) "\\" "/"))))
 
-(defn ensure-review-file! [root file]
-  (let [relative (relative-to-root root file)]
-    (when-not (and relative
-                   (str/starts-with? relative ".squad/reviews/")
-                   (str/ends-with? relative ".md"))
-      (exit! 2 "Review file must be a durable markdown artifact under .squad/reviews/."))
-    relative))
+(defn durable-review-relative? [relative]
+  (and relative
+       (str/ends-with? relative ".md")
+       (or (str/starts-with? relative "reviews/")
+           (str/starts-with? relative ".squad/reviews/"))))
 
+(defn ensure-review-file! [root file]
+  (let [worktree (not-empty (System/getenv "SWARMFORGE_WORKTREE"))
+        relative (or (when worktree
+                       (let [rel (relative-to-root worktree file)]
+                         (when (durable-review-relative? rel) rel)))
+                     (relative-to-root root file))]
+    (when-not (durable-review-relative? relative)
+      (exit! 2 "Review file must be a durable markdown artifact under reviews/ (or legacy .squad/reviews/)."))
+    relative))
 (defn ensure-assignment! [root assignment-id sender]
   (let [dir (assignment-dir root assignment-id)
         metadata (fs/path dir "metadata")

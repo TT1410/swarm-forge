@@ -128,7 +128,8 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-next-does-not-wait-on-failed-transients
+(deftest squad-next-counts-failed-transients-against-capacity-and-wait
+  ;; Failed is a temporary lifecycle state; the agent still occupies a slot.
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -140,8 +141,8 @@
       (write-agent-status! root "gherkin-writer-001" "failed")
       (let [wait (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out wait) "NEXT_ACTION: wait"))
-        (is (str/includes? (:out wait) "REASON: no handoffs, pending approvals, active transient agents, or stale locks"))
-        (is (not (str/includes? (:out wait) "ACTIVE: gherkin-writer-001"))))
+        (is (str/includes? (:out wait) "ACTIVE: gherkin-writer-001"))
+        (is (str/includes? (:out wait) "REASON: active agents are still working or awaiting handoff delivery")))
       (finally
         (fs/delete-tree root)))))
 

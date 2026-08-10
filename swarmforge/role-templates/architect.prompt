@@ -23,7 +23,7 @@ Read and obey `swarmforge/role-templates/architect.contract.edn`.
 
 ## Handoff
 
-- Write architecture review comments as a durable markdown artifact under `.squad/reviews/`.
+- Write architecture review comments as a durable markdown artifact under `reviews/`.
 - Commit the review artifact.
 - Use `squad_review.sh <assignment-id> <accepted|changes-requested> <review-file>` to send the decision.
 - Send an architecture review handoff to `squad-leader` with the decision and recommendations.

@@ -8,4 +8,4 @@
  :required-tool-ids ["gherkin-parser" "ir-dry-checker"]
  :writes ["gherkin"]
  :artifact-roots ["features/"]
- :forbidden-artifact-roots ["stories/" "qa/" "src/" "test/" ".squad/reviews/"]}
+ :forbidden-artifact-roots ["stories/" "qa/" "src/" "test/" "reviews/"]}

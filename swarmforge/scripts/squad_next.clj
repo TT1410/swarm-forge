@@ -364,8 +364,9 @@
        vec))
 
 (defn active-agent? [agent]
-  (not (contains? #{"retired" "failed"} (:state agent))))
-
+  "Agents count as active until retired. Transient failed/blocked states still
+  occupy capacity so a recovering agent cannot free a slot for a new spawn."
+  (not= "retired" (:state agent)))
 (defn active-assignment? [agents assignment-id]
   (boolean (some #(and (= assignment-id (:task-id %)) (active-agent? %)) agents)))
 
@@ -963,9 +964,10 @@
    (when-not (str/blank? (:review-file assignment))
      [(fs/path (:review-file assignment))])
    [(fs/path root ".squad" "assignments" (:assignment-id assignment) "review.md")
+    (fs/path root "reviews" (str (:assignment-id assignment) ".md"))
     (fs/path root ".squad" "reviews" (str (:assignment-id assignment) ".md"))]
+   (map #(fs/path root %) (artifact-paths assignment "reviews/" ".md"))
    (map #(fs/path root %) (artifact-paths assignment ".squad/reviews/" ".md"))))
-
 (defn review-decision [root assignment]
   (or (:review-decision assignment)
       (when (= "review_accepted" (:state assignment)) "accepted")

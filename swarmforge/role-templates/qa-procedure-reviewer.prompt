@@ -24,7 +24,7 @@ Read and obey `swarmforge/role-templates/qa-procedure-reviewer.contract.edn`.
 
 ## Handoff
 
-- Write review comments as a durable markdown artifact under `.squad/reviews/`.
+- Write review comments as a durable markdown artifact under `reviews/`.
 - Commit the review artifact.
 - Use `squad_review.sh <assignment-id> <accepted|changes-requested> <review-file>` to send the decision.
 - Send a review handoff to `squad-leader` with the decision and comments.

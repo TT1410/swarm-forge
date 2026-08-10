@@ -7,4 +7,4 @@
  :may-run-broad-tests false
  :writes ["qa-procedures"]
  :artifact-roots ["qa/"]
- :forbidden-artifact-roots ["stories/" "features/" "src/" "test/" ".squad/reviews/"]}
+ :forbidden-artifact-roots ["stories/" "features/" "src/" "test/" "reviews/"]}

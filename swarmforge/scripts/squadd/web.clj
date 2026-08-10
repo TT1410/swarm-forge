@@ -32,7 +32,7 @@
     th { background: #f0f0ea; color: #3b413d; }
     textarea { width: 100%; min-height: 90px; resize: vertical; box-sizing: border-box; border: 1px solid #c6cbc5; padding: 8px; font: inherit; }
     button { border: 1px solid #9aa59e; background: #fff; color: #202124; padding: 5px 9px; border-radius: 6px; cursor: pointer; }
-    button:active { background: #202124; color: #fff; transform: translateY(1px); }
+    button:active, button.pressed { background: #202124; color: #fff; transform: translateY(1px); }
     button + button { margin-left: 6px; }
     .muted { color: #68726c; }
     .pill { display: inline-block; padding: 2px 6px; border-radius: 999px; background: #e8eee9; }
@@ -60,6 +60,8 @@
     const assignmentsPanel = document.getElementById('assignments');
     const slDraftKey = 'swarmforge.slMessageDraft';
     let slDraft = localStorage.getItem(slDraftKey) || '';
+    // Survives 2s polling rebuilds so mousedown → refresh → mouseup still completes approve/reject.
+    let pressedApproval = null; // {id, action}
     const esc = value => String(value ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
     async function post(path, body = null, contentType = null, refresh = true) {
       const options = { method: 'POST' };
@@ -86,14 +88,48 @@
     function artifactLink(kind, id, label) {
       return `<a target=\"_blank\" href=\"/artifact/${encodeURIComponent(kind)}/${encodeURIComponent(id)}\">${esc(label)}</a>`;
     }
+    function approvalButton(id, action, label) {
+      const pressed = pressedApproval && pressedApproval.id === id && pressedApproval.action === action;
+      const cls = pressed ? ' class=\"pressed\"' : '';
+      return `<button type=\"button\" data-approval-id=\"${esc(id)}\" data-approval-action=\"${action}\"${cls}` +
+        ` onpointerdown=\"window.__sfPressApproval(event,'${esc(id)}','${action}')\"` +
+        ` onpointerup=\"window.__sfReleaseApproval(event,'${esc(id)}','${action}')\"` +
+        ` onpointerleave=\"window.__sfCancelApproval(event,'${esc(id)}','${action}')\"` +
+        ` onpointercancel=\"window.__sfCancelApproval(event,'${esc(id)}','${action}')\">${label}</button>`;
+    }
+    window.__sfPressApproval = (event, id, action) => {
+      event.preventDefault();
+      pressedApproval = {id, action};
+      const btn = event.currentTarget;
+      if (btn) btn.classList.add('pressed');
+    };
+    window.__sfCancelApproval = (event, id, action) => {
+      if (pressedApproval && pressedApproval.id === id && pressedApproval.action === action) {
+        pressedApproval = null;
+      }
+      const btn = event.currentTarget;
+      if (btn) btn.classList.remove('pressed');
+    };
+    window.__sfReleaseApproval = async (event, id, action) => {
+      const match = pressedApproval && pressedApproval.id === id && pressedApproval.action === action;
+      pressedApproval = null;
+      const btn = event.currentTarget;
+      if (btn) btn.classList.remove('pressed');
+      if (!match) return;
+      try {
+        await post('/api/approvals/' + encodeURIComponent(id) + '/' + action);
+      } catch (err) {
+        error.textContent = err.message;
+      }
+    };
     function approvals(items) {
       if (!items.length) return '<p class=\"muted\">No pending approvals.</p>';
       return table(['Approval', 'Target', 'Gate', 'Reason', 'Actions'], items.map(a => row([
         esc(a.approval_id),
         artifactLink(artifactKindForApproval(a), a.target_id, a.target_kind + ' ' + a.target_id),
         esc(a.gate), esc(a.reason),
-        `<button onclick=\"post('/api/approvals/${encodeURIComponent(a.approval_id)}/approve')\">Approve</button>` +
-        `<button onclick=\"post('/api/approvals/${encodeURIComponent(a.approval_id)}/reject')\">Reject</button>`
+        approvalButton(a.approval_id, 'approve', 'Approve') +
+        approvalButton(a.approval_id, 'reject', 'Reject')
       ])));
     }
     function blockers(items) {
@@ -230,21 +266,58 @@
          (zero? (:exit send-return))
          (zero? (:exit send-second-return)))))
 
-(defn strip-input-region [text]
+(defn codex-input-line? [line]
+  (str/starts-with? line "› "))
+
+(defn grok-footer-line? [line]
+  (or (re-find #"│\s*❯" line)
+      (re-find #"^\s*❯\s" line)
+      (str/starts-with? (str/trim line) "Grok ")
+      (str/includes? line "Shift+Tab:mode")
+      (str/includes? line "Ctrl+x:shortcuts")
+      (re-find #"^\s*┌─" line)
+      (re-find #"^\s*└─" line)
+      (re-find #"^\s*│" line)))
+
+(defn strip-codex-input-region [text]
   (let [lines (vec (str/split-lines (or text "")))
         input-index (last (keep-indexed (fn [idx line]
-                                          (when (str/starts-with? line "› ")
-                                            idx))
+                                          (when (codex-input-line? line) idx))
                                         lines))
-        kept (if input-index
-               (subvec lines 0 input-index)
-               lines)]
-    (str (str/join "\n" kept)
-         (when (seq kept) "\n"))))
+        kept (if input-index (subvec lines 0 input-index) lines)]
+    (str (str/join "\n" kept) (when (seq kept) "\n"))))
 
-(defn capture-pane-tail [socket session]
-  (strip-input-region
-   (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-200"))))
+(defn strip-grok-input-region [text]
+  (let [lines (vec (str/split-lines (or text "")))
+        ;; Drop trailing footer/prompt chrome; stop at first non-footer from the end.
+        cut (loop [i (dec (count lines))]
+              (cond
+                (neg? i) 0
+                (or (str/blank? (nth lines i))
+                    (grok-footer-line? (nth lines i)))
+                (recur (dec i))
+                :else (inc i)))
+        kept (subvec lines 0 cut)]
+    (str (str/join "\n" kept) (when (seq kept) "\n"))))
+
+(defn strip-input-region
+  ([text] (strip-input-region text nil))
+  ([text backend]
+   (case (some-> backend str/lower-case)
+     ("codex" "chatgpt") (strip-codex-input-region text)
+     ("grok" "xai") (strip-grok-input-region text)
+     ;; Unknown: try codex then grok markers conservatively.
+     (let [codex (strip-codex-input-region text)]
+       (if (not= codex text)
+         codex
+         (strip-grok-input-region text))))))
+
+(defn capture-pane-tail
+  ([socket session] (capture-pane-tail socket session nil))
+  ([socket session backend]
+   (strip-input-region
+    (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-200"))
+    backend)))
 
 (defn parse-kv-file [file]
   (into {}
@@ -636,9 +709,11 @@
 (defn agent-pane-content [root agent-id]
   (let [metadata (fs/path root ".squad" "agents" agent-id "metadata")
         session (read-value metadata "session")
+        backend (or (read-value metadata "backend")
+                    (read-value metadata "agent"))
         socket (socket-value root)]
     (or (not-empty (when (and socket (not (str/blank? session)))
-                     (capture-pane-tail socket session)))
+                     (capture-pane-tail socket session backend)))
         (tail-section (fs/path root ".squad" "agents" agent-id "liveness"))
         "")))
 
@@ -648,18 +723,22 @@
        "<title>Agent " (html-escape agent-id) "</title>"
        "<style>:root{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color-scheme:light dark}"
        "body{margin:0;background:#111;color:#f4f4f4}header{padding:10px 12px;border-bottom:1px solid #333}"
-       "h1{font:inherit;margin:0}pre{margin:0;padding:12px;white-space:pre-wrap;min-height:calc(100vh - 42px)}"
+       "h1{font:inherit;margin:0}pre{margin:0;padding:12px;white-space:pre-wrap;min-height:calc(100vh - 42px);overflow:auto}"
        "#new-output{position:fixed;right:12px;bottom:12px;background:#2f6f4e;color:white;border:0;border-radius:6px;padding:6px 10px;display:none}</style>"
        "</head><body><header><h1>" (html-escape agent-id) "</h1></header><pre id=\"pane\"></pre>"
-       "<button id=\"new-output\" onclick=\"window.scrollTo(0,document.body.scrollHeight);this.style.display='none'\">New output</button>"
-       "<script>const pane=document.getElementById('pane');async function refresh(){"
+       "<button id=\"new-output\" onclick=\"pane.scrollTop=pane.scrollHeight;this.style.display='none'\">New output</button>"
+       "<script>const pane=document.getElementById('pane');let stickBottom=true;"
+       "pane.addEventListener('scroll',()=>{const dist=pane.scrollHeight-pane.scrollTop-pane.clientHeight;"
+       "stickBottom=dist<=24;});"
+       "async function refresh(){"
        "const marker=document.getElementById('new-output');"
-       "const nearBottom=(window.innerHeight+window.scrollY)>=(document.body.scrollHeight-24);"
+       "const prevTop=pane.scrollTop;const prevHeight=pane.scrollHeight;"
        "const r=await fetch('/api/agents/" (html-escape agent-id) "/pane',{cache:'no-store'});"
-       "const text=await r.text();if(text.length>0&&text!==pane.textContent){pane.textContent=text;"
-       "if(nearBottom){window.scrollTo(0,document.body.scrollHeight);marker.style.display='none'}else{marker.style.display='block'}}}"
+       "const text=await r.text();if(text.length>0&&text!==pane.textContent){"
+       "pane.textContent=text;"
+       "if(stickBottom){pane.scrollTop=pane.scrollHeight;marker.style.display='none'}"
+       "else{pane.scrollTop=prevTop;marker.style.display='block'}}}"
        "refresh();setInterval(refresh,1000);</script></body></html>"))
-
 (defn agent-pane-response [root path]
   (let [[_ encoded-id] (re-matches #"/api/agents/([^/]+)/pane" path)
         agent-id (url-decode encoded-id)]

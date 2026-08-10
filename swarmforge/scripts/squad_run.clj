@@ -48,13 +48,14 @@
                                 command))]
       (if (zero? (:exit result))
         (event! "running" (str phase " passed: " detail))
-        (event! (if expected-failure? "running" "failed")
+        ;; Keep capacity-counted lifecycle: tool failures are progress detail, not
+        ;; a slot-freeing terminal failure. Use blocked only for durable stops.
+        (event! (if expected-failure? "running" "running")
                 (str phase
                      (if expected-failure? " expected failure: " " failed: ")
                      detail
                      " exit "
                      (:exit result))))
       (System/exit (:exit result)))))
-
 (when (= *file* (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))

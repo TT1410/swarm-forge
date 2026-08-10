@@ -91,8 +91,7 @@
     (concat row-numbers worktree-numbers agent-numbers)))
 
 (def active-agent-states
-  #{"starting" "running"})
-
+  #{"starting" "running" "failed" "blocked" "handoff_ready" "handoff_sent"})
 (defn read-value [file field]
   (when (fs/exists? file)
     (let [prefix (str field ": ")]
@@ -129,13 +128,12 @@
         state (read-value (fs/path root ".squad" "agents" role "status") "state")]
     (and (not= "squad-leader" role)
          (not= "merger" (role-template root role))
-         (not (contains? #{"retired" "failed"} state))
+         (not= "retired" state)
          (if (skip-tmux-capacity?)
            (contains? active-agent-states state)
            (tmux-session-exists? socket session))
          (not (and (= "handoff_sent" state)
                    (contains? (visible-handoff-agents root) role))))))
-
 (defn active-transient-count [root rows]
   (count
    (let [socket (tmux-socket root)]

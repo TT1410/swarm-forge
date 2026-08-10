@@ -6,5 +6,5 @@
  :may-talk-to-user false
  :may-run-broad-tests false
  :writes ["review-report"]
- :artifact-roots [".squad/reviews/"]
+ :artifact-roots ["reviews/"]
  :forbidden-artifact-roots ["stories/" "features/" "qa/" "src/" "test/"]}

@@ -5,7 +5,7 @@
  :may-spawn false
  :may-talk-to-user false
  :writes ["architecture-critique"]
- :artifact-roots [".squad/reviews/"]
+ :artifact-roots ["reviews/"]
  :forbidden-artifact-roots ["stories/" "features/" "qa/" "src/" "test/"]
  :singleton true
  :batch-kind "architecture"}
