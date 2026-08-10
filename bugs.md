@@ -13,7 +13,6 @@ Open bugs:
 | # | Title |
 |---|--------|
 | 3 | Reviewer handoffs use ambiguous free-form decisions |
-| 9 | Chained merger assignments can remain merge-blocked indefinitely |
 | 10 | Agents self-retire before workflow resolution |
 | 11 | Concurrent retirements hit registry lock contention |
 | 12 | Swarm teardown leaks worktrees and stale agent state |
@@ -78,47 +77,6 @@ Architecture notes:
   reliably from agents.
 - Root cause for several stalls: no packet review → wrong stage → wrong spawn or
   `wait`. Do not make the prose parser smarter.
-
-## Merge Recovery
-
-### Bug 9: Chained Merger Assignments Can Remain Merge-Blocked Indefinitely
-
-Merge recovery produced a chain of merger assignments, and the chain still had
-blocked/in-progress state at teardown.
-
-Observed behavior:
-
-1. Story 3 implementation merge was blocked:
-   `hunt-the-wumpus-003-movement-hazards-and-wumpus-wake-implementation`
-   had `state: merge_blocked`.
-2. The first merger assignment,
-   `hunt-the-wumpus-003-movement-hazards-and-wumpus-wake-implementation-merge`,
-   also ended `merge_blocked`.
-3. The second merger assignment,
-   `...-implementation-merge-merge`, also ended `merge_blocked`.
-4. A third merger assignment,
-   `...-implementation-merge-merge-merge`, remained `in_progress` at teardown,
-   despite its agent status later being stale/retired after the swarm was
-   killed.
-
-Expected behavior:
-
-The merger workflow should have a bounded, explicit recovery policy. If a merger
-handoff still cannot be merged, the workflow should either create the next
-merger with clear lineage and preserve required worktrees, or declare a
-dashboard-visible blocker after a configured limit. It should not leave an
-ambiguous chain of blocked merger assignments and stale in-progress state.
-
-Architecture notes:
-
-- Any `merge_blocked` assignment gets a merger whose id is
-  `assignment-id + "-merge"`. When the merger itself is blocked, the rule applies
-  again → unbounded suffix growth. No max depth, no terminal human blocker.
-- Recovery is modeled as another assignment, consistent with the rest of the
-  system, but merger failure needs an explicit policy: depth limit, preserve
-  worktree, surface a dashboard blocker, stop inventing new agents.
-- `existing-merger-assignment` only looks for a prefix match and does not cap the
-  chain.
 
 ## Agent Lifecycle And Cleanup
 

@@ -1566,6 +1566,11 @@
             assignment))
         assignments))
 
+(defn merge-suffix-depth
+  "How many -merge segments are already in the assignment id lineage."
+  [assignment-id]
+  (count (re-seq #"-merge" (str assignment-id))))
+
 (defn merger-spawn-candidate [root agents existing]
   (when (and (assignment-created? (:state existing))
              (not (active-assignment? agents (:assignment-id existing))))
@@ -1592,13 +1597,35 @@
    :command (str "squad_assign.sh create-merger " blocked-assignment-id " "
                  merger-id " --auto-instructions --queue-spawn")})
 
-(defn merger-candidate [root assignments agents {:keys [assignment-id theme-id story-id]}]
-  (let [base (str assignment-id "-merge")
-        existing (existing-merger-assignment assignments base)]
-    (if existing
-      (when-not (active-assignment? agents (:assignment-id existing))
-        (merger-spawn-candidate root agents existing))
-      (merger-create-candidate theme-id assignment-id story-id (next-id-with-base assignments base)))))
+(defn merger-limit-blocker-candidate [root {:keys [assignment-id theme-id story-id]} max-depth]
+  (let [reason-path (str ".squad/assignments/" assignment-id "/merge-limit.md")
+        reason (str "Merge recovery exceeded max_merger_depth (" max-depth "). "
+                    "Manual resolution required for assignment " assignment-id ".\n")]
+    {:priority 40
+     :stage-order 5
+     :next-action "declare_merge_blocker"
+     :theme-id theme-id
+     :story-id story-id
+     :template "merger"
+     :assignment-id assignment-id
+     :reason (str "merge recovery exceeded max_merger_depth " max-depth)
+     :command (str "printf '%s' " (pr-str reason) " > " reason-path
+                   " && squad_assign.sh block " assignment-id " " reason-path)}))
+
+(defn merger-candidate [root assignments agents {:keys [assignment-id theme-id story-id] :as assignment}]
+  (let [depth (merge-suffix-depth assignment-id)
+        max-depth (cfg/squad-max-merger-depth root)]
+    (if (>= depth max-depth)
+      (when-not (or (= "blocked" (:state assignment))
+                    (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "blocker")))
+        (merger-limit-blocker-candidate root assignment max-depth))
+      (let [base (str assignment-id "-merge")
+            existing (existing-merger-assignment assignments base)]
+        (if existing
+          (when-not (active-assignment? agents (:assignment-id existing))
+            (merger-spawn-candidate root agents existing))
+          (merger-create-candidate theme-id assignment-id story-id
+                                   (next-id-with-base assignments base)))))))
 
 (defn merger-candidates [root rows]
   (let [assignments (assignment-records root)
@@ -1668,7 +1695,8 @@
     "record_review_result"
     "record_post_revision_review_acceptance"
     "record_auto_approval"
-    "record_batch_membership"})
+    "record_batch_membership"
+    "declare_merge_blocker"})
 
 (defn mechanical-action? [candidate]
   (contains? mechanical-actions (:next-action candidate)))

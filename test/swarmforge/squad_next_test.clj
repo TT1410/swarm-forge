@@ -1046,6 +1046,71 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-stops-merger-chain-at-max-depth-with-blocker
+  ;; Given a merge-blocked lineage already at max_merger_depth
+  ;; When squad_next runs
+  ;; Then it declares a merge blocker instead of creating another -merge
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_merger_depth 2\n")
+      (doseq [[id template merge-for]
+              [["cave-impl" "implementer" nil]
+               ["cave-impl-merge" "merger" "cave-impl"]
+               ["cave-impl-merge-merge" "merger" "cave-impl-merge"]]]
+        (write-file (fs/path root ".squad/assignments" id "metadata")
+                    (str "assignment_id: " id "\n"
+                         "theme_id: wumpus\n"
+                         "story_id: cave-topology\n"
+                         "template: " template "\n"
+                         (when merge-for (str "merge_for: " merge-for "\n"))
+                         "assignment_file: " root "/instructions.md\n"))
+        (write-file (fs/path root ".squad/assignments" id "status")
+                    (str "assignment_id: " id "\n"
+                         "state: merge_blocked\n"
+                         "detail: merge failed\n")))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "declare_merge_blocker"))
+        (is (str/includes? (:out next) "ASSIGNMENT: cave-impl-merge-merge"))
+        (is (str/includes? (:out next) "max_merger_depth"))
+        (is (not (str/includes? (:out next) "cave-impl-merge-merge-merge"))))
+      (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            status (slurp (str (fs/path root ".squad/assignments/cave-impl-merge-merge/status")))
+            blocker (slurp (str (fs/path root ".squad/assignments/cave-impl-merge-merge/blocker.md")))]
+        (is (str/includes? applied "declare_merge_blocker"))
+        (is (str/includes? status "state: blocked"))
+        (is (str/includes? blocker "max_merger_depth"))
+        (is (fs/exists? (fs/path root ".squad/assignments/cave-impl-merge-merge/blocker"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-allows-second-merger-below-max-depth
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_merger_depth 2\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  (str "assignment_id: cave-impl\ntheme_id: wumpus\nstory_id: cave-topology\n"
+                       "template: implementer\nassignment_file: " root "/i.md\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  "state: merge_blocked\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge/metadata")
+                  (str "assignment_id: cave-impl-merge\ntheme_id: wumpus\nstory_id: cave-topology\n"
+                       "template: merger\nmerge_for: cave-impl\nassignment_file: " root "/m.md\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge/status")
+                  "state: merge_blocked\n")
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "create-merger cave-impl-merge cave-impl-merge-merge"))
+        (is (not (str/includes? (:out next) "declare_merge_blocker"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-routes-merge-blocked-assignment-to-merger-when-capacity-full
   (let [root (tmp-dir)]
     (try
