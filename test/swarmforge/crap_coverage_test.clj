@@ -1153,11 +1153,19 @@
   (is (= [2 5] (simulator/parse-int-range! "Ticks" "2..5")))
   (is (= 7 (simulator/range-end "Ticks" 2 "7")))
   (let [rows [["squad-leader" "master" "/tmp" "session" "Squad Leader" "claude" "task"]]]
-    (with-redefs [config/squad-transient-agent-config (constantly "leader")]
-      (is (= "claude" (spawn/configured-transient-agent (tmp-dir) rows))))
-    (with-redefs [config/squad-transient-agent-config (constantly "codex")]
+    (with-redefs [config/squad-transient-agent-config (constantly "leader")
+                  config/squad-transient-agent-for-template (fn [_ template]
+                                                              (if (= "implementer" template)
+                                                                "codex"
+                                                                "leader"))]
+      (is (= "claude" (spawn/configured-transient-agent (tmp-dir) rows)))
+      (is (= "codex" (spawn/configured-transient-agent (tmp-dir) rows "implementer")))
+      (is (= "claude" (spawn/configured-transient-agent (tmp-dir) rows "analyst"))))
+    (with-redefs [config/squad-transient-agent-config (constantly "codex")
+                  config/squad-transient-agent-for-template (constantly "codex")]
       (is (= "codex" (spawn/configured-transient-agent (tmp-dir) rows))))
-    (with-redefs [config/squad-transient-agent-config (constantly "")]
+    (with-redefs [config/squad-transient-agent-config (constantly "")
+                  config/squad-transient-agent-for-template (constantly "")]
       (is (nil? (spawn/configured-transient-agent (tmp-dir) rows)))))
   (is (= :gone (squadd/wait-session-gone-step "sock" "session" 20)))
   (with-redefs [squadd/tmux-session-exists? (constantly true)]

@@ -376,6 +376,50 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-spawn-honors-per-template-transient-agent-backend
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/constitution.prompt") "Read articles.\n")
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window squad-leader codex master task\n")
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "transient_agent claude\n"
+                       "transient_agent implementer codex\n"
+                       "transient_agent code-reviewer grok\n"))
+      (write-file (fs/path root "swarmforge/roles/squad-leader.prompt") "leader\n")
+      (write-file (fs/path root "swarmforge/role-templates/implementer.prompt") "implement\n")
+      (write-file (fs/path root "swarmforge/role-templates/code-reviewer.prompt") "review\n")
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt") "analyze\n")
+      (write-file (fs/path root "impl.md") "Implement story.\n")
+      (write-file (fs/path root "review.md") "Review code.\n")
+      (write-file (fs/path root "analysis.md") "Analyze theme.\n")
+      (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
+      (run {:dir root :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+           (script "squad_spawn.sh") "implementer" "story-impl" "impl.md")
+      (run {:dir root :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+           (script "squad_spawn.sh") "code-reviewer" "story-review" "review.md")
+      (run {:dir root :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+           (script "squad_spawn.sh") "analyst" "theme-analysis" "analysis.md")
+      (let [roles (str/split-lines (slurp (str (fs/path root ".swarmforge/roles.tsv"))))
+            by-role (into {}
+                          (map (fn [line]
+                                 (let [f (str/split line #"\t" -1)]
+                                   [(first f) (nth f 5)]))
+                               (rest roles)))]
+        (is (= "codex" (get by-role "implementer-001")))
+        (is (= "grok" (get by-role "code-reviewer-001")))
+        (is (= "claude" (get by-role "analyst-001"))
+            "templates without override use global transient_agent default")
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/implementer-001/metadata")))
+                           "backend: codex"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/code-reviewer-001/metadata")))
+                           "backend: grok"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/analyst-001/metadata")))
+                           "backend: claude")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-spawn-enforces-transient-slot-limit
   (let [root (tmp-dir)]
     (try

@@ -156,18 +156,26 @@
             (nth row 5 nil)))
         rows))
 
-(defn configured-transient-agent [root rows]
-  (let [configured (cfg/squad-transient-agent-config root)]
-    (cond
-      (str/blank? configured) nil
-      (#{"leader" "squad-leader"} configured) (leader-agent rows)
-      :else configured)))
+(defn configured-transient-agent
+  ([root rows]
+   (configured-transient-agent root rows nil))
+  ([root rows template]
+   (let [configured (if (str/blank? template)
+                      (cfg/squad-transient-agent-config root)
+                      (cfg/squad-transient-agent-for-template root template))]
+     (cond
+       (str/blank? configured) nil
+       (#{"leader" "squad-leader"} configured) (leader-agent rows)
+       :else configured))))
 
-(defn transient-agent [root rows]
-  (or (not-empty (System/getenv "SWARMFORGE_SQUAD_AGENT"))
-      (configured-transient-agent root rows)
-      (leader-agent rows)
-      "codex"))
+(defn transient-agent
+  ([root rows]
+   (transient-agent root rows nil))
+  ([root rows template]
+   (or (not-empty (System/getenv "SWARMFORGE_SQUAD_AGENT"))
+       (configured-transient-agent root rows template)
+       (leader-agent rows)
+       "codex")))
 
 (defn active-template-count [root rows template]
   (count
@@ -460,7 +468,7 @@
 (defn spawn-context [root rows template task-id assignment template-file]
   (let [agent-id (next-agent-id root rows template)
         worktree (fs/path root ".worktrees" agent-id)
-        agent (transient-agent root rows)
+        agent (transient-agent root rows template)
         squad-dir (fs/path root ".squad")
         agent-dir (fs/path squad-dir "agents" agent-id)]
     {:root root

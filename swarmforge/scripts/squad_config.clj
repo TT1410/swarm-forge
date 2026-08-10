@@ -118,8 +118,35 @@
         default (default-approval-required gate gate-key)]
     (parse-config-bool (approval-required-config root gate-key) default)))
 
-(defn squad-transient-agent-config [root]
-  (squad-config-value root "transient_agent"))
+(def valid-transient-agent-backends
+  #{"codex" "claude" "copilot" "grok" "squad-leader" "leader"})
+
+(defn- transient-agent-lines [root]
+  (squad-config-entries root "transient_agent"))
+
+(defn squad-transient-agent-default
+  "Global default backend from a one-token `transient_agent <backend>` line."
+  [root]
+  (some (fn [parts]
+          (when (= 1 (count parts))
+            (first parts)))
+        (transient-agent-lines root)))
+
+(defn squad-transient-agent-for-template
+  "Per-template override from `transient_agent <template> <backend>`, else default."
+  [root template]
+  (or (when-not (str/blank? template)
+        (some (fn [parts]
+                (when (and (= 2 (count parts))
+                           (= template (first parts)))
+                  (second parts)))
+              (transient-agent-lines root)))
+      (squad-transient-agent-default root)))
+
+(defn squad-transient-agent-config
+  "Backward-compatible global default (first bare `transient_agent <backend>`)."
+  [root]
+  (squad-transient-agent-default root))
 
 (defn squad-max-transient-agents [root]
   (if (System/getenv "SWARMFORGE_SQUAD_MAX_AGENTS")

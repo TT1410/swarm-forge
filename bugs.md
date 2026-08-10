@@ -13,7 +13,6 @@ Open bugs:
 | # | Title |
 |---|--------|
 | 3 | Reviewer handoffs use ambiguous free-form decisions |
-| 13 | No per-worker agent-tool configuration for squad transients |
 
 ## Review Result Contract
 
@@ -75,37 +74,3 @@ Architecture notes:
 - Root cause for several stalls: no packet review → wrong stage → wrong spawn or
   `wait`. Do not make the prose parser smarter.
 
-## Worker Backend Configuration
-
-### Bug 13: No Per-Worker Agent-Tool Configuration For Squad Transients
-
-Operators should be able to choose which agent CLI each worker role uses
-(e.g. `grok`, `codex`, `claude`), the way six-pack does for persistent roles.
-Squad currently lacks an analogous per-worker configuration.
-
-Observed behavior:
-
-1. Six-pack configures the agent tool per role on each `window` line in
-   `swarmforge.conf` (`window <role> <agent> <worktree> ...`), so specifier,
-   coder, cleaner, etc. can each run on a chosen backend.
-2. Squad has only a single global `transient_agent` setting in `squad.conf`
-   (default/inherit from squad-leader), applied to all spawned workers.
-3. There is no way to say, for example, implementers use `codex`, reviewers use
-   `claude`, and hardener uses `grok`.
-
-Expected behavior:
-
-Squad should provide a configuration mechanism analogous to six-pack’s per-role
-agent column so each worker template (or named worker role) can specify its
-agent tool. Spawn should honor that choice when launching transient agents.
-A global default (today’s `transient_agent`) may remain as fallback when a
-template does not set an override.
-
-Architecture notes:
-
-- Persistent packs: `swarmforge.conf` `window` lines bind role → agent binary.
-- Squad transients: `squad_spawn` / `squad_config` read one
-  `transient_agent` value and use it for every template.
-- Natural fit: per-template keys in `squad.conf` (e.g.
-  `transient_agent implementer codex`) or a small table next to
-  `max_active_template`, resolved at spawn time with global default fallback.
