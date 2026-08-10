@@ -13,7 +13,6 @@ Open bugs:
 | # | Title |
 |---|--------|
 | 3 | Reviewer handoffs use ambiguous free-form decisions |
-| 7 | Code review loop spawns unbounded repeat reviewers |
 | 8 | Batch records remain open after batch assignments merge |
 | 9 | Chained merger assignments can remain merge-blocked indefinitely |
 | 10 | Agents self-retire before workflow resolution |
@@ -80,51 +79,6 @@ Architecture notes:
   reliably from agents.
 - Root cause for several stalls: no packet review → wrong stage → wrong spawn or
   `wait`. Do not make the prose parser smarter.
-
-## Review Loop Control
-
-### Bug 7: Code Review Loop Spawns Unbounded Repeat Reviewers
-
-The workflow created dozens of repeated code-review assignments for the same
-stories instead of stopping after one review cycle or routing the review result
-to the correct next actor.
-
-Observed behavior:
-
-1. Assignment records showed 84 merged `code-reviewer` assignments and two more
-   `code-reviewer` assignments still `in_progress` at teardown.
-2. Story 2 had code review assignments from
-   `hunt-the-wumpus-002-text-start-and-turn-ui-code-review` through at least
-   `hunt-the-wumpus-002-text-start-and-turn-ui-code-review-r43`.
-3. Story 5 had code review assignments from
-   `hunt-the-wumpus-005-end-state-and-replay-code-review` through at least
-   `hunt-the-wumpus-005-end-state-and-replay-code-review-r42`.
-4. The daemon log shows repeated code-reviewer spawn completions and handoff
-   deliveries from about 15:28 through 17:57.
-5. Representative later review reports still said `Recommendation: revise`,
-   showing the workflow was repeating review rather than routing the
-   changes-requested result back to implementation/cleanup once.
-
-Expected behavior:
-
-Reviewed artifacts should follow the one-review-cycle rule. A code review should
-produce a deterministic `accepted` or `changes-requested` result. If accepted,
-the workflow should advance. If changes are requested, the workflow should route
-back to the author path (`implementer -> cleaner -> code-reviewer`) without
-spawning repeated reviewers for the same unchanged artifact. There should be an
-explicit invariant preventing unbounded `*-code-review-rN` creation.
-
-Architecture notes:
-
-- `one-cycle-review-kinds` covers only Gherkin and QA procedure, not code review.
-  Earlier bug-fix work left code review explicit and separate.
-- Code-review eligibility is roughly “has `cleaner_sha`, no `code_review` field.”
-  `next-assignment-id` invents `-r2`, `-r3`, … forever. Merged reviewers are
-  terminal, so `assignment-for` does not block a new one.
-- Combined with unparsed “revise” prose, the packet never gets `code_review`, so
-  the FSM keeps creating reviewers. Not primarily a spawn bug: missing invariant
-  (no second reviewer for the same target SHA; after `changes-requested`, route
-  to implementer/cleaner once; record decision deterministically).
 
 ## Batch Workflow
 

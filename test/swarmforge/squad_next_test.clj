@@ -938,7 +938,84 @@
           (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
           (is (str/includes? (:out next) "TEMPLATE: implementer"))
           (is (str/includes? (:out next) "code review requested implementation changes"))
-          (is (not (str/includes? (:out next) "TEMPLATE: hardener")))))
+          (is (not (str/includes? (:out next) "TEMPLATE: hardener")))
+          (is (not (str/includes? (:out next) "TEMPLATE: code-reviewer")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-does-not-spawn-repeat-code-reviewer-for-same-cleaner
+  ;; Given cleaner_sha and a merged code-reviewer whose decision was never recorded
+  ;; When squad_next runs
+  ;; Then it must not create code-review-r2; at most one reviewer per cleaner version
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "implementation_sha: abcdef1111\n"
+                       "cleaner_sha: abcdef1111\n"
+                       "cleaner_assignment: alpha-cleaner\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-cleaner/metadata")
+                  "assignment_id: alpha-cleaner\ntheme_id: wumpus\nstory_id: alpha\ntemplate: cleaner\n")
+      (write-file (fs/path root ".squad/assignments/alpha-cleaner/status") "state: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/metadata")
+                  "assignment_id: alpha-code-review\ntheme_id: wumpus\nstory_id: alpha\ntemplate: code-reviewer\n")
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/status") "state: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/accepted-merge")
+                  "merge_commit: abcdef9999\ncommit: abcdef9999\n")
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/review.md")
+                  "Recommendation: revise\n")
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (not (str/includes? (:out next) "alpha-code-review-r2")))
+        (is (not (str/includes? (:out next) "TEMPLATE: code-reviewer"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-creates-code-reviewer-after-new-cleaner-version
+  ;; After a re-clean (second cleaner), allow exactly one new code-reviewer
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "implementation_sha: abcdef2222\n"
+                       "cleaner_sha: abcdef2222\n"
+                       "cleaner_assignment: alpha-cleaner-r2\n"))
+      (doseq [id ["alpha-cleaner" "alpha-cleaner-r2"]]
+        (write-file (fs/path root ".squad/assignments" id "metadata")
+                    (str "assignment_id: " id "\ntheme_id: wumpus\nstory_id: alpha\ntemplate: cleaner\n"))
+        (write-file (fs/path root ".squad/assignments" id "status") "state: merged\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/metadata")
+                  "assignment_id: alpha-code-review\ntheme_id: wumpus\nstory_id: alpha\ntemplate: code-reviewer\n")
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/status") "state: merged\n")
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "TEMPLATE: code-reviewer"))
+        (is (str/includes? (:out next) "ASSIGNMENT: alpha-code-review-r2"))
+        (is (not (str/includes? (:out next) "alpha-code-review-r3"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-creates-first-code-reviewer-for-cleaned-story
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "implementation_sha: abcdef1111\n"
+                       "cleaner_sha: abcdef1111\n"))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "TEMPLATE: code-reviewer"))
+        (is (str/includes? (:out next) "ASSIGNMENT: alpha-code-review"))
+        (is (str/includes? (:out next) "--queue-spawn")))
       (finally
         (fs/delete-tree root)))))
 

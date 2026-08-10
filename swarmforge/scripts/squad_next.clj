@@ -484,6 +484,35 @@
                                      (next-assignment-id assignments story-id assignment-suffix)
                                      reason priority stage-order nil)))))
 
+(defn cleaner-version-count [assignments packet story-id]
+  (let [n (assignment-count-for assignments story-id "cleaner")]
+    (if (and (zero? n) (field-present? packet "cleaner_sha"))
+      1
+      n)))
+
+(defn code-review-create-allowed?
+  "At most one code-reviewer assignment per cleaner version. Stops unbounded
+  *-code-review-rN when a review result was never recorded on the packet."
+  [assignments packet story-id]
+  (let [reviewers (assignment-count-for assignments story-id "code-reviewer")
+        cleaners (cleaner-version-count assignments packet story-id)]
+    (< reviewers cleaners)))
+
+(defn code-review-assignment-candidate [root assignments agents packet]
+  (let [story-id (get packet "story_id" (get packet "_story_id"))
+        theme-id (get packet "theme_id")]
+    (when (and (field-present? packet "cleaner_sha")
+               (not (field-accepted? packet "code_review"))
+               (not (field-changes-requested? packet "code_review")))
+      (if-let [assignment (assignment-for assignments theme-id story-id "code-reviewer")]
+        (when (spawnable-assignment? root agents "code-reviewer" assignment)
+          (assignment-spawn-candidate assignment theme-id story-id "code-reviewer"
+                                      "cleaned story needs code review" 60 110))
+        (when (code-review-create-allowed? assignments packet story-id)
+          (assignment-create-candidate theme-id story-id "code-reviewer"
+                                       (next-assignment-id assignments story-id "code-review")
+                                       "cleaned story needs code review" 60 110 nil))))))
+
 (defn assignment-create-candidate [theme-id story-id template assignment-id reason priority stage-order requirement]
   {:priority priority
    :stage-order stage-order
@@ -1222,11 +1251,7 @@
 	    :priority 60
 	    :stage-order 110
     :candidate (fn [ctx packet]
-                 (when (and (field-present? packet "cleaner_sha")
-                            (not (field-present? packet "code_review")))
-	                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-	                                         "code-reviewer" "code-review"
-	                                         "cleaned story needs code review" 60 110 nil)))}
+                 (code-review-assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet))}
    {:id :code-review-approval
     :priority 30
     :stage-order 120
