@@ -295,19 +295,14 @@
                         (str root))
               roles (slurp (str (fs/path root ".swarmforge/roles.tsv")))
               daemon-log (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))]
-          (is (str/includes? (:out once) "SQUAD_STATUS_ALERT: agent analyst-001 reported retired"))
-          (is (not (fs/exists? (fs/path fake-state "killed"))))
-          (is (str/includes? roles "analyst-001\t"))
-          (is (fs/exists? worktree))
-          (is (git-worktree-registered? root worktree))
-          (is (git-branch-exists? root "swarmforge-analyst-001"))
-          (is (str/includes? daemon-log "agent-retired-awaiting-workflow analyst-001"))
-          (is (not (str/includes? daemon-log "retired-session-killed analyst-001")))
-          (is (not (str/includes? daemon-log "git-worktree-removed analyst-001")))
-          (is (not (str/includes? daemon-log "role-retired-reconciled analyst-001")))))
+          ;; Daemon-owned mechanical apply retires agents that already reported retired.
+          (is (str/includes? daemon-log "workflow-mechanical-applied"))
+          (is (not (str/includes? roles "analyst-001\t"))
+              "mechanical retire removes the role registration")
+          (is (str/includes? (slurp (str (fs/path root ".squad/agents/analyst-001/status")))
+                             "state: retired"))))
       (finally
         (fs/delete-tree root)))))
-
 (deftest squadd-preserves-failed-transients-for-recovery
   (let [root (tmp-dir)]
     (try

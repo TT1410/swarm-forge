@@ -236,12 +236,15 @@
 	                      "approval_required implementation false\n"
 	                      "recovery_quiet_seconds 5\n"
 	                      "recovery_retry_seconds 5\n"))
-    (write-file! (fs/path root "swarmforge" "role-templates" "merger.prompt")
-                 "Simulated merger role.\n")
+    (doseq [template ["analyst" "gherkin-writer" "qa-procedure-writer"
+                      "gherkin-reviewer" "qa-procedure-reviewer"
+                      "implementer" "cleaner" "code-reviewer"
+                      "hardener" "qa" "architect" "senior-implementor" "merger"]]
+      (write-file! (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
+                   (str "Simulated " template " role.\n")))
     (write-file! (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
 	    (run-script! root "squad_theme.sh" "create" "hunt-the-wumpus" "theme.md")
 	    root))
-
 (def default-story-specs
   [["cave-topology" "Story: cave topology and hazards.\n"]
    ["player-actions" "Story: player actions and turns.\n"]])
@@ -912,8 +915,16 @@
 
    "request_user_approval"
    (fn [ctx tick command-map]
-     (process-user-approval! (:root ctx) (:approval-due ctx) (get command-map "approval") tick))
-
+     (let [approval-id (get command-map "approval")
+           approval-due (:approval-due ctx)]
+       ;; Mechanical apply may create the request before the sim sees create_approval_request.
+       (when (and approval-id (not (contains? @approval-due approval-id)))
+         (let [latency (choose-int (:rng ctx) (:approval-ticks-range (:options ctx)))
+               due (+ tick latency)]
+           (swap! approval-due assoc approval-id due)
+           (println "APPROVAL_DUE_TICK:" (format "%03d" due)
+                    "(request already created by mechanical apply)")))
+       (process-user-approval! (:root ctx) approval-due approval-id tick)))
    "record_auto_approval"
    (fn [ctx _ command-map]
      (run-command! (:root ctx) (get command-map "command"))

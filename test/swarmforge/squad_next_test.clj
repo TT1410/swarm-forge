@@ -297,10 +297,12 @@
         (is (str/includes? (:out register) "CONCURRENT_STORY: alpha"))
         (is (str/includes? (:out register) "CONCURRENT_STORY: beta")))
       (let [applied (run {:dir root} (script "squad_next.sh") "--apply-mechanical")]
-        (is (str/includes? (:out applied) "APPLIED_TRANSITIONS: 2"))
         (is (str/includes? (:out applied) "APPLIED_TRANSITION: register_story_artifact story=alpha assignment=wumpus-analysis batch=none exit=0"))
         (is (str/includes? (:out applied) "APPLIED_TRANSITION: register_story_artifact story=beta assignment=wumpus-analysis batch=none exit=0"))
-        (is (str/includes? (:out applied) "NEXT_ACTION: create_approval_request")))
+        (is (str/includes? (:out applied) "APPLIED_TRANSITION: create_approval_request")
+            "approval requests are daemon-applied after registration")
+        (is (str/includes? (:out applied) "NEXT_ACTION: request_user_approval")
+            "user gate remains after approval requests are created"))
       (finally
         (fs/delete-tree root)))))
 
@@ -566,12 +568,10 @@
                        "merge_commit: abcdef1234\n"))
       (let [next (run {:dir root} (script "squad_next.sh") "--apply-mechanical")
             packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
-        (is (str/includes? (:out next) "APPLIED_TRANSITIONS: 1"))
         (is (str/includes? (:out next) "APPLIED_TRANSITION: record_merged_result story=alpha assignment=alpha-implementation batch=none exit=0"))
         (is (str/includes? packet "implementation_sha: abcdef1234")))
       (finally
         (fs/delete-tree root)))))
-
 (deftest squad-next-records-merged-review-result-from-durable-review
   (let [root (tmp-dir)]
     (try
@@ -1600,5 +1600,152 @@
         (is (or (str/includes? packet "state: qa_returned")
                 (str/includes? packet "state: qa_approved"))
             "stage advances once the batch QA result is on the packet"))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest apply-mechanical-creates-assignments-and-queues-spawns
+  ;; Given an approved story ready for gherkin and qa-procedure writers
+  ;; When squad_next --apply-mechanical runs
+  ;; Then create_assignment actions are applied (not left for the SL)
+  ;; And spawn requests are queued
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (doseq [template ["gherkin-writer" "qa-procedure-writer"]]
+        (write-file (fs/path root "swarmforge/role-templates" (str template ".prompt"))
+                    (str template " prompt\n")))
+      (write-file (fs/path root "theme.md") "Theme.\n")
+      (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "theme" "approved")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
+      (run {:dir root} "git" "add" "stories")
+      (run {:dir root} "git" "commit" "-q" "-m" "story")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "squad-leader" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved-by-user"))
+      (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
+        (is (str/includes? applied "APPLIED_TRANSITION: create_assignment")
+            "create_assignment is daemon-applied")
+        (is (str/includes? applied "exit=0")
+            "create_assignment succeeds when role templates exist")
+        (is (not (str/includes? applied "NEXT_ACTION: create_assignment"))
+            "SL is not asked to create assignments after mechanical apply")
+        (is (fs/exists? (fs/path root ".squad/assignments/alpha-gherkin"))
+            "gherkin assignment created")
+        (is (fs/exists? (fs/path root ".squad/assignments/alpha-qa-procedure"))
+            "qa-procedure assignment created")
+        (is (or (str/includes? applied "wait_for_spawn")
+                (fs/exists? (fs/path root ".squad/spawn-requests/new"))
+                (and (fs/directory? (fs/path root ".squad/spawn-requests"))
+                     (seq (filter #(str/ends-with? (fs/file-name %) ".request")
+                                  (mapcat #(when (fs/directory? %) (fs/list-dir %))
+                                          (fs/list-dir (fs/path root ".squad/spawn-requests")))))))
+            "spawn requests queued via --queue-spawn"))
+      (finally
+        (fs/delete-tree root)))))
+(deftest apply-mechanical-creates-approval-request-then-waits-for-user
+  ;; Given registered stories needing story approval
+  ;; When apply-mechanical runs
+  ;; Then create_approval_request is applied and next is request_user_approval
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "theme.md") "Theme.\n")
+      (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
+      (write-file (fs/path root "stories/beta.md") "Story: beta.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} "git" "add" "stories")
+      (run {:dir root} "git" "commit" "-q" "-m" "stories")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
+                    (str "assignment_id: wumpus-analysis\ntheme_id: wumpus\nstory_id: theme\n"
+                         "template: analyst\nassignment_file: " root "/a.md\n"))
+        (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                    "assignment_id: wumpus-analysis\nstate: merged\n")
+        (write-file (fs/path root ".squad/assignments/wumpus-analysis/result-manifest")
+                    (str "assignment_id: wumpus-analysis\nagent: analyst-001\ntemplate: analyst\n"
+                         "commit: " sha "\nartifacts: stories/beta.md,stories/alpha.md\n"))
+        (write-file (fs/path root ".squad/assignments/wumpus-analysis/accepted-merge")
+                    (str "assignment_id: wumpus-analysis\nstate: merged\ncommit: " sha
+                         "\nmerge_commit: " sha "\n")))
+      (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
+        (is (str/includes? applied "APPLIED_TRANSITION: register_story_artifact"))
+        (is (str/includes? applied "APPLIED_TRANSITION: create_approval_request")
+            "approval request creation is daemon-applied")
+        (is (str/includes? applied "NEXT_ACTION: request_user_approval")
+            "after creating requests, user gate remains for the human")
+        (is (fs/exists? (fs/path root ".squad/approvals/pending"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest apply-mechanical-does-not-finish-merge-blocked-handoff
+  ;; Given an in-process git handoff whose assignment is merge_blocked
+  ;; When squad_next runs (with or without apply-mechanical)
+  ;; Then it must not recommend finish_in_process_handoff
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "code-reviewer-001\tcode-reviewer-001\t" root "/.worktrees/cr\tswarmforge-cr\tCR\tcodex\ttask\n"))
+      (write-agent-status! root "code-reviewer-001" "handoff_sent")
+      (write-file (fs/path root ".squad/agents/code-reviewer-001/metadata")
+                  "template: code-reviewer\ntask_id: alpha-code-review\n")
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/metadata")
+                  (str "assignment_id: alpha-code-review\ntheme_id: wumpus\nstory_id: alpha\n"
+                       "template: code-reviewer\nassignment_file: " root "/i.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/status")
+                  "assignment_id: alpha-code-review\nstate: merge_blocked\n")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_from_code-reviewer-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\nto: squad-leader\nfrom: code-reviewer-001\npriority: 50\n"
+                       "task: alpha-code-review\ncommit: abcdef1234\nassignment: alpha-code-review\n"
+                       "template: code-reviewer\nartifacts: .squad/reviews/alpha-code-review.md\n\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "NEXT_ACTION: finish_in_process_handoff"))
+            "merge-blocked handoff must not be finished")
+        (is (or (str/includes? out "create_assignment")
+                (str/includes? out "request_spawn")
+                (str/includes? out "merge_blocked")
+                (str/includes? out "hold_merge_blocked")
+                (str/includes? out "merger"))
+            "should route merge recovery instead of completing the handoff"))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest apply-mechanical-records-in-process-git-handoff-result
+  ;; Given a claimed git handoff for an in_progress assignment
+  ;; When apply-mechanical runs
+  ;; Then record_assignment_result is applied before finish
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/a\tswarmforge-a\tA\tcodex\ttask\n"))
+      (write-agent-status! root "analyst-001" "handoff_sent")
+      (write-file (fs/path root ".squad/agents/analyst-001/metadata")
+                  "template: analyst\ntask_id: wumpus-analysis\n")
+      (let [handoff (fs/path root ".swarmforge/handoffs/inbox/in_process/50_from_analyst-001.handoff")]
+        (write-file handoff
+                    (str "type: git_handoff\nto: squad-leader\nfrom: analyst-001\npriority: 50\n"
+                         "task: wumpus-analysis\ncommit: abcdef1234\nassignment: wumpus-analysis\n"
+                         "agent: analyst-001\ntemplate: analyst\nartifacts: stories/cave.md\n\n"
+                         "merge_and_process analyst-001 abcdef1234\n"))
+        (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
+                    (str "assignment_id: wumpus-analysis\ntheme_id: wumpus\nstory_id: theme\n"
+                         "template: analyst\nassignment_file: " root "/i.md\n"))
+        (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                    "assignment_id: wumpus-analysis\nstate: in_progress\n")
+        (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
+          (is (str/includes? applied "APPLIED_TRANSITION: record_assignment_result")
+              "daemon records assignment result")
+          (is (fs/exists? (fs/path root ".squad/assignments/wumpus-analysis/result"))
+              "result file written")
+          (is (not (str/includes? applied "NEXT_ACTION: record_assignment_result")))))
       (finally
         (fs/delete-tree root)))))

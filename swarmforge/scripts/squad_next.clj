@@ -558,11 +558,23 @@
    :command (str "squad_spawn_request.sh " template " " (:assignment-id assignment)
                  " " (:assignment-file assignment))})
 
+(defn spawn-request-task-ids [root]
+  (->> ["new" "in_process"]
+       (mapcat (fn [state]
+                 (files-with-extension
+                  (fs/path root ".squad" "spawn-requests" state)
+                  ".request")))
+       (keep #(get (file-map %) "task_id"))
+       set))
+
+(defn pending-spawn-for-assignment? [root assignment-id]
+  (contains? (spawn-request-task-ids root) assignment-id))
+
 (defn spawnable-assignment? [root agents template assignment]
   (and (assignment-created? (:state assignment))
        (not (active-assignment? agents (:assignment-id assignment)))
+       (not (pending-spawn-for-assignment? root (:assignment-id assignment)))
        (spawn-capacity? root agents template)))
-
 (defn batch-candidate [root assignments packet kind batch-suffix stage reason priority stage-order prerequisite-assignment-field]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         theme-id (get packet "theme_id")
@@ -1102,8 +1114,8 @@
        (assignment-file-ok? assignment-file)
        (ready-assignment-requirement-ok? root packet themes story-id theme-id requires)
        (not (active-assignment? agents assignment-id))
+       (not (pending-spawn-for-assignment? root assignment-id))
        (spawn-capacity? root agents template)))
-
 (defn generic-ready-candidate [{:keys [assignment-id template story-id assignment-file theme-id created-at]}]
   {:priority 10
    :stage-order 0
@@ -1573,7 +1585,8 @@
 
 (defn merger-spawn-candidate [root agents existing]
   (when (and (assignment-created? (:state existing))
-             (not (active-assignment? agents (:assignment-id existing))))
+             (not (active-assignment? agents (:assignment-id existing)))
+             (not (pending-spawn-for-assignment? root (:assignment-id existing))))
     {:priority 50
      :stage-order 5
      :next-action "request_spawn"
@@ -1584,7 +1597,6 @@
      :reason "merge-blocked assignment needs merger"
      :command (str "squad_spawn_request.sh merger " (:assignment-id existing)
                    " " (:assignment-file existing))}))
-
 (defn merger-create-candidate [theme-id blocked-assignment-id story-id merger-id]
   {:priority 50
    :stage-order 5
@@ -1688,7 +1700,8 @@
   (doseq [[index action] (map-indexed vector actions)]
     (print-concurrent-action! (inc index) action)))
 
-(def mechanical-actions
+;; Bookkeeping-only actions: safe to apply all ready instances without capacity scheduling.
+(def bookkeeping-actions
   #{"register_story_artifact"
     "register_story_packet"
     "attach_story_artifact"
@@ -1701,8 +1714,24 @@
     "record_batch_membership"
     "declare_merge_blocker"})
 
+;; Deterministic ready-actions the daemon applies under capacity/dependency scheduling.
+(def daemon-ready-actions
+  #{"create_assignment"
+    "request_spawn"
+    "create_approval_request"})
+
+;; Union retained for callers/tests that ask "is this mechanical?"
+(def mechanical-actions
+  (into bookkeeping-actions daemon-ready-actions))
+
 (defn mechanical-action? [candidate]
   (contains? mechanical-actions (:next-action candidate)))
+
+(defn bookkeeping-action? [candidate]
+  (contains? bookkeeping-actions (:next-action candidate)))
+
+(defn daemon-ready-action? [candidate]
+  (contains? daemon-ready-actions (:next-action candidate)))
 
 (defn shell-command! [root command]
   (process/sh {:dir (str root) :continue true}
@@ -1730,21 +1759,25 @@
     (doseq [transition applied]
       (print-applied-transition! transition))))
 
-(defn apply-mechanical-ready-actions! [root rows]
+(defn apply-bookkeeping-ready-actions! [root rows]
   (loop [applied []
          remaining 100]
     (let [actions (ready-actions root rows)
-          mechanical (filter mechanical-action? actions)]
-      (if (or (zero? remaining) (empty? mechanical))
+          bookkeeping (filter bookkeeping-action? actions)]
+      (if (or (zero? remaining) (empty? bookkeeping))
         applied
-        (let [results (mapv #(apply-candidate! root %) mechanical)
+        (let [results (mapv #(apply-candidate! root %) bookkeeping)
               failed (some #(when-not (zero? (:exit %)) %) results)
               applied (into applied results)]
           (if failed
             applied
             (recur applied (dec remaining))))))))
 
-(defn lock-owner-pid [lock-dir]
+(defn apply-mechanical-ready-actions!
+  "Backward-compatible name: applies bookkeeping mechanical actions only.
+  Daemon-ready actions (create/spawn/approval request) use capacity scheduling."
+  [root rows]
+  (apply-bookkeeping-ready-actions! root rows))(defn lock-owner-pid [lock-dir]
   (let [owner (fs/path lock-dir "owner")]
     (when (fs/exists? owner)
       (some->> (str/split-lines (slurp (str owner)))
@@ -1863,15 +1896,39 @@
          :reason "merge-ready result must be accepted before handoff completion"
          :command (str "squad_assign.sh accept-merge " assignment-id)}
 
+        ;; merge_blocked and other unresolved states: no handoff step here.
         nil))))
+
+(defn in-process-merge-blocked? [root file]
+  (and file
+       (= "git_handoff" (handoff-type file))
+       (assignment-dir-exists? root (handoff-task file))
+       (assignment-merge-blocked? root (handoff-task file))))
+
+(defn in-process-needs-action?
+  "True when the in-process handoff still has a daemon/SL step other than
+  waiting on merge-block recovery (which is expressed via ready-actions)."
+  [{:keys [root in-process]}]
+  (when in-process
+    (boolean
+     (or (in-process-git-handoff-command root in-process)
+         (not (in-process-merge-blocked? root in-process))))))
 
 (defn print-in-process-handoff-action! [root file]
   (if-let [{:keys [action reason command]} (in-process-git-handoff-command root file)]
     (print-handoff-action! action file reason command)
-    (print-handoff-action! "finish_in_process_handoff"
-                           file
-                           "handoff is already claimed and must be completed before new mail"
-                           (str "done_with_current.sh " file))))
+    (if (in-process-merge-blocked? root file)
+      (print-handoff-action! "hold_merge_blocked_handoff"
+                             file
+                             "merge-blocked assignment must be resolved before handoff completion"
+                             (str "true  # hold in_process until merge recovery; do not run done_with_current.sh"))
+      (print-handoff-action! "finish_in_process_handoff"
+                             file
+                             "handoff is already claimed and must be completed before new mail"
+                             (str "done_with_current.sh " file)))))
+
+(def daemon-handoff-step-actions
+  #{"record_assignment_result" "check_merge_readiness" "accept_merge"})
 
 (defn visible-handoff-agents [root]
   (->> ["new" "in_process" "completed"]
@@ -2141,7 +2198,7 @@
      concurrent)))
 
 (def action-rules
-  [[:finish-in-process :in-process]
+  [[:finish-in-process in-process-needs-action?]
    [:process-handoff :new-handoff]
    [:stale-lock :stale-lock-info]
    [:pending-spawn :pending-spawn-file]
@@ -2154,7 +2211,6 @@
   (if (keyword? predicate)
     (get ctx predicate)
     (predicate ctx)))
-
 (defn action-printer [ctx]
   (or (some (fn [[action :as rule]]
               (when (action-rule-matches? ctx rule)
@@ -2187,15 +2243,88 @@
 (defn next-action! []
   (print-selected-action! (next-action-context)))
 
-(defn apply-mechanical-and-print-next! []
-  (let [{:keys [root rows]} (next-action-context)
-        applied-repairs (apply-mechanical-ready-actions! root rows)
-        applied-retires (apply-retirement-actions! root rows)
-        applied (into applied-repairs applied-retires)]
-    (print-applied-transitions! applied)
-    (print-selected-action! (next-action-context))))
+(defn apply-daemon-ready-actions!
+  "Apply capacity-scheduled create_assignment / request_spawn / create_approval_request."
+  [root]
+  (loop [applied []
+         remaining 50]
+    (let [rows (role-rows root)
+          concurrent (:concurrent-actions (concurrent-action-context root rows))
+          daemon (filterv daemon-ready-action? concurrent)]
+      (if (or (zero? remaining) (empty? daemon))
+        applied
+        (let [results (mapv #(apply-candidate! root %) daemon)
+              failed (some #(when-not (zero? (:exit %)) %) results)
+              applied (into applied results)]
+          (if failed
+            applied
+            (recur applied (dec remaining))))))))
 
-(defn -main [& args]
+(defn apply-in-process-handoff-step!
+  "Apply at most one deterministic in-process handoff step."
+  [root]
+  (let [file (first (files-with-extension
+                     (fs/path root ".swarmforge" "handoffs" "inbox" "in_process")
+                     ".handoff"))]
+    (when file
+      (if-let [{:keys [action command]} (in-process-git-handoff-command root file)]
+        (when (contains? daemon-handoff-step-actions action)
+          [(apply-candidate! root {:next-action action
+                                   :assignment-id (handoff-task file)
+                                   :command command})])
+        (when (and (not (in-process-merge-blocked? root file))
+                   (in-process-needs-action? {:root root :in-process file}))
+          [(apply-candidate! root {:next-action "finish_in_process_handoff"
+                                   :assignment-id (handoff-task file)
+                                   :command (str "done_with_current.sh " file)})])))))
+
+(defn apply-process-new-handoff-step!
+  "Claim the next new handoff into in_process when the inbox is free."
+  [root]
+  (let [inbox (fs/path root ".swarmforge" "handoffs" "inbox")
+        in-process (first (files-with-extension (fs/path inbox "in_process") ".handoff"))
+        new-handoff (first (files-with-extension (fs/path inbox "new") ".handoff"))]
+    (when (and new-handoff (nil? in-process))
+      [(apply-candidate! root {:next-action "process_handoff"
+                               :command "ready_for_next.sh"})])))
+
+(defn apply-clear-stale-lock-step! [root]
+  (when-let [{:keys [lock]} (stale-lock root)]
+    [(apply-candidate! root {:next-action "clear_stale_lock"
+                             :command (str "rm -rf " lock)})]))
+
+(defn apply-one-mechanical-pass!
+  "One drain pass: bookkeeping, retires, daemon-ready concurrent work, handoff steps."
+  [root]
+  (let [rows (role-rows root)
+        bookkeeping (apply-bookkeeping-ready-actions! root rows)
+        retires (apply-retirement-actions! root (role-rows root))
+        daemon-ready (apply-daemon-ready-actions! root)
+        stale (or (apply-clear-stale-lock-step! root) [])
+        claim (or (apply-process-new-handoff-step! root) [])
+        handoff (or (apply-in-process-handoff-step! root) [])]
+    (into [] (concat bookkeeping retires daemon-ready stale claim handoff))))
+
+(defn apply-mechanical-and-print-next! []
+  (let [root (fs/absolutize (project-root))]
+    (loop [applied []
+           remaining 100]
+      (let [batch (apply-one-mechanical-pass! root)]
+        (cond
+          (zero? remaining)
+          (do (print-applied-transitions! applied)
+              (print-selected-action! (next-action-context)))
+
+          (empty? batch)
+          (do (print-applied-transitions! applied)
+              (print-selected-action! (next-action-context)))
+
+          (some #(and (contains? % :exit) (not (zero? (:exit %)))) batch)
+          (do (print-applied-transitions! (into applied batch))
+              (print-selected-action! (next-action-context)))
+
+          :else
+          (recur (into applied batch) (dec remaining)))))))(defn -main [& args]
   (case (count args)
     0 (next-action!)
     1 (if (= "--apply-mechanical" (first args))

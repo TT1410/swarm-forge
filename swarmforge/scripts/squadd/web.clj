@@ -10,8 +10,7 @@
   (:import [java.net InetAddress ServerSocket URLDecoder]))
 
 (def approval-wake-message
-  "A web approval changed state. If idle, run squad_next.sh --apply-mechanical, execute its COMMAND and CONCURRENT_COMMAND entries, then repeat until waiting, blocked, or user-gated.")
-(def sl-message-prefix
+  "A web approval changed state. If idle, run squad_next.sh --apply-mechanical and handle only residual judgment or user-facing work. Deterministic workflow steps are daemon-applied.")(def sl-message-prefix
   "User message from dashboard:")
 (def dashboard-html
   "<!doctype html>

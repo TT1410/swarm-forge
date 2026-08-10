@@ -14,12 +14,15 @@
 (def poll-ms 1000)
 (def status-poll-ms 5000)
 (def handoff-wake-message
-  "You have new handoff mail. If idle, run squad_next.sh --apply-mechanical, execute its COMMAND and CONCURRENT_COMMAND entries, then repeat until waiting, blocked, or user-gated.")
+  "You have new handoff mail. If idle, run squad_next.sh --apply-mechanical and handle only residual judgment, recovery, or user-facing work. Deterministic creates, spawns, approvals requests, and handoff bookkeeping are daemon-applied.")
 (def status-wake-message
-  "Squad status needs attention. If idle, run squad_next.sh --apply-mechanical, execute its COMMAND and CONCURRENT_COMMAND entries, then repeat until waiting, blocked, or user-gated.")
+  "Squad status needs attention. If idle, run squad_next.sh --apply-mechanical and handle only residual judgment, recovery, or user-facing work.")
 (def sl-watchdog-message
-  "Run squad_next.sh --apply-mechanical, execute its COMMAND and CONCURRENT_COMMAND entries, then repeat until waiting, blocked, or user-gated.")
-(def script-dir (fs/parent *file*))
+  "Run squad_next.sh --apply-mechanical. Prefer residual judgment/recovery/user work; deterministic workflow steps are daemon-applied.")
+(def sl-judgment-actions
+  #{"request_user_approval"
+    "recover_agent"
+    "hold_merge_blocked_handoff"})(def script-dir (fs/parent *file*))
 (def stopping? (atom false))
 (def last-status-poll (atom 0))
 (def last-status-notification (atom {:alerts #{} :notified-at nil}))
@@ -987,8 +990,33 @@
 (defn should-stop? [root]
   (or @stopping? (fs/exists? (stop-file root))))
 
+(defn parse-next-action [out]
+  (some #(second (re-find #"^NEXT_ACTION:\s*(\S+)" %))
+        (str/split-lines (or out ""))))
+
+(defn apply-workflow-mechanical!
+  "Drain deterministic workflow steps via squad_next --apply-mechanical."
+  [root]
+  (let [result (process/sh {:continue true
+                            :dir (str root)
+                            :env {"PATH" (str script-dir ":" (or (System/getenv "PATH") ""))
+                                  "GIT_CONFIG_NOSYSTEM" "1"}}
+                           (str (fs/path script-dir "squad_next.sh"))
+                           "--apply-mechanical")
+        out (str (:out result))
+        action (parse-next-action out)]
+    (when (str/includes? out "APPLIED_TRANSITION:")
+      (log! root "workflow-mechanical-applied" (str (count (re-seq #"APPLIED_TRANSITION:" out)))))
+    (when-not (zero? (:exit result))
+      (log! root "workflow-mechanical-failed" (str (:exit result)) (str/trim (or (:err result) ""))))
+    {:exit (:exit result)
+     :out out
+     :next-action action
+     :needs-sl? (contains? sl-judgment-actions action)}))
+
 (defn poll-once! [opts]
   (let [root (:root opts)]
+    (apply-workflow-mechanical! root)
     (poll-spawn-requests! root)
     (poll-handoffs! root)
     (poll-status! opts)
@@ -1002,12 +1030,12 @@
 
 (defn poll-loop-once! [opts]
   (let [root (:root opts)]
+    (apply-workflow-mechanical! root)
     (poll-spawn-requests! root)
     (poll-handoffs! root)
     (when (due-status?)
       (poll-status! opts)
       (poll-sl-watchdog! opts))))
-
 (defn sleep-poll! [root ms]
   (loop [remaining ms]
     (when (and (pos? remaining) (not (should-stop? root)))
