@@ -150,10 +150,14 @@
 </body>
 </html>")
 
-(def web-active-agent-states
-  #{"starting" "running" "blocked" "handoff_ready" "handoff_sent"})
 (def web-active-assignment-states
   #{"created" "assignment_created" "in_progress" "handoff_sent" "result_received" "merge_ready" "blocked"})
+
+(defn dashboard-agent-visible?
+  "Agents appear from spawn until retirement. Temporary states such as
+  failed must remain visible while the agent is still registered."
+  [agent]
+  (not= "retired" (get agent "state")))
 (def status-reasons
   {200 "OK"
    404 "Not Found"
@@ -413,7 +417,7 @@
                                       (fs/path agent-dir "metadata"))
                          (parse-kv-file (fs/path agent-dir "status"))
                          {"heartbeat_at" (or (read-value (fs/path agent-dir "heartbeat") "updated_at") "none")})))
-           (filter #(contains? web-active-agent-states (get % "state")))
+           (filter dashboard-agent-visible?)
            vec)
       [])))
 

@@ -3,7 +3,40 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [squadd.web :as web]
             [swarmforge.test-support :refer :all]))
+
+(defn- write-agent! [root agent-id template state]
+  (write-file (fs/path root ".squad" "agents" agent-id "metadata")
+              (str "agent_id: " agent-id "\ntemplate: " template "\ntask_id: task-" agent-id "\n"))
+  (write-file (fs/path root ".squad" "agents" agent-id "status")
+              (str "state: " state "\ndetail: test\nupdated_at: 2026-08-10T00:00:00Z\n")))
+
+(deftest dashboard-lists-agents-from-spawn-until-retirement
+  ;; Given agents in every lifecycle state including failed and retired
+  ;; When the dashboard builds its agent list
+  ;; Then every non-retired agent is shown and retired agents are omitted
+  (let [root (tmp-dir)]
+    (try
+      (doseq [[agent-id template state]
+              [["starting-001" "implementer" "starting"]
+               ["running-001" "implementer" "running"]
+               ["blocked-001" "gherkin-writer" "blocked"]
+               ["failed-001" "gherkin-writer" "failed"]
+               ["handoff-ready-001" "cleaner" "handoff_ready"]
+               ["handoff-sent-001" "cleaner" "handoff_sent"]
+               ["retired-001" "analyst" "retired"]]]
+        (write-agent! root agent-id template state))
+      (let [ids (set (map #(get % "agent_id") (web/agent-state root)))]
+        (is (contains? ids "starting-001"))
+        (is (contains? ids "running-001"))
+        (is (contains? ids "blocked-001"))
+        (is (contains? ids "failed-001"))
+        (is (contains? ids "handoff-ready-001"))
+        (is (contains? ids "handoff-sent-001"))
+        (is (not (contains? ids "retired-001"))))
+      (finally
+        (fs/delete-tree root)))))
 
 (deftest squadd-serves-web-status-and-registers-approvals
   (let [root (tmp-dir)
