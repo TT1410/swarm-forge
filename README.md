@@ -249,6 +249,51 @@ In the example above, the agents run in these worktrees:
 
 If a window uses `master` as its worktree name, SwarmForge does not create `.worktrees/master`; that role runs in the main working directory on the `master` branch.
 
+## Squad Configuration
+
+The squad workflow starts one persistent, visible `squad-leader` from `swarmforge/swarmforge.conf` and spawns short-lived workers from `swarmforge/role-templates/`. Worker capacity, human-approval gates, and which CLI backend each worker uses are controlled by `swarmforge/squad.conf`.
+
+### Transient agent backends
+
+`squad_spawn` chooses the backend for each new transient worker in this order:
+
+1. `SWARMFORGE_SQUAD_AGENT` — environment override for every template
+2. Per-template line — `transient_agent <template> <backend>` in `swarmforge/squad.conf`
+3. Global default — `transient_agent <backend>` (one token) in `swarmforge/squad.conf`
+4. Squad-leader backend — the backend configured for the `squad-leader` window
+5. `codex` — final fallback when nothing else is set
+
+Allowed backends: `codex`, `claude`, `copilot`, and `grok`. The special values `squad-leader` and `leader` mean “use the squad-leader’s backend,” not a separate CLI.
+
+Example `swarmforge/squad.conf` fragment:
+
+```conf
+# Default for templates that do not set their own backend.
+transient_agent squad-leader
+
+# Per-template overrides (template name, then backend).
+transient_agent implementer codex
+transient_agent code-reviewer claude
+transient_agent hardener grok
+```
+
+With that config, an `implementer` spawn uses `codex`, a `code-reviewer` uses `claude`, a `hardener` uses `grok`, and any other template (for example `analyst`) inherits the global default and therefore the squad-leader backend.
+
+These lines only select the tool when a worker is spawned. They do not start agents by themselves. The squad leader remains the window defined in `swarmforge.conf` (for example `window squad-leader codex master task`).
+
+### Related capacity settings
+
+`swarmforge/squad.conf` also limits how many workers may run:
+
+```conf
+max_transient_agents 10
+max_active_template hardener 1
+max_active_template qa 1
+max_active_template architect 1
+```
+
+`max_transient_agents` is the global cap on concurrent transient workers. `max_active_template <template> <n>` caps concurrent workers of one template. `max_merger_depth` limits how many `-merge` segments a merge-blocked lineage may grow before the squad surfaces a blocker instead of spawning another merger.
+
 ## tmux Behavior
 
 SwarmForge uses a project-specific tmux socket recorded in `.swarmforge/tmux-socket`, so each project swarm is isolated from other tmux sessions. It also honors tmux `base-index` and `pane-base-index` settings when launching agents and sending notifications, so configurations that number windows or panes from `1` work without requiring users to change their tmux preferences.
