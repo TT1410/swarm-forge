@@ -414,6 +414,10 @@
                            "backend: codex"))
         (is (str/includes? (slurp (str (fs/path root ".squad/agents/code-reviewer-001/metadata")))
                            "backend: grok"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/agents/code-reviewer-001/launch.sh")))
+                           "--permission-mode bypassPermissions"))
+        (is (not (str/includes? (slurp (str (fs/path root ".squad/agents/code-reviewer-001/launch.sh")))
+                                "--permission-mode acceptEdits")))
         (is (str/includes? (slurp (str (fs/path root ".squad/agents/analyst-001/metadata")))
                            "backend: claude")))
       (finally

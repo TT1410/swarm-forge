@@ -294,7 +294,7 @@
 
 (defn grok-command [prompt-file worktree _ _]
   (str "grok --cwd " (sq (str worktree))
-       " --permission-mode acceptEdits --rules \"$(cat " (sq (str prompt-file))
+       " --permission-mode bypassPermissions --rules \"$(cat " (sq (str prompt-file))
        ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\""))
 
 (def backend-commands
