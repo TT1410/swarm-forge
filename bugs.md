@@ -13,7 +13,6 @@ Open bugs:
 | # | Title |
 |---|--------|
 | 3 | Reviewer handoffs use ambiguous free-form decisions |
-| 10 | Agents self-retire before workflow resolution |
 | 11 | Concurrent retirements hit registry lock contention |
 | 12 | Swarm teardown leaks worktrees and stale agent state |
 | 13 | No per-worker agent-tool configuration for squad transients |
@@ -79,39 +78,6 @@ Architecture notes:
   `wait`. Do not make the prose parser smarter.
 
 ## Agent Lifecycle And Cleanup
-
-### Bug 10: Agents Self-Retire Before Workflow Resolution
-
-An agent reported `retired` before the Squad Leader had resolved its handoff
-through the workflow.
-
-Observed behavior:
-
-1. `gherkin-writer-002` reported `state: retired`.
-2. Its handoff was still pending workflow processing.
-3. `squadd` repeatedly logged:
-   `agent-retired-awaiting-workflow gherkin-writer-002`.
-4. The daemon also warned:
-   `agent gherkin-writer-002 reported retired; run squad_retire.sh only after workflow resolves its handoff`.
-
-Expected behavior:
-
-Transient agents should not self-retire after sending a handoff. After an agent
-sends its handoff, it may report `handoff_sent`, but final retirement should be
-performed only by `squad_retire.sh` after the Squad Leader has resolved the
-handoff, merged or otherwise recorded the result, and updated durable workflow
-state.
-
-Architecture notes:
-
-- Control-plane vs agent-plane confusion. `retired` is a valid `squad_event`
-  state; prompts list it; workers can claim a workflow-terminal state that only
-  the leader should own.
-- `squadd` only logs `agent-retired-awaiting-workflow` and refuses full cleanup
-  until `squad_retire.sh`. The protocol documents the right rule in the daemon
-  warning but allows the wrong action at the tool boundary.
-- Agents should max out at `handoff_sent`; retirement should be leader- or
-  daemon-owned after merge/record.
 
 ### Bug 11: Concurrent Retirements Hit Registry Lock Contention
 

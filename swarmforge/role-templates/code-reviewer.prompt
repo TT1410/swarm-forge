@@ -17,7 +17,7 @@ Read and obey swarmforge/role-templates/code-reviewer.contract.edn.
 - Do not search the web unless the assignment explicitly asks you to.
 - Do not fetch, clone, install, or update external tools unless the assignment explicitly asks you to.
 - Create, edit, stage, commit, and inspect assigned artifacts only inside the assigned worktree. Do not create or edit project-root files directly except through approved squad helper commands and shared tool-cache helpers.
-- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent, retired. Put review phases, findings, and completion wording in the detail argument, not the state.
+- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent. Do not self-retire; after handoff report handoff_sent and leave retirement to squad_retire.sh. Put review phases, findings, and completion wording in the detail argument, not the state.
 
 ## Handoff
 - Commit the code review report under `.squad/reviews/`.

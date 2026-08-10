@@ -6,18 +6,21 @@
             [squad-config :as cfg]
             [clojure.string :as str]))
 
-(def lifecycle-states
+(def agent-reportable-states
+  "States agents may set with squad_event.sh. Retirement is leader-owned via
+  squad_retire.sh after workflow resolution — agents stop at handoff_sent."
   #{"starting"
     "running"
     "blocked"
     "failed"
     "handoff_ready"
-    "handoff_sent"
-    "retired"})
+    "handoff_sent"})
 
 (def usage-text
   (str "Usage: squad_event.sh <state> <detail...>\n"
-       "Allowed states: starting, running, blocked, failed, handoff_ready, handoff_sent, retired\n"
+       "Allowed states: starting, running, blocked, failed, handoff_ready, handoff_sent\n"
+       "Do not use retired here; squad_retire.sh performs final retirement after the "
+       "Squad Leader resolves the handoff.\n"
        "Put command names, phases, and other progress detail in <detail>, not in <state>."))
 
 (defn exit! [status & lines]
@@ -67,7 +70,12 @@
     :message (fn [_ _ _] "SQUAD_EVENT_USAGE_ERROR: first argument is the state, not the task id.")}
    {:invalid? (fn [_ _ state] (re-matches #"[a-z][a-z0-9-]*-[0-9][0-9][0-9]" state))
     :message (fn [_ _ _] "SQUAD_EVENT_USAGE_ERROR: state looks like an agent id.")}
-   {:invalid? (fn [_ _ state] (not (contains? lifecycle-states state)))
+   {:invalid? (fn [_ _ state] (= "retired" state))
+    :message (fn [_ _ _]
+               (str "SQUAD_EVENT_USAGE_ERROR: agents must not self-retire. "
+                    "Report handoff_sent after sending the handoff; "
+                    "squad_retire.sh runs only after the Squad Leader resolves workflow state."))}
+   {:invalid? (fn [_ _ state] (not (contains? agent-reportable-states state)))
     :message (fn [_ _ state] (str "SQUAD_EVENT_USAGE_ERROR: unsupported lifecycle state: " state))}])
 
 (defn state-validation-error [agent task state]

@@ -163,7 +163,19 @@
           (is (str/includes? (:err bad-state)
                              "unsupported lifecycle state: verifying_passed"))
           (is (str/includes? (:err bad-state)
-                             "Allowed states: starting, running, blocked, failed, handoff_ready, handoff_sent, retired")))
+                             "Allowed states: starting, running, blocked, failed, handoff_ready, handoff_sent")))
+        (let [self-retire (run {:dir root
+                                :env {"SWARMFORGE_ROLE" "specifier-001"}
+                                :ok? false}
+                               (script "squad_event.sh")
+                               "retired"
+                               "done with handoff")]
+          (is (= 2 (:exit self-retire)))
+          (is (str/includes? (:err self-retire) "must not self-retire"))
+          (is (str/includes? (:err self-retire) "handoff_sent"))
+          (is (str/includes? (:err self-retire) "squad_retire.sh"))
+          (is (not (str/includes? (slurp (str (fs/path root ".squad/agents/specifier-001/status")))
+                                  "state: retired"))))
         (write-file (fs/path root ".squad/agents/specifier-001/heartbeat")
                     (str "agent: specifier-001\n"
                          "task_id: wumpus-theme\n"
