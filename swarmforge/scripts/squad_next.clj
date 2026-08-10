@@ -684,17 +684,36 @@
                           :suffix ".md"
                           :packet-path-field "qa_procedure_path"}})
 
+(defn assignment-revision-rank [assignment-id]
+  (if (str/blank? assignment-id)
+    0
+    (if-let [[_ n] (re-find #"-r([0-9]+)$" assignment-id)]
+      (Long/parseLong n)
+      1)))
+
 (defn packet-artifact-stale?
-  "True when the packet lacks this artifact identity. Same path with a newer
-  assignment id or sha still needs attach (r2 revisions reuse paths)."
+  "True when the packet should adopt this merged artifact. Same path with a
+  newer assignment revision or sha still needs attach. Older revisions must not
+  overwrite a newer packet attachment."
   [packet rule path assignment sha]
   (let [kind-key (gate-key (:kind rule))
         path-field (or (:packet-path-field rule) (str kind-key "_path"))
         assignment-field (str kind-key "_assignment")
-        sha-field (str kind-key "_sha")]
-    (or (not= path (get packet path-field))
-        (not= (:assignment-id assignment) (get packet assignment-field))
-        (not= sha (get packet sha-field)))))
+        sha-field (str kind-key "_sha")
+        current-path (get packet path-field)
+        current-assignment (get packet assignment-field)
+        current-sha (get packet sha-field)
+        new-id (:assignment-id assignment)
+        new-rank (assignment-revision-rank new-id)
+        old-rank (assignment-revision-rank current-assignment)]
+    (cond
+      (str/blank? current-path) true
+      (not= path current-path) true
+      (str/blank? current-assignment) true
+      (< new-rank old-rank) false
+      (> new-rank old-rank) true
+      (not= new-id current-assignment) (pos? (compare new-id (str current-assignment)))
+      :else (not= sha current-sha))))
 
 (declare packet-by-story)
 
@@ -1170,17 +1189,13 @@
     :priority 60
     :stage-order 90
     :candidate (fn [ctx packet]
-                 (when (and (approval-satisfied? (:root ctx) packet "story")
-                            (approval-satisfied? (:root ctx) packet "gherkin")
-                            (approval-satisfied? (:root ctx) packet "qa-procedure")
-                            (approval-satisfied? (:root ctx) packet "implementation")
-                            (field-accepted? packet "gherkin_review")
-                            (field-accepted? packet "qa_procedure_review"))
-                   (when-not (field-present? packet "implementation_sha")
-                     (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                           "implementer" "implementation"
-                                           "story is approved for implementation" 60 90
-                                           nil))))}
+                 (when (and (approval-satisfied? (:root ctx) packet "implementation")
+                            (squad-state/implementation-ready? packet)
+                            (not (field-present? packet "implementation_sha")))
+                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
+                                         "implementer" "implementation"
+                                         "story is approved for implementation" 60 90
+                                         nil)))}
    {:id :implementation-revision-assignment
     :priority 60
     :stage-order 95

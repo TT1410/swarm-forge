@@ -435,6 +435,82 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-creates-implementer-when-implementation-ready
+  ;; Given specs approved and currently accepted, implementation approved, no impl sha
+  ;; When squad_next runs
+  ;; Then it creates an implementer assignment with queued spawn
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required implementation false\n")
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "story_approval: approved\n"
+                       "gherkin_path: features/alpha.feature\n"
+                       "gherkin_assignment: alpha-gherkin\n"
+                       "gherkin_sha: abcdef1111\n"
+                       "gherkin_review: accepted\n"
+                       "gherkin_review_target_sha: abcdef1111\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_path: qa/alpha.md\n"
+                       "qa_procedure_assignment: alpha-qa\n"
+                       "qa_procedure_sha: abcdef1111\n"
+                       "qa_procedure_review: accepted\n"
+                       "qa_procedure_review_target_sha: abcdef1111\n"
+                       "qa_procedure_approval: approved\n"
+                       "implementation_approval: approved\n"))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
+        (is (str/includes? (:out next) "TEMPLATE: implementer"))
+        (is (str/includes? (:out next) "ASSIGNMENT: alpha-implementation"))
+        (is (str/includes? (:out next)
+                           "COMMAND: squad_assign.sh create wumpus alpha implementer alpha-implementation --auto-instructions --queue-spawn"))
+        (is (not (str/includes? (:out next) "NEXT_ACTION: wait"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-prefers-newer-revision-attach-over-older-writer
+  ;; Given original and r2 writers both merged with the same path
+  ;; When mechanical repair runs
+  ;; Then the packet ends on the r2 assignment/sha without thrashing forever
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "features/alpha.feature") "Feature: alpha revised\n")
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "gherkin_path: features/alpha.feature\n"
+                       "gherkin_assignment: alpha-gherkin\n"
+                       "gherkin_sha: abcdef1111\n"
+                       "gherkin_review: changes-requested\n"
+                       "gherkin_review_assignment: alpha-gherkin-review\n"
+                       "gherkin_review_target_sha: abcdef1111\n"))
+      (doseq [[id sha] [["alpha-gherkin" "abcdef1111"]
+                        ["alpha-gherkin-r2" "abcdef2222"]]]
+        (write-file (fs/path root ".squad/assignments" id "metadata")
+                    (str "assignment_id: " id "\ntheme_id: wumpus\nstory_id: alpha\ntemplate: gherkin-writer\n"))
+        (write-file (fs/path root ".squad/assignments" id "status") "state: merged\n")
+        (write-file (fs/path root ".squad/assignments" id "result-manifest")
+                    (str "artifacts: features/alpha.feature\ncommit: " sha "\n"))
+        (write-file (fs/path root ".squad/assignments" id "accepted-merge")
+                    (str "merge_commit: " sha "\ncommit: " sha "\n")))
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))
+            attach-count (count (re-seq #"APPLIED_TRANSITION: attach_story_artifact" out))]
+        (is (<= attach-count 2) "must not thrash attaches between original and r2")
+        (is (str/includes? packet "gherkin_assignment: alpha-gherkin-r2"))
+        (is (str/includes? packet "gherkin_sha: abcdef2222"))
+        (is (str/includes? packet "gherkin_review: accepted")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-records-merged-direct-result-before-downstream-work
   (let [root (tmp-dir)]
     (try
@@ -466,7 +542,6 @@
         (is (str/includes? (:out next) "COMMAND: squad_packet.sh record alpha implementation alpha-implementation master abcdef1234")))
       (finally
         (fs/delete-tree root)))))
-
 (deftest squad-next-apply-mechanical-records-safe-repairs-before-next-action
   (let [root (tmp-dir)]
     (try

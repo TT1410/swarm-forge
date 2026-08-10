@@ -166,7 +166,11 @@
 (def implementation-assignment-rules
   [["complete" #(present? % "implementation_sha")]
    ["assigned" #(present? % "implementation_assignment")]
-   ["ready" #(approved? % "implementation_approval")]])
+   ;; ready only when implementation is approved AND specs are currently accepted,
+   ;; matching squad_next implementer eligibility (not mere approval presence).
+   ["ready" #(and (approved? % "implementation_approval")
+                  (implementation-ready? %)
+                  (not (present? % "implementation_sha")))]])
 
 (defn state-from-rules [rules packet default-state]
   (or (some (fn [[state predicate]]

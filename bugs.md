@@ -13,7 +13,6 @@ Open bugs:
 | # | Title |
 |---|--------|
 | 3 | Reviewer handoffs use ambiguous free-form decisions |
-| 6 | Implementation-ready stories do not produce implementer assignments |
 | 7 | Code review loop spawns unbounded repeat reviewers |
 | 8 | Batch records remain open after batch assignments merge |
 | 9 | Chained merger assignments can remain merge-blocked indefinitely |
@@ -81,40 +80,6 @@ Architecture notes:
   reliably from agents.
 - Root cause for several stalls: no packet review → wrong stage → wrong spawn or
   `wait`. Do not make the prose parser smarter.
-
-## Packet Repair And FSM Progress
-
-### Bug 6: Implementation-Ready Stories Do Not Produce Implementer Assignments
-
-Stories reached the implementation-ready state, but the workflow advisor did not
-create or spawn implementer assignments.
-
-Observed behavior:
-
-1. Stories 1, 2, 3, and 5 reached `state: implementation_approved`.
-2. Their packets showed `implementation_assignment_state: ready`.
-3. No implementer assignments existed for those stories.
-4. No implementer spawn requests existed.
-5. `squad_next.sh` returned `NEXT_ACTION: wait`.
-
-Expected behavior:
-
-If a story is implementation-approved, has satisfied story/Gherkin/QA approvals,
-has accepted Gherkin and QA review state, has no `implementation_sha`, and has
-no existing active implementer assignment, `squad_next.sh` must emit a
-`create_assignment` action, preferably with queued spawn. It should never return
-`wait` while implementation-ready stories are unassigned.
-
-Architecture notes:
-
-- Likely a cascade of free-form reviews, same-path attach failure, and stale
-  review replay—not a missing implementer rule.
-- `:implementation-assignment` requires approvals plus **current** accepted
-  Gherkin/QA reviews and no `implementation_sha`. Display fields like
-  `implementation_assignment_state: ready` can look ready while
-  `current-accepted?` is false (stale `changes-requested`, unattached r2 SHA).
-- When upstream repair fails, UI “ready” and spawn eligibility diverge;
-  `squad_next` has nothing to do → `NEXT_ACTION: wait`.
 
 ## Review Loop Control
 
