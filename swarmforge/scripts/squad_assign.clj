@@ -878,6 +878,22 @@
   (when-not (str/blank? body)
     (println "BODY_RECORDED: true")))
 
+(defn accepted-merge-state [dir]
+  (when (fs/regular-file? (fs/path dir "accepted-merge"))
+    (read-value (fs/path dir "accepted-merge") "state")))
+
+(defn assignment-already-merged? [dir]
+  (or (= "merged" (read-value (fs/path dir "status") "state"))
+      (= "merged" (accepted-merge-state dir))))
+
+(defn resync-status! [dir assignment-id state detail now]
+  "Update status only — used when replaying prior outcomes without re-logging events."
+  (write-atomic! (fs/path dir "status")
+                 (str "assignment_id: " assignment-id "\n"
+                      "state: " state "\n"
+                      "detail: " detail "\n"
+                      "updated_at: " now "\n")))
+
 (defn record-result! [assignment-id handoff-path]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
@@ -888,6 +904,16 @@
         theme-id (or (read-value metadata "theme_id") "unknown")
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
+    (when (assignment-already-merged? dir)
+      (exit! 2
+             (str "Cannot record result for assignment " assignment-id
+                  ": already merged. Do not re-record results after accept-merge.")))
+    (when (contains? #{"rejected" "blocked" "superseded" "cancelled" "abandoned"}
+                     (read-value (fs/path dir "status") "state"))
+      (exit! 2
+             (str "Cannot record result for assignment " assignment-id
+                  ": assignment is already terminal ("
+                  (read-value (fs/path dir "status") "state") ").")))
     (let [{:keys [from commit body manifest]} (validate-result-handoff! root assignment-id template handoff-file)]
     (validate-sender-assignment-lineage! root assignment-id from)
     (ensure-result-reachable! root from commit)
@@ -1041,14 +1067,24 @@
                      "dry-run merge passed"
                      "dry-run merge failed"))})))
 
-(defn replay-existing-merge-evaluation! [assignment-id commit {:keys [state detail]}]
-  (if (= "merge_ready" state)
-    (do
-      (print-merge-ready! assignment-id commit detail)
-      nil)
-    (do
-      (print-merge-blocked-ready! assignment-id commit)
-      (System/exit 4))))
+(defn replay-existing-merge-evaluation! [dir assignment-id commit {:keys [state detail]}]
+  "Replay prior merge evaluation and re-sync status so handoff FSM cannot stick
+  on result_received after status was overwritten (e.g. double result record)."
+  (let [now (timestamp)]
+    (resync-status! dir assignment-id state detail now)
+    (if (= "merge_ready" state)
+      (do
+        (print-merge-ready! assignment-id commit detail)
+        nil)
+      (do
+        (print-merge-blocked-ready! assignment-id commit)
+        (System/exit 4)))))
+
+(defn print-already-merged! [assignment-id commit]
+  (println "SQUAD_ASSIGNMENT:" assignment-id)
+  (println "STATE: merged")
+  (println "COMMIT:" (or commit "unknown"))
+  (println "DETAIL: assignment already merged"))
 
 (defn mark-merge-ready! [assignment-id]
   (validate-id! "Assignment id" assignment-id)
@@ -1060,13 +1096,21 @@
     (ensure-file! "Assignment result not found" result-file)
     (let [commit (read-value result-file "commit")]
       (ensure-result-commit! commit)
-      (if-let [prior (existing-merge-evaluation dir commit)]
-        (replay-existing-merge-evaluation! assignment-id commit prior)
-        (try
-          (ensure-known-commit! root commit)
-          (check-merge-ready! root dir assignment-id commit now)
-          (finally
-            (abort-merge! root)))))))
+      (cond
+        (assignment-already-merged? dir)
+        (do
+          (when-not (= "merged" (read-value (fs/path dir "status") "state"))
+            (resync-status! dir assignment-id "merged" "assignment already merged" now))
+          (print-already-merged! assignment-id commit))
+
+        :else
+        (if-let [prior (existing-merge-evaluation dir commit)]
+          (replay-existing-merge-evaluation! dir assignment-id commit prior)
+          (try
+            (ensure-known-commit! root commit)
+            (check-merge-ready! root dir assignment-id commit now)
+            (finally
+              (abort-merge! root))))))))
 
 (defn record-review! [assignment-id decision review-path]
   (validate-id! "Assignment id" assignment-id)

@@ -31,7 +31,8 @@
       (let [in-process (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out in-process) "NEXT_ACTION: finish_in_process_handoff"))
         (is (str/includes? (:out in-process) "HANDOFF:"))
-        (is (str/includes? (:out in-process) "COMMAND: done_with_current.sh "))
+        (is (str/includes? (:out in-process) "done_with_current.sh"))
+        (is (str/includes? (:out in-process) "SWARMFORGE_ROLE=squad-leader"))
         (is (str/includes? (:out in-process) "in_process/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")))
       (fs/create-dirs (fs/path root ".swarmforge/handoffs/inbox/completed"))
       (fs/move (fs/path root ".swarmforge/handoffs/inbox/in_process/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")
@@ -197,7 +198,8 @@
                   "assignment_id: wumpus-analysis\nstate: merged\n")
       (let [finish (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out finish) "NEXT_ACTION: finish_in_process_handoff"))
-        (is (str/includes? (:out finish) "COMMAND: done_with_current.sh ")))
+        (is (str/includes? (:out finish) "done_with_current.sh"))
+        (is (str/includes? (:out finish) "SWARMFORGE_ROLE=squad-leader")))
       (finally
         (fs/delete-tree root)))))
 

@@ -2009,29 +2009,62 @@
                     (downstream-merger-result-recorded? root assignment-id))))
          true)))
 
+(defn assignment-accepted-merge? [root assignment-id]
+  (= "merged"
+     (get (file-map (fs/path root ".squad" "assignments" assignment-id "accepted-merge"))
+          "state")))
+
+(defn assignment-merge-file-state [root assignment-id]
+  (get (file-map (fs/path root ".squad" "assignments" assignment-id "merge"))
+       "state"))
+
 (defn in-process-git-handoff-command [root file]
   (let [assignment-id (handoff-task file)
-        state (assignment-status-state root assignment-id)]
+        state (assignment-status-state root assignment-id)
+        merge-state (assignment-merge-file-state root assignment-id)
+        already-merged? (or (= "merged" state)
+                            (assignment-accepted-merge? root assignment-id))]
     (when (and (= "git_handoff" (handoff-type file))
                (assignment-dir-exists? root assignment-id))
-      (case state
-        ("created" "assignment_created" "in_progress" "handoff_sent" "unknown")
-        {:action "record_assignment_result"
-         :reason "claimed git handoff must be recorded before completion"
-         :command (str "squad_assign.sh result " assignment-id " " file)}
+      (cond
+        already-merged?
+        {:action "finish_in_process_handoff"
+         :reason "assignment already merged; complete the claimed handoff"
+         ;; Resync status via merge-ready, then finish. Daemon has no SWARMFORGE_ROLE.
+         :command (str "squad_assign.sh merge-ready " assignment-id
+                       " && SWARMFORGE_ROLE=squad-leader done_with_current.sh "
+                       (pr-str (str file)))}
 
-        "result_received"
-        {:action "check_merge_readiness"
-         :reason "recorded result must be checked for merge readiness before handoff completion"
-         :command (str "squad_assign.sh merge-ready " assignment-id)}
-
-        "merge_ready"
+        ;; Status can lag merge file when result was re-recorded after merge-ready.
+        (and (= "result_received" state)
+             (= "merge_ready" merge-state))
         {:action "accept_merge"
-         :reason "merge-ready result must be accepted before handoff completion"
+         :reason "merge readiness already recorded; accept merge before handoff completion"
          :command (str "squad_assign.sh accept-merge " assignment-id)}
 
-        ;; merge_blocked and other unresolved states: no handoff step here.
-        nil))))
+        (and (= "result_received" state)
+             (= "merge_blocked" merge-state))
+        nil
+
+        :else
+        (case state
+          ("created" "assignment_created" "in_progress" "handoff_sent" "unknown")
+          {:action "record_assignment_result"
+           :reason "claimed git handoff must be recorded before completion"
+           :command (str "squad_assign.sh result " assignment-id " " file)}
+
+          "result_received"
+          {:action "check_merge_readiness"
+           :reason "recorded result must be checked for merge readiness before handoff completion"
+           :command (str "squad_assign.sh merge-ready " assignment-id)}
+
+          "merge_ready"
+          {:action "accept_merge"
+           :reason "merge-ready result must be accepted before handoff completion"
+           :command (str "squad_assign.sh accept-merge " assignment-id)}
+
+          ;; merge_blocked and other unresolved states: no handoff step here.
+          nil)))))
 
 (defn in-process-merge-blocked? [root file]
   (and file
@@ -2059,10 +2092,11 @@
       (print-handoff-action! "finish_in_process_handoff"
                              file
                              "handoff is already claimed and must be completed before new mail"
-                             (str "done_with_current.sh " file)))))
+                             (str "SWARMFORGE_ROLE=squad-leader done_with_current.sh " file)))))
 
 (def daemon-handoff-step-actions
-  #{"record_assignment_result" "check_merge_readiness" "accept_merge"})
+  #{"record_assignment_result" "check_merge_readiness" "accept_merge"
+    "finish_in_process_handoff"})
 
 (defn visible-handoff-agents [root]
   (->> ["new" "in_process" "completed"]

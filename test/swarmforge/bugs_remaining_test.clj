@@ -113,7 +113,49 @@
           (is (str/includes? (:out second) "STATE: merge_ready"))
           (is (= (count (re-seq #"\tmerge_ready\t" events-before))
                  (count (re-seq #"\tmerge_ready\t" events-after)))
-              "second merge-ready must not append another merge_ready event")))
+              "second merge-ready must not append another merge_ready event")
+          ;; Status must stay merge_ready even if something overwrote it mid-flight.
+          (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                      "assignment_id: cave-impl\nstate: result_received\ndetail: drift\nupdated_at: now\n")
+          (run {:dir root} (script "squad_assign.sh") "merge-ready" "cave-impl")
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/cave-impl/status")))
+                             "state: merge_ready")
+              "replay must re-sync status to merge_ready")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest merge-ready-and-result-respect-already-merged
+  ;; Given accepted-merge exists but status was regressed to result_received
+  ;; When merge-ready or result is attempted
+  ;; Then merge-ready reports merged (and resyncs), result is refused
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/assignments/done-work/metadata")
+                  "assignment_id: done-work\ntemplate: implementer\ntheme_id: wumpus\nstory_id: cave\n")
+      (write-file (fs/path root ".squad/assignments/done-work/result")
+                  "assignment_id: done-work\nfrom: implementer-001\ncommit: abcdef1234\n")
+      (write-file (fs/path root ".squad/assignments/done-work/merge")
+                  "assignment_id: done-work\nstate: merge_ready\ncommit: abcdef1234\ndetail: dry-run merge passed\n")
+      (write-file (fs/path root ".squad/assignments/done-work/accepted-merge")
+                  "assignment_id: done-work\nstate: merged\ncommit: abcdef1234\nmerge_commit: deadbeef01\n")
+      (write-file (fs/path root ".squad/assignments/done-work/status")
+                  "assignment_id: done-work\nstate: result_received\ndetail: drift\n")
+      (let [mr (run {:dir root} (script "squad_assign.sh") "merge-ready" "done-work")]
+        (is (str/includes? (:out mr) "STATE: merged"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/assignments/done-work/status")))
+                           "state: merged")))
+      (write-file (fs/path root "again.handoff")
+                  (str "id: 1\nfrom: implementer-001\nto: squad-leader\npriority: 50\n"
+                       "type: git_handoff\ntask: done-work\ncommit: abcdef1234\n"
+                       "assignment: done-work\nagent: implementer-001\ntemplate: implementer\n"
+                       "artifacts: none\n\nbody\n"))
+      (let [res (run {:dir root :ok? false}
+                     (script "squad_assign.sh") "result" "done-work" "again.handoff")]
+        (is (= 2 (:exit res)))
+        (is (str/includes? (:err res) "already merged")))
       (finally
         (fs/delete-tree root)))))
 
