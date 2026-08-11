@@ -171,3 +171,23 @@
           (is (seq (dashreq/pending-requests root)))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest sl-queue-depth-counts-requests-and-handoffs
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (is (= 0 (web/sl-queue-depth root)))
+      (dashreq/create-request root {:body "one"})
+      (dashreq/create-request root {:body "two"})
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/new/50_a.handoff") "type: git_handoff\n\n")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_b.handoff") "type: git_handoff\n\n")
+      (is (= 4 (web/sl-queue-depth root))
+          "2 pending requests + 1 new + 1 in_process")
+      (let [state (web/web-state root)]
+        (is (= 4 (get state "sl_queue_depth")))
+        (is (str/includes? web/dashboard-html "sl-requests-title"))
+        (is (str/includes? web/dashboard-html "sl_queue_depth")))
+      (finally
+        (fs/delete-tree root)))))

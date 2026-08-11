@@ -56,7 +56,7 @@
     <section><h2>Blockers</h2><div id=\"blockers\"></div></section>
     <section><h2>Pending Approvals</h2><div id=\"approvals\"></div></section>
     <section>
-      <h2>Squad Leader Requests</h2>
+      <h2 id=\"sl-requests-title\">Squad Leader Requests</h2>
       <div id=\"sl-requests\" class=\"req-history\"></div>
       <div class=\"composer-row\">
         <button type=\"button\" onclick=\"sendRequest()\">Submit</button>
@@ -76,6 +76,7 @@
     const agentsPanel = document.getElementById('agents');
     const assignmentsPanel = document.getElementById('assignments');
     const requestsPanel = document.getElementById('sl-requests');
+    const requestsTitle = document.getElementById('sl-requests-title');
     const slDraftKey = 'swarmforge.slMessageDraft';
     let slDraft = localStorage.getItem(slDraftKey) || '';
     let pressedApproval = null;
@@ -233,6 +234,8 @@
         error.textContent = '';
         blockersPanel.innerHTML = blockers(data.blockers || []);
         approvalsPanel.innerHTML = approvals((data.approvals && data.approvals.pending) || []);
+        const slQueue = (data.sl_queue_depth != null) ? data.sl_queue_depth : 0;
+        requestsTitle.textContent = 'Squad Leader Requests (queue: ' + slQueue + ')';
         updateRequestsPanel(data.sl_requests || []);
         storiesPanel.innerHTML = table(['Story','State','Substate'], (data.stories || []).map(s => row([
           artifactLink('story', s.story_id, s.story_number ? ('#' + s.story_number + ' ' + s.story_id) : s.story_id),
@@ -705,9 +708,29 @@
                (global-blocker-state root)
                (agent-blocker-state assignments agents))))
 
+(defn handoff-inbox-count [root bucket]
+  (let [dir (fs/path root ".swarmforge" "handoffs" "inbox" bucket)]
+    (if (fs/directory? dir)
+      (count (filter #(and (fs/regular-file? %)
+                           (str/ends-with? (fs/file-name %) ".handoff"))
+                     (fs/list-dir dir)))
+      0)))
+
+(defn pending-dashboard-request-count [root]
+  (count (dashreq/pending-requests root)))
+
+(defn sl-queue-depth
+  "Work waiting on the squad leader: pending dashboard requests plus claimed and
+  unclaimed handoff mail."
+  [root]
+  (+ (pending-dashboard-request-count root)
+     (handoff-inbox-count root "new")
+     (handoff-inbox-count root "in_process")))
+
 (defn web-state [root]
   (let [assignments (assignment-state root)
-        agents (agent-state root)]
+        agents (agent-state root)
+        sl-requests (dashreq/list-all-requests root)]
     {"generated_at" (now)
      "project_root" (str root)
      "stories" (story-state root)
@@ -716,7 +739,8 @@
      "batches" (batch-state root)
      "blockers" (blocker-state root assignments agents)
      "approvals" {"pending" (approval-state-for root "pending")}
-     "sl_requests" (dashreq/list-all-requests root)}))
+     "sl_requests" sl-requests
+     "sl_queue_depth" (sl-queue-depth root)}))
 
 (defn response [status content-type body]
   {:status status :content-type content-type :body body})
