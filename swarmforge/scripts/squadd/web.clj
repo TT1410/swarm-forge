@@ -843,15 +843,70 @@
   (when-not (str/blank? content)
     (str "## " title "\n\n" content "\n")))
 
-(defn theme-content [root theme-id]
-  "Theme package page: theme, module map, implementation order.
-  Missing artifacts are omitted (section/ hides blank content)."
+(defn theme-package-parts [root theme-id]
+  "Ordered package sections that exist. Missing artifacts are omitted entirely.
+  Implementation order prefers the durable theme record; falls back to project
+  root implementation-order.md with a note when not yet recorded."
   (let [theme (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md"))
         module-map (slurp-if-exists (fs/path root ".squad" "themes" theme-id "module-map.md"))
-        impl-order (slurp-if-exists (fs/path root ".squad" "themes" theme-id "implementation-order.md"))]
-    (str (section "Theme" theme)
-         (section "Module Map" module-map)
-         (section "Implementation Order" impl-order))))
+        durable-order (slurp-if-exists (fs/path root ".squad" "themes" theme-id "implementation-order.md"))
+        draft-order (slurp-if-exists (fs/path root "implementation-order.md"))
+        ;; "" is truthy in Clojure — never use (or durable draft) for optional text.
+        impl-order (cond
+                     (not (str/blank? durable-order)) durable-order
+                     (not (str/blank? draft-order))
+                     (str "_(Not yet recorded under .squad/themes/" theme-id
+                          "/ — run `squad_theme.sh implementation-order "
+                          theme-id " implementation-order.md`.)_\n\n"
+                          draft-order)
+                     :else nil)]
+    (cond-> []
+      (not (str/blank? theme))
+      (conj {:id "theme" :title "Theme (scheme)" :body theme})
+      (not (str/blank? module-map))
+      (conj {:id "module-map" :title "Module Map" :body module-map})
+      (not (str/blank? impl-order))
+      (conj {:id "implementation-order" :title "Implementation Order" :body impl-order}))))
+
+(defn theme-content [root theme-id]
+  "Plain-text package body (tests / simple readers). Prefer theme-package-page for HTML."
+  (->> (theme-package-parts root theme-id)
+       (map (fn [{:keys [title body]}] (section title body)))
+       (apply str)))
+
+(defn theme-package-page [theme-id parts]
+  "HTML with clear section chrome and jump links so module map / order are not lost under theme prose."
+  (let [nav (when (seq parts)
+              (str "<nav class=\"toc\">"
+                   (str/join " · "
+                             (map (fn [{:keys [id title]}]
+                                    (str "<a href=\"#" id "\">" (html-escape title) "</a>"))
+                                  parts))
+                   "</nav>"))
+        body (str/join
+              ""
+              (map (fn [{:keys [id title body]}]
+                     (str "<section class=\"pkg\" id=\"" id "\">"
+                          "<h2>" (html-escape title) "</h2>"
+                          "<pre>" (html-escape body) "</pre>"
+                          "</section>"))
+                   parts))]
+    (str "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+         "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
+         "<title>Theme " (html-escape theme-id) "</title>"
+         "<style>:root{font-family:ui-sans-serif,system-ui,sans-serif;color-scheme:light dark}"
+         "body{margin:0;background:#f7f7f4;color:#202124}"
+         "header{padding:14px 18px;border-bottom:1px solid #d9d9d2}"
+         "h1{font-size:18px;margin:0}h2{font-size:16px;margin:0 0 10px;padding:0}"
+         "main{padding:18px;display:grid;gap:18px}"
+         "nav.toc{padding:10px 18px;background:#ecece6;border-bottom:1px solid #d9d9d2;font-size:14px}"
+         "nav.toc a{color:#1a5f4a;margin-right:4px}"
+         "section.pkg{background:white;border:1px solid #d9d9d2;border-radius:8px;padding:14px}"
+         "section.pkg pre{white-space:pre-wrap;margin:0;overflow:auto;font-size:13px;line-height:1.45}"
+         "</style></head><body>"
+         "<header><h1>Theme package: " (html-escape theme-id) "</h1></header>"
+         (or nav "")
+         "<main>" body "</main></body></html>")))
 
 (defn packet-review-sections [root packet]
   (apply str
@@ -909,9 +964,14 @@
   (let [[_ kind encoded-id] (re-matches #"/artifact/([^/]+)/([^/]+)" path)
         id (url-decode encoded-id)
         title (str (str/capitalize (str/replace kind "-" " ")) " " id)]
-    (if-let [content (not-empty (or (artifact-content root kind id) ""))]
-      (response 200 "text/html; charset=utf-8" (artifact-page title content))
-      (response 404 "text/plain; charset=utf-8" "Artifact not found\n"))))
+    (if (= "theme" kind)
+      (let [parts (theme-package-parts root id)]
+        (if (seq parts)
+          (response 200 "text/html; charset=utf-8" (theme-package-page id parts))
+          (response 404 "text/plain; charset=utf-8" "Theme package not found\n")))
+      (if-let [content (not-empty (or (artifact-content root kind id) ""))]
+        (response 200 "text/html; charset=utf-8" (artifact-page title content))
+        (response 404 "text/plain; charset=utf-8" "Artifact not found\n")))))
 
 (defn tail-section [file]
   (when (fs/regular-file? file)
