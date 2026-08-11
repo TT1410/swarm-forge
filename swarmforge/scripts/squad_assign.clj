@@ -1027,6 +1027,29 @@
     (mark-merge-ready-state! root dir assignment-id commit now "commit already reachable from HEAD")
     (mark-merge-result! root dir assignment-id commit now (dry-run-merge root commit))))
 
+(defn existing-merge-evaluation [dir commit]
+  "Return prior merge_ready/merge_blocked outcome for the same result commit, if any."
+  (let [merge-file (fs/path dir "merge")
+        prior-state (read-value merge-file "state")
+        prior-commit (read-value merge-file "commit")
+        prior-detail (read-value merge-file "detail")]
+    (when (and (= commit prior-commit)
+               (contains? #{"merge_ready" "merge_blocked"} prior-state))
+      {:state prior-state
+       :detail (or prior-detail
+                   (if (= "merge_ready" prior-state)
+                     "dry-run merge passed"
+                     "dry-run merge failed"))})))
+
+(defn replay-existing-merge-evaluation! [assignment-id commit {:keys [state detail]}]
+  (if (= "merge_ready" state)
+    (do
+      (print-merge-ready! assignment-id commit detail)
+      nil)
+    (do
+      (print-merge-blocked-ready! assignment-id commit)
+      (System/exit 4))))
+
 (defn mark-merge-ready! [assignment-id]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
@@ -1037,11 +1060,13 @@
     (ensure-file! "Assignment result not found" result-file)
     (let [commit (read-value result-file "commit")]
       (ensure-result-commit! commit)
-      (try
-        (ensure-known-commit! root commit)
-        (check-merge-ready! root dir assignment-id commit now)
-        (finally
-          (abort-merge! root))))))
+      (if-let [prior (existing-merge-evaluation dir commit)]
+        (replay-existing-merge-evaluation! assignment-id commit prior)
+        (try
+          (ensure-known-commit! root commit)
+          (check-merge-ready! root dir assignment-id commit now)
+          (finally
+            (abort-merge! root)))))))
 
 (defn record-review! [assignment-id decision review-path]
   (validate-id! "Assignment id" assignment-id)
@@ -1254,21 +1279,40 @@
                   ": merge recovery is at max_merger_depth (" max-depth "). "
                   "Use squad_assign.sh block (declare_merge_blocker), not reject/replace.")))))
 
+(defn archive-rejection! [root assignment-id reason-text]
+  (let [archive (fs/path root ".squad" "rejections" (str assignment-id ".md"))]
+    (write-atomic! archive reason-text)
+    archive))
+
+(defn write-rejection-blocker! [dir assignment-id now]
+  "Mirror rejection into blocker files so the dashboard Blockers panel surfaces it."
+  (write-atomic! (fs/path dir "blocker")
+                 (str "assignment_id: " assignment-id "\n"
+                      "state: blocked\n"
+                      "kind: assignment-rejection\n"
+                      "reason_file: " (fs/path dir "rejection.md") "\n"
+                      "updated_at: " now "\n"))
+  (when (fs/regular-file? (fs/path dir "rejection.md"))
+    (write-atomic! (fs/path dir "blocker.md")
+                   (slurp (str (fs/path dir "rejection.md"))))))
+
 (defn reject-assignment! [assignment-id reason-path]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
         dir (assignment-dir root assignment-id)
         reason-source (source-file! reason-path)
+        reason-text (slurp (str reason-source))
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
     (ensure-not-max-depth-merge-escape! root assignment-id "reject")
-    (write-atomic! (fs/path dir "rejection.md")
-                   (slurp (str reason-source)))
+    (write-atomic! (fs/path dir "rejection.md") reason-text)
     (write-atomic! (fs/path dir "rejection")
                    (str "assignment_id: " assignment-id "\n"
                         "state: rejected\n"
                         "reason_file: " (fs/path dir "rejection.md") "\n"
                         "updated_at: " now "\n"))
+    (write-rejection-blocker! dir assignment-id now)
+    (archive-rejection! root assignment-id reason-text)
     (write-atomic! (fs/path dir "status")
                    (str "assignment_id: " assignment-id "\n"
                         "state: rejected\n"
@@ -1279,7 +1323,8 @@
     (assignment-theme-event! root dir "rejected" assignment-id)
     (println "SQUAD_ASSIGNMENT:" assignment-id)
     (println "STATE: rejected")
-    (println "REJECTION:" (str (fs/path dir "rejection.md")))))
+    (println "REJECTION:" (str (fs/path dir "rejection.md")))
+    (println "BLOCKER:" (str (fs/path dir "blocker.md")))))
 
 (defn replace-assignment! [old-assignment-id new-assignment-id template instructions-file]
   (doseq [[kind value] [["Old assignment id" old-assignment-id]

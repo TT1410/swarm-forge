@@ -1956,7 +1956,7 @@
 
 (def resolved-handoff-assignment-states
   #{"merged" "rejected" "blocked" "replacement_created" "superseded"
-    "review_accepted" "review_changes_requested"})
+    "review_accepted" "review_changes_requested" "cancelled" "abandoned"})
 
 (defn downstream-merger-result-recorded? [root assignment-id]
   (boolean
@@ -2041,6 +2041,15 @@
        (remove #{"unknown"})
        set))
 
+(defn agent-task-id [root agent]
+  (get (file-map (fs/path root ".squad" "agents" agent "metadata")) "task_id"))
+
+(defn agent-assignment-retirable? [root agent]
+  (completed-handoff-retirable?
+   root
+   {:agent agent
+    :assignment-id (or (agent-task-id root agent) "unknown")}))
+
 (defn retirement-candidates [root rows]
   (let [completed (->> (completed-handoff-records root)
                        (filter #(completed-handoff-retirable? root %))
@@ -2049,10 +2058,11 @@
     (->> rows
          (keep (fn [row]
                  (let [agent (first row)
-                       state (agent-state root agent)]
-                   (when (and (transient-row? row)
-                              (or (contains? completed agent)
-                                  (= "retired" state)))
+                       state (agent-state root agent)
+                       retirable? (or (contains? completed agent)
+                                      (and (= "retired" state)
+                                           (agent-assignment-retirable? root agent)))]
+                   (when (and (transient-row? row) retirable?)
                      {:priority 5
                       :stage-order 0
                       :next-action "retire_agent"

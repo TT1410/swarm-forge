@@ -162,6 +162,23 @@
     (println "MODULE_MAP:" (str dest))
     (println "STATE: module_map_recorded")))
 
+(defn story-ref-files [dir]
+  (let [stories-dir (fs/path dir "stories")]
+    (if (fs/exists? stories-dir)
+      (->> (fs/list-dir stories-dir)
+           (filter #(and (fs/regular-file? %)
+                         (str/ends-with? (fs/file-name %) ".ref")))
+           vec)
+      [])))
+
+(defn next-story-number [dir]
+  (let [nums (keep (fn [ref-file]
+                     (when-let [n (read-value ref-file "story_number")]
+                       (when (re-matches #"[0-9]+" n)
+                         (Long/parseLong n))))
+                   (story-ref-files dir))]
+    (inc (if (seq nums) (apply max nums) 0))))
+
 (defn add-story! [theme-id story-id story-file]
   (validate-id! "Theme id" theme-id)
   (validate-id! "Story id" story-id)
@@ -174,21 +191,24 @@
     (ensure-theme! dir theme-id)
     (when (fs/exists? story-path)
       (exit! 2 (str "Story already exists: " story-id)))
-    (write-atomic! story-path
-                   (str "story_id: " story-id "\n"
-                        "path: " relative-source "\n"
-                        "recorded_at: " now "\n"))
-    (write-atomic! (fs/path dir "status")
-                   (str "theme_id: " theme-id "\n"
-                        "state: story_added\n"
-                        "detail: " story-id " " relative-source "\n"
-                        "updated_at: " now "\n"))
-    (append-line! (fs/path dir "events.log")
-                  (str now "\tstory_added\t" story-id "\t" relative-source))
-    (println "SQUAD_THEME:" theme-id)
-    (println "STORY:" story-id)
-    (println "PATH:" relative-source)
-    (println "STATE: story_added")))
+    (let [story-number (next-story-number dir)]
+      (write-atomic! story-path
+                     (str "story_id: " story-id "\n"
+                          "story_number: " story-number "\n"
+                          "path: " relative-source "\n"
+                          "recorded_at: " now "\n"))
+      (write-atomic! (fs/path dir "status")
+                     (str "theme_id: " theme-id "\n"
+                          "state: story_added\n"
+                          "detail: " story-id " " relative-source "\n"
+                          "updated_at: " now "\n"))
+      (append-line! (fs/path dir "events.log")
+                    (str now "\tstory_added\t" story-id "\t" story-number "\t" relative-source))
+      (println "SQUAD_THEME:" theme-id)
+      (println "STORY:" story-id)
+      (println "STORY_NUMBER:" story-number)
+      (println "PATH:" relative-source)
+      (println "STATE: story_added"))))
 
 (defn parse-story-pair! [pair]
   (let [[story-id story-file extra] (str/split pair #":" 3)]

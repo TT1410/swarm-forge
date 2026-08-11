@@ -243,12 +243,70 @@
         (println "PRESERVED_FOR_RECOVERY:" path "reason=merge_blocked")
         (println "PRESERVED_WORKTREE:" path "reason=cleanup_residue")))))
 
+(def open-assignment-states-to-cancel
+  #{"created" "assignment_created" "in_progress" "handoff_sent"
+    "result_received" "merge_ready"})
+
+(defn assignment-ids-on-disk [project-root]
+  (let [dir (fs/path project-root ".squad" "assignments")]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/directory?)
+           (map #(fs/file-name %))
+           sort
+           vec)
+      [])))
+
+(defn cancel-open-assignments!
+  "Mark non-terminal open assignments cancelled so a restart does not treat dead
+  agent bindings as active work. Preserves merge_blocked (recovery) and already
+  terminal states."
+  [project-root]
+  (let [now (timestamp)]
+    (doseq [assignment-id (assignment-ids-on-disk project-root)
+            :let [dir (fs/path project-root ".squad" "assignments" assignment-id)
+                  status (fs/path dir "status")
+                  state (read-value status "state")]
+            :when (contains? open-assignment-states-to-cancel state)]
+      (spit (str status)
+            (str "assignment_id: " assignment-id "\n"
+                 "state: cancelled\n"
+                 "detail: cancelled by full teardown\n"
+                 "updated_at: " now "\n"))
+      (let [events (fs/path dir "events.log")]
+        (spit (str events)
+              (str now "\tcancelled\tfull_teardown\n")
+              :append true))
+      (println "CANCELLED_ASSIGNMENT:" assignment-id))))
+
+(defn drain-inbox-handoffs!
+  "Move leftover inbox handoffs out of live queues so restart does not reprocess
+  them as active work."
+  [project-root]
+  (let [inbox (fs/path project-root ".swarmforge" "handoffs" "inbox")
+        dest (fs/path project-root ".swarmforge" "handoffs" "inbox" "cancelled")
+        now (timestamp)]
+    (fs/create-dirs dest)
+    (doseq [bucket ["new" "in_process"]
+            :let [dir (fs/path inbox bucket)]
+            :when (fs/directory? dir)
+            file (filter fs/regular-file? (fs/list-dir dir))]
+      (let [target (fs/path dest (str (fs/file-name file) ".cancelled"))]
+        (fs/move file target {:replace-existing true})
+        (spit (str target)
+              (str "\n# cancelled_by: full_teardown\n# cancelled_at: " now "\n")
+              :append true)
+        (println "CANCELLED_HANDOFF:" (str file))))))
+
 (defn full-teardown-reconcile!
-  "After processes are dead: retire agents, remove worktrees that are not held
-  for merge_blocked recovery, prune, reduce roles to squad-leader, and report
-  intentionally preserved vs residual worktrees."
+  "After processes are dead: retire agents, cancel open assignments, drain live
+  handoffs, remove worktrees that are not held for merge_blocked recovery, prune,
+  reduce roles to squad-leader, and report intentionally preserved vs residual
+  worktrees."
   [project-root]
   (retire-all-agents! project-root "swarm terminated by cleanup")
+  (cancel-open-assignments! project-root)
+  (drain-inbox-handoffs! project-root)
   (cleanup-non-merge-blocked-worktrees! project-root)
   (keep-only-squad-leader-roles! project-root)
   (report-remaining-worktrees! project-root))

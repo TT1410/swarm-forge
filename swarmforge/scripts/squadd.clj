@@ -277,12 +277,53 @@
 (defn daemon-dir [root]
   (fs/path root ".swarmforge" "daemon"))
 
+(def log-lock (Object.))
+
+(defn try-mkdir-lock! [lock-dir]
+  (try
+    (fs/create-dir lock-dir)
+    true
+    (catch java.nio.file.FileAlreadyExistsException _
+      false)
+    (catch Exception _
+      false)))
+
+(defn acquire-log-dir-lock! [lock-dir deadline-ms]
+  (loop []
+    (if (try-mkdir-lock! lock-dir)
+      true
+      (if (> (System/currentTimeMillis) deadline-ms)
+        false
+        (do
+          (Thread/sleep 5)
+          (recur))))))
+
+(defn with-log-dir-lock! [lock-dir f]
+  (let [deadline (+ (System/currentTimeMillis) 2000)]
+    (if (acquire-log-dir-lock! lock-dir deadline)
+      (try
+        (f)
+        (finally
+          (try (fs/delete-tree lock-dir) (catch Exception _))))
+      ;; Best-effort: never drop a log line if lock acquisition times out.
+      (f))))
+
+(defn append-locked-log-line! [log-file line]
+  "Append one complete line under a process-local lock and a directory lock for
+  cross-thread / multi-writer serialization (babashka-safe)."
+  (fs/create-dirs (fs/parent log-file))
+  (let [path (str log-file)
+        lock-dir (fs/path (str path ".dlock"))
+        payload (if (str/ends-with? line "\n") line (str line "\n"))]
+    (locking log-lock
+      (with-log-dir-lock! lock-dir
+        (fn []
+          (spit path payload :append true))))))
+
 (defn log! [root & parts]
-  (let [log-file (fs/path (daemon-dir root) "squadd.log")]
-    (fs/create-dirs (fs/parent log-file))
-    (spit (str log-file)
-          (str (now) " " (str/join " " parts) "\n")
-          :append true)))
+  (append-locked-log-line!
+   (fs/path (daemon-dir root) "squadd.log")
+   (str (now) " " (str/join " " parts))))
 
 (defn parse-message [path]
   (let [content (slurp (str path))
@@ -687,10 +728,35 @@
               agent-alert-rules)
         :tmux-health)))
 
+(defn agent-task-id [root agent]
+  (read-value (fs/path root ".squad" "agents" agent "metadata") "task_id"))
+
+(def resolved-handoff-assignment-states
+  #{"merged" "rejected" "blocked" "replacement_created" "superseded"
+    "review_accepted" "review_changes_requested" "cancelled" "abandoned"})
+
+(defn assignment-handoff-terminal? [root assignment-id]
+  (if-not (and assignment-id
+               (not= "unknown" assignment-id)
+               (fs/directory? (fs/path root ".squad" "assignments" assignment-id)))
+    true
+    (let [state (or (read-value (fs/path root ".squad" "assignments" assignment-id "status") "state")
+                    "unknown")]
+      (contains? resolved-handoff-assignment-states state))))
+
 (defn retired-agent-alert! [root roles socket skip-tmux? dir {:keys [agent]}]
   (when (contains? roles agent)
-    (log! root "agent-retired-awaiting-workflow" agent)
-    (str "agent " agent " reported retired; run squad_retire.sh only after workflow resolves its handoff")))
+    (let [task-id (agent-task-id root agent)
+          terminal? (assignment-handoff-terminal? root task-id)]
+      (if terminal?
+        (do
+          (log! root "agent-retired-awaiting-workflow" agent)
+          (str "agent " agent " reported retired; run squad_retire.sh only after workflow resolves its handoff"))
+        (do
+          (log! root "agent-retired-before-handoff-terminal" agent (or task-id "unknown"))
+          (str "agent " agent " status is retired but assignment "
+               (or task-id "unknown")
+               " handoff is not terminal; do not free the role until workflow resolves"))))))
 
 (defn unregistered-agent-alert [{:keys [agent]}]
   (str "agent " agent " is not registered in roles.tsv"))

@@ -141,7 +141,7 @@
              (str existing "," entry)))))
 
 (defn ordered-packet-lines [packet]
-  (let [ordered ["story_id" "theme_id" "state" "final_state"
+  (let [ordered ["story_id" "story_number" "theme_id" "state" "final_state"
                  "story_path" "story_assignment" "story_branch" "story_sha"
                  "story_approval" "story_approval_state" "story_approval_detail"
                  "story_iterations"
@@ -224,6 +224,7 @@
         theme (theme-dir root theme-id)
         story-ref (fs/path theme "stories" (str story-id ".ref"))
         story-path (referenced-project-file root story-ref)
+        story-number (read-value story-ref "story_number")
         dir (story-dir root story-id)]
     (when-not (fs/directory? theme)
       (exit! 1 (str "Unknown theme: " theme-id)))
@@ -232,17 +233,21 @@
     (when (fs/exists? (packet-file root story-id))
       (exit! 2 (str "Story packet already exists: " story-id)))
     (fs/create-dirs dir)
-    (let [packet (write-packet! root story-id
-                                (append-iteration
-                                 {"story_id" story-id
-                                  "theme_id" theme-id
-                                  "story_path" story-path
-                                  "story_assignment" assignment-id
-                                  "story_branch" branch
-                                  "story_sha" sha}
-                                 "story" assignment-id "recorded"))]
+    (let [base {"story_id" story-id
+                "theme_id" theme-id
+                "story_path" story-path
+                "story_assignment" assignment-id
+                "story_branch" branch
+                "story_sha" sha}
+          base (if (str/blank? story-number)
+                 base
+                 (assoc base "story_number" story-number))
+          packet (write-packet! root story-id
+                                (append-iteration base "story" assignment-id "recorded"))]
       (event! root story-id "story_recorded" assignment-id branch sha)
       (println "SQUAD_PACKET:" story-id)
+      (when-not (str/blank? story-number)
+        (println "STORY_NUMBER:" story-number))
       (println "STATE:" (get packet "state"))
       (println "STORY:" story-path)
       (println "PACKET:" (str (packet-file root story-id))))))

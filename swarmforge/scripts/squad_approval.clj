@@ -234,16 +234,65 @@
       (println "TARGET:" target-id)
       (println "GATE:" gate))))
 
+(defn write-approval-blocker! [root approval-id approval reason now]
+  (let [blocker-id approval-id
+        dir (fs/path root ".squad" "blockers")
+        target-kind (get approval "target_kind" "unknown")
+        target-id (get approval "target_id" "unknown")
+        gate (get approval "gate" "unknown")
+        title (get approval "title" "")
+        body (str "Approval " approval-id " rejected for " target-kind " " target-id
+                  " gate " gate ".\nReason: " reason "\n")]
+    (write-atomic! (fs/path dir blocker-id)
+                   (str "blocker_id: " blocker-id "\n"
+                        "kind: approval-rejection\n"
+                        "state: blocked\n"
+                        "approval_id: " approval-id "\n"
+                        "target_kind: " target-kind "\n"
+                        "target_id: " target-id "\n"
+                        "gate: " gate "\n"
+                        "title: " title "\n"
+                        "detail: " reason "\n"
+                        "updated_at: " now "\n"))
+    (write-atomic! (fs/path dir (str blocker-id ".md")) body)
+    blocker-id))
+
+(defn update-story-packet-on-approval-reject! [root story-id gate reason]
+  (let [file (packet-file root story-id)]
+    (when (fs/regular-file? file)
+      (let [packet (file-map file)
+            gate-key (str/replace (packet-gate gate) "-" "_")
+            approval-field (str gate-key "_approval")
+            detail-field (str gate-key "_approval_detail")
+            now (timestamp)
+            lines (for [[k v] (sort (assoc packet
+                                           approval-field "rejected"
+                                           detail-field reason
+                                           "updated_at" now))]
+                    (str k ": " v))]
+        (write-atomic! file (str (str/join "\n" lines) "\n"))))))
+
 (defn reject! [approval-id reason-parts]
   (validate-id! "Approval id" approval-id)
   (let [root (fs/absolutize (project-root))
         source (pending-file root approval-id)
-        reason (normalized-detail reason-parts "rejected-by-user")]
+        reason (normalized-detail reason-parts "rejected-by-user")
+        now (timestamp)]
     (when-not (fs/regular-file? source)
       (exit! 1 (str "Pending approval not found: " approval-id)))
-    (move-with-state! source (rejected-file root approval-id) "rejected" reason)
-    (println "SQUAD_APPROVAL:" approval-id)
-    (println "STATE: rejected")))
+    (let [approval (file-map source)
+          target-kind (get approval "target_kind")
+          target-id (get approval "target_id")
+          gate (get approval "gate")]
+      (move-with-state! source (rejected-file root approval-id) "rejected" reason)
+      (write-approval-blocker! root approval-id approval reason now)
+      (when (= "story" target-kind)
+        (update-story-packet-on-approval-reject! root target-id gate reason))
+      (println "SQUAD_APPROVAL:" approval-id)
+      (println "STATE: rejected")
+      (println "TARGET:" (or target-id "unknown"))
+      (println "GATE:" (or gate "unknown"))
+      (println "BLOCKER:" (str (fs/path root ".squad" "blockers" approval-id))))))
 
 (defn print-one-status! [root approval-id]
   (validate-id! "Approval id" approval-id)

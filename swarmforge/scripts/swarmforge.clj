@@ -536,10 +536,13 @@
   (fs/delete-if-exists (fs/path (:daemon-dir ctx) "squadd.stop"))
   (let [command (into (vec (sleep-inhibitor-prefix))
                       [(str (fs/path (:script-dir ctx) "squadd.clj"))
-                       (str (:working-dir ctx))])]
+                       (str (:working-dir ctx))])
+        ;; Process stdout must not share squadd.log with log! appends — concurrent
+        ;; writers tear event lines. Durable events go only through log!.
+        stdout-file (str (fs/path (:daemon-dir ctx) "squadd.stdout"))]
     (process/process command
                      {:dir "/"
-                      :out (str (:squadd-log ctx))
+                      :out stdout-file
                       :err :out})
     (println (str green "Started squad daemon"
                   (when (> (count command) 2) " with OS sleep prevention")

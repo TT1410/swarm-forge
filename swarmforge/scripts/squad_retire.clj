@@ -194,6 +194,48 @@
     :else
     (stop-running-session! socket session)))
 
+(def resolved-handoff-assignment-states
+  #{"merged" "rejected" "blocked" "replacement_created" "superseded"
+    "review_accepted" "review_changes_requested" "cancelled" "abandoned"})
+
+(defn agent-task-id [root agent-id]
+  (read-value (fs/path root ".squad" "agents" agent-id "metadata") "task_id"))
+
+(defn assignment-status-state [root assignment-id]
+  (or (read-value (fs/path root ".squad" "assignments" assignment-id "status") "state")
+      "unknown"))
+
+(defn downstream-merger-result-recorded? [root assignment-id]
+  (let [assignments-dir (fs/path root ".squad" "assignments")]
+    (boolean
+     (when (fs/directory? assignments-dir)
+       (some (fn [dir]
+               (let [meta (fs/path dir "metadata")]
+                 (and (= assignment-id (read-value meta "merge_for"))
+                      (fs/regular-file? (fs/path dir "result")))))
+             (filter fs/directory? (fs/list-dir assignments-dir)))))))
+
+(defn handoff-resolved-for-retire? [root assignment-id]
+  (if-not (and assignment-id
+               (not= "unknown" assignment-id)
+               (fs/directory? (fs/path root ".squad" "assignments" assignment-id)))
+    true
+    (let [state (assignment-status-state root assignment-id)]
+      (or (contains? resolved-handoff-assignment-states state)
+          (and (= "merge_blocked" state)
+               (downstream-merger-result-recorded? root assignment-id))))))
+
+(defn ensure-handoff-resolved-for-retire! [root agent-id]
+  (let [task-id (agent-task-id root agent-id)]
+    (when-not (handoff-resolved-for-retire? root task-id)
+      (exit! 2
+             (str "Cannot retire " agent-id
+                  ": assignment handoff is not terminal (task_id="
+                  (or task-id "unknown")
+                  " state="
+                  (assignment-status-state root task-id)
+                  "). Resolve merge/reject/block first, then run squad_retire.sh.")))))
+
 (defn retire! [agent-id]
   (validate-agent-id! agent-id)
   (let [root (fs/absolutize (project-root))
@@ -203,6 +245,7 @@
         agent-dir (fs/path root ".squad" "agents" agent-id)]
     (when-not (fs/regular-file? roles-file)
       (exit! 1 "Run ./swarm before retiring transient agents; .swarmforge/roles.tsv is missing."))
+    (ensure-handoff-resolved-for-retire! root agent-id)
     (fs/create-dirs (fs/parent lock-dir))
     (acquire-lock! lock-dir)
     (try

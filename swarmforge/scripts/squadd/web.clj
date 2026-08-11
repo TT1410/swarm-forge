@@ -222,12 +222,45 @@
 (defn daemon-dir [root]
   (fs/path root ".swarmforge" "daemon"))
 
+(def log-lock (Object.))
+
+(defn try-mkdir-lock! [lock-dir]
+  (try
+    (fs/create-dir lock-dir)
+    true
+    (catch java.nio.file.FileAlreadyExistsException _
+      false)
+    (catch Exception _
+      false)))
+
+(defn with-log-dir-lock! [lock-dir f]
+  (let [deadline (+ (System/currentTimeMillis) 2000)]
+    (loop []
+      (cond
+        (try-mkdir-lock! lock-dir)
+        (try
+          (f)
+          (finally
+            (try (fs/delete-tree lock-dir) (catch Exception _))))
+
+        (> (System/currentTimeMillis) deadline)
+        (f)
+
+        :else
+        (do
+          (Thread/sleep 5)
+          (recur))))))
+
 (defn log! [root & parts]
-  (let [log-file (fs/path (daemon-dir root) "squadd.log")]
+  (let [log-file (fs/path (daemon-dir root) "squadd.log")
+        path (str log-file)
+        lock-dir (fs/path (str path ".dlock"))
+        line (str (now) " " (str/join " " parts) "\n")]
     (fs/create-dirs (fs/parent log-file))
-    (spit (str log-file)
-          (str (now) " " (str/join " " parts) "\n")
-          :append true)))
+    (locking log-lock
+      (with-log-dir-lock! lock-dir
+        (fn []
+          (spit path line :append true))))))
 
 (defn read-lines [path]
   (when (fs/exists? path)
@@ -447,15 +480,22 @@
             "stage_label" (stage-label state)
             "stage_detail" (stage-detail packet state)})))
 
+(defn story-number-sort-key [row]
+  (let [n (get row "story_number")]
+    (if (and n (re-matches #"[0-9]+" (str n)))
+      (Long/parseLong (str n))
+      Long/MAX_VALUE)))
+
 (defn story-state [root]
   (let [dir (fs/path root ".squad" "stories")]
     (if (fs/exists? dir)
       (->> (fs/list-dir dir)
            (filter fs/directory?)
-           (sort-by fs/file-name)
-           (mapv (fn [story-dir]
-                   (canonical-story-row (fs/file-name story-dir)
-                                        (fs/path story-dir "packet")))))
+           (map (fn [story-dir]
+                  (canonical-story-row (fs/file-name story-dir)
+                                       (fs/path story-dir "packet"))))
+           (sort-by (juxt story-number-sort-key #(get % "story_id" "")))
+           vec)
       [])))
 
 (defn descending-value [row]
@@ -514,19 +554,55 @@
 (def blocking-agent-states
   #{"blocked" "failed"})
 
+(defn assignment-blocker-from-dir [assignment-dir]
+  (let [assignment-id (fs/file-name assignment-dir)
+        status (parse-kv-file (fs/path assignment-dir "status"))
+        state (get status "state")
+        blocker (fs/path assignment-dir "blocker")
+        rejection (fs/path assignment-dir "rejection")]
+    (cond
+      (and (fs/regular-file? blocker)
+           (= "blocked" state))
+      (merge {"assignment_id" assignment-id
+              "detail" (get status "detail" "")
+              "kind" "assignment-block"}
+             (parse-kv-file blocker))
+
+      (and (fs/regular-file? rejection)
+           (= "rejected" state))
+      (merge {"assignment_id" assignment-id
+              "state" "blocked"
+              "kind" "assignment-rejection"
+              "detail" (get status "detail" "rejected by squad leader")
+              "reason_file" (str (fs/path assignment-dir "rejection.md"))
+              "updated_at" (get status "updated_at" "")}
+             (parse-kv-file rejection)
+             (when (fs/regular-file? blocker)
+               (parse-kv-file blocker)))
+
+      :else nil)))
+
 (defn assignment-blocker-state [root]
   (let [dir (fs/path root ".squad" "assignments")]
     (if (fs/exists? dir)
       (->> (fs/list-dir dir)
            (filter fs/directory?)
-           (keep (fn [assignment-dir]
-                   (let [blocker (fs/path assignment-dir "blocker")
-                         status (parse-kv-file (fs/path assignment-dir "status"))]
-                     (when (and (fs/regular-file? blocker)
-                                (= "blocked" (get status "state")))
-                       (merge {"assignment_id" (fs/file-name assignment-dir)
-                               "detail" (get status "detail" "")}
-                              (parse-kv-file blocker))))))
+           (keep assignment-blocker-from-dir)
+           (sort-by descending-value #(compare %2 %1))
+           vec)
+      [])))
+
+(defn global-blocker-state [root]
+  (let [dir (fs/path root ".squad" "blockers")]
+    (if (fs/exists? dir)
+      (->> (fs/list-dir dir)
+           (filter #(and (fs/regular-file? %)
+                         (not (str/ends-with? (fs/file-name %) ".md"))))
+           (map (fn [file]
+                  (merge {"blocker_id" (fs/file-name file)
+                          "state" "blocked"}
+                         (parse-kv-file file))))
+           (filter #(= "blocked" (get % "state")))
            (sort-by descending-value #(compare %2 %1))
            vec)
       [])))
@@ -557,6 +633,7 @@
 
 (defn blocker-state [root assignments agents]
   (vec (concat (assignment-blocker-state root)
+               (global-blocker-state root)
                (agent-blocker-state assignments agents))))
 
 (defn web-state [root]
@@ -685,7 +762,15 @@
    "assignment" assignment-document-content
    "blocker" (fn [root id]
                (or (assignment-artifact-content root id "blocker.md")
-                   (assignment-artifact-content root id "blocker")))})
+                   (assignment-artifact-content root id "blocker")
+                   (assignment-artifact-content root id "rejection.md")
+                   (assignment-artifact-content root id "rejection")
+                   (let [global-md (fs/path root ".squad" "blockers" (str id ".md"))
+                         global (fs/path root ".squad" "blockers" id)]
+                     (cond
+                       (fs/regular-file? global-md) (slurp (str global-md))
+                       (fs/regular-file? global) (slurp (str global))
+                       :else nil))))})
 
 (defn artifact-content [root kind id]
   (when-let [reader (get artifact-readers kind)]
