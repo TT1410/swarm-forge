@@ -7,24 +7,6 @@ then recovery/visibility, then efficiency and polish.
 
 ## Open Bugs
 
-1. **Same Assignment Can Spawn Two Live Agents**
-
-   Observed in `~/junk/squad`: assignment `command-shorthand-input-analysis`
-   (theme-scope analyst) received two successful spawn requests about three
-   seconds apart and ran both `analyst-002` and `analyst-003` against the same
-   `task_id`. Assignment status only records the last assignee
-   (`agent_id: analyst-003`). Both agents drafted in parallel.
-
-   Spawn does not refuse a second agent when the assignment is already
-   `in_progress` or already has a live agent with that `task_id`. A race between
-   create/`--queue-spawn` and a later `request_spawn` (or two mechanical ticks
-   before the first agent counts as active for that assignment) can enqueue a
-   second request after the first has completed.
-
-   Expected: at most one live transient per assignment/`task_id`.
-   `request_spawn` / spawn admission must no-op or fail if a pending spawn
-   request, in-process spawn, or active agent already covers that assignment.
-
 2. **`merge-merge` Max Depth Sometimes Hard-Blocks Instead Of Recovering**
 
    Log/state from the trial: many second-level merger assignments end as SL

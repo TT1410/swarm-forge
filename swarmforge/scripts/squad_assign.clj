@@ -522,19 +522,47 @@
        "_" template "_" assignment-id "_"
        (.toString (java.util.UUID/randomUUID))))
 
+(defn spawn-request-task-ids [root]
+  (->> ["new" "in_process"]
+       (mapcat (fn [state]
+                 (let [dir (fs/path root ".squad" "spawn-requests" state)]
+                   (when (fs/directory? dir)
+                     (->> (fs/list-dir dir)
+                          (filter #(and (fs/regular-file? %)
+                                        (str/ends-with? (fs/file-name %) ".request")))
+                          (keep #(read-value % "task_id")))))))
+       (remove str/blank?)
+       set))
+
+(defn pending-or-active-spawn? [root assignment-id]
+  (or (contains? (spawn-request-task-ids root) assignment-id)
+      (let [agent-id (read-value (fs/path root ".squad" "assignments" assignment-id "status")
+                                 "agent_id")
+            state (when agent-id
+                    (read-value (fs/path root ".squad" "agents" agent-id "status") "state"))]
+        (contains? #{"starting" "running" "failed" "blocked" "handoff_ready" "handoff_sent"}
+                   (or state "")))))
+
 (defn queue-spawn-request! [root template assignment-id assignment-file]
-  (let [request-dir (fs/path root ".squad" "spawn-requests" "new")
-        request (fs/path request-dir (str (spawn-request-id template assignment-id) ".request"))]
-    (write-atomic! request
-                   (str "template: " template "\n"
-                        "task_id: " assignment-id "\n"
-                        "assignment: " assignment-file "\n"
-                        "requested_at: " (timestamp) "\n"))
-    request))
+  (if (pending-or-active-spawn? root assignment-id)
+    (do
+      (println "SQUAD_SPAWN_REQUEST: skipped")
+      (println "TASK_ID:" assignment-id)
+      (println "STATE: occupied")
+      (println "DETAIL: active agent or pending spawn already covers this task_id")
+      nil)
+    (let [request-dir (fs/path root ".squad" "spawn-requests" "new")
+          request (fs/path request-dir (str (spawn-request-id template assignment-id) ".request"))]
+      (write-atomic! request
+                     (str "template: " template "\n"
+                          "task_id: " assignment-id "\n"
+                          "assignment: " assignment-file "\n"
+                          "requested_at: " (timestamp) "\n"))
+      request)))
 
 (defn maybe-queue-spawn! [{:keys [root template assignment-id requirement queue-spawn?]} assignment-file]
   (when (and queue-spawn? (nil? requirement))
-    (let [request (queue-spawn-request! root template assignment-id assignment-file)]
+    (when-let [request (queue-spawn-request! root template assignment-id assignment-file)]
       (println "SQUAD_SPAWN_REQUEST:" (fs/file-name request))
       (println "STATE: requested"))))
 

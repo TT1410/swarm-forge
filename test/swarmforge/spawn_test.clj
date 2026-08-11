@@ -569,3 +569,64 @@
         (is (str/includes? (:err second-merger) "TEMPLATE: merger")))
       (finally
         (fs/delete-tree root)))))
+(deftest squad-spawn-refuses-second-agent-for-same-task-id
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt")
+                  "specify\n")
+      (write-file (fs/path root "assignment.md")
+                  "assignment_id: shared-analysis\n\nFind the original rules.\n")
+      (write-file (fs/path root ".squad/assignments/shared-analysis/status")
+                  "assignment_id: shared-analysis\nstate: created\n")
+      (write-file (fs/path root ".squad/assignments/shared-analysis/assignment.md")
+                  "assignment_id: shared-analysis\n\nFind the original rules.\n")
+      (let [first (run {:dir root
+                        :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
+                       (script "squad_spawn.sh")
+                       "analyst"
+                       "shared-analysis"
+                       ".squad/assignments/shared-analysis/assignment.md")
+            second (run {:dir root
+                         :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}
+                         :ok? false}
+                        (script "squad_spawn.sh")
+                        "analyst"
+                        "shared-analysis"
+                        ".squad/assignments/shared-analysis/assignment.md")]
+        (is (str/includes? (:out first) "SQUAD_AGENT: analyst-001"))
+        (is (= 3 (:exit second)))
+        (is (str/includes? (:err second) "SQUAD_SPAWN_TASK_OCCUPIED"))
+        (is (str/includes? (:err second) "TASK_ID: shared-analysis"))
+        (is (str/includes? (:err second) "AGENT: analyst-001"))
+        (is (not (fs/exists? (fs/path root ".squad/agents/analyst-002")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-spawn-request-refuses-duplicate-task-id
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "assignment.md")
+                  "assignment_id: shared-analysis\n")
+      (let [first (run {:dir root}
+                       (script "squad_spawn_request.sh")
+                       "analyst"
+                       "shared-analysis"
+                       "assignment.md")
+            second (run {:dir root
+                         :ok? false}
+                        (script "squad_spawn_request.sh")
+                        "analyst"
+                        "shared-analysis"
+                        "assignment.md")]
+        (is (str/includes? (:out first) "STATE: requested"))
+        (is (= 3 (:exit second)))
+        (is (str/includes? (:err second) "SQUAD_SPAWN_REQUEST_OCCUPIED"))
+        (is (= 1 (count (fs/list-dir (fs/path root ".squad/spawn-requests/new"))))))
+      (finally
+        (fs/delete-tree root)))))

@@ -449,6 +449,47 @@
         (global-capacity-error root rows))
       (template-capacity-error root rows template)))
 
+(defn agent-status-state [root agent-id]
+  (when agent-id
+    (read-value (fs/path root ".squad" "agents" agent-id "status") "state")))
+
+(defn live-agent? [root agent-id]
+  (boolean
+   (when-not (str/blank? agent-id)
+     (contains? active-agent-states (or (agent-status-state root agent-id) "")))))
+(defn active-agent-for-task [root task-id]
+  (let [agents-dir (fs/path root ".squad" "agents")]
+    (when (fs/directory? agents-dir)
+      (some (fn [dir]
+              (let [agent-id (fs/file-name dir)
+                    meta-task (read-value (fs/path dir "metadata") "task_id")]
+                (when (and (= task-id meta-task)
+                           (live-agent? root agent-id))
+                  agent-id)))
+            (fs/list-dir agents-dir)))))
+
+(defn task-occupancy-error [root task-id assignment]
+  "Refuse a second live agent for the same task_id / assignment."
+  (let [assignment-id (or (assignment-id-from-file assignment) task-id)
+        status-file (fs/path root ".squad" "assignments" assignment-id "status")
+        assigned-agent (read-value status-file "agent_id")
+        task-holder (active-agent-for-task root task-id)]
+    (cond
+      task-holder
+      [3
+       "SQUAD_SPAWN_TASK_OCCUPIED"
+       (str "TASK_ID: " task-id)
+       (str "AGENT: " task-holder)
+       "DETAIL: an active agent already covers this task_id"]
+
+      (live-agent? root assigned-agent)
+      [3
+       "SQUAD_SPAWN_ASSIGNMENT_OCCUPIED"
+       (str "ASSIGNMENT: " assignment-id)
+       (str "AGENT: " assigned-agent)
+       "DETAIL: assignment already has an active agent"]
+
+      :else nil)))
 (defn ensure-agent-available! [rows agent-id worktree agent-dir]
   (when (some #(= agent-id (first %)) rows)
     (exit! 2 (str "Role already registered: " agent-id)))
@@ -570,7 +611,8 @@
     (acquire-lock! lock-dir)
     (try
       (let [rows (role-rows roles-file)]
-        (if-let [error (capacity-error root rows template)]
+        (if-let [error (or (task-occupancy-error root task-id assignment)
+                           (capacity-error root rows template))]
           (reset! pending-error error)
           (let [context (spawn-context root rows template task-id assignment template-file)]
             (ensure-backend-supported! (:agent context))
@@ -580,7 +622,6 @@
         (fs/delete-tree lock-dir)))
     (when-let [error @pending-error]
       (apply exit! error))))
-
 (defn -main [& args]
   (when-not (= 3 (count args))
     (exit! 1 usage-text))

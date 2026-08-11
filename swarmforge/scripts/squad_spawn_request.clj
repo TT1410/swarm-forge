@@ -66,24 +66,75 @@
        "_"
        (.toString (java.util.UUID/randomUUID))))
 
+(defn read-value [file field]
+  (when (fs/exists? file)
+    (let [prefix (str field ": ")]
+      (some (fn [line]
+              (when (str/starts-with? line prefix)
+                (subs line (count prefix))))
+            (str/split-lines (slurp (str file)))))))
+
+(def active-agent-states
+  #{"starting" "running" "failed" "blocked" "handoff_ready" "handoff_sent"})
+
+(defn live-agent? [root agent-id]
+  (boolean
+   (when-not (str/blank? agent-id)
+     (contains? active-agent-states
+                (or (read-value (fs/path root ".squad" "agents" agent-id "status") "state")
+                    "")))))
+(defn spawn-request-task-ids [root]
+  (->> ["new" "in_process"]
+       (mapcat (fn [state]
+                 (let [dir (fs/path root ".squad" "spawn-requests" state)]
+                   (when (fs/directory? dir)
+                     (->> (fs/list-dir dir)
+                          (filter #(and (fs/regular-file? %)
+                                        (str/ends-with? (fs/file-name %) ".request")))
+                          (keep #(read-value % "task_id")))))))
+       (remove str/blank?)
+       set))
+
+(defn active-agent-for-task [root task-id]
+  (let [agents-dir (fs/path root ".squad" "agents")]
+    (when (fs/directory? agents-dir)
+      (some (fn [dir]
+              (let [agent-id (fs/file-name dir)
+                    meta-task (read-value (fs/path dir "metadata") "task_id")]
+                (when (and (= task-id meta-task)
+                           (live-agent? root agent-id))
+                  agent-id)))
+            (fs/list-dir agents-dir)))))
+
+(defn task-already-covered? [root task-id]
+  (or (contains? (spawn-request-task-ids root) task-id)
+      (some? (active-agent-for-task root task-id))
+      (let [status (fs/path root ".squad" "assignments" task-id "status")
+            agent-id (read-value status "agent_id")]
+        (live-agent? root agent-id))))
+
 (defn create-request! [template task-id assignment-file]
   (validate! template task-id)
   (let [root (fs/absolutize (project-root))
-        assignment (source-file! assignment-file)
-        request-dir (fs/path root ".squad" "spawn-requests" "new")
-        request (fs/path request-dir (str (request-id template task-id) ".request"))
-        now (timestamp)]
-    (write-atomic! request
-                   (str "template: " template "\n"
-                        "task_id: " task-id "\n"
-                        "assignment: " assignment "\n"
-                        "requested_at: " now "\n"))
-    (println "SQUAD_SPAWN_REQUEST:" (fs/file-name request))
-    (println "TEMPLATE:" template)
-    (println "TASK_ID:" task-id)
-    (println "ASSIGNMENT:" (str assignment))
-    (println "STATE: requested")))
-
+        assignment (source-file! assignment-file)]
+    (when (task-already-covered? root task-id)
+      (exit! 3
+             "SQUAD_SPAWN_REQUEST_OCCUPIED"
+             (str "TASK_ID: " task-id)
+             "DETAIL: active agent or pending spawn already covers this task_id"))
+    (let [request-dir (fs/path root ".squad" "spawn-requests" "new")
+          request (fs/path request-dir (str (request-id template task-id) ".request"))
+          now (timestamp)]
+      (write-atomic! request
+                     (str "template: " template "\n"
+                          "task_id: " task-id "\n"
+                          "assignment: " assignment "\n"
+                          "requested_at: " now "\n"))
+      (println "SQUAD_SPAWN_REQUEST:" (fs/file-name request))
+      (println "TEMPLATE:" template)
+      (println "TASK_ID:" task-id)
+      (println "ASSIGNMENT:" (str assignment))
+      (println "STATE: requested"))))
 (defn -main [& args]
   (if (= 3 (count args))
     (apply create-request! args)
