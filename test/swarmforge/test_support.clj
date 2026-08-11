@@ -16,7 +16,10 @@
   [{:keys [dir env ok?]} & args]
   (let [result (apply sh/sh (concat args [:dir (str dir)
                                           :env (merge {"PATH" (System/getenv "PATH")
-                                                       "GIT_CONFIG_NOSYSTEM" "1"}
+                                                       "GIT_CONFIG_NOSYSTEM" "1"
+                                                       ;; Tests act as the main-git owner (daemon).
+                                                       "SWARMFORGE_MAIN_GIT" "1"
+                                                       "SWARMFORGE_MAIN_GIT_OWNER" "daemon"}
                                                       env)]))]
     (when (and (not (false? ok?)) (not= 0 (:exit result)))
       (throw (ex-info (str "Command failed: " (str/join " " args))

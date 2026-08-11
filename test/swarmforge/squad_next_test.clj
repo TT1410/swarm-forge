@@ -2041,3 +2041,69 @@
             "after provider implementation_sha, dependent may schedule"))
       (finally
         (fs/delete-tree root)))))
+
+(deftest residual-only-defers-accept-merge-to-daemon
+  ;; Given merge_ready in-process handoff
+  ;; When SL uses --residual-only
+  ;; Then residual is wait_for_daemon_main_git (not accept-merge COMMAND)
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
+      (write-agent-status! root "analyst-001" "handoff_sent")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\n"
+                       "to: squad-leader\n"
+                       "from: analyst-001\n"
+                       "priority: 50\n"
+                       "task: wumpus-analysis\n"
+                       "commit: abcdef1234\n"
+                       "assignment: wumpus-analysis\n"
+                       "agent: analyst-001\n"
+                       "template: analyst\n"
+                       "artifacts: stories/cave.md\n\n"
+                       "merge_and_process analyst-001 abcdef1234\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
+                  (str "assignment_id: wumpus-analysis\n"
+                       "theme_id: wumpus\n"
+                       "story_id: theme\n"
+                       "template: analyst\n"
+                       "assignment_file: " root "/instructions.md\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                  "assignment_id: wumpus-analysis\nstate: merge_ready\n")
+      (let [inspection (run {:dir root} (script "squad_next.sh"))
+            residual (run {:dir root} (script "squad_next.sh") "--residual-only")]
+        (is (str/includes? (:out inspection) "NEXT_ACTION: accept_merge")
+            "plain inspection still shows the real merge command")
+        (is (str/includes? (:out residual) "NEXT_ACTION: wait_for_daemon_main_git"))
+        (is (str/includes? (:out residual) "DEFERRED_ACTION: accept_merge"))
+        (is (not (str/includes? (:out residual) "COMMAND: squad_assign.sh accept-merge"))
+            "SL residual must not hand accept-merge to the leader"))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest residual-only-defers-merge-ready-to-daemon
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "analyst-001\tanalyst-001\t" root "/.worktrees/analyst-001\tswarmforge-analyst-001\tAnalyst 001\tcodex\ttask\n"))
+      (write-agent-status! root "analyst-001" "handoff_sent")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_20260803T000000Z_000001_from_analyst-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\nto: squad-leader\nfrom: analyst-001\npriority: 50\n"
+                       "task: wumpus-analysis\ncommit: abcdef1234\nassignment: wumpus-analysis\n"
+                       "agent: analyst-001\ntemplate: analyst\nartifacts: stories/cave.md\n\n"
+                       "merge_and_process analyst-001 abcdef1234\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
+                  (str "assignment_id: wumpus-analysis\ntheme_id: wumpus\nstory_id: theme\n"
+                       "template: analyst\nassignment_file: " root "/i.md\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                  "assignment_id: wumpus-analysis\nstate: result_received\n")
+      (let [residual (run {:dir root} (script "squad_next.sh") "--residual-only")]
+        (is (str/includes? (:out residual) "NEXT_ACTION: wait_for_daemon_main_git"))
+        (is (str/includes? (:out residual) "DEFERRED_ACTION: check_merge_readiness")))
+      (finally
+        (fs/delete-tree root)))))

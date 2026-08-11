@@ -8,7 +8,7 @@
 
 (def poll-ms 1000)
 (def wake-message
-  "You have new handoff mail. If idle, run squad_next.sh --apply-mechanical and handle only residual judgment, recovery, or user-facing work. Deterministic workflow steps are daemon-applied.")
+  "You have new handoff mail. If idle, run squad_next.sh --residual-only and handle only residual judgment, recovery, or user-facing work. The daemon owns merge-ready/accept-merge and other mechanical applies.")
 (defn usage []
   (binding [*out* *err*]
     (println "Usage: handoffd.clj <project-root>"))

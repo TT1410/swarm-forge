@@ -19,11 +19,11 @@
 ;; Log each deferred spawn request at most once until it leaves `new/` (bug #4).
 (def deferred-spawn-log-keys (atom #{}))
 (def handoff-wake-message
-  "You have new handoff mail. If idle, run squad_next.sh --apply-mechanical and handle only residual judgment, recovery, or user-facing work. Deterministic creates, spawns, approvals requests, and handoff bookkeeping are daemon-applied.")
+  "You have new handoff mail. If idle, run squad_next.sh --residual-only and handle only residual judgment, recovery, or user-facing work. The daemon owns merge-ready/accept-merge and other mechanical applies.")
 (def status-wake-message
-  "Squad status needs attention. If idle, run squad_next.sh --apply-mechanical and handle only residual judgment, recovery, or user-facing work.")
+  "Squad status needs attention. If idle, run squad_next.sh --residual-only and handle only residual judgment, recovery, or user-facing work. The daemon owns main-git merges.")
 (def sl-watchdog-message
-  "Run squad_next.sh --apply-mechanical. Prefer residual judgment/recovery/user work; deterministic workflow steps are daemon-applied.")
+  "Run squad_next.sh --residual-only. Handle residual judgment/recovery/user work only; do not run merge-ready, accept-merge, or --apply-mechanical (daemon owns those).")
 (def sl-judgment-actions
   #{"request_user_approval"
     "answer_dashboard_request"
@@ -956,7 +956,7 @@
 
 (defn sl-watchdog-message-for [root]
   (if-let [id (oldest-pending-dashboard-request-id root)]
-    (str "Pending dashboard request " id ". Run squad_next.sh --apply-mechanical, then "
+    (str "Pending dashboard request " id ". Run squad_next.sh --residual-only, then "
          "squad_dashboard_request.sh answer " id " <answer-file>. "
          "The request is not complete until the helper succeeds.")
     sl-watchdog-message))
@@ -1146,12 +1146,16 @@
         (str/split-lines (or out ""))))
 
 (defn apply-workflow-mechanical!
-  "Drain deterministic workflow steps via squad_next --apply-mechanical."
+  "Drain deterministic workflow steps via squad_next --apply-mechanical.
+  Sets main-git owner env so merge-ready/accept-merge are allowed only here."
   [root]
   (let [result (process/sh {:continue true
                             :dir (str root)
                             :env {"PATH" (str script-dir ":" (or (System/getenv "PATH") ""))
-                                  "GIT_CONFIG_NOSYSTEM" "1"}}
+                                  "GIT_CONFIG_NOSYSTEM" "1"
+                                  "SWARMFORGE_ROLE" "squadd"
+                                  "SWARMFORGE_MAIN_GIT" "1"
+                                  "SWARMFORGE_MAIN_GIT_OWNER" "daemon"}}
                            (str (fs/path script-dir "squad_next.sh"))
                            "--apply-mechanical")
         out (str (:out result))

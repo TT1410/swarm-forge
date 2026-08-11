@@ -9,10 +9,15 @@
             [clojure.string :as str]))
 
 (def usage-text
-  "Usage: squad_next.sh [--apply-mechanical]")
+  "Usage: squad_next.sh [--apply-mechanical | --residual-only]")
 
 (def script-dir
   (fs/parent *file*))
+
+(def ^:dynamic *sl-facing-residual?*
+  "When true, main-git merge-ready/accept residual becomes wait_for_daemon_main_git
+  so the squad leader does not race squadd."
+  false)
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -2166,9 +2171,19 @@
      (or (in-process-git-handoff-command root in-process)
          (not (in-process-merge-blocked? root in-process))))))
 
+(defn print-daemon-owned-main-git-wait! [action assignment-id]
+  (println "NEXT_ACTION: wait_for_daemon_main_git")
+  (println "ASSIGNMENT:" (or assignment-id "unknown"))
+  (println "DEFERRED_ACTION:" action)
+  (println "REASON: main git merge-ready/accept is owned by squadd; wait for the next daemon poll")
+  (println "COMMAND: sleep 5 && squad_next.sh --residual-only"))
+
 (defn print-in-process-handoff-action! [root file]
   (if-let [{:keys [action reason command]} (in-process-git-handoff-command root file)]
-    (print-handoff-action! action file reason command)
+    (if (and *sl-facing-residual?*
+             (contains? #{"check_merge_readiness" "accept_merge"} action))
+      (print-daemon-owned-main-git-wait! action (handoff-task file))
+      (print-handoff-action! action file reason command))
     (if (in-process-merge-blocked? root file)
       (print-handoff-action! "hold_merge_blocked_handoff"
                              file
@@ -2638,6 +2653,15 @@
         handoff (or (apply-in-process-handoff-step! root) [])]
     (into [] (concat bookkeeping retires daemon-ready stale parked held-finish claim handoff))))
 
+(defn print-sl-facing-residual! []
+  (binding [*sl-facing-residual?* true]
+    (print-selected-action! (next-action-context))))
+
+(defn residual-only!
+  "Squad-leader residual: judgment/recovery only; never hand main-git accept to SL."
+  []
+  (print-sl-facing-residual!))
+
 (defn apply-mechanical-and-print-next! []
   (let [root (fs/absolutize (project-root))]
     (loop [applied []
@@ -2646,22 +2670,25 @@
         (cond
           (zero? remaining)
           (do (print-applied-transitions! applied)
-              (print-selected-action! (next-action-context)))
+              (print-sl-facing-residual!))
 
           (empty? batch)
           (do (print-applied-transitions! applied)
-              (print-selected-action! (next-action-context)))
+              (print-sl-facing-residual!))
 
           (some #(and (contains? % :exit) (not (zero? (:exit %)))) batch)
           (do (print-applied-transitions! (into applied batch))
-              (print-selected-action! (next-action-context)))
+              (print-sl-facing-residual!))
 
           :else
-          (recur (into applied batch) (dec remaining)))))))(defn -main [& args]
+          (recur (into applied batch) (dec remaining)))))))
+
+(defn -main [& args]
   (case (count args)
     0 (next-action!)
-    1 (if (= "--apply-mechanical" (first args))
-        (apply-mechanical-and-print-next!)
+    1 (case (first args)
+        "--apply-mechanical" (apply-mechanical-and-print-next!)
+        "--residual-only" (residual-only!)
         (exit! 1 usage-text))
     (exit! 1 usage-text)))
 

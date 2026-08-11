@@ -28,7 +28,11 @@
   (System/exit status))
 
 (defn sh! [dir & args]
-  (let [env (cond-> {"SWARMFORGE_PROJECT_ROOT" (path-str dir)}
+  (let [env (cond-> {"SWARMFORGE_PROJECT_ROOT" (path-str dir)
+                     ;; Simulator owns mechanical apply like squadd (main-git owner).
+                     "SWARMFORGE_MAIN_GIT" "1"
+                     "SWARMFORGE_MAIN_GIT_OWNER" "daemon"
+                     "SWARMFORGE_ROLE" "squadd"}
               (System/getProperty "swarmforge.sim.now")
               (assoc "SWARMFORGE_NOW" (System/getProperty "swarmforge.sim.now")
                      "SWARMFORGE_SQUAD_RECOVERY_GRACE_SECONDS" "5"))

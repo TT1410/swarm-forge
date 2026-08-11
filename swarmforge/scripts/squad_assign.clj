@@ -1021,6 +1021,102 @@
 (def merge-lock-retry-base-ms 200)
 (def merge-lock-retry-cap-ms 2000)
 
+(def main-git-lock-timeout-ms 60000)
+(def main-git-lock-poll-ms 50)
+
+(defn main-git-owner
+  "Who may mutate main repo merge-ready/accept. Default daemon (squadd)."
+  []
+  (or (not-empty (System/getenv "SWARMFORGE_MAIN_GIT_OWNER")) "daemon"))
+
+(defn main-git-allowed?
+  "True when this process is the main-git owner (squadd sets these for mechanical apply)."
+  []
+  (or (= "1" (System/getenv "SWARMFORGE_MAIN_GIT"))
+      (= "squadd" (System/getenv "SWARMFORGE_ROLE"))))
+
+(defn ensure-main-git-owner!
+  "Reject merge-ready/accept-merge unless caller is the daemon owner."
+  [op]
+  (when (and (= "daemon" (main-git-owner))
+             (not (main-git-allowed?)))
+    (exit! 3
+           (str "MAIN_GIT_OWNER: only squadd may run " op)
+           "Set SWARMFORGE_MAIN_GIT=1 (or SWARMFORGE_ROLE=squadd) from the daemon, or SWARMFORGE_MAIN_GIT_OWNER=any for tests.")))
+
+(defn main-git-lock-dir [root]
+  (fs/path root ".swarmforge" "squad" "main-git.lock"))
+
+(defn lock-owner-pid [lock-dir]
+  (let [owner (fs/path lock-dir "owner")]
+    (when (fs/exists? owner)
+      (some->> (str/split-lines (slurp (str owner)))
+               (some #(second (re-find #"^pid:\s*([0-9]+)" %)))
+               parse-long))))
+
+(defn pid-alive? [pid]
+  (when pid
+    (let [handle (java.lang.ProcessHandle/of pid)]
+      (and (.isPresent handle)
+           (.isAlive (.get handle))))))
+
+(defn cleanup-empty-main-git-lock! [lock-dir]
+  (when (and (fs/directory? lock-dir)
+             (or (not (fs/exists? lock-dir))
+                 (empty? (fs/list-dir lock-dir))))
+    (fs/delete-tree lock-dir)))
+
+(defn reclaim-stale-main-git-lock! [lock-dir]
+  (let [pid (lock-owner-pid lock-dir)]
+    (when (and (fs/directory? lock-dir)
+               (or (nil? pid) (not (pid-alive? pid))))
+      (fs/delete-tree lock-dir)
+      true)))
+
+(defn try-acquire-main-git-lock! [lock-dir]
+  (try
+    (fs/create-dirs (fs/parent lock-dir))
+    (fs/create-dir lock-dir)
+    (spit (str (fs/path lock-dir "owner"))
+          (str "pid: " (.pid (java.lang.ProcessHandle/current)) "\n"))
+    true
+    (catch java.nio.file.FileAlreadyExistsException _
+      (reclaim-stale-main-git-lock! lock-dir)
+      (cleanup-empty-main-git-lock! lock-dir)
+      false)))
+
+(defn acquire-main-git-lock! [root]
+  (let [lock-dir (main-git-lock-dir root)
+        deadline (+ (System/currentTimeMillis) main-git-lock-timeout-ms)]
+    (loop []
+      (cond
+        (try-acquire-main-git-lock! lock-dir)
+        lock-dir
+
+        (> (System/currentTimeMillis) deadline)
+        (exit! 2
+               (str "Timed out waiting for main-git lock: " lock-dir)
+               "If no squadd merge-ready/accept-merge is running, remove the stale lock and retry.")
+
+        :else
+        (do
+          (reclaim-stale-main-git-lock! lock-dir)
+          (Thread/sleep main-git-lock-poll-ms)
+          (recur))))))
+
+(defn release-main-git-lock! [lock-dir]
+  (when (and lock-dir (fs/directory? lock-dir))
+    (fs/delete-tree lock-dir)))
+
+(defn with-main-git-lock
+  "Serialize main-repo dry-run worktree and accept-merge under one process lock."
+  [root f]
+  (let [lock-dir (acquire-main-git-lock! root)]
+    (try
+      (f)
+      (finally
+        (release-main-git-lock! lock-dir)))))
+
 (defn transient-git-lock-error?
   "True when git failed in a way that is safe to retry (ref/lock races, EPERM on lock create)."
   [result]
@@ -1165,6 +1261,7 @@
 
 (defn mark-merge-ready! [assignment-id]
   (validate-id! "Assignment id" assignment-id)
+  (ensure-main-git-owner! "merge-ready")
   (let [root (fs/absolutize (project-root))
         dir (assignment-dir root assignment-id)
         result-file (fs/path dir "result")
@@ -1183,11 +1280,14 @@
         :else
         (if-let [prior (existing-merge-evaluation dir commit)]
           (replay-existing-merge-evaluation! dir assignment-id commit prior)
-          (try
-            (ensure-known-commit! root commit)
-            (check-merge-ready! root dir assignment-id commit now)
-            (finally
-              (abort-merge! root))))))))
+          (with-main-git-lock
+            root
+            (fn []
+              (try
+                (ensure-known-commit! root commit)
+                (check-merge-ready! root dir assignment-id commit now)
+                (finally
+                  (abort-merge! root))))))))))
 
 (defn record-review! [assignment-id decision review-path]
   (validate-id! "Assignment id" assignment-id)
@@ -1368,6 +1468,7 @@
 
 (defn accept-merge! [assignment-id]
   (validate-id! "Assignment id" assignment-id)
+  (ensure-main-git-owner! "accept-merge")
   (let [root (fs/absolutize (project-root))
         dir (assignment-dir root assignment-id)
         result-file (fs/path dir "result")
@@ -1378,16 +1479,19 @@
     (ensure-file! "Assignment merge readiness not found" merge-file)
     (ensure-merge-ready! merge-file)
     (let [commit (result-commit! result-file)]
-      (try
-        (when (tracked-dirty? root)
-          (block-merge! root dir assignment-id nil "tracked checkout dirty" commit now nil))
-        (clear-colliding-untracked-reviews! root commit)
-        (let [detail (merge-detail! root dir assignment-id commit now)
-              merge-commit (record-accepted-merge! root dir assignment-id commit detail now)]
-          (mark-original-resolved-by-merger! root dir assignment-id commit merge-commit now)
-          (print-merge-accepted! assignment-id commit merge-commit detail))
-        (finally
-          (abort-merge! root))))))
+      (with-main-git-lock
+        root
+        (fn []
+          (try
+            (when (tracked-dirty? root)
+              (block-merge! root dir assignment-id nil "tracked checkout dirty" commit now nil))
+            (clear-colliding-untracked-reviews! root commit)
+            (let [detail (merge-detail! root dir assignment-id commit now)
+                  merge-commit (record-accepted-merge! root dir assignment-id commit detail now)]
+              (mark-original-resolved-by-merger! root dir assignment-id commit merge-commit now)
+              (print-merge-accepted! assignment-id commit merge-commit detail))
+            (finally
+              (abort-merge! root))))))))
 
 (defn ensure-not-max-depth-merge-escape! [root assignment-id action]
   "At max_merger_depth, merge_blocked work must hard-block — not reject/replace rework."

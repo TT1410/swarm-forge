@@ -11,7 +11,7 @@
   (:import [java.net InetAddress ServerSocket URLDecoder]))
 
 (def approval-wake-message
-  "A web approval changed state. If idle, run squad_next.sh --apply-mechanical and handle only residual judgment or user-facing work. Deterministic workflow steps are daemon-applied.")
+  "A web approval changed state. If idle, run squad_next.sh --residual-only and handle only residual judgment or user-facing work. The daemon owns merge-ready/accept-merge and other mechanical applies.")
 
 (def dashboard-html
   "<!doctype html>
@@ -1072,7 +1072,7 @@
   (let [id (get request "id")
         kind (get request "kind" "command")
         body (get request "body" "")]
-    (str "Dashboard request pending. Run squad_next.sh --apply-mechanical and answer it.\n"
+    (str "Dashboard request pending. Run squad_next.sh --residual-only and answer it.\n"
          "REQUEST_ID: " id "\n"
          "KIND: " kind "\n"
          "BODY: " body "\n"
