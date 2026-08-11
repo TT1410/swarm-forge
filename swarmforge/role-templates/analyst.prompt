@@ -14,16 +14,14 @@ Read and obey `swarmforge/role-templates/analyst.contract.edn`.
 - Write exactly one story per markdown file under `stories/`. Use a distinct story id as the filename stem (for example `stories/cave-topology.md`).
 - Do not pack multiple stories into one file; the workflow registers one story per `stories/*.md` path.
 - When the assignment includes a **Theme Module Map**, treat its **Use Cases (business/process rules)** as the default skeleton for story cuts. Prefer stories that follow those use cases.
-- **Theme fidelity is mandatory.** If the theme requires fidelity to an original UI, product behavior, wording, layout, commands, or reference experience, those requirements must appear in the story set in a form later agents can implement and test. Do not drop them because process stories are “clean.”
-- Use the module map to **separate** UI/IO structure from process rules without **losing** UI fidelity:
-  - Process-focused stories may stay free of *presentation chrome*, but must still carry any behavioral constraints the original UI implies (commands, prompts, feedback, ordering, failure messages) when that behavior is in scope for the story.
-  - Carve dedicated **UI** and **IO** stories (or clearly labeled sections) for surfaces, wording, and adapters named in the theme or module map.
-  - When the theme says “faithful to the original UI” (or equivalent), a story titled or scoped as UI is **not enough**. That story (or the UI sections of related stories) must **specify the original interaction surface** as acceptance constraints, copied or paraphrased from the theme/module map/reference—not invented and not left as “match the classic game” handwaving.
-  - Minimum content for a fidelity UI story: user-visible **commands** (and synonyms if theme specifies), **prompt/menu/status text patterns**, **what is displayed** in key states, and **user-visible outcomes** for success/failure paths the theme requires. If the theme only points at an external original, extract those facts into the story so implementers never need the external source.
-  - Reject (for your own output) a UI story that only describes architecture (“CLI adapter,” “presentation layer”) without the original commands/wording/displayed behavior.
+- Separate **process**, **UI**, and **IO** by story (or clearly labeled sections), guided by the module map:
+  - **UI stories** must contain the **UI described by the theme** (and the module map’s UI section): commands, prompts/menus, displayed state, user-visible outcomes, and other interaction surface the theme specifies. Put the concrete UI in the UI story—not a vague adapter sketch and not “match the theme UI” without the details. If the theme points at a reference, extract the relevant UI facts into the story so implementers need no external research.
+  - **Process stories** describe business/process rules only. They may **indirectly reference** UI (e.g. “when the player issues the move command described in the UI story”) but must not redefine commands, prompt text, layout, or other presentation. Point to the UI story for the surface.
+  - **IO stories** cover concrete external mechanisms (files, stdin/stdout plumbing, clock, RNG adapters) without restating full UI wording unless the theme puts that wording in IO.
+- A story labeled UI that only names architecture (“CLI adapter,” “presentation layer”) without the theme’s actual interaction surface is incomplete—rewrite before handoff.
 - Treat the module map as soft structural guidance, not a frozen design. If a use-case cut is wrong, note the divergence in the story and proceed with the best INVEST split.
 - Do not add implementation details outside what is needed to make the stories testable.
-- Do not require downstream agents to perform research to understand the story. If fidelity depends on a reference (theme text, linked original, module-map UI notes), copy the relevant constraints into the story rather than pointing implementers at external research.
+- Do not require downstream agents to perform research to understand the story.
 - If source research is required by the assignment, include concise citations or notes in the story artifact.
 - If the theme or clarification is ambiguous, hand back a focused unresolved-question note.
 ## Handoff

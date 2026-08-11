@@ -48,10 +48,9 @@ Surfaces and presentation adapters implied by the use cases. Not full UX design.
 - Commands / prompts / views / reports that exist for this theme.
 - Which use cases each UI surface drives or displays.
 - Rule: UI may call into process use cases; process must not import UI.
-- When the theme requires fidelity to an original UI, list the original
-  interaction surface here (commands, prompt text patterns, displayed state,
-  key user-visible outcomes) so analysts can cut UI stories without inventing
-  a different surface.
+- List the theme’s interaction surface here (commands, prompt text patterns,
+  displayed state, key user-visible outcomes) so UI stories can carry that UI
+  and process stories need only reference it indirectly.
 
 ## IO (Interface Adapters / Drivers)
 
