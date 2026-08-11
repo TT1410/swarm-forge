@@ -79,7 +79,7 @@
     const slDraftKey = 'swarmforge.slMessageDraft';
     let slDraft = localStorage.getItem(slDraftKey) || '';
     let pressedApproval = null;
-    const esc = value => String(value ?? '').replace(/[&<>']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\\'':'&#39;'}[c] || c));
     async function post(path, body = null, contentType = null, refresh = true) {
       const options = { method: 'POST' };
       if (body !== null) options.body = body;
