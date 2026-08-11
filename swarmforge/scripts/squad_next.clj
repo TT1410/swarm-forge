@@ -547,15 +547,63 @@
          stale-changes-requested?
          architecture-gate-satisfied-for-final?)
 
+(defn implementation-order-path [root theme-id]
+  (fs/path root ".squad" "themes" theme-id "implementation-order.md"))
+
+(defn parse-implementation-order-edges
+  "Parse `dependent after provider [provider...]` lines into map dependent -> providers."
+  [text]
+  (reduce (fn [m raw]
+            (let [line (str/trim (first (str/split raw #"#" 2)))]
+              (if-let [[_ dep providers]
+                       (re-matches #"([A-Za-z0-9][A-Za-z0-9._-]*)\s+after\s+(.+)" line)]
+                (let [ps (->> (str/split providers #"\s+")
+                              (remove str/blank?)
+                              vec)]
+                  (if (seq ps)
+                    (update m dep (fnil into []) ps)
+                    m))
+                m)))
+          {}
+          (str/split-lines (or text ""))))
+
+(defn load-implementation-order [root theme-id]
+  (let [path (implementation-order-path root theme-id)]
+    (if (fs/regular-file? path)
+      (parse-implementation-order-edges (slurp (str path)))
+      {})))
+
+(defn story-implementation-complete? [root story-id]
+  "True when the story packet has recorded a merged implementation_sha."
+  (let [packet-file (fs/path root ".squad" "stories" story-id "packet")]
+    (and (fs/regular-file? packet-file)
+         (not (str/blank? (get (file-map packet-file) "implementation_sha"))))))
+
+(defn implementer-dependencies-satisfied?
+  "Hard gate: implementer for story-id waits until all `after` providers have implementation_sha."
+  [root theme-id story-id]
+  (let [providers (get (load-implementation-order root theme-id) story-id)]
+    (or (empty? providers)
+        (every? #(story-implementation-complete? root %) providers))))
+
+(defn implementer-dependency-block-reason [root theme-id story-id]
+  (let [providers (get (load-implementation-order root theme-id) story-id)
+        pending (remove #(story-implementation-complete? root %) providers)]
+    (when (seq pending)
+      (str "implementation order: waiting on " (str/join ", " pending)))))
+
 (defn assignment-candidate [root assignments agents packet template assignment-suffix reason priority stage-order requirement]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         theme-id (get packet "theme_id")
         assignment-id (next-assignment-id assignments story-id assignment-suffix)
-        assignment (assignment-for assignments theme-id story-id template)]
-    (if assignment
-      (when (spawnable-assignment? root agents template assignment)
-        (assignment-spawn-candidate assignment theme-id story-id template reason priority stage-order))
-      (assignment-create-candidate theme-id story-id template assignment-id reason priority stage-order requirement))))
+        assignment (assignment-for assignments theme-id story-id template)
+        blocked-by-order? (and (= "implementer" template)
+                               (not (implementer-dependencies-satisfied? root theme-id story-id)))]
+    (when-not blocked-by-order?
+      (if assignment
+        (when (spawnable-assignment? root agents template assignment)
+          (assignment-spawn-candidate assignment theme-id story-id template reason priority stage-order))
+        (assignment-create-candidate theme-id story-id template assignment-id reason priority stage-order requirement)))))
 
 (defn one-cycle-revision-candidate [root assignments agents packet template assignment-suffix review-field reason priority stage-order]
   (let [story-id (get packet "story_id" (get packet "_story_id"))]
@@ -2035,25 +2083,14 @@
   #{"merged" "rejected" "blocked" "replacement_created" "superseded"
     "review_accepted" "review_changes_requested" "cancelled" "abandoned"})
 
-(defn downstream-merger-result-recorded? [root assignment-id]
-  (boolean
-   (let [assignments-dir (fs/path root ".squad" "assignments")]
-     (when (fs/directory? assignments-dir)
-       (some (fn [dir]
-               (let [merger-id (fs/file-name dir)]
-                 (when (and (= assignment-id
-                               (get (file-map (fs/path dir "metadata")) "merge_for"))
-                            (assignment-result-recorded? root merger-id))
-                   merger-id)))
-             (filter fs/directory? (fs/list-dir assignments-dir)))))))
-
 (defn completed-handoff-retirable? [root {:keys [agent assignment-id]}]
+  "Retire only when the assignment handoff is terminal. merge_blocked agents
+  keep their worktree for merger recovery until the assignment is merged (or
+  otherwise resolved) — not merely when a downstream merger recorded a result."
   (and (not= "unknown" agent)
        (if (assignment-dir-exists? root assignment-id)
-         (let [state (assignment-status-state root assignment-id)]
-           (or (contains? resolved-handoff-assignment-states state)
-               (and (= "merge_blocked" state)
-                    (downstream-merger-result-recorded? root assignment-id))))
+         (contains? resolved-handoff-assignment-states
+                    (assignment-status-state root assignment-id))
          true)))
 
 (defn assignment-accepted-merge? [root assignment-id]
@@ -2241,9 +2278,17 @@
    :threshold threshold
    :retry-threshold retry-threshold})
 
+(defn held-for-merge-recovery? [root assignment-id]
+  "True when the agent's assignment is merge_blocked: worktree is held for merger
+  recovery. Do not recover_agent — residual should drive merger instead."
+  (and assignment-id
+       (not= "unknown" assignment-id)
+       (assignment-merge-blocked? root assignment-id)))
+
 (defn recovery-candidate-for-agent [root now threshold retry-threshold
                                     {:keys [agent task-id state last-activity-at activity-source] :as record}]
-  (when (active-agent? record)
+  (when (and (active-agent? record)
+             (not (held-for-merge-recovery? root task-id)))
     (let [quiet-for (recovery-quiet-for last-activity-at now)]
       (when (recovery-agent-due? root now threshold retry-threshold agent quiet-for)
         (recovery-candidate-record threshold retry-threshold quiet-for record)))))
@@ -2315,6 +2360,12 @@
   (and (spawn-action? action)
        (= "merger" (:template action))))
 
+(defn queues-spawn? [action]
+  "True when applying this action will create a spawn request (capacity-relevant)."
+  (or (spawn-action? action)
+      (and (= "create_assignment" (:next-action action))
+           (str/includes? (str (:command action)) "--queue-spawn"))))
+
 (defn singleton-spawn-blocked? [active-singletons action]
   (and (contains? singleton-templates (:template action))
        (contains? active-singletons (:template action))))
@@ -2370,18 +2421,18 @@
 (defn include-concurrent-action [state action]
   (if (dependency-conflict? state action)
     state
-    (if-not (spawn-action? action)
+    (if-not (queues-spawn? action)
       (-> state
           (update :actions conj action)
           (account-dependencies action))
-    (let [{:keys [used max-agents active-singletons]} state]
-      (if-not (spawn-fits? used max-agents active-singletons action)
-        state
-        (let [[used active-singletons] (account-spawn used active-singletons action)]
-          (-> state
-              (assoc :used used :active-singletons active-singletons)
-              (update :actions conj action)
-              (account-dependencies action))))))))
+      (let [{:keys [used max-agents active-singletons]} state]
+        (if-not (spawn-fits? used max-agents active-singletons action)
+          state
+          (let [[used active-singletons] (account-spawn used active-singletons action)]
+            (-> state
+                (assoc :used used :active-singletons active-singletons)
+                (update :actions conj action)
+                (account-dependencies action))))))))
 
 (defn schedule-concurrent-actions [root rows retire-actions ready-actions]
   (let [retired-agents (set (keep :agent retire-actions))

@@ -1,6 +1,7 @@
 You are a transient analyst.
 
 Read and obey `swarmforge/role-templates/analyst.contract.edn`.
+Read `swarmforge/clean-architecture.md`.
 
 ## Owns
 
@@ -14,6 +15,7 @@ Read and obey `swarmforge/role-templates/analyst.contract.edn`.
 - Write exactly one story per markdown file under `stories/`. Use a distinct story id as the filename stem (for example `stories/cave-topology.md`).
 - Do not pack multiple stories into one file; the workflow registers one story per `stories/*.md` path.
 - When the assignment includes a **Theme Module Map**, treat its **Use Cases (business/process rules)** as the default skeleton for story cuts. Prefer stories that follow those use cases.
+- Author a durable **implementation order** addendum when stories have implementer dependencies (shared hubs, foundation before UI). Format: lines `dependent after provider [provider...]` (see `swarmforge/templates/theme-implementation-order.md`). Commit it under the project (e.g. `stories/implementation-order.md` or as directed) and note in the handoff that the SL should record it with `squad_theme.sh implementation-order <theme-id> <file>`. This gates implementer fan-out; Gherkin/QA may still run in parallel.
 - Separate **process**, **UI**, and **IO** by story (or clearly labeled sections), guided by the module map:
   - **UI stories** must contain the **UI described by the theme** (and the module map’s UI section): commands, prompts/menus, displayed state, user-visible outcomes, and other interaction surface the theme specifies. Put the concrete UI in the UI story—not a vague adapter sketch and not “match the theme UI” without the details. If the theme points at a reference, extract the relevant UI facts into the story so implementers need no external research.
   - **Process stories** describe business/process rules only. They may **indirectly reference** UI (e.g. “when the player issues the move command described in the UI story”) but must not redefine commands, prompt text, layout, or other presentation. Point to the UI story for the surface.

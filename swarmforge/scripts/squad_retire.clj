@@ -205,25 +205,16 @@
   (or (read-value (fs/path root ".squad" "assignments" assignment-id "status") "state")
       "unknown"))
 
-(defn downstream-merger-result-recorded? [root assignment-id]
-  (let [assignments-dir (fs/path root ".squad" "assignments")]
-    (boolean
-     (when (fs/directory? assignments-dir)
-       (some (fn [dir]
-               (let [meta (fs/path dir "metadata")]
-                 (and (= assignment-id (read-value meta "merge_for"))
-                      (fs/regular-file? (fs/path dir "result")))))
-             (filter fs/directory? (fs/list-dir assignments-dir)))))))
-
 (defn handoff-resolved-for-retire? [root assignment-id]
+  "merge_blocked holds the worktree for merger recovery until the assignment is
+  actually merged (or otherwise terminal). A downstream merger result alone is
+  not enough to free the agent."
   (if-not (and assignment-id
                (not= "unknown" assignment-id)
                (fs/directory? (fs/path root ".squad" "assignments" assignment-id)))
     true
-    (let [state (assignment-status-state root assignment-id)]
-      (or (contains? resolved-handoff-assignment-states state)
-          (and (= "merge_blocked" state)
-               (downstream-merger-result-recorded? root assignment-id))))))
+    (contains? resolved-handoff-assignment-states
+               (assignment-status-state root assignment-id))))
 
 (defn ensure-handoff-resolved-for-retire! [root agent-id]
   (let [task-id (agent-task-id root agent-id)]

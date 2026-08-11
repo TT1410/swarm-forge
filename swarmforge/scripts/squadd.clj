@@ -12,7 +12,12 @@
   "Usage: squadd.sh [--once] [--no-notify] [project-root]")
 
 (def poll-ms 1000)
+(def poll-ms-max 15000)
 (def status-poll-ms 5000)
+;; Adaptive poll delay when spawn queue is capacity-full (bug #4).
+(def current-poll-ms (atom poll-ms))
+;; Log each deferred spawn request at most once until it leaves `new/` (bug #4).
+(def deferred-spawn-log-keys (atom #{}))
 (def handoff-wake-message
   "You have new handoff mail. If idle, run squad_next.sh --apply-mechanical and handle only residual judgment, recovery, or user-facing work. Deterministic creates, spawns, approvals requests, and handoff bookkeeping are daemon-applied.")
 (def status-wake-message
@@ -962,14 +967,20 @@
     (log! root "sl-watchdog-notify-failed" (str idle-for))))
 
 (def sl-watchdog-log-handlers
-  {:active (fn [root _ _ _] (log! root "sl-watchdog-active"))
+  ;; Do not log :active every poll — it drowned the daemon log (bug #5).
+  {:active (fn [_ _ _ _] nil)
    :not-idle (fn [root _ _ _] (log! root "sl-watchdog-not-idle-prompt"))
    :below-threshold (fn [_ _ _ _] nil)
    :throttled (fn [root _ _ idle-for] (log! root "sl-watchdog-throttled" (str idle-for)))
    :notify log-sl-watchdog-notify!})
 
+(def last-sl-watchdog-log-state (atom nil))
+
 (defn log-sl-watchdog-state! [root socket session idle-for state]
-  ((sl-watchdog-log-handlers state) root socket session idle-for))
+  (when (not= state @last-sl-watchdog-log-state)
+    (reset! last-sl-watchdog-log-state state)
+    (when-not (= state :active)
+      ((sl-watchdog-log-handlers state) root socket session idle-for))))
 
 (defn log-sl-watchdog! [root socket session {:keys [idle-for] :as observation} threshold due?]
   (log-sl-watchdog-state! root socket session idle-for
@@ -1050,7 +1061,21 @@
     (archive-spawn-result! root active base completed failed
                            (run-spawn-request! root request-data))))
 
-(defn process-spawn-request! [root request]
+(defn log-spawn-deferred-once! [root request blocker]
+  "Rate-limit: one log line per request basename+blocker while it sits deferred."
+  (let [key (str (fs/file-name request) "|" blocker)]
+    (when-not (contains? @deferred-spawn-log-keys key)
+      (swap! deferred-spawn-log-keys conj key)
+      (log! root "spawn-request-deferred" (str request) blocker))))
+
+(defn clear-deferred-log-keys-for! [basename]
+  (swap! deferred-spawn-log-keys
+         (fn [keys]
+           (into #{} (remove #(str/starts-with? % (str basename "|")) keys)))))
+
+(defn process-spawn-request!
+  "Returns :processed, :deferred, or :error."
+  [root request]
   (let [{:keys [in-process completed failed]} (spawn-request-dirs root)
         base (fs/file-name request)
         active (fs/path in-process base)
@@ -1059,19 +1084,53 @@
         blocker (when-not (str/blank? template)
                   (spawn-capacity-blocker root template))]
     (if blocker
-      (log! root "spawn-request-deferred" (str request) blocker)
       (do
+        (log-spawn-deferred-once! root request blocker)
+        :deferred)
+      (do
+        (clear-deferred-log-keys-for! base)
         (fs/create-dirs in-process)
         (fs/move request active {:replace-existing false})
-        (handle-active-spawn-request! root active base completed failed request-data)))))
+        (handle-active-spawn-request! root active base completed failed request-data)
+        :processed))))
 
-(defn poll-spawn-requests! [root]
-  (doseq [request (or (spawn-request-files root) [])
-          :while (not @stopping?)]
-    (try
-      (process-spawn-request! root request)
-      (catch Exception e
-        (log! root "spawn-request-error" (str request) (.getMessage e))))))
+(defn capacity-style-blocker? [blocker]
+  (or (= "capacity-full" blocker)
+      (and blocker (str/starts-with? (str blocker) "template-capacity-full"))
+      (and blocker (str/starts-with? (str blocker) "group-capacity-full"))))
+
+(defn poll-spawn-requests!
+  "Process new spawn requests. On capacity-full, stop the scan early and return
+  true so the daemon can back off. Deferred requests log once each, not every tick."
+  [root]
+  (let [deferred (atom 0)
+        capacity-pressure? (atom false)]
+    (doseq [request (or (spawn-request-files root) [])
+            :while (and (not @stopping?) (not @capacity-pressure?))]
+      (try
+        (case (process-spawn-request! root request)
+          :deferred
+          (do
+            (swap! deferred inc)
+            (let [blocker (spawn-capacity-blocker
+                           root
+                           (get (parse-kv-file request) "template"))]
+              (when (capacity-style-blocker? blocker)
+                (reset! capacity-pressure? true))))
+          :processed nil
+          nil)
+        (catch Exception e
+          (log! root "spawn-request-error" (str request) (.getMessage e)))))
+    (when (and (pos? @deferred) @capacity-pressure?)
+      (log! root "spawn-queue-waiting"
+            (str @deferred " deferred this pass;")
+            (str (count (or (spawn-request-files root) [])) " still queued")))
+    @capacity-pressure?))
+
+(defn note-spawn-poll-result! [capacity-pressure?]
+  (if capacity-pressure?
+    (swap! current-poll-ms #(min poll-ms-max (long (* % 1.5))))
+    (reset! current-poll-ms poll-ms)))
 
 (defn pid-file [root]
   (fs/path (daemon-dir root) "squadd.pid"))
@@ -1109,7 +1168,7 @@
 (defn poll-once! [opts]
   (let [root (:root opts)]
     (apply-workflow-mechanical! root)
-    (poll-spawn-requests! root)
+    (note-spawn-poll-result! (poll-spawn-requests! root))
     (poll-handoffs! root)
     (poll-status! opts)
     (poll-sl-watchdog! opts)))
@@ -1123,7 +1182,7 @@
 (defn poll-loop-once! [opts]
   (let [root (:root opts)]
     (apply-workflow-mechanical! root)
-    (poll-spawn-requests! root)
+    (note-spawn-poll-result! (poll-spawn-requests! root))
     (poll-handoffs! root)
     (when (due-status?)
       (poll-status! opts)
@@ -1179,7 +1238,7 @@
           (try
             (while (not (should-stop? root))
               (poll-loop-once! opts)
-              (sleep-poll! root poll-ms))
+              (sleep-poll! root @current-poll-ms))
             (finally
               (web/stop-web-server! web-server)
               (shutdown! root))))))))

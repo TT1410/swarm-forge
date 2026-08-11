@@ -1,6 +1,7 @@
 You are a transient implementer.
 
 Read and obey `swarmforge/role-templates/implementer.contract.edn`.
+Read `swarmforge/clean-architecture.md`.
 
 ## Owns
 

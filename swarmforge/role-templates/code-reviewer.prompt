@@ -1,6 +1,7 @@
 You are a transient code reviewer.
 
 Read and obey `swarmforge/role-templates/code-reviewer.contract.edn`.
+Read `swarmforge/clean-architecture.md`.
 
 ## Owns
 

@@ -1203,14 +1203,18 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-next-retires-merge-blocked-source-agent-after-downstream-merger-result
+(deftest squad-next-does-not-retire-merge-blocked-source-when-only-merger-has-result
+  ;; Given source assignment still merge_blocked (worktree held for recovery)
+  ;; and a downstream merger has only recorded a result (not merged to main)
+  ;; When squad_next runs
+  ;; Then do not retire the source agent; keep driving merge recovery
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
                        "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
-      (write-agent-status! root "implementer-001" "running")
+      (write-agent-status! root "implementer-001" "handoff_sent")
       (write-file (fs/path root ".squad/agents/implementer-001/metadata")
                   "template: implementer\ntask_id: cave-impl\n")
       (write-file (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_implementer-001_to_squad-leader.handoff")
@@ -1243,18 +1247,111 @@
                        "created_at: 2026-08-03T00:00:00Z\n"))
       (write-file (fs/path root ".squad/assignments/cave-impl-merge/status")
                   (str "assignment_id: cave-impl-merge\n"
-                       "state: merge_blocked\n"
-                       "detail: merger merge failed\n"
+                       "state: created\n"
+                       "detail: merger for cave-topology\n"
                        "updated_at: 2026-08-03T00:00:00Z\n"))
       (write-file (fs/path root ".squad/assignments/cave-impl-merge/result")
                   (str "assignment_id: cave-impl-merge\n"
                        "state: result_received\n"
                        "from: merger-001\n"
                        "commit: abcdef1234\n"))
+      (write-file (fs/path root "merger.md") "Resolve the merge.\n")
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (not (str/includes? (:out next) "NEXT_ACTION: retire_agent")))
+        (is (not (str/includes? (:out next) "NEXT_ACTION: recover_agent")))
+        (is (or (str/includes? (:out next) "TEMPLATE: merger")
+                (str/includes? (:out next) "create-merger")
+                (str/includes? (:out next) "request_spawn"))
+            "should continue merger recovery while source stays held"))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-retires-source-agent-after-assignment-merged-to-main
+  ;; Given source assignment resolved to merged (work landed on main)
+  ;; When squad_next runs
+  ;; Then retire the held source agent
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
+      (write-agent-status! root "implementer-001" "handoff_sent")
+      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                  "template: implementer\ntask_id: cave-impl\n")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_implementer-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\n"
+                       "to: squad-leader\n"
+                       "from: implementer-001\n"
+                       "priority: 50\n"
+                       "task: cave-impl\n"
+                       "commit: abcdef1234\n\n"
+                       "implementation ready\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  (str "assignment_id: cave-impl\n"
+                       "theme_id: wumpus\n"
+                       "story_id: cave-topology\n"
+                       "template: implementer\n"
+                       "assignment_file: " root "/instructions.md\n"
+                       "created_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  (str "assignment_id: cave-impl\n"
+                       "state: merged\n"
+                       "detail: resolved by merger assignment cave-impl-merge\n"
+                       "updated_at: 2026-08-03T00:00:00Z\n"))
       (let [next (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out next) "NEXT_ACTION: retire_agent"))
         (is (str/includes? (:out next) "AGENT: implementer-001"))
         (is (str/includes? (:out next) "COMMAND: squad_retire.sh implementer-001")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-does-not-recover-quiet-merge-blocked-agent-drives-merger
+  ;; Given a quiet handoff_sent implementer whose assignment is merge_blocked
+  ;; When recovery thresholds would otherwise fire
+  ;; Then residual is merger recovery, not recover_agent
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "recovery_quiet_seconds 5\nrecovery_retry_seconds 5\n")
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                  "template: implementer\ntask_id: cave-impl\n")
+      (write-agent-status! root "implementer-001" "handoff_sent" "2026-08-03T00:00:00Z")
+      (write-file (fs/path root ".squad/agents/implementer-001/heartbeat")
+                  "updated_at: 2026-08-03T00:00:00Z\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  (str "assignment_id: cave-impl\n"
+                       "theme_id: wumpus\n"
+                       "story_id: cave-topology\n"
+                       "template: implementer\n"
+                       "assignment_file: " root "/instructions.md\n"
+                       "created_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  (str "assignment_id: cave-impl\n"
+                       "state: merge_blocked\n"
+                       "detail: dry-run merge failed\n"
+                       "updated_at: 2026-08-03T00:00:00Z\n"))
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_implementer-001_to_squad-leader.handoff")
+                  (str "type: git_handoff\n"
+                       "to: squad-leader\n"
+                       "from: implementer-001\n"
+                       "priority: 50\n"
+                       "task: cave-impl\n"
+                       "commit: abcdef1234\n\n"
+                       "implementation ready\n"))
+      (let [next (run {:dir root
+                       :env {"SWARMFORGE_NOW" "2026-08-03T00:10:00Z"}}
+                      (script "squad_next.sh"))]
+        (is (not (str/includes? (:out next) "NEXT_ACTION: recover_agent"))
+            "merge-held agents must not enter recover_agent loop")
+        (is (str/includes? (:out next) "TEMPLATE: merger"))
+        (is (or (str/includes? (:out next) "create-merger")
+                (str/includes? (:out next) "create_assignment")
+                (str/includes? (:out next) "request_spawn"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -1851,5 +1948,52 @@
         (is (not (str/includes? out "create-merger"))
             "exhausted lineage must not create another merger")
         (is (not (str/includes? out "TEMPLATE: merger"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-hard-gates-implementer-on-implementation-order
+  ;; Given story B requires story A in implementation-order.md and A has no implementation_sha
+  ;; When both are approved for implementation
+  ;; Then only A may get an implementer assignment
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 10\napproval_required implementation false\n")
+      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
+                  "story-b after story-a\n")
+      (doseq [story ["story-a" "story-b"]]
+        (write-file (fs/path root ".squad/stories" story "packet")
+                    (str "story_id: " story "\n"
+                         "theme_id: wumpus\n"
+                         "story_approval: approved\n"
+                         "gherkin_approval: approved\n"
+                         "qa_procedure_approval: approved\n"
+                         "gherkin_review: accepted\n"
+                         "qa_procedure_review: accepted\n"
+                         "implementation_approval: approved\n")))
+      (let [next (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out next) "story-a")
+            "foundation story should be scheduled")
+        (is (str/includes? (:out next) "implementer"))
+        (is (not (str/includes? (:out next) "story-b-implementation"))
+            "dependent implementer must wait for provider implementation_sha"))
+      (write-file (fs/path root ".squad/stories/story-a/packet")
+                  (str "story_id: story-a\n"
+                       "theme_id: wumpus\n"
+                       "story_approval: approved\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_approval: approved\n"
+                       "gherkin_review: accepted\n"
+                       "qa_procedure_review: accepted\n"
+                       "implementation_approval: approved\n"
+                       "implementation_sha: abcdef1234\n"
+                       "implementation_branch: master\n"))
+      (let [after (run {:dir root} (script "squad_next.sh"))]
+        (is (or (str/includes? (:out after) "story-b")
+                (str/includes? (:out after) "story_b"))
+            "after provider implementation_sha, dependent may schedule"))
       (finally
         (fs/delete-tree root)))))

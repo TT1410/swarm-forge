@@ -1,6 +1,7 @@
 You are a transient architect.
 
 Read and obey `swarmforge/role-templates/architect.contract.edn`.
+Read `swarmforge/clean-architecture.md`.
 
 ## Owns
 

@@ -12,6 +12,7 @@
   (str "Usage:\n"
        "  squad_theme.sh create <theme-id> <theme-file>\n"
        "  squad_theme.sh module-map <theme-id> <module-map-file>\n"
+       "  squad_theme.sh implementation-order <theme-id> <order-file>\n"
        "  squad_theme.sh story <theme-id> <story-id> <story-file>\n"
        "  squad_theme.sh stories <theme-id> <story-id>:<story-file>...\n"
        "  squad_theme.sh approved-story <theme-id> <story-id> <story-file> <assignment-id> <branch> <sha> <detail...>\n"
@@ -161,6 +162,49 @@
     (println "SQUAD_THEME:" theme-id)
     (println "MODULE_MAP:" (str dest))
     (println "STATE: module_map_recorded")))
+
+(defn implementation-order-path [dir]
+  (fs/path dir "implementation-order.md"))
+
+(defn implementation-order-exists? [dir]
+  (fs/regular-file? (implementation-order-path dir)))
+
+(defn implementation-order-edge-line? [line]
+  (re-matches #"[A-Za-z0-9][A-Za-z0-9._-]*\s+after\s+[A-Za-z0-9][A-Za-z0-9._-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._-]*)*"
+              line))
+
+(defn validate-implementation-order-content! [text]
+  (when (str/blank? (str/trim text))
+    (exit! 2 "Implementation order file is empty."))
+  (doseq [raw (str/split-lines text)]
+    (let [line (str/trim (first (str/split raw #"#" 2)))]
+      (when (and (not (str/blank? line))
+                 (str/includes? line " after ")
+                 (not (implementation-order-edge-line? line)))
+        (exit! 2 (str "Invalid implementation-order edge (want: <story> after <provider>...): "
+                      line))))))
+
+(defn record-implementation-order! [theme-id order-file]
+  (validate-id! "Theme id" theme-id)
+  (let [root (fs/absolutize (project-root))
+        source (source-file! order-file)
+        dir (theme-dir root theme-id)
+        dest (implementation-order-path dir)
+        content (slurp (str source))
+        now (timestamp)]
+    (ensure-theme! dir theme-id)
+    (validate-implementation-order-content! content)
+    (write-atomic! dest content)
+    (write-atomic! (fs/path dir "status")
+                   (str "theme_id: " theme-id "\n"
+                        "state: implementation_order_recorded\n"
+                        "detail: implementation-order.md\n"
+                        "updated_at: " now "\n"))
+    (append-line! (fs/path dir "events.log")
+                  (str now "\timplementation_order_recorded\timplementation-order.md"))
+    (println "SQUAD_THEME:" theme-id)
+    (println "IMPLEMENTATION_ORDER:" (str dest))
+    (println "STATE: implementation_order_recorded")))
 
 (defn story-ref-files [dir]
   (let [stories-dir (fs/path dir "stories")]
@@ -333,6 +377,7 @@
     (println "STORIES:" (str/join "," (story-ids dir)))
     (println "ACCEPTANCE:" (str/join "," (acceptance-ids dir)))
     (println "MODULE_MAP:" (if (module-map-exists? dir) "present" "missing"))
+    (println "IMPLEMENTATION_ORDER:" (if (implementation-order-exists? dir) "present" "missing"))
     (println "APPROVALS:" (count (approval-lines dir)))))
 
 (defn exact-count! [args n]
@@ -350,6 +395,9 @@
    "module-map" (fn [args]
                   (exact-count! args 3)
                   (record-module-map! (second args) (nth args 2)))
+   "implementation-order" (fn [args]
+                            (exact-count! args 3)
+                            (record-implementation-order! (second args) (nth args 2)))
    "story" (fn [args]
              (exact-count! args 4)
              (add-story! (second args) (nth args 2) (nth args 3)))

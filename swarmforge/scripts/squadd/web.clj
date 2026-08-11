@@ -153,25 +153,15 @@
     }
     function blockers(items) {
       if (!items.length) return '<p class=\"muted\">No blockers.</p>';
-      return table(['Id','Kind','Detail','Actions'], items.map(b => {
+      // No one-click Resolve: operator + SL clear via squad_approval.sh resolve-rejection after recovery.
+      return table(['Id','Kind','Detail'], items.map(b => {
         const id = b.assignment_id || b.blocker_id || b.approval_id || '';
-        const resolve = (b.kind === 'approval-rejection' && (b.approval_id || b.blocker_id))
-          ? '<button type=\"button\" onclick=\"resolveBlocker(\\'' + esc(b.approval_id || b.blocker_id) + '\\')\">Resolve</button>'
-          : '';
         return row([
           artifactLink('blocker', id, id),
           esc(b.kind || 'blocked'),
-          esc(b.detail || ''),
-          resolve
+          esc(b.detail || '')
         ]);
       }));
-    }
-    async function resolveBlocker(id) {
-      try {
-        await post('/api/blockers/' + encodeURIComponent(id) + '/resolve');
-      } catch (err) {
-        error.textContent = err.message;
-      }
     }
     function statusPill(status) {
       const s = String(status || 'pending');
@@ -930,12 +920,16 @@
        "stickBottom=dist<=24;});"
        "async function refresh(){"
        "const marker=document.getElementById('new-output');"
-       "const prevTop=pane.scrollTop;const prevHeight=pane.scrollHeight;"
+       "const prevHeight=pane.scrollHeight||0;"
+       "const prevTop=pane.scrollTop||0;"
+       "const distFromBottom=Math.max(0,prevHeight-prevTop-pane.clientHeight);"
        "const r=await fetch('/api/agents/" (html-escape agent-id) "/pane',{cache:'no-store'});"
        "const text=await r.text();if(text.length>0&&text!==pane.textContent){"
        "pane.textContent=text;"
+       "requestAnimationFrame(()=>{"
        "if(stickBottom){pane.scrollTop=pane.scrollHeight;marker.style.display='none'}"
-       "else{pane.scrollTop=prevTop;marker.style.display='block'}}}"
+       "else{pane.scrollTop=Math.max(0,pane.scrollHeight-pane.clientHeight-distFromBottom);"
+       "marker.style.display='block'}});}}"
        "refresh();setInterval(refresh,1000);</script></body></html>"))
 (defn agent-pane-response [root path]
   (let [[_ encoded-id] (re-matches #"/api/agents/([^/]+)/pane" path)
@@ -1061,28 +1055,13 @@
   "Compatibility wrapper: plain-text message becomes a command request."
   (sl-request-create-response root body))
 
-(defn resolve-blocker-action! [root blocker-id]
-  (let [result (process/sh {:continue true :dir (str root)}
-                           (str (fs/path (script-dir) "squad_approval.sh"))
-                           "resolve-rejection"
-                           blocker-id
-                           "resolved-by-web")]
-    (if (zero? (:exit result))
-      (do
-        (when-let [socket (socket-value root)]
-          (tmux-notify! socket "swarmforge-squad-leader"
-                        (str "Durable blocker cleared: " blocker-id
-                             ". If idle, run squad_next.sh --apply-mechanical.")))
-        (log! root "web-blocker-resolved" blocker-id)
-        {:ok true})
-      {:ok false :status 409 :error (str (:err result) (:out result))})))
-
-(defn blocker-resolve-response [root path]
-  (let [[_ encoded-id] (re-matches #"/api/blockers/([^/]+)/resolve" path)
-        result (resolve-blocker-action! root (url-decode encoded-id))]
-    (if (:ok result)
-      (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
-      (response (:status result 409) "text/plain; charset=utf-8" (:error result)))))
+(defn blocker-resolve-response [_ path]
+  "Dashboard one-click resolve removed: clearing approval-rejection blockers is
+  an SL CLI path (squad_approval.sh resolve-rejection) after operator recovery."
+  (response 405 "text/plain; charset=utf-8"
+            (str "Dashboard Resolve is disabled. Clear durable blockers with: "
+                 "squad_approval.sh resolve-rejection <approval-id> <detail> "
+                 "after operator and squad-leader recovery work. Path=" path "\n")))
 
 (def web-routes
   [{:method "GET"
