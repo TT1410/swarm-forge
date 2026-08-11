@@ -1,0 +1,390 @@
+#!/usr/bin/env bb
+
+(ns squad-dashboard-request
+  (:require [babashka.fs :as fs]
+            [squad-config :as cfg]
+            [clojure.string :as str]))
+
+(def usage-text
+  (str "Usage:\n"
+       "  squad_dashboard_request.sh answer <id> <answer-file>\n"
+       "  squad_dashboard_request.sh complete <id> <answer-file>\n"
+       "  squad_dashboard_request.sh reject <id> <reason-file>\n"
+       "  squad_dashboard_request.sh cancel <id>\n"
+       "  squad_dashboard_request.sh status [id]\n"))
+
+(def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
+(def valid-kinds #{"command" "question"})
+(def max-body-chars 8000)
+(def history-limit 50)
+
+(defn exit! [status & lines]
+  (binding [*out* *err*]
+    (doseq [line lines]
+      (println line)))
+  (System/exit status))
+
+(defn project-root []
+  (or (cfg/project-root)
+      (exit! 1 "Cannot find SwarmForge project root")))
+
+(defn timestamp []
+  (.format java.time.format.DateTimeFormatter/ISO_INSTANT
+           (java.time.Instant/now)))
+
+(defn valid-id? [value]
+  (and (string? value)
+       (re-matches valid-id value)
+       (not (str/includes? value "/"))
+       (not (str/includes? value "\\"))
+       (not (str/includes? value ".."))))
+
+(defn write-atomic! [file content]
+  (fs/create-dirs (fs/parent file))
+  (let [tmp (fs/create-temp-file {:dir (fs/parent file)
+                                  :prefix (str "." (fs/file-name file) ".")})]
+    (spit (str tmp) content)
+    (fs/move tmp file {:replace-existing true})))
+
+(defn requests-root [root]
+  (fs/path root ".swarmforge" "dashboard" "requests"))
+
+(defn state-dir [root state]
+  (fs/path (requests-root root) state))
+
+(defn request-file [root state id]
+  (fs/path (state-dir root state) (str id ".request")))
+
+(defn parse-kv [text]
+  (into {}
+        (keep (fn [line]
+                (let [[k v] (str/split line #": " 2)]
+                  (when (and k v) [k v]))))
+        (str/split-lines (or text ""))))
+
+(defn file-map [file]
+  (if (fs/regular-file? file)
+    (parse-kv (slurp (str file)))
+    {}))
+
+(defn find-request-file [root id]
+  (some (fn [state]
+          (let [file (request-file root state id)]
+            (when (fs/regular-file? file)
+              {:state state :file file})))
+        ["pending" "answered" "rejected"]))
+
+(defn render-request [m]
+  (let [ordered ["id" "kind" "status" "created_at" "updated_at" "answered_at"
+                 "body" "response" "detail"]
+        emitted (set ordered)]
+    (str
+     (str/join "\n"
+               (concat
+                (keep (fn [k]
+                        (when-let [v (not-empty (str (get m k "")))]
+                          (str k ": " v)))
+                      ordered)
+                (for [k (sort (remove emitted (keys m)))
+                      :let [v (get m k)]
+                      :when (not (str/blank? (str v)))]
+                  (str k ": " v))))
+     "\n")))
+
+(defn normalize-body [text]
+  (str/trim (or text "")))
+
+(defn body-error [body]
+  (cond
+    (str/blank? body) "Request body is empty."
+    (> (count body) max-body-chars) (str "Request body exceeds " max-body-chars " characters.")
+    :else nil))
+
+(defn kind-error [kind]
+  (when-not (contains? valid-kinds kind)
+    "kind must be command or question."))
+
+(defn utc-stamp []
+  (let [fmt (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd'T'HHmmss'Z'")
+        zdt (java.time.ZonedDateTime/now java.time.ZoneOffset/UTC)]
+    (.format zdt fmt)))
+
+(defn next-request-id [root]
+  (let [base (str "dashboard-" (utc-stamp))
+        existing (for [state ["pending" "answered" "rejected"]
+                       :let [dir (state-dir root state)]
+                       :when (fs/directory? dir)
+                       f (fs/list-dir dir)
+                       :when (fs/regular-file? f)
+                       :let [name (fs/file-name f)]
+                       :when (str/starts-with? name base)]
+                   name)]
+    (if (empty? existing)
+      (str base "-001")
+      (let [nums (keep (fn [name]
+                         (when-let [[_ n] (re-matches
+                                           (re-pattern (str "\\Q" base "\\E-([0-9]{3})\\.request"))
+                                           name)]
+                           (Long/parseLong n)))
+                       existing)
+            n (inc (if (seq nums) (apply max nums) 0))]
+        (format "%s-%03d" base n)))))
+
+(defn create-request
+  "Create a pending dashboard request.
+  Returns {:ok true :request m} or {:ok false :error msg}."
+  [root {:keys [kind body]}]
+  (let [kind (str/lower-case (str/trim (or kind "command")))
+        body (normalize-body body)]
+    (or (when-let [err (kind-error kind)]
+          {:ok false :error err})
+        (when-let [err (body-error body)]
+          {:ok false :error err})
+        (let [now (timestamp)
+              id (next-request-id root)
+              m {"id" id
+                 "kind" kind
+                 "status" "pending"
+                 "created_at" now
+                 "updated_at" now
+                 "body" body}
+              file (request-file root "pending" id)]
+          (if-not (valid-id? id)
+            {:ok false :error "Generated request id is invalid."}
+            (do
+              (write-atomic! file (render-request m))
+              {:ok true :request m}))))))
+
+(defn list-request-files [root state]
+  (let [dir (state-dir root state)]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter #(and (fs/regular-file? %)
+                         (str/ends-with? (fs/file-name %) ".request")))
+           (sort-by fs/file-name)
+           vec)
+      [])))
+
+(defn request-summary [file state]
+  (let [m (file-map file)
+        id (or (get m "id")
+               (str/replace (fs/file-name file) #"\.request$" ""))]
+    (merge m
+           {"id" id
+            "status" (or (get m "status") state)
+            "kind" (get m "kind" "command")
+            "created_at" (get m "created_at" "")
+            "updated_at" (get m "updated_at" "")
+            "answered_at" (get m "answered_at" "")
+            "body" (get m "body" "")
+            "response" (get m "response" "")
+            "detail" (get m "detail" "")})))
+
+(defn list-all-requests
+  ([root] (list-all-requests root history-limit))
+  ([root limit]
+   (let [rows (vec
+               (mapcat (fn [state]
+                         (map #(request-summary % state)
+                              (list-request-files root state)))
+                       ["pending" "answered" "rejected"]))
+         sorted (sort-by (fn [r]
+                           [(get r "created_at" "")
+                            (get r "id" "")])
+                         rows)]
+     (if (and limit (pos? limit) (> (count sorted) limit))
+       (vec (take-last limit sorted))
+       (vec sorted)))))
+
+(defn pending-requests [root]
+  (->> (list-request-files root "pending")
+       (map #(request-summary % "pending"))
+       (sort-by (fn [r] [(get r "created_at" "") (get r "id" "")]))
+       vec))
+
+(defn oldest-pending [root]
+  (first (pending-requests root)))
+
+(defn source-file [path]
+  (let [file (fs/path path)
+        file (if (fs/absolute? file) file (fs/path (fs/cwd) file))]
+    (when (fs/regular-file? file)
+      file)))
+
+(defn move-resolved [root id from-file target-state updates]
+  (let [now (timestamp)
+        m (merge (file-map from-file)
+                 updates
+                 {"status" target-state
+                  "updated_at" now})
+        m (if (= "answered" target-state)
+            (assoc m "answered_at" (or (get updates "answered_at") now))
+            m)
+        target (request-file root target-state id)]
+    (write-atomic! target (render-request m))
+    (fs/delete-if-exists from-file)
+    m))
+
+(defn normalize-answer [kind text]
+  (let [text (str/trim (or text ""))]
+    (cond
+      (and (= "command" kind) (str/blank? text)) "Done"
+      (str/blank? text) nil
+      :else text)))
+
+(defn answer-request
+  "Answer a pending request. answer-text is the response body string.
+  Returns {:ok true :request m} or {:ok false :error msg}."
+  [root id answer-text]
+  (cond
+    (not (valid-id? id))
+    {:ok false :error "Invalid request id."}
+
+    :else
+    (let [pending (request-file root "pending" id)]
+      (cond
+        (not (fs/regular-file? pending))
+        (if-let [{:keys [state]} (find-request-file root id)]
+          {:ok false :error (str "Request is not pending (status=" state ").")}
+          {:ok false :error (str "Pending request not found: " id)})
+
+        :else
+        (let [m (file-map pending)
+              kind (get m "kind" "command")
+              answer (normalize-answer kind answer-text)]
+          (cond
+            (nil? answer)
+            {:ok false :error "Question answers must be non-empty."}
+
+            (> (count answer) max-body-chars)
+            {:ok false :error (str "Answer exceeds " max-body-chars " characters.")}
+
+            :else
+            {:ok true
+             :request (move-resolved root id pending "answered"
+                                     {"response" answer})}))))))
+
+(defn reject-request
+  [root id reason]
+  (cond
+    (not (valid-id? id))
+    {:ok false :error "Invalid request id."}
+
+    :else
+    (let [pending (request-file root "pending" id)]
+      (cond
+        (not (fs/regular-file? pending))
+        (if-let [{:keys [state]} (find-request-file root id)]
+          {:ok false :error (str "Request is not pending (status=" state ").")}
+          {:ok false :error (str "Pending request not found: " id)})
+
+        :else
+        (let [reason (let [r (str/trim (or reason ""))]
+                       (if (str/blank? r) "rejected" r))]
+          {:ok true
+           :request (move-resolved root id pending "rejected"
+                                   {"detail" reason
+                                    "response" ""})})))))
+
+(defn cancel-request
+  [root id]
+  (reject-request root id "cancelled-by-operator"))
+
+(defn answer! [id answer-path]
+  (let [root (fs/absolutize (project-root))
+        file (source-file answer-path)]
+    (when-not file
+      (exit! 1 (str "Source file not found: " answer-path)))
+    (let [result (answer-request root id (slurp (str file)))]
+      (if (:ok result)
+        (let [m (:request result)]
+          (println "SQUAD_DASHBOARD_REQUEST:" (get m "id"))
+          (println "STATE: answered")
+          (println "KIND:" (get m "kind"))
+          (println "RESPONSE:" (get m "response")))
+        (exit! 2 (:error result))))))
+
+(defn reject! [id reason-path]
+  (let [root (fs/absolutize (project-root))
+        file (source-file reason-path)]
+    (when-not file
+      (exit! 1 (str "Source file not found: " reason-path)))
+    (let [result (reject-request root id (slurp (str file)))]
+      (if (:ok result)
+        (let [m (:request result)]
+          (println "SQUAD_DASHBOARD_REQUEST:" (get m "id"))
+          (println "STATE: rejected")
+          (println "DETAIL:" (get m "detail")))
+        (exit! 2 (:error result))))))
+
+(defn cancel! [id]
+  (let [root (fs/absolutize (project-root))
+        result (cancel-request root id)]
+    (if (:ok result)
+      (let [m (:request result)]
+        (println "SQUAD_DASHBOARD_REQUEST:" (get m "id"))
+        (println "STATE: rejected")
+        (println "DETAIL:" (get m "detail")))
+      (exit! 2 (:error result)))))
+
+(defn print-one-status! [root id]
+  (when-not (valid-id? id)
+    (exit! 2 "Invalid request id."))
+  (if-let [{:keys [state file]} (find-request-file root id)]
+    (let [m (request-summary file state)]
+      (println "REQUEST:" id)
+      (println "STATE:" (get m "status" state))
+      (println "KIND:" (get m "kind" "command"))
+      (println "BODY:" (get m "body" ""))
+      (when-not (str/blank? (get m "response" ""))
+        (println "RESPONSE:" (get m "response")))
+      (when-not (str/blank? (get m "detail" ""))
+        (println "DETAIL:" (get m "detail")))
+      (println "FILE:" (str file)))
+    (exit! 1 (str "Request not found: " id))))
+
+(defn print-all-status! [root]
+  (doseq [r (list-all-requests root nil)]
+    (println "REQUEST:" (get r "id"))
+    (println "STATE:" (get r "status"))
+    (println "KIND:" (get r "kind"))
+    (println "BODY:" (get r "body"))
+    (when-not (str/blank? (get r "response"))
+      (println "RESPONSE:" (get r "response")))
+    (println "---")))
+
+(defn status! [maybe-id]
+  (let [root (fs/absolutize (project-root))]
+    (if maybe-id
+      (print-one-status! root maybe-id)
+      (print-all-status! root))))
+
+(defn exact-count! [args n]
+  (when-not (= n (count args))
+    (exit! 1 usage-text)))
+
+(def commands
+  {"answer" (fn [args]
+              (exact-count! args 3)
+              (answer! (second args) (nth args 2)))
+   "complete" (fn [args]
+                (exact-count! args 3)
+                (answer! (second args) (nth args 2)))
+   "reject" (fn [args]
+              (exact-count! args 3)
+              (reject! (second args) (nth args 2)))
+   "cancel" (fn [args]
+              (exact-count! args 2)
+              (cancel! (second args)))
+   "status" (fn [args]
+              (when-not (<= 1 (count args) 2)
+                (exit! 1 usage-text))
+              (status! (second args)))})
+
+(defn -main [& args]
+  (if-let [command (commands (first args))]
+    (command args)
+    (exit! 1 usage-text)))
+
+(when (= *file* (System/getProperty "babashka.file"))
+  (apply -main *command-line-args*))

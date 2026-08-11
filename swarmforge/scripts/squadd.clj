@@ -21,8 +21,10 @@
   "Run squad_next.sh --apply-mechanical. Prefer residual judgment/recovery/user work; deterministic workflow steps are daemon-applied.")
 (def sl-judgment-actions
   #{"request_user_approval"
+    "answer_dashboard_request"
     "recover_agent"
-    "hold_merge_blocked_handoff"})(def script-dir (fs/parent *file*))
+    "hold_merge_blocked_handoff"})
+(def script-dir (fs/parent *file*))
 (def stopping? (atom false))
 (def last-status-poll (atom 0))
 (def last-status-notification (atom {:alerts #{} :notified-at nil}))
@@ -935,8 +937,26 @@
     (not due?) :throttled
     :else :notify))
 
+(defn oldest-pending-dashboard-request-id [root]
+  (let [dir (fs/path root ".swarmforge" "dashboard" "requests" "pending")]
+    (when (fs/directory? dir)
+      (some->> (fs/list-dir dir)
+               (filter #(and (fs/regular-file? %)
+                             (str/ends-with? (fs/file-name %) ".request")))
+               (sort-by fs/file-name)
+               first
+               fs/file-name
+               (#(str/replace % #"\.request$" ""))))))
+
+(defn sl-watchdog-message-for [root]
+  (if-let [id (oldest-pending-dashboard-request-id root)]
+    (str "Pending dashboard request " id ". Run squad_next.sh --apply-mechanical, then "
+         "squad_dashboard_request.sh answer " id " <answer-file>. "
+         "The request is not complete until the helper succeeds.")
+    sl-watchdog-message))
+
 (defn log-sl-watchdog-notify! [root socket session idle-for]
-  (if (tmux-notify! socket session sl-watchdog-message)
+  (if (tmux-notify! socket session (sl-watchdog-message-for root))
     (log! root "sl-watchdog-notified" (str idle-for))
     (log! root "sl-watchdog-notify-failed" (str idle-for))))
 

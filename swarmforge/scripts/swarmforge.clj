@@ -287,6 +287,7 @@
    "squadd.clj" "squadd.sh" "stop_squadd.clj" "stop_squadd.sh"
    "squad_assign.clj" "squad_assign.sh"
 	   "squad_approval.clj" "squad_approval.sh"
+   "squad_dashboard_request.clj" "squad_dashboard_request.sh"
 	   "squad_batch.clj" "squad_batch.sh"
 	   "squad_batch_story.clj" "squad_batch_story.sh"
 	   "squad_config.clj"

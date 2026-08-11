@@ -6,12 +6,13 @@
             [clojure.java.io :as io]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
+            [squad-dashboard-request :as dashreq]
             [squad-state :as squad-state])
   (:import [java.net InetAddress ServerSocket URLDecoder]))
 
 (def approval-wake-message
-  "A web approval changed state. If idle, run squad_next.sh --apply-mechanical and handle only residual judgment or user-facing work. Deterministic workflow steps are daemon-applied.")(def sl-message-prefix
-  "User message from dashboard:")
+  "A web approval changed state. If idle, run squad_next.sh --apply-mechanical and handle only residual judgment or user-facing work. Deterministic workflow steps are daemon-applied.")
+
 (def dashboard-html
   "<!doctype html>
 <html lang=\"en\">
@@ -35,8 +36,20 @@
     button:active, button.pressed { background: #202124; color: #fff; transform: translateY(1px); }
     button + button { margin-left: 6px; }
     .muted { color: #68726c; }
-    .pill { display: inline-block; padding: 2px 6px; border-radius: 999px; background: #e8eee9; }
+    .pill { display: inline-block; padding: 2px 6px; border-radius: 999px; background: #e8eee9; font-size: 11px; }
+    .pill-pending { background: #fff3cd; }
+    .pill-answered { background: #d4edda; }
+    .pill-rejected { background: #f8d7da; }
     .error { color: #9b1c1c; }
+    .req-history { max-height: 280px; overflow-y: auto; background: white; border: 1px solid #d9d9d2; padding: 10px 12px; display: grid; gap: 10px; }
+    .req-you { border-left: 3px solid #6b7c72; padding-left: 8px; }
+    .req-sl { color: #4a4f4c; padding-left: 16px; }
+    .req-sl.short { font-style: italic; }
+    .req-meta { font-size: 11px; color: #68726c; margin-bottom: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .seg { display: inline-flex; border: 1px solid #9aa59e; border-radius: 6px; overflow: hidden; }
+    .seg button { border: 0; border-radius: 0; margin: 0; background: #fff; }
+    .seg button.active { background: #202124; color: #fff; }
+    .composer-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   </style>
 </head>
 <body>
@@ -45,7 +58,18 @@
     <p id=\"error\" class=\"error\"></p>
     <section><h2>Blockers</h2><div id=\"blockers\"></div></section>
     <section><h2>Pending Approvals</h2><div id=\"approvals\"></div></section>
-    <section><h2>Message Squad Leader</h2><textarea id=\"sl-message\"></textarea><div><button onclick=\"sendMessage()\">Submit</button></div></section>
+    <section>
+      <h2>Squad Leader Requests</h2>
+      <div id=\"sl-requests\" class=\"req-history\"></div>
+      <div class=\"composer-row\">
+        <div class=\"seg\" role=\"group\" aria-label=\"Request kind\">
+          <button type=\"button\" id=\"kind-command\" class=\"active\" onclick=\"setKind('command')\">Command</button>
+          <button type=\"button\" id=\"kind-question\" onclick=\"setKind('question')\">Question</button>
+        </div>
+        <button type=\"button\" onclick=\"sendRequest()\">Submit</button>
+      </div>
+      <textarea id=\"sl-message\" placeholder=\"Command or question for the squad leader…\"></textarea>
+    </section>
     <section><h2>Stories</h2><div id=\"stories\"></div></section>
     <section><h2>Agents</h2><div id=\"agents\"></div></section>
     <section><h2>Assignments</h2><div id=\"assignments\"></div></section>
@@ -58,11 +82,13 @@
     const storiesPanel = document.getElementById('stories');
     const agentsPanel = document.getElementById('agents');
     const assignmentsPanel = document.getElementById('assignments');
+    const requestsPanel = document.getElementById('sl-requests');
     const slDraftKey = 'swarmforge.slMessageDraft';
+    const slKindKey = 'swarmforge.slRequestKind';
     let slDraft = localStorage.getItem(slDraftKey) || '';
-    // Survives 2s polling rebuilds so mousedown → refresh → mouseup still completes approve/reject.
-    let pressedApproval = null; // {id, action}
-    const esc = value => String(value ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+    let slKind = localStorage.getItem(slKindKey) || 'command';
+    let pressedApproval = null;
+    const esc = value => String(value ?? '').replace(/[&<>']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
     async function post(path, body = null, contentType = null, refresh = true) {
       const options = { method: 'POST' };
       if (body !== null) options.body = body;
@@ -70,6 +96,7 @@
       const response = await fetch(path, options);
       if (!response.ok) throw new Error(await response.text());
       if (refresh) await render();
+      return response;
     }
     function row(cells) { return '<tr>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>'; }
     function table(headers, rows) {
@@ -135,11 +162,48 @@
     function blockers(items) {
       if (!items.length) return '<p class=\"muted\">No blockers.</p>';
       return table(['Assignment','Kind','Detail'], items.map(b => row([
-        artifactLink('blocker', b.assignment_id, b.assignment_id), esc(b.kind || 'blocked'), esc(b.detail || '')
+        artifactLink('blocker', b.assignment_id || b.blocker_id, b.assignment_id || b.blocker_id), esc(b.kind || 'blocked'), esc(b.detail || '')
       ])));
+    }
+    function setKind(kind) {
+      slKind = kind === 'question' ? 'question' : 'command';
+      localStorage.setItem(slKindKey, slKind);
+      document.getElementById('kind-command').classList.toggle('active', slKind === 'command');
+      document.getElementById('kind-question').classList.toggle('active', slKind === 'question');
+    }
+    function statusPill(status) {
+      const s = String(status || 'pending');
+      return '<span class=\"pill pill-' + esc(s) + '\">' + esc(s) + '</span>';
+    }
+    function renderRequests(items) {
+      if (!items || !items.length) return '<p class=\"muted\">No squad leader requests yet.</p>';
+      return items.map(r => {
+        const cancel = r.status === 'pending'
+          ? ' <button type=\"button\" onclick=\"cancelRequest(\\'' + esc(r.id) + '\\')\">Cancel</button>'
+          : '';
+        const response = r.response
+          ? '<div class=\"req-sl' + (String(r.response).length < 40 ? ' short' : '') + '\">' + esc(r.response) + '</div>'
+          : (r.status === 'rejected' && r.detail
+             ? '<div class=\"req-sl short\">' + esc(r.detail) + '</div>'
+             : '');
+        return '<div class=\"req-item\">' +
+          '<div class=\"req-meta\"><strong>You</strong>' + statusPill(r.status) +
+          '<span>' + esc(r.kind || 'command') + '</span><span class=\"muted\">' + esc(r.id) + '</span>' + cancel + '</div>' +
+          '<div class=\"req-you\">' + esc(r.body || '') + '</div>' +
+          response +
+          '</div>';
+      }).join('');
+    }
+    async function cancelRequest(id) {
+      try {
+        await post('/api/sl-requests/' + encodeURIComponent(id) + '/cancel', null, null, true);
+      } catch (err) {
+        error.textContent = err.message;
+      }
     }
     const messageInput = document.getElementById('sl-message');
     messageInput.value = slDraft;
+    setKind(slKind);
     messageInput.addEventListener('input', () => {
       slDraft = messageInput.value;
       localStorage.setItem(slDraftKey, slDraft);
@@ -147,13 +211,14 @@
     messageInput.addEventListener('keydown', event => {
       if (event.key === 'Enter' && !event.shiftKey) {
         event.preventDefault();
-        sendMessage();
+        sendRequest();
       }
     });
-    async function sendMessage() {
+    async function sendRequest() {
       const text = messageInput.value.trim();
       if (!text) return;
-      await post('/api/sl-message', text, 'text/plain; charset=utf-8', false);
+      const payload = JSON.stringify({ kind: slKind, body: text });
+      await post('/api/sl-requests', payload, 'application/json; charset=utf-8', false);
       slDraft = '';
       localStorage.removeItem(slDraftKey);
       messageInput.value = '';
@@ -164,15 +229,19 @@
         const data = await (await fetch('/api/state', { cache: 'no-store' })).json();
         meta.textContent = data.project_root + ' | ' + data.generated_at;
         error.textContent = '';
-        blockersPanel.innerHTML = blockers(data.blockers);
-        approvalsPanel.innerHTML = approvals(data.approvals.pending);
-        storiesPanel.innerHTML = table(['Story','State','Substate'], data.stories.map(s => row([
-          artifactLink('story', s.story_id, s.story_id), '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.stage_detail || s.final_state)
+        blockersPanel.innerHTML = blockers(data.blockers || []);
+        approvalsPanel.innerHTML = approvals((data.approvals && data.approvals.pending) || []);
+        const nearBottom = requestsPanel.scrollHeight - requestsPanel.scrollTop - requestsPanel.clientHeight <= 24;
+        requestsPanel.innerHTML = renderRequests(data.sl_requests || []);
+        if (nearBottom) requestsPanel.scrollTop = requestsPanel.scrollHeight;
+        storiesPanel.innerHTML = table(['Story','State','Substate'], (data.stories || []).map(s => row([
+          artifactLink('story', s.story_id, s.story_number ? ('#' + s.story_number + ' ' + s.story_id) : s.story_id),
+          '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.stage_detail || s.final_state)
         ])));
-        agentsPanel.innerHTML = table(['Agent','Template','Task','State','Detail'], data.agents.map(a => row([
+        agentsPanel.innerHTML = table(['Agent','Template','Task','State','Detail'], (data.agents || []).map(a => row([
           `<a target=\"_blank\" href=\"/agent/${encodeURIComponent(a.agent_id)}\">${esc(a.agent_id)}</a>`, esc(a.template), esc(a.task_id), esc(a.state), esc(a.detail)
         ])));
-        assignmentsPanel.innerHTML = table(['Assignment','Template','Story','State'], data.assignments.map(a => row([
+        assignmentsPanel.innerHTML = table(['Assignment','Template','Story','State'], (data.assignments || []).map(a => row([
           artifactLink('assignment', a.assignment_id, a.assignment_id), esc(a.template), esc(a.story_id), esc(a.state)
         ])));
       } catch (err) {
@@ -646,7 +715,8 @@
      "agents" agents
      "batches" (batch-state root)
      "blockers" (blocker-state root assignments agents)
-     "approvals" {"pending" (approval-state-for root "pending")}}))
+     "approvals" {"pending" (approval-state-for root "pending")}
+     "sl_requests" (dashreq/list-all-requests root)}))
 
 (defn response [status content-type body]
   {:status status :content-type content-type :body body})
@@ -854,25 +924,68 @@
 (defn web-error [message]
   {:ok false :status 409 :error message})
 
-(defn sl-dashboard-message [message]
-  (str sl-message-prefix "\n\n" message))
+(defn json-unescape [s]
+  (-> (or s "")
+      (str/replace #"\\n" "\n")
+      (str/replace #"\\t" "\t")
+      (str/replace #"\\\"" "\"")
+      (str/replace #"\\\\" "\\")))
 
-(defn send-sl-dashboard-message! [socket message]
-  (tmux-notify! socket "swarmforge-squad-leader" (sl-dashboard-message message)))
+(defn extract-json-string [json key]
+  (when-let [[_ raw] (re-find (re-pattern (str "\"" key "\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\""))
+                              (or json ""))]
+    (json-unescape raw)))
 
-(defn sl-message-result! [root socket message]
-  (if (send-sl-dashboard-message! socket message)
-    (do
-      (log! root "web-sl-message-sent")
-      {:ok true})
-    (web-error "Could not send message to squad leader\n")))
+(defn parse-sl-request-body [body]
+  "Accept JSON {kind,body} or plain text body (kind defaults to command)."
+  (let [text (str/trim (or body ""))]
+    (if (str/starts-with? text "{")
+      {:kind (or (extract-json-string text "kind") "command")
+       :body (or (extract-json-string text "body") "")}
+      {:kind "command"
+       :body text})))
 
-(defn sl-message-web-action! [root text]
-  (let [message (str/trim (or text ""))]
-    (cond
-      (str/blank? message) (web-error "Message is empty\n")
-      (nil? (socket-value root)) (web-error "Missing tmux socket\n")
-      :else (sl-message-result! root (socket-value root) message))))
+(defn dashboard-request-wake-message [request]
+  (let [id (get request "id")
+        kind (get request "kind" "command")
+        body (get request "body" "")]
+    (str "Dashboard request pending. Run squad_next.sh --apply-mechanical and answer it.\n"
+         "REQUEST_ID: " id "\n"
+         "KIND: " kind "\n"
+         "BODY: " body "\n"
+         "COMMAND: squad_dashboard_request.sh answer " id " <answer-file>\n"
+         "A request is not complete until the helper succeeds.")))
+
+(defn wake-sl-for-request! [root request]
+  (if-let [socket (socket-value root)]
+    (if (tmux-notify! socket "swarmforge-squad-leader" (dashboard-request-wake-message request))
+      (do
+        (log! root "web-sl-request-created" (get request "id"))
+        true)
+      false)
+    false))
+
+(defn create-sl-request-action! [root body]
+  (let [{:keys [kind body]} (parse-sl-request-body body)
+        result (dashreq/create-request root {:kind kind :body body})]
+    (if-not (:ok result)
+      (web-error (str (:error result) "\n"))
+      (let [request (:request result)
+            woke? (wake-sl-for-request! root request)]
+        (if woke?
+          {:ok true :request request}
+          ;; Durable create still succeeds if wake fails — operator can retry / SL sees next.
+          (do
+            (log! root "web-sl-request-wake-failed" (get request "id"))
+            {:ok true :request request :wake_failed true}))))))
+
+(defn cancel-sl-request-action! [root request-id]
+  (let [result (dashreq/cancel-request root request-id)]
+    (if (:ok result)
+      (do
+        (log! root "web-sl-request-cancelled" request-id)
+        {:ok true :request (:request result)})
+      (web-error (str (:error result) "\n")))))
 
 (defn state-response [root]
   (response 200 "application/json; charset=utf-8" (to-json (web-state root))))
@@ -884,11 +997,29 @@
       (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
       (response (:status result) "text/plain; charset=utf-8" (:error result)))))
 
-(defn sl-message-response [root body]
-  (let [result (sl-message-web-action! root body)]
+(defn sl-requests-list-response [root]
+  (response 200 "application/json; charset=utf-8"
+            (to-json {"requests" (dashreq/list-all-requests root)})))
+
+(defn sl-request-create-response [root body]
+  (let [result (create-sl-request-action! root body)]
+    (if (:ok result)
+      (response 200 "application/json; charset=utf-8"
+                (to-json {"ok" true
+                          "id" (get-in result [:request "id"])
+                          "request" (:request result)}))
+      (response (:status result 409) "text/plain; charset=utf-8" (:error result)))))
+
+(defn sl-request-cancel-response [root path]
+  (let [[_ encoded-id] (re-matches #"/api/sl-requests/([^/]+)/cancel" path)
+        result (cancel-sl-request-action! root (url-decode encoded-id))]
     (if (:ok result)
       (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
-      (response (:status result) "text/plain; charset=utf-8" (:error result)))))
+      (response (:status result 409) "text/plain; charset=utf-8" (:error result)))))
+
+(defn sl-message-response [root body]
+  "Compatibility wrapper: plain-text message becomes a command request."
+  (sl-request-create-response root body))
 
 (def web-routes
   [{:method "GET"
@@ -897,6 +1028,9 @@
    {:method "GET"
     :path "/api/state"
     :handler (fn [root _ _] (state-response root))}
+   {:method "GET"
+    :path "/api/sl-requests"
+    :handler (fn [root _ _] (sl-requests-list-response root))}
    {:method "GET"
     :pattern #"/artifact/[^/]+/[^/]+"
     :handler (fn [root path _] (artifact-response root path))}
@@ -909,6 +1043,12 @@
    {:method "POST"
     :pattern #"/api/approvals/[^/]+/(approve|reject)"
     :handler (fn [root path _] (approval-response root path))}
+   {:method "POST"
+    :path "/api/sl-requests"
+    :handler (fn [root _ body] (sl-request-create-response root body))}
+   {:method "POST"
+    :pattern #"/api/sl-requests/[^/]+/cancel"
+    :handler (fn [root path _] (sl-request-cancel-response root path))}
    {:method "POST"
     :path "/api/sl-message"
     :handler (fn [root _ body] (sl-message-response root body))}])

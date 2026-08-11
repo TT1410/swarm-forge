@@ -125,6 +125,36 @@
     (println "COMMAND_ON_APPROVAL:" (str "squad_approval.sh approve " approval-id " approved-by-user"))
     (println "COMMAND_ON_REJECTION:" (str "squad_approval.sh reject " approval-id " <reason>"))))
 
+(defn pending-dashboard-request-files [root]
+  (let [dir (fs/path root ".swarmforge" "dashboard" "requests" "pending")]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter #(and (fs/regular-file? %)
+                         (str/ends-with? (fs/file-name %) ".request")))
+           (sort-by fs/file-name)
+           vec)
+      [])))
+
+(defn oldest-pending-dashboard-request [root]
+  (when-let [file (first (pending-dashboard-request-files root))]
+    (let [m (file-map file)
+          id (or (get m "id")
+                 (str/replace (fs/file-name file) #"\.request$" ""))]
+      (merge m {"id" id
+                "file" (str file)}))))
+
+(defn print-dashboard-request-action! [request]
+  (let [id (get request "id")
+        kind (get request "kind" "command")]
+    (println "NEXT_ACTION: answer_dashboard_request")
+    (println "REQUEST_ID:" id)
+    (println "KIND:" kind)
+    (println "BODY:" (get request "body" ""))
+    (println "REASON: operator dashboard request is pending and must be answered via the helper")
+    (println "COMMAND:" (str "squad_dashboard_request.sh answer " id " <answer-file>"))
+    (println "COMMAND_ON_REJECTION:" (str "squad_dashboard_request.sh reject " id " <reason-file>"))
+    (println "NOTE: request is not complete until the helper succeeds; pane text alone does not resolve it")))
+
 (defn gate-key [gate]
   (str/replace gate "-" "_"))
 
@@ -2307,6 +2337,7 @@
       :pending-spawn-file (pending-spawn-request root)
       :retire-candidate (first (:retire-actions concurrent))
       :recover-candidate (recovery-candidate root rows)
+      :pending-dashboard-request (oldest-pending-dashboard-request root)
       :pending-approval-file (pending-approval root)}
      concurrent)))
 
@@ -2315,6 +2346,8 @@
    [:process-handoff :new-handoff]
    [:stale-lock :stale-lock-info]
    [:pending-spawn :pending-spawn-file]
+   ;; Operator dashboard requests beat story FSM residual work and approval framing.
+   [:dashboard-request :pending-dashboard-request]
    [:retire :retire-candidate]
    [:recover :recover-candidate]
    [:ready-action #(seq (:ready-actions %))]
@@ -2340,6 +2373,8 @@
      (print-handoff-action! "process_handoff" new-handoff "new handoff mail is waiting" "ready_for_next.sh"))
    :stale-lock (fn [{:keys [stale-lock-info]}] (print-stale-lock-action! stale-lock-info))
    :pending-spawn (fn [{:keys [pending-spawn-file]}] (print-spawn-wait-action! pending-spawn-file))
+   :dashboard-request (fn [{:keys [pending-dashboard-request]}]
+                        (print-dashboard-request-action! pending-dashboard-request))
    :retire (fn [{:keys [retire-candidate concurrent-actions]}]
              (print-retirement-action! retire-candidate)
              (print-concurrent-actions! concurrent-actions))

@@ -1234,16 +1234,17 @@
       (is (str/includes? (squadd/pane-liveness-message root "sock" "agent" "session" 10 :dead-pane)
                          "dead"))
       (is (= "agent:10" (squadd/pane-liveness-message root "sock" "agent" "session" 10 :live-pane))))
-    (with-redefs [squadd-web/socket-value (constantly nil)]
-      (is (= "Missing tmux socket\n" (:error (squadd-web/sl-message-web-action! root "hello")))))
-    (with-redefs [squadd-web/socket-value (constantly "sock")
-                  squadd-web/send-sl-dashboard-message! (constantly true)
+    (is (not (:ok (squadd-web/create-sl-request-action! root ""))))
+    (is (str/includes? (:error (squadd-web/create-sl-request-action! root "   ")) "empty"))
+    (with-redefs [squadd-web/wake-sl-for-request! (constantly true)
                   squadd-web/log! (fn [& _])]
-      (is (:ok (squadd-web/sl-message-web-action! root "hello"))))
-    (with-redefs [squadd-web/socket-value (constantly "sock")
-                  squadd-web/send-sl-dashboard-message! (constantly false)]
-      (is (= "Could not send message to squad leader\n"
-             (:error (squadd-web/sl-message-web-action! root "hello")))))))
+      (is (:ok (squadd-web/create-sl-request-action! root "hello")))
+      (is (seq (.list (java.io.File. (str root "/.swarmforge/dashboard/requests/pending"))))))
+    (with-redefs [squadd-web/wake-sl-for-request! (constantly false)
+                  squadd-web/log! (fn [& _])]
+      (let [result (squadd-web/create-sl-request-action! root "still durable")]
+        (is (:ok result))
+        (is (:wake_failed result))))))
 
 (deftest launcher-config-and-terminal-helper-branches
   (let [root (tmp-dir)
@@ -1411,10 +1412,18 @@
       (is (= 200 (:status (squadd-web/approval-response root "/api/approvals/a%201/approve")))))
     (with-redefs [squadd-web/approval-web-action! (constantly {:ok false :status 409 :error "no\n"})]
       (is (= 409 (:status (squadd-web/approval-response root "/api/approvals/a%201/reject")))))
-    (with-redefs [squadd-web/sl-message-web-action! (constantly {:ok true})]
-      (is (= 200 (:status (squadd-web/sl-message-response root "hello")))))
-    (with-redefs [squadd-web/sl-message-web-action! (constantly {:ok false :status 409 :error "empty\n"})]
-      (is (= 409 (:status (squadd-web/sl-message-response root "")))))))
+    (with-redefs [squadd-web/create-sl-request-action!
+                  (constantly {:ok true :request {"id" "dashboard-test-001"}})]
+      (is (= 200 (:status (squadd-web/sl-message-response root "hello"))))
+      (is (= 200 (:status (squadd-web/sl-request-create-response root "{\"kind\":\"question\",\"body\":\"why?\"}")))))
+    (with-redefs [squadd-web/create-sl-request-action!
+                  (constantly {:ok false :status 409 :error "empty\n"})]
+      (is (= 409 (:status (squadd-web/sl-message-response root "")))))
+    (with-redefs [squadd-web/cancel-sl-request-action! (constantly {:ok true})]
+      (is (= 200 (:status (squadd-web/sl-request-cancel-response root "/api/sl-requests/dashboard-test-001/cancel")))))
+    (with-redefs [squadd-web/cancel-sl-request-action!
+                  (constantly {:ok false :status 409 :error "missing\n"})]
+      (is (= 409 (:status (squadd-web/sl-request-cancel-response root "/api/sl-requests/missing/cancel")))))))
 
 (deftest squadd-spawn-request-and-args-helper-branches
   (let [root (tmp-dir)

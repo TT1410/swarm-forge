@@ -76,7 +76,7 @@
 	                       "    test -f \"$count_file\" && read count < \"$count_file\"\n"
 	                       "    case \"$*\" in\n"
 	                       "      *\"web approval changed state\"*|*\"run squad_next.sh\"*) touch \"$FAKE_TMUX_STATE/web-approval-notify\" ;;\n"
-	                       "      *\"User message from dashboard\"*) touch \"$FAKE_TMUX_STATE/sl-message\" ;;\n"
+	                       "      *\"User message from dashboard\"*|*Dashboard*request*|*REQUEST_ID*|*squad_dashboard_request*) touch \"$FAKE_TMUX_STATE/sl-message\" ;;\n"
 	                       "      *\" C-m\") count=$((count + 1)); echo \"$count\" > \"$count_file\" ;;\n"
 	                       "    esac\n"
 	                       "    exit 0\n"
@@ -226,6 +226,8 @@
 	          (is (str/includes? page "event.key === 'Enter' && !event.shiftKey"))
 	          (is (str/includes? page "localStorage.removeItem(slDraftKey)"))
 	          (is (str/includes? page "const messageInput = document.getElementById('sl-message')"))
+	          (is (str/includes? page "Squad Leader Requests"))
+	          (is (str/includes? page "sendRequest()"))
 	          (is (not (str/includes? page "app.innerHTML")))
 	          (is (str/includes? page "/artifact/${encodeURIComponent(kind)}/${encodeURIComponent(id)}"))
 	          (is (str/includes? page "artifactLink('assignment', a.assignment_id, a.assignment_id)"))
