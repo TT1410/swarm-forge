@@ -1818,8 +1818,52 @@
                 (str/includes? out "request_spawn")
                 (str/includes? out "merge_blocked")
                 (str/includes? out "hold_merge_blocked")
-                (str/includes? out "merger"))
+                (str/includes? out "merger")
+                (str/includes? out "park_merge_blocked"))
             "should route merge recovery instead of completing the handoff"))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest apply-mechanical-parks-merge-blocked-in-process-so-new-handoffs-claim
+  ;; Given in_process is merge_blocked and new mail waits
+  ;; When apply-mechanical runs
+  ;; Then the blocked handoff is parked under held/ and new is claimed
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "qa-procedure-writer-001\tqa-procedure-writer-001\t" root "/.worktrees/q\tswarmforge-q\tQ\tcodex\ttask\n"))
+      (write-agent-status! root "qa-procedure-writer-001" "handoff_sent")
+      (write-file (fs/path root ".squad/agents/qa-procedure-writer-001/metadata")
+                  "template: qa-procedure-writer\ntask_id: blocked-qa\n")
+      (write-file (fs/path root ".squad/assignments/blocked-qa/metadata")
+                  (str "assignment_id: blocked-qa\ntheme_id: wumpus\nstory_id: s1\n"
+                       "template: qa-procedure-writer\nassignment_file: " root "/i.md\n"))
+      (write-file (fs/path root ".squad/assignments/blocked-qa/status")
+                  "assignment_id: blocked-qa\nstate: merge_blocked\n")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_blocked.handoff")
+                  (str "type: git_handoff\nto: squad-leader\nfrom: qa-procedure-writer-001\npriority: 50\n"
+                       "task: blocked-qa\ncommit: abcdef1234\nassignment: blocked-qa\n"
+                       "template: qa-procedure-writer\n\nmerge_and_process\n"))
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/new/50_new.handoff")
+                  (str "type: git_handoff\nto: squad-leader\nfrom: qa-procedure-writer-001\npriority: 50\n"
+                       "task: other-qa\ncommit: abcdef9999\nassignment: other-qa\n"
+                       "template: qa-procedure-writer\n\nmerge_and_process\n"))
+      (write-file (fs/path root ".squad/assignments/other-qa/metadata")
+                  (str "assignment_id: other-qa\ntheme_id: wumpus\nstory_id: s2\n"
+                       "template: qa-procedure-writer\nassignment_file: " root "/j.md\n"))
+      (write-file (fs/path root ".squad/assignments/other-qa/status")
+                  "assignment_id: other-qa\nstate: in_progress\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
+        (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/held/50_blocked.handoff"))
+            "merge_blocked handoff must leave in_process")
+        (is (not (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/in_process/50_blocked.handoff"))))
+        (is (or (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/in_process/50_new.handoff"))
+                (str/includes? out "process_handoff")
+                (str/includes? out "APPLIED_TRANSITION: process_handoff")
+                (str/includes? out "record_assignment_result"))
+            "new handoff should be claimable after park"))
       (finally
         (fs/delete-tree root)))))
 

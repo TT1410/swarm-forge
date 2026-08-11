@@ -4,7 +4,10 @@ Delivery order for **implementer** work under this theme. Soft for other roles;
 `squad_next` hard-gates implementer assignment/spawn until listed providers have
 `implementation_sha` on their story packet (implementation merged).
 
-Owned by the analyst (with SL overrides). Sibling of the theme module map.
+Owned by the analyst (with SL overrides). Sibling of the theme module map —
+**not a story**. Do not place this under `stories/` or register it as a story.
+Record only via `squad_theme.sh implementation-order` into
+`.squad/themes/<theme-id>/implementation-order.md`.
 
 ## Format
 

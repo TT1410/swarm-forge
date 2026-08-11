@@ -2546,11 +2546,54 @@
             applied
             (recur applied (dec remaining))))))))
 
+(defn handoff-inbox-dir [root]
+  (fs/path root ".swarmforge" "handoffs" "inbox"))
+
+(defn park-merge-blocked-in-process-handoffs!
+  "Free the single in_process slot: park merge_blocked handoffs under inbox/held/
+  so later workers' mail can be claimed. Merger residual still sees the assignment."
+  [root]
+  (let [in-process-dir (fs/path (handoff-inbox-dir root) "in_process")
+        held-dir (fs/path (handoff-inbox-dir root) "held")
+        parked (atom [])]
+    (doseq [file (files-with-extension in-process-dir ".handoff")]
+      (when (in-process-merge-blocked? root file)
+        (fs/create-dirs held-dir)
+        (let [dest (fs/path held-dir (fs/file-name file))]
+          (fs/move file dest {:replace-existing true})
+          (swap! parked conj
+                 {:next-action "park_merge_blocked_handoff"
+                  :assignment-id (handoff-task dest)
+                  :exit 0
+                  :out ""
+                  :err ""
+                  :command (str "park " (fs/file-name dest))}))))
+    @parked))
+
+(defn held-handoff-files [root]
+  (files-with-extension (fs/path (handoff-inbox-dir root) "held") ".handoff"))
+
+(defn apply-held-handoff-finish-step!
+  "When a parked merge_blocked assignment later merges, finish the held handoff."
+  [root]
+  (some (fn [file]
+          (let [assignment-id (handoff-task file)
+                state (assignment-status-state root assignment-id)]
+            (when (or (= "merged" state)
+                      (assignment-accepted-merge? root assignment-id)
+                      (contains? resolved-handoff-assignment-states state))
+              [(apply-candidate! root
+                                 {:next-action "finish_held_handoff"
+                                  :assignment-id assignment-id
+                                  :command (str "SWARMFORGE_ROLE=squad-leader done_with_current.sh "
+                                                (pr-str (str file)))})])))
+        (held-handoff-files root)))
+
 (defn apply-in-process-handoff-step!
   "Apply at most one deterministic in-process handoff step."
   [root]
   (let [file (first (files-with-extension
-                     (fs/path root ".swarmforge" "handoffs" "inbox" "in_process")
+                     (fs/path (handoff-inbox-dir root) "in_process")
                      ".handoff"))]
     (when file
       (if-let [{:keys [action command]} (in-process-git-handoff-command root file)]
@@ -2567,12 +2610,12 @@
 (defn apply-process-new-handoff-step!
   "Claim the next new handoff into in_process when the inbox is free."
   [root]
-  (let [inbox (fs/path root ".swarmforge" "handoffs" "inbox")
+  (let [inbox (handoff-inbox-dir root)
         in-process (first (files-with-extension (fs/path inbox "in_process") ".handoff"))
         new-handoff (first (files-with-extension (fs/path inbox "new") ".handoff"))]
     (when (and new-handoff (nil? in-process))
       [(apply-candidate! root {:next-action "process_handoff"
-                               :command "ready_for_next.sh"})])))
+                               :command "SWARMFORGE_ROLE=squad-leader ready_for_next.sh"})])))
 
 (defn apply-clear-stale-lock-step! [root]
   (when-let [{:keys [lock]} (stale-lock root)]
@@ -2587,9 +2630,12 @@
         retires (apply-retirement-actions! root (role-rows root))
         daemon-ready (apply-daemon-ready-actions! root)
         stale (or (apply-clear-stale-lock-step! root) [])
+        ;; Free in_process before claim so merge_blocked does not starve new mail.
+        parked (park-merge-blocked-in-process-handoffs! root)
+        held-finish (or (apply-held-handoff-finish-step! root) [])
         claim (or (apply-process-new-handoff-step! root) [])
         handoff (or (apply-in-process-handoff-step! root) [])]
-    (into [] (concat bookkeeping retires daemon-ready stale claim handoff))))
+    (into [] (concat bookkeeping retires daemon-ready stale parked held-finish claim handoff))))
 
 (defn apply-mechanical-and-print-next! []
   (let [root (fs/absolutize (project-root))]
