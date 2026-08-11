@@ -12,3 +12,25 @@
    anchor (no jump/jitter when content is prepended or length changes). Only
    auto-scroll to the bottom when the user was already near the bottom (or
    chooses “New output” / stick-to-bottom).
+
+2. **Approval-Rejection Blocker Recovery Should Be SL-Routed, Not A Dashboard Resolve Button**
+
+   Durable approval-rejection blockers (under `.squad/blockers/`) must stay
+   visible to the squad leader (e.g. via `squad_next` `handle_durable_blocker`)
+   so the SL cannot claim “no blocker” while files remain. Clearing must not be
+   a one-click dashboard **Resolve** control.
+
+   Expected recovery model:
+   - Operator and SL discuss how to clear the blocker.
+   - Typically: reword the story / QA procedure / related artifact, then route
+     the document back to the appropriate review (or other) workflow step.
+   - Only after that recovery work is done, the SL uses a **CLI tool** to clear
+     the durable blocker (archive rejection, remove blocker files, reopen the
+     gate for re-request). The tool is not a substitute for fixing the issue.
+   - Remove the dashboard Resolve button / one-click resolve API as the primary
+     operator path; keep (or refine) an SL-facing clear tool for use after
+     recovery.
+
+   Related: durable blockers should not permanently starve all other residual
+   workflow if that freezes the swarm—surface them accurately without making
+   “handle blocker” the only possible next action forever.
