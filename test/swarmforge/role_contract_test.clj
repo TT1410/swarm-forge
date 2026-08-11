@@ -201,7 +201,7 @@
         outline (slurp (str (fs/path repo-root "swarmforge/templates/theme-module-map.md")))]
     (is (str/includes? analyst "Theme Module Map"))
     (is (str/includes? analyst "Separate **process**, **UI**, and **IO**"))
-    (is (str/includes? analyst "implementation order"))
+    (is (str/includes? analyst "implementation-order"))
     (is (str/includes? implementer "Theme Module Map"))
     (is (str/includes? implementer "root tooling files"))
     (is (str/includes? implementer "deps.edn"))

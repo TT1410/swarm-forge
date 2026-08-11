@@ -34,7 +34,7 @@ When the user asks to add, revise, or insert a story (including via dashboard re
 
 ## Implementation Order
 - **Theme orchestration metadata**, sibling of the module map — **not a story**. Never register it under `stories/` or as a story packet.
-- Analyst may author a free-standing order file (`dependent after provider ...` lines). Record with `squad_theme.sh implementation-order <theme-id> <file>` → `.squad/themes/<theme-id>/implementation-order.md` only.
+- Analyst may author a free-standing order file (`dependent: provider ...` makefile colon lines only). Record with `squad_theme.sh implementation-order <theme-id> <file>` → `.squad/themes/<theme-id>/implementation-order.md` only.
 - `squad_next` hard-gates **implementer** create/spawn until each provider story has `implementation_sha` on its packet. Spec writers/reviewers are not gated by this file.
 - You may edit edges for merge recovery or capacity judgment (override policy). Missing/empty order means no extra implementer gates.
 

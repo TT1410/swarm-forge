@@ -170,7 +170,8 @@
   (fs/regular-file? (implementation-order-path dir)))
 
 (defn implementation-order-edge-line? [line]
-  (re-matches #"[A-Za-z0-9][A-Za-z0-9._-]*\s+after\s+[A-Za-z0-9][A-Za-z0-9._-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._-]*)*"
+  "Makefile-style: dependent: provider [provider ...]"
+  (re-matches #"[A-Za-z0-9][A-Za-z0-9._-]*\s*:\s*[A-Za-z0-9][A-Za-z0-9._-]*(?:\s+[A-Za-z0-9][A-Za-z0-9._-]*)*"
               line))
 
 (defn validate-implementation-order-content! [text]
@@ -178,11 +179,15 @@
     (exit! 2 "Implementation order file is empty."))
   (doseq [raw (str/split-lines text)]
     (let [line (str/trim (first (str/split raw #"#" 2)))]
-      (when (and (not (str/blank? line))
-                 (str/includes? line " after ")
-                 (not (implementation-order-edge-line? line)))
-        (exit! 2 (str "Invalid implementation-order edge (want: <story> after <provider>...): "
-                      line))))))
+      (when-not (str/blank? line)
+        (when (re-find #"(?i)\bafter\b" line)
+          (exit! 2 (str "Invalid implementation-order edge: use makefile colon form "
+                        "`dependent: provider ...`, not the word after. Line: " line)))
+        (when (or (str/includes? line ":")
+                  (re-find #"\bafter\b" line))
+          (when-not (implementation-order-edge-line? line)
+            (exit! 2 (str "Invalid implementation-order edge (want: <story>: <provider>...): "
+                          line))))))))
 
 (defn record-implementation-order! [theme-id order-file]
   (validate-id! "Theme id" theme-id)

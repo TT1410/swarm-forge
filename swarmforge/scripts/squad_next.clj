@@ -551,12 +551,13 @@
   (fs/path root ".squad" "themes" theme-id "implementation-order.md"))
 
 (defn parse-implementation-order-edges
-  "Parse `dependent after provider [provider...]` lines into map dependent -> providers."
+  "Parse makefile-style `dependent: provider [provider...]` lines into map dependent -> providers.
+  Lines using the word `after` are ignored (invalid; record step rejects them)."
   [text]
   (reduce (fn [m raw]
             (let [line (str/trim (first (str/split raw #"#" 2)))]
               (if-let [[_ dep providers]
-                       (re-matches #"([A-Za-z0-9][A-Za-z0-9._-]*)\s+after\s+(.+)" line)]
+                       (re-matches #"([A-Za-z0-9][A-Za-z0-9._-]*)\s*:\s*(.+)" line)]
                 (let [ps (->> (str/split providers #"\s+")
                               (remove str/blank?)
                               vec)]
@@ -580,7 +581,7 @@
          (not (str/blank? (get (file-map packet-file) "implementation_sha"))))))
 
 (defn implementer-dependencies-satisfied?
-  "Hard gate: implementer for story-id waits until all `after` providers have implementation_sha."
+  "Hard gate: implementer for story-id waits until all colon-listed providers have implementation_sha."
   [root theme-id story-id]
   (let [providers (get (load-implementation-order root theme-id) story-id)]
     (or (empty? providers)

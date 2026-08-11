@@ -63,6 +63,7 @@
       </div>
       <textarea id=\"sl-message\" placeholder=\"Message for the squad leader…\"></textarea>
     </section>
+    <section><h2>Theme</h2><div id=\"theme\"></div></section>
     <section><h2>Stories</h2><div id=\"stories\"></div></section>
     <section><h2>Agents</h2><div id=\"agents\"></div></section>
     <section><h2>Assignments</h2><div id=\"assignments\"></div></section>
@@ -72,6 +73,7 @@
     const error = document.getElementById('error');
     const blockersPanel = document.getElementById('blockers');
     const approvalsPanel = document.getElementById('approvals');
+    const themePanel = document.getElementById('theme');
     const storiesPanel = document.getElementById('stories');
     const agentsPanel = document.getElementById('agents');
     const assignmentsPanel = document.getElementById('assignments');
@@ -243,6 +245,12 @@
         const slQueue = (data.sl_queue_depth != null) ? data.sl_queue_depth : 0;
         requestsTitle.textContent = 'Squad Leader Requests (queue: ' + slQueue + ')';
         updateRequestsPanel(data.sl_requests || []);
+        if (data.current_theme_id) {
+          themePanel.innerHTML = artifactLink('theme', data.current_theme_id,
+            'Theme package: ' + data.current_theme_id + ' (scheme, module map, implementation order)');
+        } else {
+          themePanel.innerHTML = '<p class=\"muted\">No theme recorded yet.</p>';
+        }
         storiesPanel.innerHTML = table(['Story','State','Substate'], (data.stories || []).map(s => row([
           artifactLink('story', s.story_id, s.story_number ? ('#' + s.story_number + ' ' + s.story_id) : s.story_id),
           '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.stage_detail || s.final_state)
@@ -733,20 +741,37 @@
      (handoff-inbox-count root "new")
      (handoff-inbox-count root "in_process")))
 
+(defn current-theme-id [root]
+  "Prefer the most recently updated theme directory under .squad/themes."
+  (let [dir (fs/path root ".squad" "themes")]
+    (when (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/directory?)
+           (sort-by (fn [d]
+                      (or (when-let [st (fs/path d "status")]
+                            (when (fs/regular-file? st)
+                              (fs/last-modified-time st)))
+                          (fs/last-modified-time d)))
+                    #(compare %2 %1))
+           first
+           fs/file-name))))
+
 (defn web-state [root]
   (let [assignments (assignment-state root)
         agents (agent-state root)
-        sl-requests (dashreq/list-all-requests root)]
-    {"generated_at" (now)
-     "project_root" (str root)
-     "stories" (story-state root)
-     "assignments" assignments
-     "agents" agents
-     "batches" (batch-state root)
-     "blockers" (blocker-state root assignments agents)
-     "approvals" {"pending" (approval-state-for root "pending")}
-     "sl_requests" sl-requests
-     "sl_queue_depth" (sl-queue-depth root)}))
+        sl-requests (dashreq/list-all-requests root)
+        theme-id (current-theme-id root)]
+    (cond-> {"generated_at" (now)
+             "project_root" (str root)
+             "stories" (story-state root)
+             "assignments" assignments
+             "agents" agents
+             "batches" (batch-state root)
+             "blockers" (blocker-state root assignments agents)
+             "approvals" {"pending" (approval-state-for root "pending")}
+             "sl_requests" sl-requests
+             "sl_queue_depth" (sl-queue-depth root)}
+      theme-id (assoc "current_theme_id" theme-id))))
 
 (defn response [status content-type body]
   {:status status :content-type content-type :body body})
@@ -819,10 +844,14 @@
     (str "## " title "\n\n" content "\n")))
 
 (defn theme-content [root theme-id]
+  "Theme package page: theme, module map, implementation order.
+  Missing artifacts are omitted (section/ hides blank content)."
   (let [theme (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md"))
-        module-map (slurp-if-exists (fs/path root ".squad" "themes" theme-id "module-map.md"))]
+        module-map (slurp-if-exists (fs/path root ".squad" "themes" theme-id "module-map.md"))
+        impl-order (slurp-if-exists (fs/path root ".squad" "themes" theme-id "implementation-order.md"))]
     (str (section "Theme" theme)
-         (section "Module Map" module-map))))
+         (section "Module Map" module-map)
+         (section "Implementation Order" impl-order))))
 
 (defn packet-review-sections [root packet]
   (apply str

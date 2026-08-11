@@ -2007,7 +2007,7 @@
       (write-file (fs/path root "swarmforge/squad.conf")
                   "max_transient_agents 10\napproval_required implementation false\n")
       (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
-                  "story-b after story-a\n")
+                  "story-b: story-a\n")
       (doseq [story ["story-a" "story-b"]]
         (write-file (fs/path root ".squad/stories" story "packet")
                     (str "story_id: " story "\n"

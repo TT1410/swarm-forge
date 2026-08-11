@@ -1014,11 +1014,46 @@
 (defn ancestor-commit? [root commit]
   (zero? (:exit (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD"))))
 
+(def merge-lock-retry-delays-ms
+  "Backoff after each transient lock failure before the next attempt."
+  [200 500 1000 2000])
+
+(defn transient-git-lock-error?
+  "True when git failed in a way that is safe to retry (ref/lock races, EPERM on lock create)."
+  [result]
+  (let [text (str (:err result) "\n" (:out result))]
+    (boolean
+     (or (re-find #"(?i)ORIG_HEAD\.lock" text)
+         (re-find #"(?i)Operation not permitted" text)
+         (re-find #"(?i)Unable to create '.*\.lock'" text)
+         (re-find #"(?i)cannot lock ref" text)
+         (re-find #"(?i)index\.lock" text)))))
+
+(defn sleep-ms! [ms]
+  (when (and ms (pos? ms))
+    (Thread/sleep (long ms))))
+
+(defn git-with-lock-retry
+  "Run (thunk) which must return a process result map {:exit :out :err}.
+  Retry on transient-git-lock-error? with merge-lock-retry-delays-ms backoff."
+  [thunk]
+  (loop [attempt 0
+         delays merge-lock-retry-delays-ms]
+    (let [result (thunk)]
+      (if (or (zero? (:exit result))
+              (not (transient-git-lock-error? result))
+              (empty? delays))
+        result
+        (do
+          (sleep-ms! (first delays))
+          (recur (inc attempt) (rest delays)))))))
+
 (defn dry-run-merge [root commit]
   (with-merge-check-worktree
     root
     (fn [worktree]
-      (sh-at worktree "git" "merge" "--no-commit" "--no-ff" commit))))
+      (git-with-lock-retry
+       #(sh-at worktree "git" "merge" "--no-commit" "--no-ff" commit)))))
 
 (defn print-merge-ready! [assignment-id commit detail]
   (println "SQUAD_ASSIGNMENT:" assignment-id)
@@ -1257,7 +1292,9 @@
   (let [ancestor (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD")]
     (if (zero? (:exit ancestor))
       "commit already reachable from HEAD"
-      (let [merge (sh-at root "git" "merge" "--no-ff" "-m" (str "Merge squad assignment " assignment-id) commit)]
+      (let [merge (git-with-lock-retry
+                   #(sh-at root "git" "merge" "--no-ff" "-m"
+                           (str "Merge squad assignment " assignment-id) commit))]
         (when-not (zero? (:exit merge))
           (abort-merge! root)
           (block-merge! root dir assignment-id "accept-merge" "accepted merge failed" commit now merge))

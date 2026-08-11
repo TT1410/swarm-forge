@@ -11,10 +11,10 @@ Record only via `squad_theme.sh implementation-order` into
 
 ## Format
 
-Non-comment lines:
+Non-comment edge lines use makefile-style colons only:
 
 ```text
-<dependent-story-id> after <provider-story-id> [provider-story-id ...]
+<dependent-story-id>: <provider-story-id> [provider-story-id ...]
 ```
 
 Meaning: do not start implementer work for `dependent` until each provider
@@ -24,13 +24,16 @@ Example:
 
 ```text
 # foundation first
-room-reporting after cave-topology
-move-command after cave-topology
-# UI after process
-terminal-ui after room-reporting move-command
+room-reporting: cave-topology
+move-command: cave-topology
+# UI after process surface
+terminal-ui: room-reporting move-command
 ```
 
-Stories with no `after` line may implement as soon as story/spec gates allow.
+Do **not** use the word `after` (it can collide with a story id). Invalid edge
+lines are rejected when the file is recorded.
+
+Stories with no edge line may implement as soon as story/spec gates allow.
 Empty file or missing file means no implementation-order gates.
 
 ## Notes
