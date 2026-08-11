@@ -1014,9 +1014,12 @@
 (defn ancestor-commit? [root commit]
   (zero? (:exit (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD"))))
 
-(def merge-lock-retry-delays-ms
-  "Backoff after each transient lock failure before the next attempt."
-  [200 500 1000 2000])
+(def merge-lock-retry-max-attempts
+  "Total tries including the first (4 retries after failure → 5 attempts)."
+  5)
+
+(def merge-lock-retry-base-ms 200)
+(def merge-lock-retry-cap-ms 2000)
 
 (defn transient-git-lock-error?
   "True when git failed in a way that is safe to retry (ref/lock races, EPERM on lock create)."
@@ -1033,26 +1036,65 @@
   (when (and ms (pos? ms))
     (Thread/sleep (long ms))))
 
+(defn random-merge-lock-backoff-ms
+  "Full jitter exponential backoff: uniform random in [0, min(cap, base * 2^attempt)].
+  attempt is 0-based for the first retry after the initial failure."
+  [attempt]
+  (let [exp (bit-shift-left 1 (min attempt 4))
+        ceiling (min merge-lock-retry-cap-ms (* merge-lock-retry-base-ms exp))]
+    (long (rand-int (inc ceiling)))))
+
+(defn log-merge-lock-retry! [label attempt delay-ms result]
+  (let [snippet (-> (str (:err result) " " (:out result))
+                    (str/replace #"\s+" " ")
+                    (str/trim)
+                    (#(if (> (count %) 160) (str (subs % 0 160) "…") %)))]
+    (binding [*out* *err*]
+      (println "MERGE_LOCK_RETRY:"
+               (str "label=" label)
+               (str "attempt=" attempt)
+               (str "next_delay_ms=" delay-ms)
+               (str "exit=" (:exit result))
+               (str "detail=" (pr-str snippet))))))
+
+(defn log-merge-lock-retry-outcome! [label attempt result]
+  (binding [*out* *err*]
+    (if (zero? (:exit result))
+      (when (pos? attempt)
+        (println "MERGE_LOCK_RETRY_OK:"
+                 (str "label=" label)
+                 (str "attempts=" (inc attempt))))
+      (when (and (pos? attempt) (transient-git-lock-error? result))
+        (println "MERGE_LOCK_RETRY_EXHAUSTED:"
+                 (str "label=" label)
+                 (str "attempts=" (inc attempt))
+                 (str "exit=" (:exit result)))))))
+
 (defn git-with-lock-retry
   "Run (thunk) which must return a process result map {:exit :out :err}.
-  Retry on transient-git-lock-error? with merge-lock-retry-delays-ms backoff."
-  [thunk]
-  (loop [attempt 0
-         delays merge-lock-retry-delays-ms]
-    (let [result (thunk)]
-      (if (or (zero? (:exit result))
-              (not (transient-git-lock-error? result))
-              (empty? delays))
-        result
-        (do
-          (sleep-ms! (first delays))
-          (recur (inc attempt) (rest delays)))))))
+  Retry on transient-git-lock-error? with full-jitter exponential backoff.
+  Logs each retry and final success-after-retry / exhaustion to stderr."
+  ([thunk] (git-with-lock-retry "git" thunk))
+  ([label thunk]
+   (loop [attempt 0]
+     (let [result (thunk)]
+       (if (or (zero? (:exit result))
+               (not (transient-git-lock-error? result))
+               (>= (inc attempt) merge-lock-retry-max-attempts))
+         (do
+           (log-merge-lock-retry-outcome! label attempt result)
+           result)
+         (let [delay-ms (random-merge-lock-backoff-ms attempt)]
+           (log-merge-lock-retry! label (inc attempt) delay-ms result)
+           (sleep-ms! delay-ms)
+           (recur (inc attempt))))))))
 
 (defn dry-run-merge [root commit]
   (with-merge-check-worktree
     root
     (fn [worktree]
       (git-with-lock-retry
+       "dry-run-merge"
        #(sh-at worktree "git" "merge" "--no-commit" "--no-ff" commit)))))
 
 (defn print-merge-ready! [assignment-id commit detail]
@@ -1293,6 +1335,7 @@
     (if (zero? (:exit ancestor))
       "commit already reachable from HEAD"
       (let [merge (git-with-lock-retry
+                   (str "accept-merge:" assignment-id)
                    #(sh-at root "git" "merge" "--no-ff" "-m"
                            (str "Merge squad assignment " assignment-id) commit))]
         (when-not (zero? (:exit merge))
