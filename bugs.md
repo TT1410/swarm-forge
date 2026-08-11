@@ -34,3 +34,28 @@
    Related: durable blockers should not permanently starve all other residual
    workflow if that freezes the swarm—surface them accurately without making
    “handle blocker” the only possible next action forever.
+
+3. **SL Loops On `recover_agent` For Quiet Agents Whose Assignments Are Already `merge_blocked`**
+
+   Observed on the Hunt the Wumpus run: `squad_next` residual stays
+   `recover_agent` for implementers (and similar) that are `handoff_sent` with
+   stale heartbeats, while `squad_recover` reports `delivered_handoff` or
+   `live` and the assignment is already **`merge_blocked`**. The SL re-runs
+   recover and `squad_next --apply-mechanical` forever; squadd’s SL watchdog
+   keeps waking the SL (~1 min), amplifying the loop.
+
+   Root dynamics:
+   - Quiet `handoff_sent` → recovery candidate.
+   - Handoff already delivered/completed; work cannot land (merge conflict).
+   - `merge_blocked` is not a terminal state for retirement, so the agent is
+     not retirable and the residual never advances.
+   - Recover does not change durable state → next residual is recover again.
+
+   Expected:
+   - After handoff is recorded and assignment is `merge_blocked`, residual
+     should prioritize **merge recovery** (merger/rework/block), not endless
+     `recover_agent` for that quiet worker.
+   - Or allow retire/hold once handoff is terminal-for-worker purposes and
+     merge outcome is already `merge_blocked`.
+   - SL should not be stuck in recover ↔ next when recover state is unchanged
+     (`delivered_handoff` / `live` + merge_blocked).
