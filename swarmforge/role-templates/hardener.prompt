@@ -19,6 +19,7 @@ Read and obey `swarmforge/role-templates/hardener.contract.edn`.
 - Work only on the assigned closed batch.
 - Do not add new product scope.
 - Do not alter story intent.
+- Do **not** edit root tooling files (`bb.edn`, `deps.edn`, or equivalent build/lock manifests) unless the assignment explicitly requires it for hardening tooling.
 - Run required focused verification before handoff.
 
 ## Handoff

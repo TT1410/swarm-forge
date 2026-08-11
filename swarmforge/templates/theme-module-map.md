@@ -69,6 +69,12 @@ exist once code lands, e.g.:
 
 These names should stay consistent with a future `dependency-checker` policy.
 
+## Tooling Layout (note)
+
+Root `bb.edn` / `deps.edn` are shared infrastructure, not use-case modules.
+Prefer thin `bb.edn` (tasks + optional `{:local/root "."}`), deps in `deps.edn`,
+and task bodies under `bb/tasks/`. Story work should not thrash root tooling.
+
 ## Out of Scope
 
 Explicit non-goals for this map (what not to invent here): story text, Gherkin,

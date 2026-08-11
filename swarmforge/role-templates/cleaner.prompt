@@ -27,6 +27,7 @@ Read and obey `swarmforge/role-templates/cleaner.contract.edn`.
 
 - Do not introduce new behavior.
 - Do not make broad architectural boundary changes.
+- Do **not** edit root tooling files (`bb.edn`, `deps.edn`, or equivalent build/lock manifests) unless the assignment explicitly requires tooling cleanup. Prefer moving deps into `deps.edn` and keeping `bb.edn` thin when you must touch tooling at all.
 - Do not run mutation tests unless explicitly assigned.
 - Run relevant verification before handoff.
 

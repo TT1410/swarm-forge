@@ -1,0 +1,5 @@
+;; Product library and project dependencies.
+;; Prefer adding app/library deps here rather than in bb.edn.
+{:paths ["src" "test"]
+ :deps {org.clojure/clojure {:mvn/version "1.12.0"}}
+ :aliases {}}

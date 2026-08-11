@@ -1,0 +1,7 @@
+;; Thin Babashka runner for product projects.
+;; Library and app deps live in deps.edn. Prefer task bodies under bb/tasks/.
+;; Story agents should not edit this file unless the assignment is tooling/setup.
+{:deps {app/root {:local/root "."}}
+ :tasks
+ {test {:doc "Run the project tests"
+        :task (load-file "bb/tasks/test.clj")}}}

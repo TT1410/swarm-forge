@@ -12,6 +12,7 @@ Read and obey `swarmforge/role-templates/senior-implementer.contract.edn`.
 - Implement only the assigned architectural recommendations.
 - Keep dependencies consistent with the architect's direction.
 - Separate large multi-responsibility modules into well-named single-responsibility modules when assigned.
+- Prefer thin root `bb.edn` and `deps.edn` for libraries; do not expand root tooling for story convenience unless assigned.
 - Run the full verification suite before handoff.
 
 ## Handoff

@@ -202,13 +202,33 @@
     (is (str/includes? analyst "Theme Module Map"))
     (is (str/includes? analyst "isolate UI and IO"))
     (is (str/includes? implementer "Theme Module Map"))
+    (is (str/includes? implementer "root tooling files"))
+    (is (str/includes? implementer "deps.edn"))
     (is (str/includes? architect "Theme Module Map"))
     (is (str/includes? architect "Recommend changes to the theme **module map**"))
     (is (str/includes? architect "Module Map Recommendations"))
     (is (str/includes? outline "## Use Cases (Business / Process Rules)"))
     (is (str/includes? outline "## Dependency Rule"))
     (is (str/includes? outline "## UI (Interface Adapters)"))
-    (is (str/includes? outline "## IO (Interface Adapters / Drivers)"))))
+    (is (str/includes? outline "## IO (Interface Adapters / Drivers)"))
+    (is (str/includes? outline "Tooling Layout"))))
+
+(deftest product-tooling-templates-keep-bb-edn-thin
+  (let [bb (slurp (str (fs/path repo-root "swarmforge/templates/product-bb.edn")))
+        deps (slurp (str (fs/path repo-root "swarmforge/templates/product-deps.edn")))
+        engineering (slurp (str (fs/path repo-root "swarmforge/constitution/articles/engineering.prompt")))
+        implementer (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))
+        cleaner (slurp (str (fs/path repo-root "swarmforge/role-templates/cleaner.prompt")))
+        hardener (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))]
+    (is (str/includes? bb "local/root"))
+    (is (str/includes? bb "bb/tasks/test.clj"))
+    (is (not (str/includes? bb ":paths")))
+    (is (str/includes? deps ":paths"))
+    (is (str/includes? engineering "Project Tooling Layout"))
+    (is (str/includes? engineering "Keep root `bb.edn` thin"))
+    (doseq [prompt [implementer cleaner hardener]]
+      (is (str/includes? prompt "bb.edn"))
+      (is (str/includes? prompt "deps.edn")))))
 
 (deftest runtime-constitution-does-not-require-development-design-doc
   (let [project-article (slurp (str (fs/path repo-root "swarmforge/constitution/articles/project.prompt")))]

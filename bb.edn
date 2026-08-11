@@ -1,4 +1,5 @@
-{:paths ["swarmforge/scripts" "test"]
+;; Thin runner: paths/deps live in deps.edn (local/root).
+{:deps {swarmforge/root {:local/root "."}}
  :tasks
  {test {:doc "Run helper tests except simulator tests"
         :task (do

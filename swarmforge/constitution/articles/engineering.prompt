@@ -13,6 +13,14 @@
 - For Clojure or Babashka projects using Speclj, use `github.com/unclebob/speclj-structure-check` to validate test syntax. If a Speclj spec file changed, run the structure check before executing the relevant test command.
 - For Java projects, avoid using Maven to run tests; build dedicated test runners and run those instead.
 
+## Project Tooling Layout (Clojure / Babashka)
+- Keep root `bb.edn` thin and stable so parallel stories do not thrash on it.
+- Put library and project dependencies in root `deps.edn`, not in `bb.edn`.
+- Prefer `bb.edn` that reuses the project via `{:deps {app/root {:local/root "."}}}` (or equivalent) plus `:tasks` only.
+- Prefer task *bodies* under `bb/tasks/*.clj` (or similar) and only a one-line task entry in `bb.edn` when a new top-level command is required.
+- Root tooling files (`bb.edn`, `deps.edn`, and equivalent lock/build manifests) are shared project infrastructure. Story-scoped implementer/cleaner/hardener work must not edit them unless the assignment explicitly is a tooling/setup story.
+- When a library dependency is required for a story, add it in `deps.edn` only if the assignment allows tooling edits; otherwise hand back a blocker asking for a tooling story or SL-approved tooling change.
+
 ## Design And Testability
 - Work in small, reviewable increments.
 - Prefer the simplest design that supports the current behavior and leaves clear options for the next step.

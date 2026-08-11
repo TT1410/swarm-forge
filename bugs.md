@@ -7,20 +7,6 @@ then recovery/visibility, then efficiency and polish.
 
 ## Open Bugs
 
-3. **Merge Thrash Includes Tooling Config, Not Only Product Code**
-
-   Beyond `src/wumpus/core.clj` and `test/wumpus/core_test.clj` (50+ and 48
-   conflict mentions in assignment `merge-error` files), dry-run merges also
-   conflicted on `deps.edn` and `bb.edn` (including add/add). Parallel
-   implementers/mergers are fighting over project tooling as well as domain
-   code, which multiplies cascade depth (observed implementer ladders up to
-   **r6**, cleaner ladders up to **r5**, 40 merge-blocked rejection notes).
-
-   Expected: either serialize edits to shared config, keep story work off
-   root tooling files, or treat config conflicts with a dedicated resolution
-   path so they do not drive endless rN rework. Complements implementer
-   co-scheduling / module isolation when stories share the same files.
-
 4. **Merge-Conflict Rejects Do Not Create Dashboard Blockers**
 
    The trial produced 40 rejection notes under `.squad/rejections/` (all
