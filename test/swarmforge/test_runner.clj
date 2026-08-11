@@ -4,6 +4,7 @@
             [swarmforge.assign-merge-test]
             [swarmforge.bugs-remaining-test]
             [swarmforge.dashboard-request-test]
+            [swarmforge.durable-blocker-test]
             [swarmforge.crap-coverage-test]
             [swarmforge.handoff-test]
             [swarmforge.handoff-lib-test]
@@ -23,6 +24,7 @@
     swarmforge.assign-merge-test
     swarmforge.bugs-remaining-test
     swarmforge.dashboard-request-test
+    swarmforge.durable-blocker-test
     swarmforge.handoff-lib-test
     swarmforge.launcher-test
     swarmforge.recover-test

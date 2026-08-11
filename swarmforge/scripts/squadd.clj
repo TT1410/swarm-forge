@@ -22,6 +22,7 @@
 (def sl-judgment-actions
   #{"request_user_approval"
     "answer_dashboard_request"
+    "handle_durable_blocker"
     "recover_agent"
     "hold_merge_blocked_handoff"})
 (def script-dir (fs/parent *file*))

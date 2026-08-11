@@ -15,6 +15,7 @@
        "  squad_approval.sh request-bulk <theme|story> <gate> <title> <reason> <approval-id>:<target-id>...\n"
        "  squad_approval.sh approve <approval-id> <detail...>\n"
        "  squad_approval.sh reject <approval-id> <reason...>\n"
+       "  squad_approval.sh resolve-rejection <approval-id> [detail...]\n"
        "  squad_approval.sh status [approval-id]\n"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -69,6 +70,15 @@
 (defn rejected-file [root approval-id]
   (fs/path (approvals-dir root "rejected") (str approval-id ".approval")))
 
+(defn cleared-file [root approval-id]
+  (fs/path (approvals-dir root "cleared") (str approval-id ".approval")))
+
+(defn blocker-file [root blocker-id]
+  (fs/path root ".squad" "blockers" blocker-id))
+
+(defn blocker-md-file [root blocker-id]
+  (fs/path root ".squad" "blockers" (str blocker-id ".md")))
+
 (defn read-value [file field]
   (when (fs/exists? file)
     (let [prefix (str field ": ")]
@@ -84,14 +94,22 @@
                   (when (and k v) [k v]))))
         (str/split-lines (slurp (str file)))))
 
-(defn approval-file [root approval-id]
+(defn active-approval-file [root approval-id]
+  "Pending, approved, or rejected — not cleared (cleared gates may be re-requested)."
   (some (fn [file]
           (when (fs/exists? file) file))
         [(pending-file root approval-id)
          (approved-file root approval-id)
          (rejected-file root approval-id)]))
 
-(defn approval-files [root]
+(defn approval-file [root approval-id]
+  (or (active-approval-file root approval-id)
+      (let [cleared (cleared-file root approval-id)]
+        (when (fs/exists? cleared) cleared))))
+
+(defn approval-files
+  "Active approval records (not cleared). Used to block duplicate gate requests."
+  [root]
   (for [state ["pending" "approved" "rejected"]
         :let [dir (approvals-dir root state)]
         :when (fs/exists? dir)
@@ -177,7 +195,7 @@
         reason (normalized-detail reason-parts "approval requested")
         now (timestamp)]
     (ensure-target-exists! root target-kind target-id)
-    (if-let [existing (or (approval-file root approval-id)
+    (if-let [existing (or (active-approval-file root approval-id)
                           (equivalent-approval-file root target-kind target-id gate))]
       (print-request-result! root existing)
       (do
@@ -257,20 +275,41 @@
     (write-atomic! (fs/path dir (str blocker-id ".md")) body)
     blocker-id))
 
+(defn write-packet-map! [file packet]
+  (let [now (timestamp)
+        packet (assoc packet "updated_at" now)
+        lines (for [k (sort (keys packet))
+                    :let [v (get packet k)]
+                    :when (not (str/blank? (str v)))]
+                (str k ": " v))]
+    (write-atomic! file (str (str/join "\n" lines) "\n"))))
+
 (defn update-story-packet-on-approval-reject! [root story-id gate reason]
   (let [file (packet-file root story-id)]
     (when (fs/regular-file? file)
       (let [packet (file-map file)
             gate-key (str/replace (packet-gate gate) "-" "_")
             approval-field (str gate-key "_approval")
-            detail-field (str gate-key "_approval_detail")
-            now (timestamp)
-            lines (for [[k v] (sort (assoc packet
-                                           approval-field "rejected"
-                                           detail-field reason
-                                           "updated_at" now))]
-                    (str k ": " v))]
-        (write-atomic! file (str (str/join "\n" lines) "\n"))))))
+            detail-field (str gate-key "_approval_detail")]
+        (write-packet-map! file
+                           (assoc packet
+                                  approval-field "rejected"
+                                  detail-field reason))))))
+
+(defn clear-story-packet-rejection! [root story-id gate]
+  "Remove rejected gate approval fields so the workflow can re-request the gate."
+  (let [file (packet-file root story-id)]
+    (when (fs/regular-file? file)
+      (let [packet (file-map file)
+            gate-key (str/replace (packet-gate gate) "-" "_")
+            drop-keys #{(str gate-key "_approval")
+                        (str gate-key "_approval_detail")
+                        (str gate-key "_approval_state")}]
+        (write-packet-map! file (apply dissoc packet drop-keys))))))
+
+(defn remove-approval-blocker! [root blocker-id]
+  (fs/delete-if-exists (blocker-file root blocker-id))
+  (fs/delete-if-exists (blocker-md-file root blocker-id)))
 
 (defn reject! [approval-id reason-parts]
   (validate-id! "Approval id" approval-id)
@@ -293,6 +332,35 @@
       (println "TARGET:" (or target-id "unknown"))
       (println "GATE:" (or gate "unknown"))
       (println "BLOCKER:" (str (fs/path root ".squad" "blockers" approval-id))))))
+
+(defn resolve-rejection!
+  "Clear an approval-rejection durable blocker and reopen the gate for re-request.
+  Does not auto-approve; workflow may request a new pending approval afterward."
+  [approval-id detail-parts]
+  (validate-id! "Approval id" approval-id)
+  (let [root (fs/absolutize (project-root))
+        rejected (rejected-file root approval-id)
+        detail (normalized-detail detail-parts "rejection-cleared-for-reentry")
+        now (timestamp)]
+    (when-not (fs/regular-file? rejected)
+      (exit! 1 (str "Rejected approval not found: " approval-id
+                    " (resolve-rejection only clears rejected gates)")))
+    (let [approval (file-map rejected)
+          target-kind (get approval "target_kind")
+          target-id (get approval "target_id")
+          gate (get approval "gate")
+          blocker-id (or (get approval "approval_id") approval-id)]
+      (move-with-state! rejected (cleared-file root approval-id) "cleared" detail)
+      (remove-approval-blocker! root blocker-id)
+      (when (and (= "story" target-kind) (not (str/blank? target-id)) (not (str/blank? gate)))
+        (clear-story-packet-rejection! root target-id gate))
+      (println "SQUAD_APPROVAL:" approval-id)
+      (println "STATE: cleared")
+      (println "TARGET:" (or target-id "unknown"))
+      (println "GATE:" (or gate "unknown"))
+      (println "DETAIL:" detail)
+      (println "BLOCKER_REMOVED:" (str (blocker-file root blocker-id)))
+      (println "NOTE: gate may be re-requested; not approved"))))
 
 (defn print-one-status! [root approval-id]
   (validate-id! "Approval id" approval-id)
@@ -347,6 +415,9 @@
    "reject" (fn [args]
               (minimum-count! args 2)
               (reject! (second args) (drop 2 args)))
+   "resolve-rejection" (fn [args]
+                         (minimum-count! args 2)
+                         (resolve-rejection! (second args) (drop 2 args)))
    "status" (fn [args]
               (when-not (<= 1 (count args) 2)
                 (exit! 1 usage-text))

@@ -125,6 +125,53 @@
     (println "COMMAND_ON_APPROVAL:" (str "squad_approval.sh approve " approval-id " approved-by-user"))
     (println "COMMAND_ON_REJECTION:" (str "squad_approval.sh reject " approval-id " <reason>"))))
 
+(defn durable-blocker-files [root]
+  (let [dir (fs/path root ".squad" "blockers")]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter #(and (fs/regular-file? %)
+                         (not (str/ends-with? (fs/file-name %) ".md"))))
+           (sort-by fs/file-name)
+           vec)
+      [])))
+
+(defn durable-blocker-record [file]
+  (let [m (file-map file)
+        id (or (get m "blocker_id")
+               (get m "approval_id")
+               (fs/file-name file))]
+    (merge m
+           {"blocker_id" id
+            "file" (str file)
+            "state" (get m "state" "blocked")
+            "kind" (get m "kind" "blocker")})))
+
+(defn oldest-durable-blocker [root]
+  (when-let [file (first (durable-blocker-files root))]
+    (durable-blocker-record file)))
+
+(defn print-durable-blocker-action! [blocker]
+  (let [id (get blocker "blocker_id")
+        kind (get blocker "kind" "blocker")
+        approval-id (or (get blocker "approval_id") id)]
+    (println "NEXT_ACTION: handle_durable_blocker")
+    (println "BLOCKER_ID:" id)
+    (println "KIND:" kind)
+    (println "STATE:" (get blocker "state" "blocked"))
+    (println "TARGET_KIND:" (get blocker "target_kind" "unknown"))
+    (println "TARGET_ID:" (get blocker "target_id" (get blocker "assignment_id" "unknown")))
+    (println "GATE:" (get blocker "gate" "unknown"))
+    (println "DETAIL:" (get blocker "detail" ""))
+    (println "FILE:" (get blocker "file" ""))
+    (println "REASON: durable blocker under .squad/blockers/ is not the same as a pending approval; report it accurately to the operator")
+    (when (= "approval-rejection" kind)
+      (println "COMMAND_TO_CLEAR:" (str "squad_approval.sh resolve-rejection " approval-id
+                                        " rejection-cleared-for-reentry"))
+      (println "NOTE: resolve-rejection removes the blocker and reopens the gate for re-request; it does not approve"))
+    (when (and (not= "approval-rejection" kind)
+               (get blocker "assignment_id"))
+      (println "NOTE: assignment-scoped blockers are cleared by resolving the assignment (merge/block/reject/rework), not by ignoring the dashboard"))))
+
 (defn pending-dashboard-request-files [root]
   (let [dir (fs/path root ".swarmforge" "dashboard" "requests" "pending")]
     (if (fs/directory? dir)
@@ -2372,6 +2419,7 @@
       :retire-candidate (first (:retire-actions concurrent))
       :recover-candidate (recovery-candidate root rows)
       :pending-dashboard-request (oldest-pending-dashboard-request root)
+      :durable-blocker (oldest-durable-blocker root)
       :pending-approval-file (pending-approval root)}
      concurrent)))
 
@@ -2384,6 +2432,9 @@
    [:dashboard-request :pending-dashboard-request]
    [:retire :retire-candidate]
    [:recover :recover-candidate]
+   ;; Durable blockers outrank ordinary story ready-actions so SL cannot claim "no blocker"
+   ;; while .squad/blockers/ still has open rejection/assignment blockers.
+   [:durable-blocker :durable-blocker]
    [:ready-action #(seq (:ready-actions %))]
    [:pending-approval :pending-approval-file]])
 
@@ -2413,6 +2464,8 @@
              (print-retirement-action! retire-candidate)
              (print-concurrent-actions! concurrent-actions))
    :recover (fn [{:keys [recover-candidate]}] (print-recovery-action! recover-candidate))
+   :durable-blocker (fn [{:keys [durable-blocker]}]
+                      (print-durable-blocker-action! durable-blocker))
    :ready-action (fn [{:keys [ready-actions concurrent-actions]}]
                    (print-story-candidate! (first ready-actions) (count ready-actions))
                    (print-concurrent-actions! concurrent-actions))

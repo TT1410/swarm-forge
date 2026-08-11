@@ -153,9 +153,25 @@
     }
     function blockers(items) {
       if (!items.length) return '<p class=\"muted\">No blockers.</p>';
-      return table(['Assignment','Kind','Detail'], items.map(b => row([
-        artifactLink('blocker', b.assignment_id || b.blocker_id, b.assignment_id || b.blocker_id), esc(b.kind || 'blocked'), esc(b.detail || '')
-      ])));
+      return table(['Id','Kind','Detail','Actions'], items.map(b => {
+        const id = b.assignment_id || b.blocker_id || b.approval_id || '';
+        const resolve = (b.kind === 'approval-rejection' && (b.approval_id || b.blocker_id))
+          ? '<button type=\"button\" onclick=\"resolveBlocker(\\'' + esc(b.approval_id || b.blocker_id) + '\\')\">Resolve</button>'
+          : '';
+        return row([
+          artifactLink('blocker', id, id),
+          esc(b.kind || 'blocked'),
+          esc(b.detail || ''),
+          resolve
+        ]);
+      }));
+    }
+    async function resolveBlocker(id) {
+      try {
+        await post('/api/blockers/' + encodeURIComponent(id) + '/resolve');
+      } catch (err) {
+        error.textContent = err.message;
+      }
     }
     function statusPill(status) {
       const s = String(status || 'pending');
@@ -1045,6 +1061,29 @@
   "Compatibility wrapper: plain-text message becomes a command request."
   (sl-request-create-response root body))
 
+(defn resolve-blocker-action! [root blocker-id]
+  (let [result (process/sh {:continue true :dir (str root)}
+                           (str (fs/path (script-dir) "squad_approval.sh"))
+                           "resolve-rejection"
+                           blocker-id
+                           "resolved-by-web")]
+    (if (zero? (:exit result))
+      (do
+        (when-let [socket (socket-value root)]
+          (tmux-notify! socket "swarmforge-squad-leader"
+                        (str "Durable blocker cleared: " blocker-id
+                             ". If idle, run squad_next.sh --apply-mechanical.")))
+        (log! root "web-blocker-resolved" blocker-id)
+        {:ok true})
+      {:ok false :status 409 :error (str (:err result) (:out result))})))
+
+(defn blocker-resolve-response [root path]
+  (let [[_ encoded-id] (re-matches #"/api/blockers/([^/]+)/resolve" path)
+        result (resolve-blocker-action! root (url-decode encoded-id))]
+    (if (:ok result)
+      (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
+      (response (:status result 409) "text/plain; charset=utf-8" (:error result)))))
+
 (def web-routes
   [{:method "GET"
     :path "/"
@@ -1067,6 +1106,9 @@
    {:method "POST"
     :pattern #"/api/approvals/[^/]+/(approve|reject)"
     :handler (fn [root path _] (approval-response root path))}
+   {:method "POST"
+    :pattern #"/api/blockers/[^/]+/resolve"
+    :handler (fn [root path _] (blocker-resolve-response root path))}
    {:method "POST"
     :path "/api/sl-requests"
     :handler (fn [root _ body] (sl-request-create-response root body))}
