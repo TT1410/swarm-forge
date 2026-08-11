@@ -71,3 +71,28 @@
    scroll (tmux capture, terminal settings, Grok TUI behavior, dashboard pane
    mirror, or another approach) so operators can review output without the
    view fighting them.
+
+5. **Story Implementation Dependencies Need A Durable Addendum And Enforced Scheduling**
+
+   Parallel implementers thrash merges when many stories land at once on shared
+   hubs (`main`, `cave`, `dependency-checker`, etc.). Better story *and*
+   assignment order would cut merges: foundation modules first, then leaf
+   process, then IO, then UI/wiring—not “all story-approved ⇒ all implementers.”
+
+   Expected design:
+   - **Analyst** authors a durable **story dependency / implementation-order
+     addendum** (sibling of theme package, not buried only in story prose)—e.g.
+     edges like B→A (B depends on A), parallel sets, and serial hubs. Module map
+     stays structural; this doc is **delivery order**.
+   - **`squad_next`** enforces routine gates: do not mark implementer B ready /
+     spawn B until A’s implementation is complete (merged / packet past the
+     needed gate) when B→A is declared. Spec (Gherkin/QA) may still fan out
+     earlier where independent.
+   - **SL** owns scheduling *policy and exceptions* (judgment when the graph is
+     wrong, merge recovery, capacity)—not inventing the full graph by hand every
+     time, and not relying on hope that concurrent ready-actions stay ordered.
+   - Today SL can only sequence by manual judgment; the daemon can still spawn
+     many implementers at once. That is insufficient.
+
+   Architect may recommend dependency-order revisions late; implementers report
+   local blockers, they do not set global order.
