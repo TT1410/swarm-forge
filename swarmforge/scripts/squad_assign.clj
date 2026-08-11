@@ -626,6 +626,46 @@
        "conflicting_commit: " (or conflicting-commit "unknown") "\n"
        "Merge this result commit into the squad leader's current integration state, resolve mechanical conflicts, run the relevant test suites, and hand back one unconflicted result commit.\n"))
 
+(defn merge-suffix-depth [assignment-id]
+  (count (re-seq #"-merge" (str assignment-id))))
+
+(defn merge-lineage-root [assignment-id]
+  (str/replace (str assignment-id) #"(?:-merge)+$" ""))
+
+(defn assignment-in-merge-lineage? [assignment-id lineage-root]
+  (or (= assignment-id lineage-root)
+      (str/starts-with? (str assignment-id) (str lineage-root "-merge"))))
+
+(defn assignment-blocked-for-merge-limit? [root assignment-id]
+  (or (= "blocked" (read-value (fs/path root ".squad" "assignments" assignment-id "status") "state"))
+      (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "blocker"))
+      (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "blocker.md"))))
+
+(defn lineage-max-depth-exhausted? [root lineage-root max-depth]
+  (let [assignments-dir (fs/path root ".squad" "assignments")]
+    (boolean
+     (when (fs/directory? assignments-dir)
+       (some (fn [dir]
+               (let [id (fs/file-name dir)]
+                 (and (assignment-in-merge-lineage? id lineage-root)
+                      (>= (merge-suffix-depth id) max-depth)
+                      (assignment-blocked-for-merge-limit? root id))))
+             (filter fs/directory? (fs/list-dir assignments-dir)))))))
+
+(defn ensure-merger-create-allowed! [root blocked-assignment-id]
+  (let [max-depth (cfg/squad-max-merger-depth root)
+        depth (merge-suffix-depth blocked-assignment-id)
+        lineage-root (merge-lineage-root blocked-assignment-id)]
+    (when (>= depth max-depth)
+      (exit! 2
+             (str "Cannot create merger: assignment already at max_merger_depth (" max-depth "). "
+                  "Use squad_assign.sh block, not create-merger or reject/replace.")))
+    (when (lineage-max-depth-exhausted? root lineage-root max-depth)
+      (exit! 2
+             (str "Cannot create merger: merge lineage " lineage-root
+                  " already exhausted max_merger_depth (" max-depth "). "
+                  "Resolve the existing merge blocker; do not restart the chain.")))))
+
 (defn original-merge-context [root blocked-assignment-id]
   (validate-id! "Blocked assignment id" blocked-assignment-id)
   (let [dir (assignment-dir root blocked-assignment-id)
@@ -635,6 +675,7 @@
     (ensure-assignment-dir! dir blocked-assignment-id)
     (when-not (= "merge_blocked" (read-value status "state"))
       (exit! 2 (str "Assignment is not merge_blocked: " blocked-assignment-id)))
+    (ensure-merger-create-allowed! root blocked-assignment-id)
     {:dir dir
      :theme-id (read-value metadata "theme_id")
      :story-id (read-value metadata "story_id")
@@ -1199,6 +1240,20 @@
         (finally
           (abort-merge! root))))))
 
+(defn ensure-not-max-depth-merge-escape! [root assignment-id action]
+  "At max_merger_depth, merge_blocked work must hard-block — not reject/replace rework."
+  (let [max-depth (cfg/squad-max-merger-depth root)
+        depth (merge-suffix-depth assignment-id)
+        state (read-value (fs/path root ".squad" "assignments" assignment-id "status") "state")
+        lineage-root (merge-lineage-root assignment-id)]
+    (when (and (= "merge_blocked" state)
+               (or (>= depth max-depth)
+                   (lineage-max-depth-exhausted? root lineage-root max-depth)))
+      (exit! 2
+             (str "Cannot " action " assignment " assignment-id
+                  ": merge recovery is at max_merger_depth (" max-depth "). "
+                  "Use squad_assign.sh block (declare_merge_blocker), not reject/replace.")))))
+
 (defn reject-assignment! [assignment-id reason-path]
   (validate-id! "Assignment id" assignment-id)
   (let [root (fs/absolutize (project-root))
@@ -1206,6 +1261,7 @@
         reason-source (source-file! reason-path)
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
+    (ensure-not-max-depth-merge-escape! root assignment-id "reject")
     (write-atomic! (fs/path dir "rejection.md")
                    (slurp (str reason-source)))
     (write-atomic! (fs/path dir "rejection")
@@ -1238,6 +1294,7 @@
         requirement-text (read-value old-metadata "requires")
         now (timestamp)]
     (ensure-assignment-dir! old-dir old-assignment-id)
+    (ensure-not-max-depth-merge-escape! root old-assignment-id "replace")
     (when-not (and theme-id story-id)
       (exit! 2 "Original assignment metadata must include theme_id and story_id."))
     (create-assignment! {:theme-id theme-id

@@ -1223,3 +1223,102 @@
                            "review_decision: accepted")))
       (finally
         (fs/delete-tree root)))))
+
+
+(deftest squad-assign-refuses-create-merger-at-max-depth
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf") "max_merger_depth 2\n")
+      (write-file (fs/path root "swarmforge/role-templates/merger.prompt") "merge\n")
+      (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
+      (write-file (fs/path root ".squad/themes/wumpus/status") "state: theme_created\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/metadata")
+                  (str "assignment_id: cave-impl-merge-merge\n"
+                       "theme_id: wumpus\n"
+                       "story_id: cave\n"
+                       "template: merger\n"
+                       "merge_for: cave-impl-merge\n"
+                       "assignment_file: x\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/status")
+                  "state: merge_blocked\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/result")
+                  "from: merger-001\ncommit: abcdef1234\n")
+      (let [result (run {:dir root
+                         :ok? false}
+                        (script "squad_assign.sh")
+                        "create-merger"
+                        "cave-impl-merge-merge"
+                        "cave-impl-merge-merge-merge"
+                        "--auto-instructions")]
+        (is (= 2 (:exit result)))
+        (is (str/includes? (:err result) "max_merger_depth"))
+        (is (not (fs/exists? (fs/path root ".squad/assignments/cave-impl-merge-merge-merge")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-refuses-reject-at-max-depth-merge-blocked
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf") "max_merger_depth 2\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/metadata")
+                  (str "assignment_id: cave-impl-merge-merge\ntheme_id: wumpus\nstory_id: cave\n"
+                       "template: merger\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/status")
+                  "state: merge_blocked\n")
+      (write-file (fs/path root "reason.md") "give up\n")
+      (let [result (run {:dir root
+                         :ok? false}
+                        (script "squad_assign.sh")
+                        "reject"
+                        "cave-impl-merge-merge"
+                        "reason.md")]
+        (is (= 2 (:exit result)))
+        (is (str/includes? (:err result) "max_merger_depth"))
+        (is (str/includes? (:err result) "block"))
+        (is (str/includes? (slurp (str (fs/path root ".squad/assignments/cave-impl-merge-merge/status")))
+                           "state: merge_blocked")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-assign-refuses-create-merger-when-lineage-already-blocked-at-max-depth
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf") "max_merger_depth 2\n")
+      (write-file (fs/path root "swarmforge/role-templates/merger.prompt") "merge\n")
+      (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
+      (write-file (fs/path root ".squad/themes/wumpus/status") "state: theme_created\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  (str "assignment_id: cave-impl\ntheme_id: wumpus\nstory_id: cave\n"
+                       "template: implementer\nassignment_file: x\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  "state: merge_blocked\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/result")
+                  "from: implementer-001\ncommit: abcdef1234\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/metadata")
+                  (str "assignment_id: cave-impl-merge-merge\ntheme_id: wumpus\nstory_id: cave\n"
+                       "template: merger\nmerge_for: cave-impl-merge\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/status")
+                  "state: blocked\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/blocker")
+                  "state: blocked\n")
+      (let [result (run {:dir root
+                         :ok? false}
+                        (script "squad_assign.sh")
+                        "create-merger"
+                        "cave-impl"
+                        "cave-impl-merge"
+                        "--auto-instructions")]
+        (is (= 2 (:exit result)))
+        (is (str/includes? (:err result) "exhausted"))
+        (is (not (fs/exists? (fs/path root ".squad/assignments/cave-impl-merge")))))
+      (finally
+        (fs/delete-tree root)))))

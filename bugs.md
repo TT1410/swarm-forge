@@ -7,22 +7,6 @@ then recovery/visibility, then efficiency and polish.
 
 ## Open Bugs
 
-2. **`merge-merge` Max Depth Sometimes Hard-Blocks Instead Of Recovering**
-
-   Log/state from the trial: many second-level merger assignments end as SL
-   **reject** + rework (`rN+1` implementer/cleaner). Others end as assignment
-   `state: blocked` / “blocked by squad leader” with no further rN
-   (examples: `cli-…-implementation-r2-merge-merge`,
-   `hazards-…-cleaner-merge-merge`, `hazards-…-cleaner-r3-merge-merge`,
-   `hunt-the-wumpus-greg-yob-hardener-merge-merge`). Same underlying
-   dry-run conflict on `core.clj` / `core_test.clj`, different terminal
-   policy.
-
-   Expected: one explicit, documented policy at max merger depth — e.g.
-   always create a durable blocker + stop spawning, or always reject back to
-   implementer/cleaner — not a mix of reject-and-escalate vs park-as-blocked
-   that is hard to see in the dashboard.
-
 3. **Merge Thrash Includes Tooling Config, Not Only Product Code**
 
    Beyond `src/wumpus/core.clj` and `test/wumpus/core_test.clj` (50+ and 48

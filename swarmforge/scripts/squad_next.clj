@@ -1624,6 +1624,32 @@
   [assignment-id]
   (count (re-seq #"-merge" (str assignment-id))))
 
+(defn merge-lineage-root
+  "Strip trailing -merge segments to get the product/rework assignment root."
+  [assignment-id]
+  (str/replace (str assignment-id) #"(?:-merge)+$" ""))
+
+(defn assignment-in-merge-lineage? [assignment-id lineage-root]
+  (or (= assignment-id lineage-root)
+      (str/starts-with? (str assignment-id) (str lineage-root "-merge"))))
+
+(defn assignment-has-blocker? [root assignment-id]
+  (or (= "blocked" (get (file-map (fs/path root ".squad" "assignments" assignment-id "status")) "state"))
+      (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "blocker"))
+      (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "blocker.md"))))
+
+(defn lineage-max-depth-exhausted?
+  "True when any assignment in this merge lineage is already at max_merger_depth
+  and terminal-blocked. Stops re-creating mergers after max-depth hard stop."
+  [root assignments lineage-root max-depth]
+  (boolean
+   (some (fn [{:keys [assignment-id state]}]
+           (and (assignment-in-merge-lineage? assignment-id lineage-root)
+                (>= (merge-suffix-depth assignment-id) max-depth)
+                (or (= "blocked" state)
+                    (assignment-has-blocker? root assignment-id))))
+         assignments)))
+
 (defn merger-spawn-candidate [root agents existing]
   (when (and (assignment-created? (:state existing))
              (not (active-assignment? agents (:assignment-id existing)))
@@ -1638,6 +1664,7 @@
      :reason "merge-blocked assignment needs merger"
      :command (str "squad_spawn_request.sh merger " (:assignment-id existing)
                    " " (:assignment-file existing))}))
+
 (defn merger-create-candidate [theme-id blocked-assignment-id story-id merger-id]
   {:priority 50
    :stage-order 5
@@ -1653,7 +1680,8 @@
 (defn merger-limit-blocker-candidate [root {:keys [assignment-id theme-id story-id]} max-depth]
   (let [reason-path (str ".squad/assignments/" assignment-id "/merge-limit.md")
         reason (str "Merge recovery exceeded max_merger_depth (" max-depth "). "
-                    "Manual resolution required for assignment " assignment-id ".\n")]
+                    "Manual resolution required for assignment " assignment-id ". "
+                    "Do not reject/replace this lineage; resolve the blocker.\n")]
     {:priority 40
      :stage-order 5
      :next-action "declare_merge_blocker"
@@ -1667,11 +1695,20 @@
 
 (defn merger-candidate [root assignments agents {:keys [assignment-id theme-id story-id] :as assignment}]
   (let [depth (merge-suffix-depth assignment-id)
-        max-depth (cfg/squad-max-merger-depth root)]
-    (if (>= depth max-depth)
-      (when-not (or (= "blocked" (:state assignment))
-                    (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "blocker")))
+        max-depth (cfg/squad-max-merger-depth root)
+        lineage-root (merge-lineage-root assignment-id)
+        exhausted? (lineage-max-depth-exhausted? root assignments lineage-root max-depth)]
+    (cond
+      ;; At or past max depth: only durable block — never create another -merge or rework.
+      (>= depth max-depth)
+      (when-not (assignment-has-blocker? root assignment-id)
         (merger-limit-blocker-candidate root assignment max-depth))
+
+      ;; Lineage already hard-stopped at max depth: do not restart with a new merger.
+      exhausted?
+      nil
+
+      :else
       (let [base (str assignment-id "-merge")
             existing (existing-merger-assignment assignments base)]
         (if existing

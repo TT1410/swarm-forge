@@ -1825,3 +1825,29 @@
             "no further merger spawn while a merger agent is active"))
       (finally
         (fs/delete-tree root)))))
+(deftest squad-next-does-not-restart-merger-after-max-depth-blocker
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_merger_depth 2\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  (str "assignment_id: cave-impl\ntheme_id: wumpus\nstory_id: cave\n"
+                       "template: implementer\nassignment_file: x\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  "state: merge_blocked\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/metadata")
+                  (str "assignment_id: cave-impl-merge-merge\ntheme_id: wumpus\nstory_id: cave\n"
+                       "template: merger\nmerge_for: cave-impl-merge\nassignment_file: y\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/status")
+                  "state: blocked\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/blocker")
+                  "kind: merge-limit\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "create-merger"))
+            "exhausted lineage must not create another merger")
+        (is (not (str/includes? out "TEMPLATE: merger"))))
+      (finally
+        (fs/delete-tree root)))))
