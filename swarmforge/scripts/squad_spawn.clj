@@ -122,18 +122,25 @@
 
 (declare role-template)
 
-(defn capacity-counted-row? [root socket row]
+(defn template-active-row? [root socket row]
+  "True when the role is a live transient that should count toward template caps."
   (let [role (first row)
         session (nth row 3 nil)
         state (read-value (fs/path root ".squad" "agents" role "status") "state")]
     (and (not= "squad-leader" role)
-         (not= "merger" (role-template root role))
          (not= "retired" state)
          (if (skip-tmux-capacity?)
            (contains? active-agent-states state)
            (tmux-session-exists? socket session))
          (not (and (= "handoff_sent" state)
                    (contains? (visible-handoff-agents root) role))))))
+
+(defn capacity-counted-row? [root socket row]
+  "True when the role consumes max_transient_agents. Merger is singleton-gated
+  via max_active_template and does not consume the general budget."
+  (and (template-active-row? root socket row)
+       (not= "merger" (role-template root (first row)))))
+
 (defn active-transient-count [root rows]
   (count
    (let [socket (tmux-socket root)]
@@ -180,7 +187,7 @@
    (let [socket (tmux-socket root)]
      (for [row rows
            :let [role (first row)]
-           :when (and (capacity-counted-row? root socket row)
+           :when (and (template-active-row? root socket row)
                       (= template (role-template root role)))]
        role))))
 
@@ -189,7 +196,7 @@
    (let [socket (tmux-socket root)]
      (for [row rows
            :let [role (first row)]
-           :when (and (capacity-counted-row? root socket row)
+           :when (and (template-active-row? root socket row)
                       (contains? templates (role-template root role)))]
        role))))
 
@@ -438,9 +445,9 @@
        (str "MAX_TRANSIENTS: " limit)])))
 
 (defn capacity-error [root rows template]
-  (when-not (= "merger" template)
-    (or (global-capacity-error root rows)
-        (template-capacity-error root rows template))))
+  (or (when-not (= "merger" template)
+        (global-capacity-error root rows))
+      (template-capacity-error root rows template)))
 
 (defn ensure-agent-available! [rows agent-id worktree agent-dir]
   (when (some #(= agent-id (first %)) rows)

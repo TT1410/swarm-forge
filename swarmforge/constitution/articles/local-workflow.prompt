@@ -51,7 +51,7 @@
 - Hardener and QA handoffs and assignments should be batched when several completed stories need the same quality gate.
 - Architect should normally follow QA and be batched across the QA-verified story set because QA may make minimal code changes. Senior-implementer receives architect critique and code selected by the squad leader.
 - The architect may recommend updates to the theme module map (use cases, UI/IO boundaries, dependency direction) without editing the map. The squad leader owns map revisions via `squad_theme.sh module-map` when adopting those recommendations.
-- Keep singleton quality gates singleton: do not have more than one active hardener assignment, more than one active QA assignment, or more than one active architect assignment at the same time.
+- Keep singleton quality gates singleton: do not have more than one active hardener assignment, more than one active QA assignment, more than one active architect assignment, or more than one active merger at the same time. Merger is a singleton so only one integration against `master` runs at a time.
 - Track story-to-batch movement with `squad_batch.sh`; do not infer batch membership from logs.
 - Track per-story artifact and approval state with `squad_packet.sh`; do not infer story readiness from logs, chat, or directory scans.
 - After creating an assignment for analysis, Gherkin, QA procedure, artifact review, implementation, cleanup, code review, hardening, QA, architecture critique, or senior implementation work, request the matching transient agent through `squad_spawn_request.sh` instead of doing that assigned work directly.

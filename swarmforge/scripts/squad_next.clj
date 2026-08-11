@@ -373,26 +373,35 @@
 (defn active-template? [agents template]
   (boolean (some #(and (= template (:template %)) (active-agent? %)) agents)))
 
-(defn capacity-active-template? [root agents template]
-  (boolean (some #(and (= template (:template %))
-                       (capacity-counted-agent? root %))
-                 agents)))
-
-(def singleton-templates #{"hardener" "qa" "architect"})
+(def singleton-templates #{"hardener" "qa" "architect" "merger"})
 
 (defn handoff-visible-agent? [root agent]
   (contains? (visible-handoff-agents root) agent))
 
 (defn capacity-counted-agent? [root agent]
+  "Agents that consume max_transient_agents slots. Merger is singleton-gated
+  separately and does not consume the general transient budget."
   (and (active-agent? agent)
        (not= "merger" (:template agent))
        (not (and (= "handoff_sent" (:state agent))
                  (handoff-visible-agent? root (:agent agent))))))
 
+(defn capacity-active-template? [root agents template]
+  "True when a live agent already holds this template for capacity/singleton purposes.
+  Merger uses any active agent (including handoff_sent) so only one merger runs."
+  (boolean
+   (some (fn [agent]
+           (and (= template (:template agent))
+                (if (= "merger" template)
+                  (active-agent? agent)
+                  (capacity-counted-agent? root agent))))
+         agents)))
+
 (defn spawn-capacity? [root agents template]
   (let [active (filter #(capacity-counted-agent? root %) agents)
         max-agents (cfg/squad-max-transient-agents root)]
-    (and (< (count active) max-agents)
+    (and (or (= "merger" template)
+             (< (count active) max-agents))
          (or (not (contains? singleton-templates template))
              (not (capacity-active-template? root agents template))))))
 
@@ -1671,17 +1680,43 @@
           (merger-create-candidate theme-id assignment-id story-id
                                    (next-id-with-base assignments base)))))))
 
+(def open-merger-states
+  #{"created" "assignment_created" "in_progress" "handoff_sent"
+    "result_received" "merge_ready" "merge_blocked"})
+
+(defn open-merger-assignments [assignments]
+  (filter #(and (= "merger" (:template %))
+                (contains? open-merger-states (:state %)))
+          assignments))
+
 (defn merger-candidates [root rows]
+  "At most one open merger lineage at a time (singleton). Prefer progressing an
+  existing open merger (spawn or nested merge-merge); otherwise create for the
+  highest-priority merge_blocked product assignment."
   (let [assignments (assignment-records root)
-        agents (agent-records root rows)]
-    (->> (for [{:keys [state] :as assignment} assignments
-               :when (= "merge_blocked" state)
-               :let [candidate (merger-candidate root assignments agents assignment)]
-               :when candidate]
-           candidate)
-         (remove nil?)
-         (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
-         vec)))
+        agents (agent-records root rows)
+        sort-key (juxt :priority :theme-id :story-id :stage-order :assignment-id)]
+    (if (active-template? agents "merger")
+      []
+      (let [open (vec (open-merger-assignments assignments))]
+        (if (seq open)
+          (->> open
+               (keep (fn [assignment]
+                       (if (= "merge_blocked" (:state assignment))
+                         (merger-candidate root assignments agents assignment)
+                         (when (assignment-created? (:state assignment))
+                           (merger-spawn-candidate root agents assignment)))))
+               (remove nil?)
+               (sort-by sort-key)
+               (take 1)
+               vec)
+          (->> assignments
+               (filter #(= "merge_blocked" (:state %)))
+               (keep #(merger-candidate root assignments agents %))
+               (remove nil?)
+               (sort-by sort-key)
+               (take 1)
+               vec))))))
 
 (def story-candidate-fields
   [["NEXT_ACTION" :next-action true]
@@ -2111,10 +2146,8 @@
   (count (filter #(capacity-counted-agent? root %) agents)))
 
 (defn active-singleton-templates [root agents]
-  (->> agents
-       (filter #(capacity-counted-agent? root %))
-       (keep :template)
-       (filter singleton-templates)
+  (->> singleton-templates
+       (filter #(capacity-active-template? root agents %))
        set))
 
 (defn spawn-action? [action]
@@ -2129,17 +2162,18 @@
        (contains? active-singletons (:template action))))
 
 (defn spawn-fits? [used max-agents active-singletons action]
-  (or (merger-spawn-action? action)
-      (and (< used max-agents)
-           (not (singleton-spawn-blocked? active-singletons action)))))
+  "Mergers skip the general transient budget but still honor singleton caps."
+  (and (not (singleton-spawn-blocked? active-singletons action))
+       (or (merger-spawn-action? action)
+           (< used max-agents))))
 
 (defn account-spawn [used active-singletons action]
-  (if (merger-spawn-action? action)
-    [used active-singletons]
-    [(inc used)
-     (cond-> active-singletons
-       (contains? singleton-templates (:template action))
-       (conj (:template action)))]))
+  (let [singletons (cond-> active-singletons
+                     (contains? singleton-templates (:template action))
+                     (conj (:template action)))]
+    (if (merger-spawn-action? action)
+      [used singletons]
+      [(inc used) singletons])))
 
 (defn action-dependency-keys [{:keys [next-action story-id assignment-id batch-id agent gate template batch-kind]}]
   (set

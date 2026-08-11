@@ -183,17 +183,23 @@
 
 (declare role-template)
 
-(defn capacity-counted-role? [root socket role role-data]
+(defn template-active-role? [root socket role role-data]
+  "True when the role is a live transient that should count toward template caps."
   (let [state (read-value (fs/path root ".squad" "agents" role "status") "state")
         session (:session role-data)]
     (and (not= "squad-leader" role)
-         (not= "merger" (role-template root role))
          (not (contains? #{"retired" "failed"} state))
          (if (skip-tmux-env?)
            (active-state? state)
            (tmux-session-exists? socket session))
          (not (and (= "handoff_sent" state)
                    (contains? (visible-handoff-agents root) role))))))
+
+(defn capacity-counted-role? [root socket role role-data]
+  "True when the role consumes max_transient_agents. Merger is singleton-gated
+  via max_active_template and does not consume the general budget."
+  (and (template-active-role? root socket role role-data)
+       (not= "merger" (role-template root role))))
 
 (defn active-transient-role-count [root]
   (count
@@ -205,7 +211,7 @@
 (defn active-role? [root role]
   (let [roles (load-roles root)
         socket (tmux-socket root)]
-    (capacity-counted-role? root socket role (get roles role))))
+    (template-active-role? root socket role (get roles role))))
 
 (defn template-from-role [role]
   (str/replace role #"-\d{3}$" ""))
@@ -240,17 +246,16 @@
     (str "group-capacity-full:" group)))
 
 (defn spawn-capacity-blocker [root template]
-  (when-not (= "merger" template)
-    (cond
-      (total-capacity-full? root)
-      "capacity-full"
+  (cond
+    (and (not= "merger" template) (total-capacity-full? root))
+    "capacity-full"
 
-      (template-capacity-full? root template)
-      (str "template-capacity-full:" template)
+    (template-capacity-full? root template)
+    (str "template-capacity-full:" template)
 
-      :else
-      (some #(group-capacity-blocker root %)
-            (cfg/squad-template-group-limits root template)))))
+    :else
+    (some #(group-capacity-blocker root %)
+          (cfg/squad-template-group-limits root template))))
 
 (defn reconcile-roles! [root]
   (let [roles (load-roles root)

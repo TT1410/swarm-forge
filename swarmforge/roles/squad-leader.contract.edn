@@ -28,5 +28,5 @@
  :implementation-readiness-source "squad_next.sh --apply-mechanical"
  :concurrent-action-source "squad_next.sh --apply-mechanical"
  :applied-transitions-informational true
- :singleton-roles ["hardener" "qa" "architect"]
+ :singleton-roles ["hardener" "qa" "architect" "merger"]
  :transient-slot-config "max_transient_agents"}

@@ -169,6 +169,7 @@
                   (str "max_transient_agents 5\n"
                        "max_active_template hardener 1\n"
                        "max_active_template qa 1\n"
+                       "max_active_template merger 1\n"
                        "max_active_group architecture 1 architect senior-implementer\n"))
       (write-file (fs/path root "swarmforge/role-templates/qa.prompt")
                   "qa\n")

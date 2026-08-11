@@ -1756,3 +1756,72 @@
           (is (not (str/includes? applied "NEXT_ACTION: record_assignment_result")))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest squad-next-treats-merger-as-singleton-queue
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "max_transient_agents 10\n"
+                       "max_active_template merger 1\n"
+                       "max_merger_depth 2\n"))
+      (write-file (fs/path root "swarmforge/role-templates/merger.prompt") "merge\n")
+      (doseq [[id story] [["story-a-impl" "story-a"] ["story-b-impl" "story-b"]]]
+        (write-file (fs/path root ".squad/assignments" id "metadata")
+                    (str "assignment_id: " id "\n"
+                         "theme_id: wumpus\n"
+                         "story_id: " story "\n"
+                         "template: implementer\n"
+                         "assignment_file: " root "/.squad/assignments/" id "/assignment.md\n"))
+        (write-file (fs/path root ".squad/assignments" id "status")
+                    (str "assignment_id: " id "\n"
+                         "state: merge_blocked\n"
+                         "detail: dry-run merge failed\n"
+                         "updated_at: now\n"))
+        (write-file (fs/path root ".squad/assignments" id "assignment.md")
+                    (str "# Assignment " id "\n")))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "NEXT_ACTION: create_assignment"))
+        (is (str/includes? out "TEMPLATE: merger"))
+        (is (str/includes? out "CANDIDATES: 1")
+            "only one merger create while none are open"))
+      (write-file (fs/path root ".squad/assignments/story-a-impl-merge/metadata")
+                  (str "assignment_id: story-a-impl-merge\n"
+                       "theme_id: wumpus\n"
+                       "story_id: story-a\n"
+                       "template: merger\n"
+                       "merge_for: story-a-impl\n"
+                       "assignment_file: " root "/.squad/assignments/story-a-impl-merge/assignment.md\n"))
+      (write-file (fs/path root ".squad/assignments/story-a-impl-merge/status")
+                  (str "assignment_id: story-a-impl-merge\n"
+                       "state: created\n"
+                       "detail: merger for story-a-impl\n"
+                       "updated_at: now\n"))
+      (write-file (fs/path root ".squad/assignments/story-a-impl-merge/assignment.md")
+                  "# Merger\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "NEXT_ACTION: request_spawn"))
+        (is (str/includes? out "TEMPLATE: merger"))
+        (is (str/includes? out "ASSIGNMENT: story-a-impl-merge"))
+        (is (str/includes? out "CONCURRENT_ACTIONS: 1")
+            "singleton schedules only one merger spawn")
+        (is (not (str/includes? out "create_assignment"))
+            "with an open merger, do not create a second for story-b"))
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "merger-001\tmerger-001\t" root "/.worktrees/merger-001\tswarmforge-merger-001\tMerger 001\tcodex\ttask\n"))
+      (write-agent-status! root "merger-001" "running")
+      (write-file (fs/path root ".squad/agents/merger-001/metadata")
+                  (str "agent_id: merger-001\n"
+                       "template: merger\n"
+                       "task_id: story-a-impl-merge\n"
+                       "session: swarmforge-merger-001\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "create_assignment"))
+            "no further merger create while a merger agent is active")
+        (is (not (str/includes? out "request_spawn"))
+            "no further merger spawn while a merger agent is active"))
+      (finally
+        (fs/delete-tree root)))))
