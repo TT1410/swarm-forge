@@ -34,8 +34,8 @@
                      "architecture_review_branch" "architecture_review_sha"
                      "architecture_review_target_sha"
                      "architecture_approval" "architecture_approval_detail"
-                     "senior_implementor_assignment"
-                     "senior_implementor_branch" "senior_implementor_sha"
+                     "senior_implementer_assignment"
+                     "senior_implementer_branch" "senior_implementer_sha"
                      "final_approval" "final_approval_detail"]
    "cleaner" ["code_review" "code_review_assignment" "code_review_branch"
               "code_review_sha" "code_review_target_sha"
@@ -57,10 +57,10 @@
               "architecture_review_branch" "architecture_review_sha"
               "architecture_review_target_sha"
               "architecture_approval" "architecture_approval_detail"
-              "senior_implementor_assignment"
-              "senior_implementor_branch" "senior_implementor_sha"
+              "senior_implementer_assignment"
+              "senior_implementer_branch" "senior_implementer_sha"
               "final_approval" "final_approval_detail"]
-   "senior-implementor" ["final_approval" "final_approval_detail"]})
+   "senior-implementer" ["final_approval" "final_approval_detail"]})
 
 (defn parse-kv-lines [text]
   (into {}
@@ -126,7 +126,7 @@
   [["final_approved" #(approved? % "final_approval")]
    ["architecture_approved" #(approved? % "architecture_approval")]
    ["architecture_reviewed" #(current-accepted? % "architecture_review")]
-   ["architecture_revision_returned" #(present? % "senior_implementor_sha")]
+   ["architecture_revision_returned" #(present? % "senior_implementer_sha")]
    ["architecture_returned" #(present? % "architecture_sha")]
    ["qa_approved" #(approved? % "qa_approval")]
    ["qa_returned" #(present? % "qa_sha")]

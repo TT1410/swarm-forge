@@ -239,7 +239,7 @@
     (doseq [template ["analyst" "gherkin-writer" "qa-procedure-writer"
                       "gherkin-reviewer" "qa-procedure-reviewer"
                       "implementer" "cleaner" "code-reviewer"
-                      "hardener" "qa" "architect" "senior-implementor" "merger"]]
+                      "hardener" "qa" "architect" "senior-implementer" "merger"]]
       (write-file! (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
                    (str "Simulated " template " role.\n")))
     (write-file! (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
@@ -617,10 +617,10 @@
   (let [stories (packets-with-architecture-changes root)]
     (doseq [story stories]
       (append-file! (fs/path root "src" (str story ".txt"))
-                    "senior-implementor\n"))
+                    "senior-implementer\n"))
     (let [sha (git-commit! root (str "Senior implementation " assignment))]
       (doseq [story stories]
-        (run-script! root "squad_packet.sh" "record" story "senior-implementor" assignment agent sha)))))
+        (run-script! root "squad_packet.sh" "record" story "senior-implementer" assignment agent sha)))))
 
 (defn batch-story? [story]
   (= "batch" story))
@@ -642,7 +642,7 @@
                (process-cleaner! root task from story))
    "code-reviewer" (fn [root _ _ task from _ story]
                      (process-code-reviewer! root task from story))
-   "senior-implementor" (fn [root _ _ task from _ _]
+   "senior-implementer" (fn [root _ _ task from _ _]
                           (process-senior-batch! root task from))})
 
 (defn process-result-template! [root task from story kind]

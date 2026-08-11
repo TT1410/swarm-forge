@@ -8,7 +8,8 @@
           "approval-records"
           "review-dispositions"
           "batch-manifests"
-          "status-reports"]
+          "status-reports"
+          "theme-module-maps"]
  :forbidden-writes ["stories"
                     "gherkin"
                     "qa-procedures"
@@ -21,6 +22,7 @@
                     "architecture-critiques"
                     "cleanup-changes"]
  :requires-theme-negotiation-before-analyst true
+ :theme-module-map-before-theme-approval true
  :theme-approval-before-analyst true
  :story-packet-source-of-truth true
  :implementation-readiness-source "squad_next.sh --apply-mechanical"

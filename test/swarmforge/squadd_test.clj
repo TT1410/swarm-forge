@@ -169,10 +169,10 @@
                   (str "max_transient_agents 5\n"
                        "max_active_template hardener 1\n"
                        "max_active_template qa 1\n"
-                       "max_active_group architecture 1 architect senior-implementor\n"))
+                       "max_active_group architecture 1 architect senior-implementer\n"))
       (write-file (fs/path root "swarmforge/role-templates/qa.prompt")
                   "qa\n")
-      (write-file (fs/path root "swarmforge/role-templates/senior-implementor.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/senior-implementer.prompt")
                   "clean architecture\n")
       (write-file (fs/path root "qa-assignment.md")
                   "Run QA.\n")
@@ -185,7 +185,7 @@
            "qa-assignment.md")
       (run {:dir root}
            (script "squad_spawn_request.sh")
-           "senior-implementor"
+           "senior-implementer"
            "architecture-cleanup"
            "architecture-assignment.md")
       (let [once (run {:dir root

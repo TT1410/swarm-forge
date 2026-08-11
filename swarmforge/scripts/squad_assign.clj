@@ -324,7 +324,13 @@
     (when (fs/regular-file? file)
       (edn/read-string (slurp (str file))))))
 
-(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence merge-text]}]
+(def module-map-templates
+  #{"analyst" "implementer" "architect" "senior-implementer" "cleaner" "code-reviewer"})
+
+(defn include-module-map? [template]
+  (contains? module-map-templates template))
+
+(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text module-map-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence merge-text]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
@@ -336,6 +342,9 @@
        "\n"
        "## Theme\n\n"
        theme-text "\n\n"
+       (when module-map-text
+         (str "## Theme Module Map\n\n"
+              module-map-text "\n\n"))
        (when story-text
          (str "## Story\n\n"
               story-text "\n\n"))
@@ -404,6 +413,7 @@
      :batch-scoped? (:batch-scoped? scope-flags)
      :scope resolved-scope
      :theme-file (fs/path theme "theme.md")
+     :module-map-file (fs/path theme "module-map.md")
      :story-file (when (story-file-required? resolved-scope)
                    (assignment-story-file root theme story-id false))
      :template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
@@ -440,9 +450,15 @@
     (default-instructions context)
     (slurp (str (:instructions context)))))
 
+(defn module-map-text-for [context]
+  (when (and (include-module-map? (:template context))
+             (fs/regular-file? (:module-map-file context)))
+    (slurp (str (:module-map-file context)))))
+
 (defn assignment-text [context]
   (render-assignment (merge context
                             {:theme-text (slurp (str (:theme-file context)))
+                             :module-map-text (module-map-text-for context)
                              :story-text (when-let [story-file (:story-file context)]
                                            (slurp (str story-file)))
                              :instructions-text (assignment-instructions-text context)

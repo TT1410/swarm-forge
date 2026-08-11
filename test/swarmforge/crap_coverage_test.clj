@@ -38,6 +38,16 @@
 
 (def temp-dirs (atom []))
 
+(def minimal-module-map
+  (str "# Theme Module Map\n\n"
+       "## Purpose\n\nSample purpose.\n\n"
+       "## Dependency Rule\n\nDependencies point inward.\n\n"
+       "## Use Cases (Business / Process Rules)\n\n"
+       "### Use case: sample\n\n- **Intent:** sample.\n\n"
+       "## UI (Interface Adapters)\n\nCLI prompts.\n\n"
+       "## IO (Interface Adapters / Drivers)\n\nStdin/stdout.\n\n"
+       "## Out of Scope\n\nDetailed APIs.\n"))
+
 (defn tmp-dir []
   (let [dir (fs/create-temp-dir {:prefix "swarmforge-crap-coverage."})]
     (swap! temp-dirs conj dir)
@@ -79,7 +89,7 @@
                {"qa_sha" "qa1"}
                {"qa_approval" "approved"}
                {"architecture_sha" "a1"}
-               {"senior_implementor_sha" "sri1"}
+               {"senior_implementer_sha" "sri1"}
                {"architecture_sha" "a1" "architecture_review" "accepted" "architecture_review_target_sha" "a1"}
                {"architecture_approval" "approved"}
                {"final_approval" "approved"}]
@@ -381,6 +391,7 @@
         (is (str/includes? out "STATE: theme_created"))
         (is (str/includes? out "STORIES: cave"))
         (is (str/includes? out "ACCEPTANCE: cave"))
+        (is (str/includes? out "MODULE_MAP: missing"))
         (is (str/includes? out "APPROVALS: 1")))
       (is (= 1 (exit-status #(theme/print-status! "missing"))))
       (is (= 2 (exit-status #(theme/relative-project-artifact! root (fs/path root "stories/cave.md")))))
@@ -432,6 +443,8 @@
   (let [root (tmp-dir)]
     (write-file (fs/path root ".squad/themes/wumpus/theme.md")
                 "Theme text\n")
+    (write-file (fs/path root ".squad/themes/wumpus/module-map.md")
+                "Module map text\n")
     (write-file (fs/path root "stories/cave.md")
                 "Story text\n")
     (write-file (fs/path root "features/cave.feature")
@@ -450,7 +463,10 @@
                 "Assignment review text\n")
     (write-file (fs/path root ".squad/assignments/blocker-001/blocker.md")
                 "Blocker text\n")
-    (is (= "Theme text\n" (squadd-web/artifact-content root "theme" "wumpus")))
+    (is (str/includes? (squadd-web/artifact-content root "theme" "wumpus")
+                       "## Theme\n\nTheme text\n"))
+    (is (str/includes? (squadd-web/artifact-content root "theme" "wumpus")
+                       "## Module Map\n\nModule map text\n"))
     (is (str/includes? (squadd-web/artifact-content root "story" "cave")
                        "## Story\n\nStory text\n"))
     (is (str/includes? (squadd-web/artifact-content root "story" "cave")
@@ -492,7 +508,9 @@
     (write-file (fs/path root "swarmforge/squad.conf") "approval_required theme true\n")
     (write-file (fs/path root ".squad/themes/alpha/status") "state: theme_created\n")
     (write-file (fs/path root ".squad/themes/bravo/status") "state: theme_created\n")
+    (write-file (fs/path root ".squad/themes/bravo/module-map.md") minimal-module-map)
     (write-file (fs/path root ".squad/themes/charlie/status") "state: theme_created\n")
+    (write-file (fs/path root ".squad/themes/charlie/module-map.md") minimal-module-map)
     (write-file (fs/path root ".squad/themes/bravo/approvals.tsv") "now\ttheme\tok\n")
     (write-file (fs/path root ".squad/approvals/pending/theme__charlie.approval")
                 "target_kind: theme\ntarget_id: charlie\ngate: theme\n")
@@ -501,10 +519,15 @@
     (write-file (fs/path root ".squad/themes/delta/status") "state: theme_created\n")
     (let [candidates (next/theme-candidates root [])
           by-theme (into {} (map (juxt :theme-id identity) candidates))]
-      (is (= "create_approval_request" (:next-action (by-theme "alpha"))))
+      (is (= "write_theme_module_map" (:next-action (by-theme "alpha"))))
       (is (= "create_assignment" (:next-action (by-theme "bravo"))))
       (is (nil? (by-theme "charlie")))
       (is (nil? (by-theme "delta"))))
+    (write-file (fs/path root ".squad/themes/alpha/module-map.md") minimal-module-map)
+    (let [candidates (next/theme-candidates root [])
+          by-theme (into {} (map (juxt :theme-id identity) candidates))]
+      (is (= "create_approval_request" (:next-action (by-theme "alpha"))))
+      (is (str/includes? (:reason (by-theme "alpha")) "module map")))
     (write-file (fs/path root ".squad/assignments/bravo-analysis/metadata")
                 (str "assignment_id: bravo-analysis\n"
                      "theme_id: bravo\n"

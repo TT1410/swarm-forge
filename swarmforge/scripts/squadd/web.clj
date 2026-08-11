@@ -637,12 +637,15 @@
                          ["Code Review" "code_review_assignment"]
                          ["Architecture Review" "architecture_review_assignment"]])))))
 
-(defn theme-content [root theme-id]
-  (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md")))
-
 (defn section [title content]
   (when-not (str/blank? content)
     (str "## " title "\n\n" content "\n")))
+
+(defn theme-content [root theme-id]
+  (let [theme (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md"))
+        module-map (slurp-if-exists (fs/path root ".squad" "themes" theme-id "module-map.md"))]
+    (str (section "Theme" theme)
+         (section "Module Map" module-map))))
 
 (defn packet-review-sections [root packet]
   (apply str

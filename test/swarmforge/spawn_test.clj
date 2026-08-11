@@ -523,10 +523,10 @@
                   (str "max_transient_agents 5\n"
                        "max_active_template hardener 1\n"
                        "max_active_template qa 1\n"
-                       "max_active_group architecture 1 architect senior-implementor\n"))
+                       "max_active_group architecture 1 architect senior-implementer\n"))
       (write-file (fs/path root "swarmforge/role-templates/hardener.prompt")
                   "harden\n")
-      (write-file (fs/path root "swarmforge/role-templates/senior-implementor.prompt")
+      (write-file (fs/path root "swarmforge/role-templates/senior-implementer.prompt")
                   "clean architecture\n")
       (write-file (fs/path root "assignment.md")
                   "Run a quality gate.\n")
@@ -537,18 +537,18 @@
                                  "hardener"
                                  "second-hardening"
                                  "assignment.md")
-            senior-implementor (run {:dir root
+            senior-implementer (run {:dir root
                                        :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}
                                        :ok? false}
                                       (script "squad_spawn.sh")
-                                      "senior-implementor"
+                                      "senior-implementer"
                                       "architecture-cleanup"
                                       "assignment.md")]
         (is (= 3 (:exit second-hardener)))
         (is (str/includes? (:err second-hardener) "SQUAD_SPAWN_TEMPLATE_CAPACITY_FULL"))
         (is (str/includes? (:err second-hardener) "TEMPLATE: hardener"))
-        (is (= 3 (:exit senior-implementor)))
-        (is (str/includes? (:err senior-implementor) "SQUAD_SPAWN_GROUP_CAPACITY_FULL"))
-        (is (str/includes? (:err senior-implementor) "GROUP: architecture")))
+        (is (= 3 (:exit senior-implementer)))
+        (is (str/includes? (:err senior-implementer) "SQUAD_SPAWN_GROUP_CAPACITY_FULL"))
+        (is (str/includes? (:err senior-implementer) "GROUP: architecture")))
       (finally
         (fs/delete-tree root)))))

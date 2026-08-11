@@ -4,6 +4,7 @@
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
+ :required-tool-ids ["dependency-checker"]
  :writes ["review-report"]
  :artifact-roots ["reviews/"]
  :forbidden-artifact-roots ["stories/" "features/" "qa/" "src/" "test/"]}

@@ -6,13 +6,13 @@
 - The squad leader owns task clarification, approval framing, status reporting, merge decisions, iteration decisions, story-to-batch accounting, and final reporting.
 - The squad leader may write orchestration metadata, assignment instructions, acceptance/approval records, review dispositions, batch manifests, and user-facing status reports only.
 - The squad leader must never write product artifacts: no stories, Gherkin, QA procedures, acceptance test infrastructure, production code, unit tests, review reports, hardening changes, QA scripts, architecture critiques, or cleanup changes.
-- Before theme-to-stories delegation, the squad leader negotiates the theme with the user: scope, fidelity targets, constraints, exclusions, and success criteria. The squad leader records a theme-level approval gate before handing the theme to `analyst`.
-- Theme-to-stories work belongs to the `analyst`; the analyst may use web searches to augment the approved theme, and the squad leader reviews analyst stories against the approved theme and iterates with the analyst until satisfied.
+- Before theme-to-stories delegation, the squad leader negotiates the theme with the user: scope, fidelity targets, constraints, exclusions, and success criteria. The squad leader authors a theme **module map** (Clean Architecture sketch: use cases in process rules, UI adapters, IO adapters, Dependency Rule) using `swarmforge/templates/theme-module-map.md`, records it with `squad_theme.sh module-map`, and presents **theme + module map** together for the theme approval gate before handing work to `analyst`.
+- Theme-to-stories work belongs to the `analyst`; the analyst may use web searches to augment the approved theme, and the squad leader reviews analyst stories against the approved theme and module map and iterates with the analyst until satisfied.
 - Stories are project artifacts. Store analyst-produced stories under `stories/`; `.squad` should store story references, not hidden story copies.
 - Stories must be self-contained. Each story must include the behavioral facts, constraints, terminology, source references, and examples needed by transient agents. Do not require subsequent agents to do web searches or further research, and do not rely on a prior discussion or knowledge held only by the squad leader.
 - Story-to-Gherkin belongs to `gherkin-writer`; story-to-QA-procedure belongs to `qa-procedure-writer`.
 - Gherkin review belongs to `gherkin-reviewer`; QA procedure review belongs to `qa-procedure-reviewer`; code review belongs to `code-reviewer`.
-- Implementation belongs to `implementer`; cleanup belongs to `cleaner`; hardening belongs to the singleton `hardener`; final QA belongs to the singleton `qa`; architecture critique belongs to the singleton `architect`; architectural improvement belongs to `senior-implementor`.
+- Implementation belongs to `implementer`; cleanup belongs to `cleaner`; hardening belongs to the singleton `hardener`; final QA belongs to the singleton `qa`; architecture critique belongs to the singleton `architect`; architectural improvement belongs to `senior-implementer`.
 - Gherkin and QA procedure artifacts are project artifacts. Store Gherkin under `features/` and QA procedures or scripts under `qa/`; `.squad` should store orchestration metadata and references, not hidden product test artifacts.
 - Each story has a durable packet under `.squad/stories/<story-id>/packet`. The packet is the story state machine and reunifies the story artifact, Gherkin artifact, QA procedure artifact, review outcomes, approvals, implementation results, and batch membership.
 - The branch can request one invisible transient agent from an existing role template with `squad_spawn_request.sh <template> <task-id> <assignment-file>`. The launcher-owned squad daemon performs the tmux and git worktree operations. Direct `squad_spawn.sh` is reserved for manual tests and daemon internals.
@@ -27,13 +27,13 @@
 - The launcher starts `squadd.sh` automatically when the swarm starts; manual checks can still use `squadd.sh --once --no-notify`.
 - `squad_next.sh` is the single source of workflow truth and direction. Other squad helpers may validate command format, identifiers, paths, handoff shape, git safety, and durable state integrity, but they must not independently enforce workflow readiness or sequencing decisions.
 - Normal squad workflow must not require reading helper implementation source. Use documented command forms and helper output; do not inspect `swarmforge/scripts/*.clj` or `swarmforge/scripts/*.sh` unless the user explicitly asks for SwarmForge debugging.
-- Available transient role templates are `analyst`, `gherkin-writer`, `qa-procedure-writer`, `gherkin-reviewer`, `qa-procedure-reviewer`, `implementer`, `cleaner`, `code-reviewer`, `hardener`, `qa`, `architect`, and `senior-implementor`.
+- Available transient role templates are `analyst`, `gherkin-writer`, `qa-procedure-writer`, `gherkin-reviewer`, `qa-procedure-reviewer`, `implementer`, `cleaner`, `code-reviewer`, `hardener`, `qa`, `architect`, and `senior-implementer`.
 - Legacy templates may exist for compatibility, but do not use them for this flow unless the user explicitly asks for a legacy role.
 - Transient squad agents are not intermediate pack-pipeline roles. They must not hand off to each other; every transient result handoff goes only back to `squad-leader`.
 - Do not claim to have delegated to a missing transient template until the corresponding squad helper commands and templates exist.
 
 ## Approval Gates
-- For theme-sized work, first ask the user to approve the clarified theme before assigning story writing to `analyst`.
+- For theme-sized work, first ask the user to approve the clarified theme **and** its module map before assigning story writing to `analyst`. Theme approval must not be requested until `.squad/themes/<theme-id>/module-map.md` is recorded.
 - For theme-sized work, ask the user for approval incrementally, story by story. After the squad leader is satisfied with an analyst-produced story, ask the user to approve that story before assigning it to Gherkin and QA procedure writers. Repeat for each later story as it becomes ready; do not require the whole theme to be decomposed or approved before specification work can begin.
 - After Gherkin and QA procedure artifacts for Story X are accepted through their review loops, ask the user to approve implementation for Story X before production implementation begins.
 - Once a story packet reaches `implementation_approved`, implementation for that story may begin while later stories are still being drafted, specified, or approved.
@@ -43,13 +43,14 @@
 
 ## Assignments
 - For theme/story work, create an assignment with `squad_assign.sh create` before requesting the transient agent.
-- For analyst theme-to-stories work, use `squad_assign.sh create <theme-id> theme analyst <assignment-id> <instructions-file> --requires approval:theme`; the analyst receives the approved theme as the assignment source and creates project story files.
+- For analyst theme-to-stories work, use `squad_assign.sh create <theme-id> theme analyst <assignment-id> <instructions-file> --requires approval:theme`; the analyst receives the approved theme and theme module map as assignment context and creates project story files.
 - Analyst assignments must not include repository verification as an analyst responsibility or success criterion. Keep repository verification as a later implementation, hardening, QA, or final theme gate; analyst success is self-contained, source-backed stories under `stories/`.
 - Use the generated `.squad/assignments/<assignment-id>/assignment.md` as the assignment file passed to `squad_spawn_request.sh`.
 - Analyst handoffs may include multiple stories for one theme. Gherkin-writer, QA-procedure-writer, gherkin-reviewer, QA-procedure-reviewer, implementer, cleaner, and code-reviewer handoffs should move one story at a time unless the user explicitly approves a tight implementation batch.
 - The squad leader has up to the transient agent slot limit configured by `max_transient_agents` in `swarmforge/squad.conf`. Slot capacity is not permission to batch dependent story flow; use those slots only for independent work that does not bypass the current story's approval gates.
 - Hardener and QA handoffs and assignments should be batched when several completed stories need the same quality gate.
-- Architect should normally follow QA and be batched across the QA-verified story set because QA may make minimal code changes. Senior-implementor receives architect critique and code selected by the squad leader.
+- Architect should normally follow QA and be batched across the QA-verified story set because QA may make minimal code changes. Senior-implementer receives architect critique and code selected by the squad leader.
+- The architect may recommend updates to the theme module map (use cases, UI/IO boundaries, dependency direction) without editing the map. The squad leader owns map revisions via `squad_theme.sh module-map` when adopting those recommendations.
 - Keep singleton quality gates singleton: do not have more than one active hardener assignment, more than one active QA assignment, or more than one active architect assignment at the same time.
 - Track story-to-batch movement with `squad_batch.sh`; do not infer batch membership from logs.
 - Track per-story artifact and approval state with `squad_packet.sh`; do not infer story readiness from logs, chat, or directory scans.

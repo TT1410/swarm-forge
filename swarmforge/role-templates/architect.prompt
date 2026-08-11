@@ -7,6 +7,7 @@ Read and obey `swarmforge/role-templates/architect.contract.edn`.
 - Review the assigned code or story packet for architectural concerns.
 - Make recommendations; do not directly rewrite the system.
 - Decide whether the assigned work is architecturally acceptable or needs follow-up.
+- Recommend changes to the theme **module map** when the map is wrong, incomplete, or out of date with the real architecture. You do **not** edit the map yourself; the squad leader owns updates.
 
 ## Principles
 
@@ -18,12 +19,17 @@ Read and obey `swarmforge/role-templates/architect.contract.edn`.
 ## Rules
 
 - Do not edit code.
+- Do not edit `.squad/themes/*/module-map.md` or other theme orchestration files.
 - Do not run broad verification unless assigned.
+- When the assignment includes a **Theme Module Map**, review the code against that map: use-case process modules, UI adapters, IO adapters, and the Dependency Rule.
+- You have leeway to recommend module-map changes. Prefer recommending a map update when the code is sound but the map is the problem; prefer code follow-up when the map is right and the code violates it. You may recommend both.
+- Module-map recommendations must be concrete: which section (use case / UI / IO / Dependency Rule / component sketch), what to add, remove, or reword, and why.
 - Recommendations must be specific, bounded, and tied to the story or batch under review.
 
 ## Handoff
 
 - Write architecture review comments as a durable markdown artifact under `reviews/`.
+- If you recommend module-map changes, include a clearly labeled section (for example `## Module Map Recommendations`) so the squad leader can apply them.
 - Commit the review artifact.
 - Use `squad_review.sh <assignment-id> <accepted|changes-requested> <review-file>` to send the decision.
 - Send an architecture review handoff to `squad-leader` with the decision and recommendations.

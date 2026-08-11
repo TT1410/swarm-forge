@@ -1797,51 +1797,51 @@ TICK 172
 NEXT_ACTION: create_assignment
 THEME: hunt-the-wumpus
 STORY: batch
-TEMPLATE: senior-implementor
+TEMPLATE: senior-implementer
 ASSIGNMENT: hunt-the-wumpus-architecture-fix
 REASON: architecture critique needs senior implementation
 CANDIDATES: 1
-COMMAND: squad_assign.sh create hunt-the-wumpus batch senior-implementor hunt-the-wumpus-architecture-fix <instructions-file>
+COMMAND: squad_assign.sh create hunt-the-wumpus batch senior-implementer hunt-the-wumpus-architecture-fix <instructions-file>
 SIM_APPLIED: assignment created
 
 TICK 173
 NEXT_ACTION: request_spawn
 THEME: hunt-the-wumpus
 STORY: batch
-TEMPLATE: senior-implementor
+TEMPLATE: senior-implementer
 ASSIGNMENT: hunt-the-wumpus-architecture-fix
 REASON: architecture critique needs senior implementation
 CANDIDATES: 1
-COMMAND: squad_spawn_request.sh senior-implementor hunt-the-wumpus-architecture-fix /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/hunt-the-wumpus-architecture-fix/assignment.md
-AGENT: senior-implementor-001
+COMMAND: squad_spawn_request.sh senior-implementer hunt-the-wumpus-architecture-fix /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.squad/assignments/hunt-the-wumpus-architecture-fix/assignment.md
+AGENT: senior-implementer-001
 DUE_TICK: 176
 
 TICK 174..175
 WAIT_TICKS: 2
 NEXT_ACTION: wait
 REASON: active agents are still working or awaiting handoff delivery
-ACTIVE: senior-implementor-001 hunt-the-wumpus-architecture-fix running quiet_for=2 activity_source=heartbeat
+ACTIVE: senior-implementer-001 hunt-the-wumpus-architecture-fix running quiet_for=2 activity_source=heartbeat
 CHECK_AFTER_SECONDS: 30
 COMMAND: sleep 30 && squad_next.sh
 SIM_WAIT: no executable simulated event
 
 TICK 176
 NEXT_ACTION: process_handoff
-HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000176_000001_from_senior-implementor-001_to_squad-leader.handoff
+HANDOFF: /private/var/folders/kg/9tvs4vvn75b99n4rkndnf3sm0000gs/T/swarmforge-htw-sim.2438438099623342191/.swarmforge/handoffs/inbox/new/50_000176_000001_from_senior-implementer-001_to_squad-leader.handoff
 TASK: hunt-the-wumpus-architecture-fix
-FROM: senior-implementor-001
+FROM: senior-implementer-001
 COMMIT: 2c310eb387
 REASON: new handoff mail is waiting
 COMMAND: ready_for_next.sh
-AGENT_HANDOFF: senior-implementor-001 assignment=hunt-the-wumpus-architecture-fix
+AGENT_HANDOFF: senior-implementer-001 assignment=hunt-the-wumpus-architecture-fix
 SIM_APPLIED: handoff processed
 
 TICK 177
 NEXT_ACTION: retire_agent
-AGENT: senior-implementor-001
+AGENT: senior-implementer-001
 STATE: running
 REASON: completed handoff has been processed and role is still registered
-COMMAND: squad_retire.sh senior-implementor-001
+COMMAND: squad_retire.sh senior-implementer-001
 SIM_APPLIED: agent retired
 
 TICK 178

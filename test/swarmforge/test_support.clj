@@ -45,6 +45,16 @@
 (defn script [name]
   (str (fs/path scripts-dir name)))
 
+(def minimal-module-map
+  (str "# Theme Module Map\n\n"
+       "## Purpose\n\nSample purpose.\n\n"
+       "## Dependency Rule\n\nDependencies point inward.\n\n"
+       "## Use Cases (Business / Process Rules)\n\n"
+       "### Use case: sample\n\n- **Intent:** sample.\n\n"
+       "## UI (Interface Adapters)\n\nCLI prompts.\n\n"
+       "## IO (Interface Adapters / Drivers)\n\nStdin/stdout.\n\n"
+       "## Out of Scope\n\nDetailed APIs.\n"))
+
 (defn wait-for-file [path timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []

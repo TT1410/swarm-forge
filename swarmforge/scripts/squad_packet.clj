@@ -15,7 +15,7 @@
        "  squad_packet.sh attach <story-id> <gherkin|qa-procedure> <assignment-id> <branch> <sha> <artifact-file>\n"
        "  squad_packet.sh review <story-id> <gherkin|qa-procedure|code|architecture> <accepted|changes-requested> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh approve <story-id> <story|gherkin|qa-procedure|implementation|code-review|hardening|qa|architecture|final> <detail...>\n"
-       "  squad_packet.sh record <story-id> <implementation|cleaner|hardener|qa|architecture|senior-implementor> <assignment-id> <branch> <sha>\n"
+       "  squad_packet.sh record <story-id> <implementation|cleaner|hardener|qa|architecture|senior-implementer> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh batch <story-id> <hardener|qa|architecture> <batch-id> <stage> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh status <story-id>\n"
        "  squad_packet.sh validate <story-id>"))
@@ -23,7 +23,7 @@
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
 (def artifact-kinds #{"gherkin" "qa-procedure"})
 (def review-kinds #{"gherkin" "qa-procedure" "code" "architecture"})
-(def result-kinds #{"implementation" "cleaner" "hardener" "qa" "architecture" "senior-implementor"})
+(def result-kinds #{"implementation" "cleaner" "hardener" "qa" "architecture" "senior-implementer"})
 (def batch-kinds #{"hardener" "qa" "architecture"})
 (def approval-gates #{"story" "gherkin" "qa-procedure" "implementation"
                       "code-review" "hardening" "qa" "architecture" "final"})
@@ -185,8 +185,8 @@
                  "architecture_review_branch" "architecture_review_sha" "architecture_review_target_sha"
                  "architecture_review_iterations"
                  "architecture_approval" "architecture_approval_detail" "architecture_approval_iterations"
-                 "senior_implementor_assignment" "senior_implementor_branch"
-                 "senior_implementor_sha" "senior_implementor_iterations"
+                 "senior_implementer_assignment" "senior_implementer_branch"
+                 "senior_implementer_sha" "senior_implementer_iterations"
                  "final_approval" "final_approval_detail" "final_approval_iterations"
                  "updated_at"]
         emitted (set ordered)]
@@ -366,7 +366,7 @@
 
 (defn record-result! [story-id kind assignment-id branch sha]
   (when-not (contains? result-kinds kind)
-    (exit! 2 "Result kind must be implementation, cleaner, hardener, qa, architecture, or senior-implementor."))
+    (exit! 2 "Result kind must be implementation, cleaner, hardener, qa, architecture, or senior-implementer."))
   (doseq [[label value] [["Story id" story-id]
                          ["Assignment id" assignment-id]
                          ["Branch" branch]]]
@@ -462,7 +462,7 @@
 	    (println "ARCHITECTURE:" (get packet "architecture_sha" "none"))
 	    (println "ARCHITECTURE_REVIEW:" (get packet "architecture_review" "none"))
 	    (println "ARCHITECTURE_RESULT_STATE:" (get packet "architecture_result_state" "none"))
-	    (println "SENIOR_IMPLEMENTOR:" (get packet "senior_implementor_sha" "none"))
+	    (println "SENIOR_IMPLEMENTER:" (get packet "senior_implementer_sha" "none"))
 	    (println "FINAL_APPROVAL:" (get packet "final_approval" "none"))
 	    (println "CONSISTENCY:" (if (seq issues) "issues" "ok"))
 	    (println "PACKET:" (str file))))

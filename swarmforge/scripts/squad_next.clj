@@ -416,11 +416,19 @@
                    (= gate recorded-gate)))
                (str/split-lines (slurp (str file)))))))
 
+(defn theme-module-map-path [theme-dir]
+  (fs/path theme-dir "module-map.md"))
+
+(defn theme-module-map-present? [theme-dir]
+  (fs/regular-file? (theme-module-map-path theme-dir)))
+
 (defn theme-records [root]
   (->> (theme-dirs root)
        (map (fn [dir]
               (let [theme-id (fs/file-name dir)]
                 {:theme-id theme-id
+                 :theme-dir dir
+                 :module-map-present? (theme-module-map-present? dir)
                  :approved-theme? (theme-approved? dir "theme")})))
        vec))
 
@@ -630,6 +638,19 @@
                (= "merged" (:state %)))
          assignments)))
 
+(defn theme-module-map-candidate [theme]
+  {:priority 18
+   :stage-order 1
+   :next-action "write_theme_module_map"
+   :theme-id (:theme-id theme)
+   :story-id "theme"
+   :gate "theme"
+   :reason (str "theme needs a Clean Architecture module map before theme approval; "
+                "fill swarmforge/templates/theme-module-map.md for this theme, then "
+                "record it with squad_theme.sh module-map")
+   :command (str "squad_theme.sh module-map " (:theme-id theme)
+                 " <filled-module-map.md>")})
+
 (defn theme-candidates [root rows]
   (let [assignments (assignment-records root)
         agents (agent-records root rows)
@@ -638,23 +659,32 @@
                :when (not (or (contains? packet-themes (:theme-id theme))
                               (theme-analysis-complete? assignments (:theme-id theme))))
                :let [approval-id (str "theme__" (:theme-id theme))
-                     approval (when-not (approval-record-exists-for? root "theme" (:theme-id theme) "theme")
+                     write-map (when (and (not (:module-map-present? theme))
+                                          (not (:approved-theme? theme)))
+                                 (theme-module-map-candidate theme))
+                     approval (when (and (:module-map-present? theme)
+                                         (not (:approved-theme? theme))
+                                         (not (approval-record-exists-for? root "theme" (:theme-id theme) "theme")))
                                 {:priority 20
                                  :stage-order 1
                                  :next-action "create_approval_request"
                                  :theme-id (:theme-id theme)
                                  :story-id "theme"
                                  :gate "theme"
-                                 :reason "theme-ready"
+                                 :reason "theme and module map ready for user approval"
                                  :command (str "squad_approval.sh request " approval-id
                                                " theme " (:theme-id theme)
-                                               " theme Approve_theme theme-ready")})
+                                               " theme Approve_theme_and_module_map "
+                                               "theme-and-module-map-ready")})
                      analyst (when (:approved-theme? theme)
                                (theme-assignment-candidate root assignments agents theme
                                                            "analyst" "analysis"
                                                            "approved theme needs story analysis"
                                                            60 5 "theme"))
-                     candidate (if (:approved-theme? theme) analyst approval)]
+                     candidate (cond
+                                 (:approved-theme? theme) analyst
+                                 write-map write-map
+                                 :else approval)]
                :when candidate]
            candidate)
          (sort-by (juxt :priority :theme-id :stage-order :assignment-id))
@@ -797,7 +827,7 @@
    "cleaner" "cleaner"
    "hardener" "hardener"
    "qa" "qa"
-   "senior-implementor" "senior-implementor"})
+   "senior-implementer" "senior-implementer"})
 
 (def review-assignment-rules
   {"gherkin-reviewer" "gherkin"
@@ -1377,7 +1407,7 @@
 (defn architecture-member-ready? [root packet]
   (and (approval-satisfied? root packet "qa")
        (field-present? packet "qa_sha")
-       (not (field-present? packet "senior_implementor_sha"))
+       (not (field-present? packet "senior_implementer_sha"))
        (not (or (field-accepted? packet "architecture_review")
                 (field-changes-requested? packet "architecture_review")))))
 
@@ -1406,19 +1436,19 @@
 
 (defn any-architecture-needs-senior? [packets]
   (boolean (some #(and (field-changes-requested? % "architecture_review")
-                       (not (field-present? % "senior_implementor_sha")))
+                       (not (field-present? % "senior_implementer_sha")))
                  packets)))
 
 (defn architecture-complete? [packet]
   (or (field-accepted? packet "architecture_review")
       (and (field-changes-requested? packet "architecture_review")
-           (field-present? packet "senior_implementor_sha"))))
+           (field-present? packet "senior_implementer_sha"))))
 
 (defn architecture-gate-satisfied-for-final? [root packet]
   (or (and (field-accepted? packet "architecture_review")
            (approval-satisfied? root packet "architecture"))
       (and (field-changes-requested? packet "architecture_review")
-           (field-present? packet "senior_implementor_sha"))))
+           (field-present? packet "senior_implementer_sha"))))
 
 (defn any-hardener-member-ready? [root packets]
   (boolean (some #(hardener-member-ready? root %) packets)))
@@ -1521,7 +1551,7 @@
     :reason "QA batch is ready"
     :stage-order 150}
    {:ready? :senior-ready?
-    :template "senior-implementor"
+    :template "senior-implementer"
     :suffix "-architecture-fix"
     :reason "architecture critique needs senior implementation"
     :stage-order 166}

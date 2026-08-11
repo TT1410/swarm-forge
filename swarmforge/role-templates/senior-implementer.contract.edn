@@ -1,10 +1,11 @@
-{:role "senior-implementor"
+{:role "senior-implementer"
  :handoff-targets ["squad-leader"]
  :may-web-search false
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
  :may-run-broad-tests true
+ :required-tool-ids ["dependency-checker"]
  :writes ["architectural-improvement" "verification-updates"]
  :artifact-roots ["src/" "test/"]
  :behavior-preserving true}

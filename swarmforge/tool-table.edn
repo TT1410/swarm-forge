@@ -22,11 +22,20 @@
   "ir-dry-checker" {:source "github.com/unclebob/Acceptance-Pipeline-Specification"
                     :version "latest"
                     :purpose "IR DRY"
-                    :install-command ["bash" "swarmforge/scripts/install_bb_tool.sh" "/Users/unclebob/projects/Acceptance-Pipeline-Specification" "gherkin-ir-dry-checker"]}}
+                    :install-command ["bash" "swarmforge/scripts/install_bb_tool.sh" "/Users/unclebob/projects/Acceptance-Pipeline-Specification" "gherkin-ir-dry-checker"]}
+  "dependency-checker" {:source "github.com/unclebob/dependency-checker"
+                        :version "latest"
+                        :purpose "component dependency boundaries"
+                        :install-command ["bash" "swarmforge/scripts/install_bb_tool.sh" "/Users/unclebob/projects/clojure/dependency-checker" "check-dependencies"]}}
  :roles
- {"cleaner" {:required-tools ["crap4clj" "dry4clj"]}
+ {"implementer" {:required-tools ["dependency-checker"]}
+  "cleaner" {:required-tools ["crap4clj" "dry4clj" "dependency-checker"]}
   "hardener" {:required-tools ["clj-mutate" "crap4clj" "dry4clj"
-                               "gherkin-parser" "gherkin-mutator"]}
+                               "gherkin-parser" "gherkin-mutator"
+                               "dependency-checker"]}
+  "architect" {:required-tools ["dependency-checker"]}
+  "code-reviewer" {:required-tools ["dependency-checker"]}
+  "senior-implementer" {:required-tools ["dependency-checker"]}
   "qa" {:required-tools ["crap4clj" "dry4clj"]}
   "gherkin-writer" {:required-tools ["gherkin-parser" "ir-dry-checker"]}
   "gherkin-reviewer" {:required-tools ["gherkin-parser" "ir-dry-checker"]}}}

@@ -21,6 +21,8 @@ Read and obey `swarmforge/role-templates/implementer.contract.edn`.
 ## Rules
 
 - Follow the Principles Of Clean Code while implementing the assigned story.
+- When the assignment includes a **Theme Module Map**, place new code so process rules, UI, and IO stay separated as the map describes. Dependencies should point inward (UI/IO toward process), not from process into concrete UI or IO.
+- Prefer module/namespace names consistent with the map’s use-case and component sketch when creating structure.
 - Do not perform cleanup or architecture work beyond what is necessary to implement the story.
 - Run focused verification required by the assignment.
 - If assigned acceptance tests fail, keep working until they pass or hand back a real blocker.

@@ -18,7 +18,7 @@
    "hardener"
    "qa"
    "architect"
-   "senior-implementor"
+   "senior-implementer"
    "merger"])
 
 (defn contract-path [template]
@@ -89,15 +89,23 @@
 
 (deftest squad-role-tooling-contracts-include-required-tools
   (let [by-role (into {} (map (juxt :role identity) (contracts)))]
-    (is (= ["crap4clj" "dry4clj"] (:required-tool-ids (by-role "cleaner"))))
-    (is (= ["clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator"]
+    (is (= ["dependency-checker"] (:required-tool-ids (by-role "implementer"))))
+    (is (= ["crap4clj" "dry4clj" "dependency-checker"] (:required-tool-ids (by-role "cleaner"))))
+    (is (= ["clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator" "dependency-checker"]
            (:required-tool-ids (by-role "hardener"))))
+    (is (= ["dependency-checker"] (:required-tool-ids (by-role "architect"))))
+    (is (= ["dependency-checker"] (:required-tool-ids (by-role "code-reviewer"))))
+    (is (= ["dependency-checker"] (:required-tool-ids (by-role "senior-implementer"))))
     (is (= ["crap4clj" "dry4clj"] (:required-tool-ids (by-role "qa"))))
     (is (= ["gherkin-parser" "ir-dry-checker"] (:required-tool-ids (by-role "gherkin-writer"))))
     (is (= ["gherkin-parser" "ir-dry-checker"] (:required-tool-ids (by-role "gherkin-reviewer"))))
-    (is (= #{"crap4clj" "dry4clj"} (required-tool-names "cleaner")))
-    (is (= #{"clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator"}
+    (is (= #{"dependency-checker"} (required-tool-names "implementer")))
+    (is (= #{"crap4clj" "dry4clj" "dependency-checker"} (required-tool-names "cleaner")))
+    (is (= #{"clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator" "dependency-checker"}
            (required-tool-names "hardener")))
+    (is (= #{"dependency-checker"} (required-tool-names "architect")))
+    (is (= #{"dependency-checker"} (required-tool-names "code-reviewer")))
+    (is (= #{"dependency-checker"} (required-tool-names "senior-implementer")))
     (is (= #{"crap4clj" "dry4clj"} (required-tool-names "qa")))
     (is (= #{"gherkin-parser" "ir-dry-checker"} (required-tool-names "gherkin-writer")))
     (is (= #{"gherkin-parser" "ir-dry-checker"} (required-tool-names "gherkin-reviewer")))))
@@ -142,9 +150,9 @@
     (is (str/includes? prompt "Large modules with many responsibilities"))
     (is (str/includes? prompt "well-named modules with single responsibilities"))))
 
-(deftest squad-senior-implementor-runs-full-verification-before-handoff
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/senior-implementor.prompt")))
-        contract (contract "senior-implementor")]
+(deftest squad-senior-implementer-runs-full-verification-before-handoff
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/senior-implementer.prompt")))
+        contract (contract "senior-implementer")]
     (is (str/includes? prompt "Run the full verification suite before handoff."))
     (is (not (str/includes? prompt "Run relevant verification before handoff.")))
     (is (true? (:may-run-broad-tests contract)))))
@@ -168,6 +176,7 @@
     (is (true? (:may-talk-to-user c)))
     (is (true? (:may-spawn c)))
     (is (true? (:requires-theme-negotiation-before-analyst c)))
+    (is (true? (:theme-module-map-before-theme-approval c)))
     (is (true? (:theme-approval-before-analyst c)))
     (is (true? (:story-packet-source-of-truth c)))
     (is (= "squad_next.sh --apply-mechanical" (:implementation-readiness-source c)))
@@ -177,9 +186,29 @@
     (is (str/includes? prompt "CONCURRENT_COMMAND"))
     (is (str/includes? prompt "APPLIED_TRANSITIONS"))
     (is (str/includes? prompt "informational history"))
+    (is (str/includes? prompt "Theme Module Map"))
+    (is (str/includes? prompt "squad_theme.sh module-map"))
+    (is (str/includes? prompt "theme-module-map.md"))
     (is (= ["hardener" "qa" "architect"] (:singleton-roles c)))
     (is (some #{"stories"} (:forbidden-writes c)))
-    (is (some #{"production-code"} (:forbidden-writes c)))))
+    (is (some #{"production-code"} (:forbidden-writes c)))
+    (is (some #{"theme-module-maps"} (:writes c)))))
+
+(deftest analyst-implementer-architect-prompts-reference-module-map
+  (let [analyst (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))
+        implementer (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))
+        architect (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))
+        outline (slurp (str (fs/path repo-root "swarmforge/templates/theme-module-map.md")))]
+    (is (str/includes? analyst "Theme Module Map"))
+    (is (str/includes? analyst "isolate UI and IO"))
+    (is (str/includes? implementer "Theme Module Map"))
+    (is (str/includes? architect "Theme Module Map"))
+    (is (str/includes? architect "Recommend changes to the theme **module map**"))
+    (is (str/includes? architect "Module Map Recommendations"))
+    (is (str/includes? outline "## Use Cases (Business / Process Rules)"))
+    (is (str/includes? outline "## Dependency Rule"))
+    (is (str/includes? outline "## UI (Interface Adapters)"))
+    (is (str/includes? outline "## IO (Interface Adapters / Drivers)"))))
 
 (deftest runtime-constitution-does-not-require-development-design-doc
   (let [project-article (slurp (str (fs/path repo-root "swarmforge/constitution/articles/project.prompt")))]

@@ -44,6 +44,12 @@
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (let [needs-map (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out needs-map) "NEXT_ACTION: write_theme_module_map"))
+        (is (str/includes? (:out needs-map) "THEME: wumpus"))
+        (is (str/includes? (:out needs-map) "squad_theme.sh module-map wumpus")))
+      (write-file (fs/path root "module-map.md") minimal-module-map)
+      (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
       (run {:dir root}
            (script "squad_approval.sh")
            "request"
@@ -51,8 +57,8 @@
            "theme"
            "wumpus"
            "theme"
-           "Approve theme"
-           "theme is ready")
+           "Approve theme and module map"
+           "theme and module map ready")
       (write-file (fs/path root ".swarmforge/daemon/squad-web-url")
                   "http://127.0.0.1:8765/\n")
       (let [approval (run {:dir root} (script "squad_next.sh"))]

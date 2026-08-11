@@ -11,12 +11,20 @@
 (def usage-text
   (str "Usage:\n"
        "  squad_theme.sh create <theme-id> <theme-file>\n"
+       "  squad_theme.sh module-map <theme-id> <module-map-file>\n"
        "  squad_theme.sh story <theme-id> <story-id> <story-file>\n"
        "  squad_theme.sh stories <theme-id> <story-id>:<story-file>...\n"
        "  squad_theme.sh approved-story <theme-id> <story-id> <story-file> <assignment-id> <branch> <sha> <detail...>\n"
        "  squad_theme.sh acceptance <theme-id> <artifact-id> <acceptance-file>\n"
        "  squad_theme.sh approve <theme-id> <gate> <detail...>\n"
        "  squad_theme.sh status <theme-id>"))
+
+(def module-map-required-headings
+  ["## Purpose"
+   "## Dependency Rule"
+   "## Use Cases (Business / Process Rules)"
+   "## UI (Interface Adapters)"
+   "## IO (Interface Adapters / Drivers)"])
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
 
@@ -117,6 +125,42 @@
 (defn ensure-theme! [dir theme-id]
   (when-not (fs/directory? dir)
     (exit! 1 (str "Unknown theme: " theme-id))))
+
+(defn module-map-path [dir]
+  (fs/path dir "module-map.md"))
+
+(defn module-map-exists? [dir]
+  (fs/regular-file? (module-map-path dir)))
+
+(defn validate-module-map-content! [text]
+  (when (str/blank? (str/trim text))
+    (exit! 2 "Module map file is empty."))
+  (doseq [heading module-map-required-headings]
+    (when-not (str/includes? text heading)
+      (exit! 2 (str "Module map missing required heading: " heading
+                    " (see swarmforge/templates/theme-module-map.md)")))))
+
+(defn record-module-map! [theme-id module-map-file]
+  (validate-id! "Theme id" theme-id)
+  (let [root (fs/absolutize (project-root))
+        source (source-file! module-map-file)
+        dir (theme-dir root theme-id)
+        dest (module-map-path dir)
+        content (slurp (str source))
+        now (timestamp)]
+    (ensure-theme! dir theme-id)
+    (validate-module-map-content! content)
+    (write-atomic! dest content)
+    (write-atomic! (fs/path dir "status")
+                   (str "theme_id: " theme-id "\n"
+                        "state: module_map_recorded\n"
+                        "detail: module-map.md\n"
+                        "updated_at: " now "\n"))
+    (append-line! (fs/path dir "events.log")
+                  (str now "\tmodule_map_recorded\tmodule-map.md"))
+    (println "SQUAD_THEME:" theme-id)
+    (println "MODULE_MAP:" (str dest))
+    (println "STATE: module_map_recorded")))
 
 (defn add-story! [theme-id story-id story-file]
   (validate-id! "Theme id" theme-id)
@@ -268,6 +312,7 @@
     (println "UPDATED_AT:" (or (read-value status "updated_at") "unknown"))
     (println "STORIES:" (str/join "," (story-ids dir)))
     (println "ACCEPTANCE:" (str/join "," (acceptance-ids dir)))
+    (println "MODULE_MAP:" (if (module-map-exists? dir) "present" "missing"))
     (println "APPROVALS:" (count (approval-lines dir)))))
 
 (defn exact-count! [args n]
@@ -282,6 +327,9 @@
   {"create" (fn [args]
               (exact-count! args 3)
               (create-theme! (second args) (nth args 2)))
+   "module-map" (fn [args]
+                  (exact-count! args 3)
+                  (record-module-map! (second args) (nth args 2)))
    "story" (fn [args]
              (exact-count! args 4)
              (add-story! (second args) (nth args 2) (nth args 3)))

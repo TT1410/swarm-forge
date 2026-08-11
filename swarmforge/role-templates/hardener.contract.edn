@@ -4,7 +4,7 @@
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
- :required-tool-ids ["clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator"]
+ :required-tool-ids ["clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator" "dependency-checker"]
  :writes ["hardening-tests" "hardening-fixes" "tool-manifests"]
  :artifact-roots ["src/" "test/" ".squad/"]
  :singleton true

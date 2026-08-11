@@ -13,6 +13,7 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
+      (write-file (fs/path root "module-map.md") minimal-module-map)
       (write-file (fs/path root "stories/cave-topology.md")
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "features/cave-topology.feature")
@@ -26,6 +27,11 @@
                         "create"
                         "wumpus"
                         "theme.md")
+            module-map (run {:dir root}
+                            (script "squad_theme.sh")
+                            "module-map"
+                            "wumpus"
+                            "module-map.md")
             story (run {:dir root}
                        (script "squad_theme.sh")
                        "story"
@@ -62,6 +68,11 @@
                         "wumpus")
             theme-dir (fs/path root ".squad/themes/wumpus")]
         (is (str/includes? (:out create) "STATE: theme_created"))
+        (is (str/includes? (:out module-map) "STATE: module_map_recorded"))
+        (is (str/includes? (:out module-map) "MODULE_MAP:"))
+        (is (str/includes? (:out status) "MODULE_MAP: present"))
+        (is (str/includes? (slurp (str (fs/path theme-dir "module-map.md")))
+                           "Use Cases (Business / Process Rules)"))
         (is (str/includes? (:out story) "STORY: cave-topology"))
         (is (str/includes? (:out story) "PATH: stories/cave-topology.md"))
         (is (str/includes? (:out acceptance) "ACCEPTANCE: cave-topology"))
