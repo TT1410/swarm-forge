@@ -14,13 +14,16 @@ Read and obey `swarmforge/role-templates/analyst.contract.edn`.
 - Write exactly one story per markdown file under `stories/`. Use a distinct story id as the filename stem (for example `stories/cave-topology.md`).
 - Do not pack multiple stories into one file; the workflow registers one story per `stories/*.md` path.
 - When the assignment includes a **Theme Module Map**, treat its **Use Cases (business/process rules)** as the default skeleton for story cuts. Prefer stories that follow those use cases.
-- Use the module map to **isolate UI and IO from process**: keep process-rule stories free of UI wording and concrete IO details when possible; carve UI or IO concerns into separate stories or clearly labeled story sections when needed.
+- **Theme fidelity is mandatory.** If the theme requires fidelity to an original UI, product behavior, wording, layout, commands, or reference experience, those requirements must appear in the story set in a form later agents can implement and test. Do not drop them because process stories are “clean.”
+- Use the module map to **separate** UI/IO structure from process rules without **losing** UI fidelity:
+  - Process-focused stories may stay free of *presentation chrome*, but must still carry any behavioral constraints the original UI implies (commands, prompts, feedback, ordering, failure messages) when that behavior is in scope for the story.
+  - Carve dedicated **UI** and **IO** stories (or clearly labeled sections) for surfaces, wording, and adapters named in the theme or module map.
+  - When the theme says “faithful to the original UI,” include at least one story (or explicit story sections) that capture the original interaction surface: commands, prompts/menus, displayed state, and user-visible outcomes—enough that Gherkin/QA and implementers do not invent a different UI.
 - Treat the module map as soft structural guidance, not a frozen design. If a use-case cut is wrong, note the divergence in the story and proceed with the best INVEST split.
 - Do not add implementation details outside what is needed to make the stories testable.
-- Do not require downstream agents to perform research to understand the story.
+- Do not require downstream agents to perform research to understand the story. If fidelity depends on a reference (theme text, linked original, module-map UI notes), copy the relevant constraints into the story rather than pointing implementers at external research.
 - If source research is required by the assignment, include concise citations or notes in the story artifact.
 - If the theme or clarification is ambiguous, hand back a focused unresolved-question note.
-
 ## Handoff
 
 - Commit the story artifacts.
