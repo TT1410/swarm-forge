@@ -46,9 +46,6 @@
     .req-sl { color: #4a4f4c; padding-left: 16px; }
     .req-sl.short { font-style: italic; }
     .req-meta { font-size: 11px; color: #68726c; margin-bottom: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .seg { display: inline-flex; border: 1px solid #9aa59e; border-radius: 6px; overflow: hidden; }
-    .seg button { border: 0; border-radius: 0; margin: 0; background: #fff; }
-    .seg button.active { background: #202124; color: #fff; }
     .composer-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   </style>
 </head>
@@ -62,13 +59,9 @@
       <h2>Squad Leader Requests</h2>
       <div id=\"sl-requests\" class=\"req-history\"></div>
       <div class=\"composer-row\">
-        <div class=\"seg\" role=\"group\" aria-label=\"Request kind\">
-          <button type=\"button\" id=\"kind-command\" class=\"active\" onclick=\"setKind('command')\">Command</button>
-          <button type=\"button\" id=\"kind-question\" onclick=\"setKind('question')\">Question</button>
-        </div>
         <button type=\"button\" onclick=\"sendRequest()\">Submit</button>
       </div>
-      <textarea id=\"sl-message\" placeholder=\"Command or question for the squad leader…\"></textarea>
+      <textarea id=\"sl-message\" placeholder=\"Message for the squad leader…\"></textarea>
     </section>
     <section><h2>Stories</h2><div id=\"stories\"></div></section>
     <section><h2>Agents</h2><div id=\"agents\"></div></section>
@@ -84,9 +77,7 @@
     const assignmentsPanel = document.getElementById('assignments');
     const requestsPanel = document.getElementById('sl-requests');
     const slDraftKey = 'swarmforge.slMessageDraft';
-    const slKindKey = 'swarmforge.slRequestKind';
     let slDraft = localStorage.getItem(slDraftKey) || '';
-    let slKind = localStorage.getItem(slKindKey) || 'command';
     let pressedApproval = null;
     const esc = value => String(value ?? '').replace(/[&<>']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
     async function post(path, body = null, contentType = null, refresh = true) {
@@ -165,12 +156,6 @@
         artifactLink('blocker', b.assignment_id || b.blocker_id, b.assignment_id || b.blocker_id), esc(b.kind || 'blocked'), esc(b.detail || '')
       ])));
     }
-    function setKind(kind) {
-      slKind = kind === 'question' ? 'question' : 'command';
-      localStorage.setItem(slKindKey, slKind);
-      document.getElementById('kind-command').classList.toggle('active', slKind === 'command');
-      document.getElementById('kind-question').classList.toggle('active', slKind === 'question');
-    }
     function statusPill(status) {
       const s = String(status || 'pending');
       return '<span class=\"pill pill-' + esc(s) + '\">' + esc(s) + '</span>';
@@ -188,7 +173,7 @@
              : '');
         return '<div class=\"req-item\">' +
           '<div class=\"req-meta\"><strong>You</strong>' + statusPill(r.status) +
-          '<span>' + esc(r.kind || 'command') + '</span><span class=\"muted\">' + esc(r.id) + '</span>' + cancel + '</div>' +
+          '<span class=\"muted\">' + esc(r.id) + '</span>' + cancel + '</div>' +
           '<div class=\"req-you\">' + esc(r.body || '') + '</div>' +
           response +
           '</div>';
@@ -203,7 +188,6 @@
     }
     const messageInput = document.getElementById('sl-message');
     messageInput.value = slDraft;
-    setKind(slKind);
     messageInput.addEventListener('input', () => {
       slDraft = messageInput.value;
       localStorage.setItem(slDraftKey, slDraft);
@@ -217,12 +201,30 @@
     async function sendRequest() {
       const text = messageInput.value.trim();
       if (!text) return;
-      const payload = JSON.stringify({ kind: slKind, body: text });
+      const payload = JSON.stringify({ body: text });
       await post('/api/sl-requests', payload, 'application/json; charset=utf-8', false);
       slDraft = '';
       localStorage.removeItem(slDraftKey);
       messageInput.value = '';
       await render();
+    }
+    function selectionInside(el) {
+      const sel = window.getSelection();
+      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
+      const node = sel.anchorNode;
+      if (!node) return false;
+      const element = node.nodeType === 3 ? node.parentNode : node;
+      return !!(element && el.contains(element));
+    }
+    function updateRequestsPanel(items) {
+      const html = renderRequests(items);
+      // Skip rebuild while the operator has a text selection (copy/paste).
+      if (selectionInside(requestsPanel)) return;
+      if (requestsPanel.dataset.lastHtml === html) return;
+      const nearBottom = requestsPanel.scrollHeight - requestsPanel.scrollTop - requestsPanel.clientHeight <= 24;
+      requestsPanel.innerHTML = html;
+      requestsPanel.dataset.lastHtml = html;
+      if (nearBottom) requestsPanel.scrollTop = requestsPanel.scrollHeight;
     }
     async function render() {
       try {
@@ -231,9 +233,7 @@
         error.textContent = '';
         blockersPanel.innerHTML = blockers(data.blockers || []);
         approvalsPanel.innerHTML = approvals((data.approvals && data.approvals.pending) || []);
-        const nearBottom = requestsPanel.scrollHeight - requestsPanel.scrollTop - requestsPanel.clientHeight <= 24;
-        requestsPanel.innerHTML = renderRequests(data.sl_requests || []);
-        if (nearBottom) requestsPanel.scrollTop = requestsPanel.scrollHeight;
+        updateRequestsPanel(data.sl_requests || []);
         storiesPanel.innerHTML = table(['Story','State','Substate'], (data.stories || []).map(s => row([
           artifactLink('story', s.story_id, s.story_number ? ('#' + s.story_number + ' ' + s.story_id) : s.story_id),
           '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.stage_detail || s.final_state)
@@ -937,12 +937,12 @@
     (json-unescape raw)))
 
 (defn parse-sl-request-body [body]
-  "Accept JSON {kind,body} or plain text body (kind defaults to command)."
+  "Accept JSON {body} (optional legacy kind ignored) or plain text body."
   (let [text (str/trim (or body ""))]
     (if (str/starts-with? text "{")
-      {:kind (or (extract-json-string text "kind") "command")
+      {:kind "request"
        :body (or (extract-json-string text "body") "")}
-      {:kind "command"
+      {:kind "request"
        :body text})))
 
 (defn dashboard-request-wake-message [request]

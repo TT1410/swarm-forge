@@ -14,7 +14,8 @@
        "  squad_dashboard_request.sh status [id]\n"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
-(def valid-kinds #{"command" "question"})
+;; Single request type. Legacy "command"/"question" accepted and normalized to "request".
+(def valid-kinds #{"request" "command" "question"})
 (def max-body-chars 8000)
 (def history-limit 50)
 
@@ -102,7 +103,13 @@
 
 (defn kind-error [kind]
   (when-not (contains? valid-kinds kind)
-    "kind must be command or question."))
+    "kind must be request (legacy command/question also accepted)."))
+
+(defn normalize-kind [kind]
+  (let [k (str/lower-case (str/trim (or kind "request")))]
+    (if (contains? #{"command" "question" "request"} k)
+      "request"
+      k)))
 
 (defn utc-stamp []
   (let [fmt (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd'T'HHmmss'Z'")
@@ -134,7 +141,7 @@
   "Create a pending dashboard request.
   Returns {:ok true :request m} or {:ok false :error msg}."
   [root {:keys [kind body]}]
-  (let [kind (str/lower-case (str/trim (or kind "command")))
+  (let [kind (normalize-kind kind)
         body (normalize-body body)]
     (or (when-let [err (kind-error kind)]
           {:ok false :error err})
@@ -172,7 +179,7 @@
     (merge m
            {"id" id
             "status" (or (get m "status") state)
-            "kind" (get m "kind" "command")
+            "kind" (get m "kind" "request")
             "created_at" (get m "created_at" "")
             "updated_at" (get m "updated_at" "")
             "answered_at" (get m "answered_at" "")
@@ -225,12 +232,10 @@
     (fs/delete-if-exists from-file)
     m))
 
-(defn normalize-answer [kind text]
+(defn normalize-answer [_kind text]
+  "Single answer rule: blank answers become Done (intent lives in request body)."
   (let [text (str/trim (or text ""))]
-    (cond
-      (and (= "command" kind) (str/blank? text)) "Done"
-      (str/blank? text) nil
-      :else text)))
+    (if (str/blank? text) "Done" text)))
 
 (defn answer-request
   "Answer a pending request. answer-text is the response body string.
@@ -250,12 +255,9 @@
 
         :else
         (let [m (file-map pending)
-              kind (get m "kind" "command")
+              kind (get m "kind" "request")
               answer (normalize-answer kind answer-text)]
           (cond
-            (nil? answer)
-            {:ok false :error "Question answers must be non-empty."}
-
             (> (count answer) max-body-chars)
             {:ok false :error (str "Answer exceeds " max-body-chars " characters.")}
 
@@ -334,7 +336,7 @@
     (let [m (request-summary file state)]
       (println "REQUEST:" id)
       (println "STATE:" (get m "status" state))
-      (println "KIND:" (get m "kind" "command"))
+      (println "KIND:" (get m "kind" "request"))
       (println "BODY:" (get m "body" ""))
       (when-not (str/blank? (get m "response" ""))
         (println "RESPONSE:" (get m "response")))

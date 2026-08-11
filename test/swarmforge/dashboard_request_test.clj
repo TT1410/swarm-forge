@@ -12,9 +12,10 @@
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (let [created (dashreq/create-request root {:kind "command" :body "Summarize status"})
+      (let [created (dashreq/create-request root {:body "Summarize status"})
             id (get-in created [:request "id"])]
         (is (:ok created))
+        (is (= "request" (get-in created [:request "kind"])))
         (is (fs/exists? (fs/path root ".swarmforge/dashboard/requests/pending" (str id ".request"))))
         (is (= 1 (count (dashreq/pending-requests root))))
         (write-file (fs/path root "answer.txt") "All clear.\n")
@@ -24,14 +25,17 @@
           (is (not (fs/exists? (fs/path root ".swarmforge/dashboard/requests/pending" (str id ".request")))))))
       (let [q (dashreq/create-request root {:kind "question" :body "What is blocked?"})
             qid (get-in q [:request "id"])]
+        (is (= "request" (get-in q [:request "kind"]))
+            "legacy kind is normalized to request")
         (write-file (fs/path root "empty.txt") "")
-        (let [bad (run {:dir root :ok? false}
-                       (script "squad_dashboard_request.sh") "answer" qid "empty.txt")]
-          (is (= 2 (:exit bad)))
-          (is (str/includes? (:err bad) "non-empty")))
-        (write-file (fs/path root "reason.txt") "not now")
-        (let [rej (run {:dir root} (script "squad_dashboard_request.sh") "reject" qid "reason.txt")]
-          (is (str/includes? (:out rej) "STATE: rejected"))))
+        (let [ack (run {:dir root} (script "squad_dashboard_request.sh") "answer" qid "empty.txt")]
+          (is (str/includes? (:out ack) "STATE: answered"))
+          (is (str/includes? (:out ack) "RESPONSE: Done")))
+        (let [q2 (dashreq/create-request root {:body "Another?"})
+              qid2 (get-in q2 [:request "id"])]
+          (write-file (fs/path root "reason.txt") "not now")
+          (let [rej (run {:dir root} (script "squad_dashboard_request.sh") "reject" qid2 "reason.txt")]
+            (is (str/includes? (:out rej) "STATE: rejected")))))
       (finally
         (fs/delete-tree root)))))
 
@@ -131,7 +135,10 @@
               state (slurp (str base-url "api/state"))
               list (slurp (str base-url "api/sl-requests"))]
           (is (str/includes? page "Squad Leader Requests"))
-          (is (str/includes? page "setKind('command')"))
+          (is (not (str/includes? page "setKind(")))
+          (is (not (str/includes? page "kind-command")))
+          (is (str/includes? page "selectionInside"))
+          (is (str/includes? page "updateRequestsPanel"))
           (is (str/includes? page "req-you"))
           (is (str/includes? page "req-sl"))
           (is (= 200 (:status create)))
@@ -159,7 +166,7 @@
                     web/socket-value (constantly "/tmp/x.sock")]
         (let [result (web/create-sl-request-action! root "legacy plain message")]
           (is (:ok result))
-          (is (= "command" (get-in result [:request "kind"])))
+          (is (= "request" (get-in result [:request "kind"])))
           (is (= "legacy plain message" (get-in result [:request "body"])))
           (is (seq (dashreq/pending-requests root)))))
       (finally
