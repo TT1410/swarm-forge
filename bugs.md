@@ -59,3 +59,15 @@
      merge outcome is already `merge_blocked`.
    - SL should not be stuck in recover ↔ next when recover state is unchanged
      (`delivered_handoff` / `live` + merge_blocked).
+
+4. **Investigate How To Get Grok Agent Windows To Scroll Properly**
+
+   Grok-backed agent sessions (tmux panes / agent windows) do not scroll in a
+   usable way for operators watching live work. Related to but broader than
+   dashboard agent-pane jitter (bug 1): the live Grok window itself needs a
+   workable scroll model (history, stick-to-bottom, no fight with the TUI).
+
+   Expected: investigate and document or fix how Grok agent windows should
+   scroll (tmux capture, terminal settings, Grok TUI behavior, dashboard pane
+   mirror, or another approach) so operators can review output without the
+   view fighting them.
