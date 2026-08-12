@@ -34,8 +34,9 @@
 - The Acceptance Pipeline Specification supplies `gherkin-parser` and `gherkin-mutator`; install or build those commands from that repository instead of reimplementing them in the project.
 - Prefer the Babashka APS tools for `gherkin-parser`, `gherkin-mutator`, and related APS support commands.
 - Use Go-based APS tools only if the Babashka APS tools do not work in the current project environment.
-- Project-specific acceptance pipeline components are the acceptance entrypoint generator, acceptance runtime, project step handlers, runner adapter, and convenience scripts.
-- Product scaffolds expose `bb acceptance` as the full suite command and as `gherkin-mutator --runner-worker`. Implementers own wiring those project components when features exist; hardeners/QA must not silently skip mutation or the suite when the runner is missing — hand back a blocker instead.
+- Project-specific acceptance pipeline components are the acceptance entrypoint generator, acceptance runtime, project step handlers, thin runner adapter, and convenience scripts (six-pack coder model). Prefer additive step modules over one mega runner file.
+- Product scaffolds expose `bb acceptance` as the full human suite and `bb acceptance-worker` as `gherkin-mutator --runner-worker` (NDJSON). Implementers own wiring those project components when features exist; hardeners/QA must not silently skip mutation or the suite when the runner is missing — hand back a blocker instead.
+- Do not document bare `bb acceptance` as the mutator worker command.
 - Gherkin acceptance mutation means running `gherkin-mutator` to mutate Gherkin example values.
 - Gherkin acceptance mutation runs must report periodic progress/status so agents can distinguish normal long-running work from a hang.
 

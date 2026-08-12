@@ -1,0 +1,25 @@
+;; Example project step handlers — copy to acceptance/steps/<story>.clj.
+;; Connect Gherkin step text to product behavior and assertions.
+;;
+;; Prefer regex-based parameter extraction for repeated step shapes that vary
+;; only by example values. Use separate literal handlers only when the wording
+;; represents genuinely different behavior.
+;;
+;; (ns acceptance.steps.example
+;;   (:require [clojure.string :as str]))
+;;
+;; (def handlers
+;;   [{"pattern" #"^the provider has no runtime dependency on (.+)$"
+;;     "fn" (fn [ctx [resource]]
+;;            ;; assert product behavior using resource
+;;            ctx)}
+;;    {"pattern" #"^each instruction page has a stable page id and ordered text lines$"
+;;     "fn" (fn [ctx _]
+;;            ctx)}])
+;;
+;; Register handlers with the acceptance runtime so suite and mutator worker
+;; share the same step layer (IR-bound mutations can kill).
+
+(binding [*out* *err*]
+  (println "Copy to acceptance/steps/<story>.clj and implement real handlers."))
+(System/exit 2)

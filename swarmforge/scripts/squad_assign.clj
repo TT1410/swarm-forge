@@ -471,7 +471,7 @@
                              :optional-tools (tools/optional-tools (:root context) (:template context))
                              :required-evidence (tools/required-evidence (:root context) (:template context))})))
 
-(defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now merge-for conflicting-template conflicting-agent conflicting-commit]}]
+(defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now merge-for batch-id conflicting-template conflicting-agent conflicting-commit]}]
   (str "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
        "scope: " scope "\n"
@@ -481,6 +481,8 @@
          (str "requires: " (:text requirement) "\n"))
        (when merge-for
          (str "merge_for: " merge-for "\n"))
+       (when (or batch-id (= "batch" story-id) (= "batch" scope))
+         (str "batch_id: " (or batch-id assignment-id) "\n"))
        (when conflicting-template
          (str "conflicting_template: " conflicting-template "\n"))
        (when conflicting-agent
@@ -1579,12 +1581,18 @@
                          :assignment-id new-assignment-id
                          :instructions-file instructions-file
                          :requirement (parse-requirement! requirement-text)})
-    (let [new-dir (assignment-dir root new-assignment-id)]
+    (let [new-dir (assignment-dir root new-assignment-id)
+          old-batch-id (or (read-value old-metadata "batch_id")
+                           (when (= "batch" story-id) old-assignment-id))]
       (append-file! (fs/path new-dir "metadata")
-                    (str "replaces: " old-assignment-id "\n"))
+                    (str "replaces: " old-assignment-id "\n"
+                         (when old-batch-id
+                           (str "batch_id: " old-batch-id "\n"))))
       (write-atomic! (fs/path new-dir "replaces")
                      (str "assignment_id: " new-assignment-id "\n"
                           "replaces: " old-assignment-id "\n"
+                          (when old-batch-id
+                            (str "batch_id: " old-batch-id "\n"))
                           "created_at: " now "\n"))
       (write-atomic! (fs/path old-dir "replacement")
                      (str "assignment_id: " old-assignment-id "\n"
@@ -1600,6 +1608,8 @@
                     (str now "\tsuperseded\t" new-assignment-id))
       (assignment-theme-event! root old-dir "superseded" old-assignment-id new-assignment-id)
       (println "REPLACES:" old-assignment-id)
+      (when old-batch-id
+        (println "BATCH_ID:" old-batch-id))
       (println "STATE: superseded"))))
 
 (defn exact-count! [args expected]

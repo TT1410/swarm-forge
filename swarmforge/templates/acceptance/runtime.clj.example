@@ -1,0 +1,20 @@
+;; APS acceptance runtime — copy to acceptance/runtime.clj and extend.
+;; Expands scenarios from JSON IR and dispatches each step to project handlers.
+;;
+;; Contract (see Acceptance-Pipeline-Specification acceptance-generator.md):
+;; - Load feature JSON IR (not raw .feature)
+;; - Run every scenario execution represented by the IR
+;; - Route steps via acceptance/steps handlers (regex captures by default)
+;; - Fail on unsupported step, invalid example, or failed assertion
+;;
+;; (require '[acceptance.steps.core :as steps]  ;; project handlers
+;;          '[cheshire.core :as json]
+;;          ...)
+;;
+;; (defn run-feature-ir! [feature-map] ...)
+;; (defn run-suite! [feature-paths] ...)
+;; (defn run-worker! [] ...)  ;; NDJSON stdin/stdout for gherkin-mutator
+
+(binding [*out* *err*]
+  (println "Replace acceptance/runtime.clj.example with acceptance/runtime.clj."))
+(System/exit 2)

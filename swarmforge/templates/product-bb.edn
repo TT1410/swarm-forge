@@ -2,15 +2,18 @@
 ;; Library and app deps live in deps.edn. Prefer task bodies under bb/tasks/.
 ;; Story agents should not edit this file unless the assignment is tooling/setup.
 ;;
-;; Canonical verification commands (handoff / gherkin-mutator --runner-worker):
-;;   bb test         — unit suite
-;;   bb acceptance   — full Gherkin acceptance suite (APS)
-;;   bb coverage     — LCOV for CRAP / clj-mutate (requires deps.edn :cov)
+;; Canonical verification commands:
+;;   bb test                 — unit suite
+;;   bb acceptance           — full Gherkin suite (human output; not mutator worker)
+;;   bb acceptance-worker    — APS gherkin-mutator --runner-worker (NDJSON)
+;;   bb coverage             — LCOV for CRAP / clj-mutate (requires deps.edn :cov)
 {:deps {app/root {:local/root "."}}
  :tasks
  {test {:doc "Run the project unit tests"
         :task (load-file "bb/tasks/test.clj")}
-  acceptance {:doc "Run the full Gherkin acceptance suite (APS runner-worker)"
+  acceptance {:doc "Run the full Gherkin acceptance suite (human output; not a mutator worker)"
               :task (load-file "bb/tasks/acceptance.clj")}
+  acceptance-worker {:doc "APS gherkin-mutator --runner-worker (NDJSON stdin/stdout)"
+                     :task (load-file "bb/tasks/acceptance_worker.clj")}
   coverage {:doc "Generate target/coverage/lcov.info for CRAP and mutation tools"
             :task (load-file "bb/tasks/coverage.clj")}}}

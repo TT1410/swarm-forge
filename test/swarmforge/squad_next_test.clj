@@ -1676,6 +1676,84 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest squad-next-projects-batch-result-from-replacement-assignment-batch-id
+  ;; Given batch members under original batch id, assignment replaced then merged (B32)
+  ;; When mechanical repair runs
+  ;; Then packets receive hardener_sha from the replacement assignment
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required hardening false\n")
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\ntheme_id: wumpus\n"
+                       "cleaner_sha: abcdef1234\ncode_review: accepted\ncode_review_sha: abcdef1234\n"
+                       "hardener_batch: wumpus-hardener\nhardener_batch_stage: code_reviewed\n"))
+      (write-file (fs/path root ".squad/batches/wumpus-hardener/metadata")
+                  "batch_id: wumpus-hardener\nkind: hardener\n")
+      (write-file (fs/path root ".squad/batches/wumpus-hardener/status")
+                  "batch_id: wumpus-hardener\nkind: hardener\nstate: closed\n")
+      (write-file (fs/path root ".squad/batches/wumpus-hardener/manifest.tsv")
+                  (str "story_id\tstage\tassignment_id\tbranch\tsha\tadded_at\n"
+                       "alpha\tcode_reviewed\talpha-review\tmaster\tabcdef1234\t2026-08-10T00:00:00Z\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-hardener/metadata")
+                  "assignment_id: wumpus-hardener\ntheme_id: wumpus\nstory_id: batch\ntemplate: hardener\n")
+      (write-file (fs/path root ".squad/assignments/wumpus-hardener/status")
+                  "state: superseded\ndetail: wumpus-hardener-r2\n")
+      (write-file (fs/path root ".squad/assignments/wumpus-hardener-r2/metadata")
+                  (str "assignment_id: wumpus-hardener-r2\ntheme_id: wumpus\nstory_id: batch\n"
+                       "template: hardener\nreplaces: wumpus-hardener\nbatch_id: wumpus-hardener\n"
+                       "assignment_file: " root "/h.md\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-hardener-r2/status")
+                  "assignment_id: wumpus-hardener-r2\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/wumpus-hardener-r2/accepted-merge")
+                  "merge_commit: bb22cc33dd\ncommit: bb22cc33dd\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
+        (is (str/includes? out "record_merged_batch_result"))
+        (is (str/includes? packet "hardener_sha: bb22cc33dd")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-second-merger-when-first-is-only-handoff-sent-merge-blocked
+  ;; Given merger-001 handoff_sent with merge_blocked assignment (B27)
+  ;; And another product assignment is merge_blocked
+  ;; When residual runs
+  ;; Then a new merger can be created (slot not monopolized)
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "merger-001\tmerger-001\t" root "/.worktrees/merger-001\tswarmforge-merger-001\tMerger 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/agents/merger-001/metadata")
+                  "template: merger\ntask_id: cave-impl-merge\n")
+      (write-agent-status! root "merger-001" "handoff_sent")
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge/metadata")
+                  (str "assignment_id: cave-impl-merge\ntheme_id: wumpus\nstory_id: cave\n"
+                       "template: merger\nmerge_for: cave-impl\nassignment_file: m.md\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl-merge/status")
+                  "state: merge_blocked\ndetail: dry-run failed\n")
+      (write-file (fs/path root ".squad/assignments/cleaner-impl/metadata")
+                  (str "assignment_id: cleaner-impl\ntheme_id: wumpus\nstory_id: cave\n"
+                       "template: cleaner\nassignment_file: c.md\n"))
+      (write-file (fs/path root ".squad/assignments/cleaner-impl/status")
+                  "state: merge_blocked\ndetail: dry-run failed\n")
+      (write-file (fs/path root "swarmforge/role-templates/merger.prompt") "Merge.\n")
+      (write-file (fs/path root "swarmforge/role-templates/merger.contract.edn")
+                  "{:handoff-targets [\"squad-leader\"]}\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (or (str/includes? out "create-merger")
+                (str/includes? out "TEMPLATE: merger")
+                (str/includes? out "request_spawn"))
+            "handoff_sent merge_blocked merger must not block next merger")
+        (is (not (and (str/includes? out "NEXT_ACTION: wait")
+                      (not (str/includes? out "merger"))))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squad-next-projects-batch-result-even-when-assignment-not-yet-merged
   ;; Durable batch result alone is enough to project onto member packets
   (let [root (tmp-dir)]

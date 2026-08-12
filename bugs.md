@@ -2,16 +2,15 @@
 
 Prioritized open issues. Priority is **impact on swarm correctness, operator unblock, and recurring defect classes** — not chronological discovery. Architecture debt and product/workflow defects share one list.
 
+**How to read priority**
+- **P1 — Fix before the next serious multi-story swarm.** Live deadlocks, false idle, invisible stuck state, merge hotspots, or hardener facilities that make quality gates fail.
+- **P2 — Important soon.** Operator UX, role contracts, theme gates, control-plane structure. Does not by itself freeze a running swarm the way P1 does.
+- **P3 — When capacity allows.** Polish, deep architecture, nice-to-have dashboard IA.
+
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
-| **P1** | B27 | Second merger blocked while first is only handoff_sent (awaiting finish/retire) | Workflow / FSM | Merger capacity |
-| **P1** | B26 | Single shared `acceptance/runner.clj` is a merge hotspot | Product architecture | APS / acceptance |
-| **P1** | B28 | Dashboard hides non-completed assignments (e.g. `merge_blocked` missing from list) | Reliability | Dashboard |
-| **P1** | B29 | When the swarm is stalled, the dashboard should explain why (usually stalled agents) | UX / design | Dashboard |
-| **P1** | B30 | Hardener cannot run Gherkin mutation reliably (wrong runner facilities / data shape) | Product quality | APS / hardener |
-| **P1** | B31 | Hardener quality bar not contracted (CRAP≤6, kill all mutants, reduce DRY) | Product quality | Role / hardener |
-| **P1** | B32 | Batch assignment replace breaks batch-id == assignment-id (results never projected) | Workflow / FSM | Batch / replace |
-| **P1** | B33 | Implementer acceptance model diverges from six-pack coder (no generate/step suite) | Product quality | APS / implementer |
+| **P2** | B31 | Hardener quality bar not contracted (CRAP≤6, kill all mutants, reduce DRY) | Product quality | Role / hardener |
+| **P2** | B29 | When the swarm is stalled, the dashboard should explain why (usually stalled agents) | UX / design | Dashboard |
 | **P2** | B10 | Dashboard answers truncate to first line of multiline response | Reliability | Dashboard IO |
 | **P2** | B09 | Operator unblock needs Troubleshooter (not SL) | Operator + arch | Roles / dashboard |
 | **P2** | B11 | Zombie tmux sessions after agent retire | Hygiene | Lifecycle |
@@ -33,172 +32,30 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 **Fixed (removed):**
 - P0 B01–B04 (rework thrash, held handoff, impl-order gate, spawn HOL)
 - prior P1 B05–B08 (APS acceptance pipeline + templates; coverage before CRAP/mutate; full acceptance suite before late-role handoff; safe `file-map` TOCTOU)
+- **P1 B26–B28, B30, B32, B33** (dashboard terminal deny-list; batch replace re-links `batch_id` and projects results; merger slot ignores `handoff_sent`+`merge_blocked`; six-pack APS templates + implementer model; hardener/tool-table mutator worker `bb acceptance-worker`)
 
-**Suggested fix order:**
-1. **P1:** **B28** show non-completed assignments → **B29** stall explanation → **B32** batch replace ↔ result projection → **B33** implementer APS = six-pack coder model → **B26** split/modular runner → **B30** Gherkin mutator facilities → **B31** hardener quality bar → **B27** free merger slot.
-2. **P2 operator/hygiene:** B10 → B09 → B11 → B12.
-3. **P2 workflow design:** B25 (approve order + dependency-checker) → B23 (theme finalize).
-4. **P2 architecture foundation:** B17 → B18 → B16 → B19 (incremental; do not block P1).
-5. **P3:** B13–B15, B24, B20–B22.
+**Suggested fix order**
+
+1. **P2 hardener contract / operator:** **B31** → **B29** → **B10** → **B09** → **B11** → **B12**.
+2. **P2 workflow design:** **B25** → **B23**.
+3. **P2 architecture foundation (incremental):** **B17** → **B18** → **B16** → **B19**.
+4. **P3:** **B13**–**B15**, **B24**, **B20**–**B22**.
 
 **Related clusters**
 
 | Cluster | Bugs | Note |
 |---------|------|------|
-| Live stuck swarm (2026-08-12) | **B27**, **B26**, **B28**, **B29**, **B32** | Merger deadlock + runner hotspot + hidden assignment state + no stall explanation + **batch replace orphans results** |
-| Informal file state | B10, B22 | Multiline truncate; B22 systemic |
-| Control plane structure | B16, B17, B18, B19 | Ownership, typed ops, planner split, priority policy |
-| Concurrency / multi-write | B20, B21 | Leases + explicit transition persistence |
-| Operator path | B09, B16 | Troubleshooter + unreachable unsafe ops from SL |
-| Theme lifecycle | B23 | Open / shipped / extend without lockout |
-| Theme architecture gates | B13, B14, B25 | Policy content, UI cards, user approval of order + checker |
-| APS / acceptance layout | **B33**, B26, **B30** | Implementer must follow six-pack coder pipeline (generate + steps); not one mega runner; mutator needs worker protocol |
-| Hardener quality bar | **B31**, B30, B12 | Contract must require CRAP≤6, kill all code+Gherkin mutants, reduce DRY; facilities + no root tooling thrash |
-| Batch / replace linkage | **B32** | Mechanical record assumes batch-id == assignment-id; replace orphans members |
-| Merger / merge recovery | B27 | Singleton slot stuck on finished-but-not-retired merger |
-| Dashboard UX | B28, B29, B10, B14, B24 | Missing states, **stall diagnosis**, truncate, cards, IA |
-| Dependency-checker | B13, B14, B25 | Author, display, and approve |
+| Hardener / quality gates | **B31**, B12 | CRAP/mutants/DRY bar; no root tooling thrash |
+| Dashboard / operator | **B29**, B10, B09, B14, B24 | Stall reason, answers, troubleshooter, IA |
+| Theme gates | B25, B23, B13, B14 | Approve order/checker; finalize; analyst policy; theme card |
+| Control plane | B16, B17, B18, B19, B20, B21 | Ownership, typed ops, planner split, priority, leases, transitions |
+| Informal state | B10, B22 | Multiline + durable formats |
 
 Source notes for B16–B22: `architecture-improvements.md` (review findings folded in and re-prioritized).
 
 ---
 
-## P1 — Active pipeline blockers (fix first)
-
-### B28 — Dashboard hides non-completed assignments (e.g. `merge_blocked` missing from list)
-
-**Symptom:** Assignments in important non-terminal states such as **`merge_blocked`** (and likely others not on an allow-list) **do not appear** in the dashboard Assignments table. On disk, `.squad/assignments/<id>/status` correctly has `state: merge_blocked` and detail `dry-run merge failed`. Operators only see agents as `handoff_sent` / “waiting,” with no assignment row explaining the block. Live stuck swarm (2026-08-12): hardener, merger, and cleaner were merge_blocked for hours without showing in Assignments.
-
-**Cause:** `squadd/web.clj` filters with an **allow-list** of “web-active” states:
-
-```clojure
-#{"created" "assignment_created" "in_progress" "handoff_sent"
-  "result_received" "merge_ready" "blocked"}
-```
-
-**`merge_blocked` is omitted.** The filter is inverted from what operators need: it keeps a few in-flight names and drops everything else (including stuck states). Blockers panel also does not treat plain `merge_blocked` as a blocker unless a durable `blocker` file exists.
-
-**Expected:**  
-1. **Only completed / terminal assignments are filtered out** of the active Assignments list. Terminal means truly finished for display purposes (e.g. `merged`, `rejected`, `superseded`, `replacement_created`, `retired` — align with `terminal-assignment-states` in `squad_next` / product semantics, not a partial allow-list).  
-2. All non-completed states remain visible, including **`merge_blocked`**, `merge_ready`, `in_progress`, `handoff_sent` (if used on assignments), durable `blocked`, etc.  
-3. `merge_blocked` should be **easy to spot** (state column, detail, and/or Blockers section with merge-error summary).  
-4. Optional: completed assignments available under a separate “History” / toggle, not mixed into the active list.
-
-**Solution direction:**  
-- Replace `web-active-assignment-states` allow-list with a **terminal deny-list** (or `not (contains? terminal-states state)`).  
-- Surface `detail` / merge-error snippet for merge_blocked rows.  
-- Optionally add merge_blocked to blocker-state without requiring a separate blocker file.  
-- Test: create assignment with `merge_blocked`; dashboard JSON/API includes it; `merged` assignment is excluded from default active list.
-
-**Priority rationale (P1):** Operators cannot diagnose or unblock stuck swarms if the decisive assignment state is invisible; hid B27 for hours.
-
-**Where:** `swarmforge/scripts/squadd/web.clj` (`web-active-assignment-states`, `assignment-state`, Assignments table render, `blocker-state`).
-
-**Related:** B27, B26, B29, B10, B24.
-
----
-
-### B29 — When the swarm is stalled, the dashboard should explain why (usually stalled agents)
-
-**Symptom / gap:** When residual is effectively stuck (`wait` with agents “active” for hours, merge_blocked, held handoffs, capacity deadlock), the **dashboard does not tell the operator why**. Status looks like ordinary busyness: agents in `handoff_sent`, empty or incomplete Assignments (B28), no prominent “stalled” signal. Operators must dig into disk, merge-error files, held inbox, and `squad_next` by hand. Live example: multi-hour wait while hardener/merger/cleaner were merge_blocked; UI never surfaced “merge conflict on acceptance/runner.clj” or “singleton merger slot held by handoff_sent.”
-
-**Design need (open — prefer clarity over a specific chrome):**
-
-Most stalls are **one or more agents not making progress**. The dashboard should make that obvious and attach a **human-readable reason**.
-
-**Candidate UX (not mandatory):**
-- Mark stalled agents (e.g. **red** / warning pill) when quiet beyond recovery threshold, assignment is `merge_blocked`, handoff held, dirty checkout blocked merge, etc.
-- **Hover or click** shows a short reason (from assignment `detail`, `merge-error` summary, held-handoff note, recovery classification).
-- Optional top **“Swarm health”** strip: “Stalled: 3 agents” with the same reasons listed.
-
-**Better ideas welcome** if red+hover is wrong for density (e.g. dedicated Stall panel, sticky blocker list, residual-reason mirrored on the page). Goal is: **open dashboard → know why nothing moves**, without shell archaeology.
-
-**Expected:**  
-1. Define “stalled” operationally (quiet time, merge_blocked, held handoff, failed merge, no ready residual progress, etc.).  
-2. Surface stalled agents and/or assignments with **state + reason** derived from existing status/merge-error/held data.  
-3. Do not rely only on agent `handoff_sent` (looks healthy).  
-4. Align with B28 (show merge_blocked rows) and B24 (IA so “needs you / stalled” outranks noise).
-
-**Solution direction:**  
-- Extend status API with `stalled?` / `stall_reason` per agent/assignment.  
-- UI treatment TBD (color, hover, panel).  
-- Prefer reusing assignment `detail` and first lines of merge-error over inventing new files when possible.
-
-**Priority rationale (P1):** Same stuck swarm was undiagnosable from the dashboard; visibility is part of unblocking.
-
-**Where:** `squadd/web.clj` status JSON + agents/assignments UI; agent quiet/recovery signals; assignment status + merge-error; optional residual “wait” reason export.
-
-**Related:** B28 (show merge_blocked), B27, B26, B30, B24, B09 (troubleshooter).
-
----
-
-### B30 — Hardener cannot run Gherkin mutation reliably (wrong runner facilities / data shape)
-
-**Symptom:** Hardener is required to run `gherkin-mutator` with `--runner-worker` (assignment Tool Startup / Verification Prerequisites). In live product work the mutator either fails immediately or reports mass **errors**, not kills/survives:
-
-- Default/placeholder feature path (`features/a-feature.feature` missing).  
-- After pointing at a real feature, run completes with e.g. `killed=0 survived=0 errors=155` (“Stream closed”) when worker is **`bb acceptance`**.  
-- Hardener then stalls for minutes in agent “thinking” while diagnosing protocol mismatch—no long-running mutator process; verification already failed.
-
-Live (Hunt the Wumpus, hardener-002): coverage + `bb acceptance` suite can pass; **gherkin mutation does not**. A successful mutator **manifest** exists only on `instructions-content.feature` (hardener-001 era); other features lack kill reports; `terminal-text-ui` got an empty scenarios manifest after the error run.
-
-**Cause:** Product acceptance facilities / **assignment guidance** are the wrong **shape** for the mutator:
-
-1. **`bb acceptance` is a human full-suite command** (prints scenario results, exits).  
-2. **`gherkin-mutator` expects a persistent NDJSON worker protocol** (runner-worker): one job per stdin line, one JSON response per stdout line (`outcome` ∈ `test_failure` | `test_success` | `infrastructure_error`); diagnostics on stderr only.  
-3. Assignment text steered hardeners to `--runner-worker "bb acceptance"`, which **looks** correct after APS wiring (B05) but is **protocol-wrong**.  
-4. Mega `acceptance/runner.clj` (B26) mixes suite + worker; worker path was easy to miss.
-
-**Learned (live debug, Hunt the Wumpus 2026-08-12):**
-
-1. **Worker mode already existed** inside `acceptance/runner.clj`: `(if (some #{"--worker"} *command-line-args*) (run-worker!) (run-suite!))` with `run-worker-job` / NDJSON. The facility was not missing entirely—it was **unadvertised and unused**.  
-2. **Wrong command was the main failure:** `gherkin-mutator … --runner-worker "bb acceptance"` → suite prints human text and exits → mutator sees **Stream closed** / mass `errors` (not kills). Process check: when hardener “waited 6–12 min,” **no** `gherkin-mutator` process was running—only Codex thinking after the failed run.  
-3. **Correct worker invocation (proven):**
-   ```bash
-   gherkin-mutator --feature features/instructions-content.feature \
-     --runner-worker "bb acceptance-worker" \
-     --workers 4
-   # also: bb acceptance -- --worker
-   ```
-   Smoke run produced real **killed** lines (topic/warning/excluded-addition mutations).  
-4. **IR-bound vs health-only:** `run-feature-json!` was built around **instructions-content** (example tables drive assertions → kills). Other features (e.g. terminal-text-ui) lack IR-sensitive handlers; a worker that only re-runs suite-health will **not** kill example-value mutations (false survives). Prefer instructions-content for hardener kill evidence until full step/runtime binding exists.  
-5. **Manifests as evidence:** Successful mutator leaves `# mutation-stamp` + `# acceptance-mutation-manifest-begin/end` in the feature file. Master had a full kill report only on `instructions-content.feature` (`tested_at` during hardener-001). hardener-002 left an empty `scenarios:[]` manifest on `terminal-text-ui` after the error run.  
-6. **Partial product fix landed** on product master (`d602c9f` and follow-ups in product tree): `bb acceptance-worker` task, `bb/tasks/acceptance_worker.clj`, `acceptance/MUTATOR_WORKER.md`, worker path clarity in `runner.clj`. SwarmForge **tool-table / hardener assignment text still say** `--runner-worker "bb acceptance"` and must be updated so the next hardener does not re-learn this.  
-7. **Templates / constitution** should ship the worker task and never document suite command as mutator worker.
-8. **Residual confirmed on hardener restart (2026-08-12, hardener-003 / `hunt-the-wumpus-hardener-r4`):** Product worker is present on master, and operator Leader Instructions + live session kick correctly require `--runner-worker "bb acceptance-worker"`. But **auto-generated assignment sections still contradict that**:
-   - Hardener **Verification Prerequisites** (from `swarmforge/tool-table.edn` + `squad_tool_table.clj` `verification-instructions`) still say run gherkin-mutator with `--runner-worker` pointing at the project acceptance command, **typically `bb acceptance`**.
-   - Canonical project commands block in generated assignments still documents:  
-     `` `bb acceptance` — full Gherkin acceptance suite; also `gherkin-mutator --runner-worker "bb acceptance"` ``
-   - `hardener.prompt` / role contract still list `--runner-worker "bb acceptance"` under Gherkin acceptance mutation.
-   - `templates/product-bb.edn` still documents `bb acceptance` as the APS runner-worker.
-   So every new hardener assignment **re-injects the wrong default** unless the operator overrides in Leader Instructions / pane paste. Fix is SwarmForge-side: tool-table prereqs, canonical command blurb, hardener prompt/contract, product-bb template — all must name `bb acceptance-worker` (or `bb acceptance -- --worker`) for mutator and keep bare `bb acceptance` for the human suite only.
-
-**Expected:**  
-1. Product exposes a **documented mutator worker command** (`bb acceptance-worker`) that speaks the APS runner-worker protocol.  
-2. Hardener Tool Startup / tool-table / constitution name **that** command for `gherkin-mutator --runner-worker`, not bare `bb acceptance`.  
-3. `bb acceptance` remains the full human suite for handoff verification; mutator uses the worker.  
-4. Hardener can produce real manifests (kills/survives) on features under test, or hand back a clear **blocker** if worker facilities are missing—without thrashing or silent skip.  
-5. Templates ship worker adapter + docs; IR-bound checks for more features over time (or explicit “survives until bound” policy).  
-6. Optional preflight: one NDJSON smoke job before a full mutator pass.
-7. Generated assignments must **not** dual-document conflicting runners; auto text and operator overrides should agree.
-
-**Solution direction:**  
-- Product: keep/expand `acceptance-worker` + IR handlers per feature (B26 modular layout helps).  
-- SwarmForge: fix tool-table verification prerequisites and hardener evidence text to `bb acceptance-worker`.  
-  - `swarmforge/tool-table.edn` hardener (and any other role) lines that say typically `` `bb acceptance` `` for mutator.  
-  - `squad_tool_table.clj` canonical commands blurb (suite vs mutator worker as two bullets).  
-  - `role-templates/hardener.prompt` (+ contract if needed).  
-  - `templates/product-bb.edn` comments/task docs: suite ≠ worker.  
-- Optional: hardener preflight that fails fast if worker is not NDJSON.  
-- Align with B26.
-
-**Priority rationale (P1):** Hardener quality gate fails or wastes long agent turns without correct worker wiring; assignment text currently misleads even after product worker exists.
-
-**Where:** product `acceptance/` + `bb/tasks/` + `bb.edn`; APS `mutator-spec.md` worker protocol; `swarmforge/tool-table.edn` verification prerequisites; `swarmforge/scripts/squad_tool_table.clj` canonical blurb; `swarmforge/role-templates/hardener.prompt`; `swarmforge/templates/product-bb.edn`; hardener assignment generation; live hardener-001/002/003 (r2 blocked zombie, r4 operator override).
-
-**Related:** B26 (single runner), P1 B05 (suite command wired ≠ worker), hardener required evidence `gherkin_mutation`, **B31** (quality thresholds once tools run).
-
----
+## P2 — Operator UX, hardener contract, workflow, architecture foundation
 
 ### B31 — Hardener quality bar not contracted (CRAP≤6, kill all mutants, reduce DRY)
 
@@ -243,7 +100,7 @@ Also:
 - Optionally teach residual/SL not to advance `hardening_approved` on evidence that only proves tools ran.  
 - Correct dry4clj vs deintroverter wiring in tool-table/install.
 
-**Priority rationale (P1):** Without this bar, “hardening complete” can mean “tools executed” while high CRAP, surviving mutants, and duplication remain — false quality gate for the whole theme.
+**Priority rationale (P2):** Without this bar, “hardening complete” can mean “tools executed” while high CRAP, surviving mutants, and duplication remain — false quality gate for the whole theme. Demoted from P1: role-contract gap; pair with B30 facilities, not a control-plane deadlock.
 
 **Where:** `swarmforge/role-templates/hardener.prompt`, `hardener.contract.edn`, `swarmforge/tool-table.edn` (hardener role + dry4clj install), assignment generation / required evidence; contrast `cleaner.prompt`; live hardener handoffs that report runs without thresholds.
 
@@ -251,99 +108,45 @@ Also:
 
 ---
 
-### B32 — Batch assignment replace breaks batch-id == assignment-id (results never projected)
-
-**Symptom / gap:** After a **batch** assignment (hardener / QA / architecture) is **replaced** (or otherwise recreated under a new assignment id), the replacement can **merge successfully** while the swarm goes fully **idle**: residual reports
-
-```text
-NEXT_ACTION: wait
-REASON: no handoffs, pending approvals, active transient agents, or stale locks
-```
-
-even though member stories still lack `hardener_sha` / equivalent result fields and never advance (no hardening approval, no QA batch, etc.).
-
-Live (Hunt the Wumpus, 2026-08-12):
-
-1. Batch **`hunt-the-wumpus-hardener-r2`** closed with 6 member stories; assignment r2 blocked (zombie hardener-002).  
-2. Operator **`squad_assign.sh replace`** → **`hunt-the-wumpus-hardener-r4`** (same theme/scope batch, `replaces: r2`).  
-3. hardener-003 finished; r4 **merged** (`b69df9d3e2` / merge commit on master); agent retired.  
-4. Residual pure wait. Packets still `code_review_approved` with `hardener_batch: hunt-the-wumpus-hardener-r2`, `hardener_review_state: batched`, **no** `hardener_sha`.  
-5. Batch r2 status: `closed`, **RESULT: none**. Open r3 (one story) same class of orphan.
-
-**Secondary symptom (post-unstick race, same day):** Operator projected r4’s SHA onto r2/r3 members and marked batches complete so the pipeline could advance. Mechanical next then still **created/spawned `hunt-the-wumpus-hardener-r3` / hardener-004** against a batch that already had a result and whose member stories already had `hardener_sha`. Theme ran through QA → architecture → **all stories `final_approved`** while hardener-004 kept working (dry analysis / handoff prep). Residual only reported “active agents still working” — it never said “batch already complete / stories past hardening / theme final.” Operator had to **block + retire** the redundant hardener.
-
-**Cause:** Mechanical bookkeeping assumes **batch-id == assignment-id**:
-
-- `batch-result-record-candidates` walks `batch-manifest-rows root (:assignment-id assignment)` — members live under the **original** batch id.  
-- Merged **replacement** assignment has a **new** id → looks for a batch named `…-r4` (missing / empty) → **no** `record_merged_batch_result`.  
-- Original assignment is `superseded` / not `merged` → `batch-result-available?` false until someone writes a batch `result` file by hand.  
-- `batch-complete` / story transitions that depend on projected `hardener_sha` never fire.  
-- Residual has nothing in inbox, no active agents, no approvals pending → **false “nothing to do”** (pairs with B29: stall reason should name stranded batches).  
-- **Inverse race:** create-batch / queue-spawn / residual do not gate on “members already have result SHA,” “batch already complete,” or “stories already past hardening / final.” So unstick projection + late spawn leaves a **zombie batch agent** after the theme is done.
-
-`squad_assign.sh replace` only creates the new assignment + supersedes the old; it does **not** re-link batch metadata, rewrite `active-batches/*`, or retarget mechanical record commands.
-
-**Expected:**
-
-1. Replacing a **batch** assignment either:  
-   - **keeps** assignment-id == batch-id (restart in place / reopen assignment on same id), **or**  
-   - **re-links** the batch to the replacement (batch metadata `assignment_id`, manifest, story `hardener_batch` / active-batch pointers) and teaches mechanical paths to follow `replaces` / `replacement` edges.  
-2. When a replacement batch assignment **merges**, automatic `record_merged_batch_result` (or equivalent) projects the result SHA onto **all original batch members**, then batch complete + downstream approvals/QA can run without operator surgery.  
-3. Residual / stall UX (B29) must **not** report empty wait when closed batches have members without result fields while a replacement assignment is merged (or superseded lineage has a merged child).  
-4. **Do not create/spawn** a batch assignment (and **cancel / refuse spawn** if already in flight) when: batch state is already `complete` / `result_received` with a result SHA, **or** all members already have the kind’s result field (`hardener_sha` etc.), **or** members have advanced past that gate (e.g. hardening approved / final). Residual should surface **retire obsolete batch agent** instead of only “wait on active agents.”  
-5. Operator docs: do not recommend bare `replace` for batch hardeners until this is fixed; prefer recovery that preserves id linkage.
-
-**Solution direction:**
-
-- Prefer: `replace` for batch-scope assignments **forbids** id change, or creates replacement under **same** id after terminalizing the old attempt.  
-- Or: store `batch_id` on assignment metadata distinct from `assignment_id`; all batch mechanical candidates use `batch_id`.  
-- Or: on merge of assignment with `replaces: <old-batch-id>`, project results using old batch manifest.  
-- Emit residual candidate: “merged batch replacement needs result projection” when linkage is broken.  
-- Gate `create-batch` / spawn / batch-ready candidates on member result presence and story stage; if assignment is `in_progress` but batch/members already satisfied, residual offers **block/retire** (or auto-retire policy).  
-- Tests: (a) create-batch → block → replace with new id → merge → expect member packets to gain `hardener_sha` and next QA batch without manual `squad_packet.sh record` / `squad_batch.sh result`. (b) batch complete + member SHAs present → no further hardener create/spawn; if agent still running, residual directs retire.
-
-**Priority rationale (P1):** Successful hardener work can land on master while the whole theme stalls indefinitely with residual claiming idle — high-impact false idle; operator unstick required every time replace is used on batch roles. The inverse race wastes a full hardener turn (and risks noisy late merges) after the theme is already final.
-
-**Where:** `squad_assign.clj` `replace-assignment!`; `squad_next.clj` `batch-result-record-candidates`, `batch-complete-candidate`, `batch-result-available?`, `batch-manifest-rows`, batch create/spawn readiness; batch records under `.squad/batches/`; story packets `hardener_batch` / `*_sha`; live r2/r4 hardener restart + hardener-004 after final_approved 2026-08-12.
-
-**Related:** B29 (stall explain), B27 (false active / empty ready), B09 (operator/troubleshoot path), batch create/complete lifecycle.
+---
 
 ---
 
-### B27 — Second merger blocked while first is only handoff_sent (awaiting finish/retire)
+---
 
-**Symptom / gap:** When a merger agent has finished its attempt and is only waiting for handoff completion / retirement (often `handoff_sent`, assignment already `merge_blocked` or otherwise no longer “working”), the swarm still treats the **merger template as active**. `merger-candidates` short-circuits:
+---
 
-```clojure
-(if (active-template? agents "merger")
-  []   ;; no create/spawn for any other merge recovery
-  …)
-```
+### B29 — When the swarm is stalled, the dashboard should explain why (usually stalled agents)
 
-So **no second merger can start** — not a nested `-merge-merge` on the failed lineage, and not a merger for a different merge_blocked assignment (e.g. cleaner) — until the first merger agent is fully cleared from the active set.
+**Symptom / gap:** When residual is effectively stuck (`wait` with agents “active” for hours, merge_blocked, held handoffs, capacity deadlock), the **dashboard does not tell the operator why**. Status looks like ordinary busyness: agents in `handoff_sent`, empty or incomplete Assignments (B28), no prominent “stalled” signal. Operators must dig into disk, merge-error files, held inbox, and `squad_next` by hand. Live example: multi-hour wait while hardener/merger/cleaner were merge_blocked; UI never surfaced “merge conflict on acceptance/runner.clj” or “singleton merger slot held by handoff_sent.”
 
-Live (Hunt the Wumpus, 2026-08-12): `merger-003` sat `handoff_sent` for hours after dry-run merge failed; handoff in `inbox/held/`; residual only `wait` on “active agents”; `ready-actions` and merger candidates both empty even though other merge_blocked work needed recovery.
+**Design need (open — prefer clarity over a specific chrome):**
+
+Most stalls are **one or more agents not making progress**. The dashboard should make that obvious and attach a **human-readable reason**.
+
+**Candidate UX (not mandatory):**
+- Mark stalled agents (e.g. **red** / warning pill) when quiet beyond recovery threshold, assignment is `merge_blocked`, handoff held, dirty checkout blocked merge, etc.
+- **Hover or click** shows a short reason (from assignment `detail`, `merge-error` summary, held-handoff note, recovery classification).
+- Optional top **“Swarm health”** strip: “Stalled: 3 agents” with the same reasons listed.
+
+**Better ideas welcome** if red+hover is wrong for density (e.g. dedicated Stall panel, sticky blocker list, residual-reason mirrored on the page). Goal is: **open dashboard → know why nothing moves**, without shell archaeology.
 
 **Expected:**  
-1. A merger that has **handed off** and is only waiting for held-finish / retire must **not** monopolize the singleton merger slot for *new* recovery work.  
-2. Either:
-   - **Free the template slot** when state is effectively terminal for capacity purposes (`handoff_sent` + assignment `merge_blocked` / held handoff / no further product work), **or**  
-   - **Finish/retire that merger promptly** so the slot frees, **or**  
-   - Allow **one recovery merger create** even when a prior merger is `handoff_sent` if that prior agent is only awaiting cleanup (not `running` / not mid-merge).  
-3. Prefer not leaving operators with pure `wait` while merge recovery is the real need.
+1. Define “stalled” operationally (quiet time, merge_blocked, held handoff, failed merge, no ready residual progress, etc.).  
+2. Surface stalled agents and/or assignments with **state + reason** derived from existing status/merge-error/held data.  
+3. Do not rely only on agent `handoff_sent` (looks healthy).  
+4. Align with B28 (show merge_blocked rows) and B24 (IA so “needs you / stalled” outranks noise).
 
 **Solution direction:**  
-- Tighten `active-template?` / capacity counting for merger: exclude agents whose assignment is merge_blocked and handoff is held/completed-pending, or treat `handoff_sent`+merge_blocked as non-capacity for singleton.  
-- Or: mechanical path must finish held handoff / retire merge_blocked mergers so slot frees (pairs with held-finish P0 B02 — may still leave merge_blocked agents unretirable without completed path).  
-- Residual: when open merger is only handoff_sent and merge_blocked, surface create next merger or retire_agent instead of wait.  
-- Tests: two merge_blocked lineages; first merger handoff_sent → second merger create/spawn still offered.
+- Extend status API with `stalled?` / `stall_reason` per agent/assignment.  
+- UI treatment TBD (color, hover, panel).  
+- Prefer reusing assignment `detail` and first lines of merge-error over inventing new files when possible.
 
+**Priority rationale (P2):** Same stuck swarm was undiagnosable from the dashboard; visibility is part of unblocking. Demoted from P1: diagnosis UX; fix B28 first for assignment visibility.
 
-**Priority rationale (P1):** Live multi-hour stuck swarms; residual only `wait` while merge recovery is blocked — same severity class as former P0 pipeline deadlocks.
+**Where:** `squadd/web.clj` status JSON + agents/assignments UI; agent quiet/recovery signals; assignment status + merge-error; optional residual “wait” reason export.
 
-**Where:** `squad_next.clj` `merger-candidates`, `active-template?`, capacity/singleton accounting; retirement/held-finish for merge_blocked; live `merger-003` + empty merger candidates.
-
-**Related:** B26 (why merges keep failing on one file); fixed P0 held handoff finish; max_merger_depth / durable merge blockers.
+**Related:** B28 (show merge_blocked), B27, B26, B30, B24, B09 (troubleshooter).
 
 ---
 
@@ -351,101 +154,9 @@ Live (Hunt the Wumpus, 2026-08-12): `merger-003` sat `handoff_sent` for hours af
 
 ---
 
-### B26 — Single shared `acceptance/runner.clj` is a merge hotspot
-
-**Symptom / gap:** Product acceptance is wired as **one** shared file, typically `acceptance/runner.clj` (loaded by `bb acceptance` / `gherkin-mutator --runner-worker`). Every story that extends acceptance tends to **edit that same file** (new feature flags, requires, step helpers, scenario checks). Parallel implementers, cleaners, and hardeners all touch it. Git then reports:
-
-```text
-CONFLICT (content): Merge conflict in acceptance/runner.clj
-```
-
-Live example (Hunt the Wumpus, 2026-08-12): hardener and then merger both dry-run-failed on `acceptance/runner.clj` because master already held a large multi-feature runner while the hardener branch carried a divergent rewrite focused on instructions. Agents sat `merge_blocked` / `handoff_sent` for hours; singleton merger slot stayed occupied (see stuck-swarm diagnosis).
-
-This is not only “unlucky concurrent edits.” A **single monolithic runner** forces cross-story contention on one blob even when intents compose (add more scenarios).
-
-**Expected:**  
-1. **Thin shell** `acceptance/runner.clj` (or task body) that discovers and runs story/feature modules — rarely needs content merges.  
-2. **Story- or feature-owned modules** (e.g. `acceptance/steps/<story>.clj`, per-feature entrypoints, or APS-generated entrypoints) so new work is usually a **new file**.  
-3. Product templates and implementer/hardener guidance: prefer extending via new modules, not rewriting the shared runner.  
-4. Optional: mechanical/layout check that flags runaway growth of a single runner file during review/hardening.
-
-**Solution direction:**  
-- Refactor product APS layout: dispatcher + pluggable step/feature modules (align with APS generator/runtime/handlers).  
-- Update `swarmforge/templates` acceptance scaffold and role prompts so agents don’t treat one runner as the only place for new acceptance logic.  
-- Constitution / implementer notes: shared runner edits are high-conflict; prefer additive files.
-
-
-**Priority rationale (P1):** Structural product layout that repeatedly forces content conflicts and merge_blocked storms on multi-story themes; feeds B27.
-
-**Where:** product `acceptance/`; `bb/tasks/acceptance.clj`; APS templates; implementer/hardener guidance; live Wumpus `acceptance/runner.clj` (~multi-story megafile).
-
-**Related:** **B33** (implementer should build generator/runtime/steps, not grow mega runner); P1 APS wiring (B05 fixed for commands); B27 (merger slot stuck after conflict); B12/root tooling fights are a similar “everyone edits the same file” pattern.
-
 ---
 
-### B33 — Implementer acceptance model diverges from six-pack coder (no generate/step suite)
-
-**Symptom / gap:** Live products (e.g. Hunt the Wumpus) treat acceptance as **one imperative Clojure program** (`acceptance/runner.clj` + thin `bb acceptance` / `bb acceptance-worker` loaders): feature-presence checks, hand-coded `assert-true` blocks, and only partial IR binding for mutation. That is **not** how the six-pack **coder** is instructed to treat acceptance, and not full APS.
-
-**Six-pack coder contract** (`six-pack` branch, `swarmforge/roles/coder.prompt`) — implementer should match this:
-
-1. At startup, ensure APS pipeline tools (`gherkin-parser`; do not reimplement the parser).  
-2. Build **project-specific** components: **acceptance entrypoint generator**, **acceptance runtime**, **step handlers**, normal acceptance scripts.  
-3. Step handlers: **regex-based parameter extraction by default** for repeated step shapes; separate literal handlers only when wording is genuinely different behavior.  
-4. **Running acceptance** means: run `gherkin-parser` → run project entrypoint generator → run the **generated executable tests** (project test-runner style).  
-5. Keep **generated acceptance tests separate from unit tests**.  
-6. Still **TDD with unit tests**; do **not** use generated acceptance as a substitute for units.  
-7. Does not own QA suite / language mutation / CRAP / DRY / Gherkin mutation (those stay cleaner/hardener/etc.).
-
-APS normal run (same intent):
-
-```text
-feature → gherkin-parser → JSON IR → entrypoint generator
-  → generated test entry points → project test runner
-  (runtime + step handlers)
-```
-
-**What squad implementer + product do today:**
-
-| Expectation (six-pack coder / APS) | Live implementer outcome |
-|------------------------------------|---------------------------|
-| Generator + generated entrypoints | No (or unused) generator; no per-feature generated tests |
-| Runtime dispatches steps | One `run-suite!` procedural body |
-| Step handlers (regex captures) | Ad-hoc asserts; little reusable step layer |
-| Features drive execution | Features often only **presence-checked** or re-encoded in runner |
-| Suite-like failures per scenario/example | Single process, exit codes, `ACCEPTANCE_PASS: …` prints |
-| Units via TDD + separate acceptance | Units exist; acceptance is a second monolithic program |
-| Additive story files | Everyone edits **`acceptance/runner.clj`** (B26) |
-
-`implementer.prompt` *names* generator/runtime/step handlers when the suite is missing, but scaffolds and practice steer to **`bb acceptance` + one runner file**, and still document that command as the mutator worker target (conflicts with B30). Agents “make acceptance pass” by extending the mega program, not by installing the six-pack pipeline.
-
-**Expected:**
-
-1. **Implementer role** (prompt, contract, constitution, tool-table, templates) requires the **six-pack coder acceptance model**: parser → generator → generated tests + runtime + step handlers.  
-2. Product scaffold ships thin shells and extension points (per-feature/step modules, generator hook), not a growing god-runner.  
-3. `bb acceptance` runs the **generated** suite (or discovers generated entrypoints); worker mode evaluates IR through the **same step runtime** (B30).  
-4. New story work prefers **new step/feature modules + regenerate**, not rewrite of shared runner body.  
-5. Implementer still owns focused unit TDD; acceptance does not replace units.  
-6. Alignment with B26 (modular layout) and B30 (mutator worker); B31 hardener quality depends on IR-bound steps actually killing mutants.
-
-**Solution direction:**
-
-- Port/adapt six-pack `coder.prompt` acceptance section into squad **`implementer.prompt` / contract** (and constitution engineering APS bullets) so the duty is explicit and not optional “if missing.”  
-- Replace `swarmforge/templates` acceptance scaffold: entrypoint generator stub, runtime, step-handler convention, generated-test output dir, suite runner that executes generated tests.  
-- Prefer regex step handlers as default (as six-pack and APS step-handler contract).  
-- Migrate live products off mega `runner.clj` over time (B26); stop teaching implementers that “acceptance = edit runner.clj.”  
-- Keep unit tests as `clojure.test`/speclj; keep generated acceptance separate.  
-- Tests/docs: implementer assignment for first feature produces generator+steps+generated tests, not only a hand-written suite script.
-
-**Priority rationale (P1):** Wrong acceptance architecture is systemic: merge hotspots (B26), weak Gherkin mutation (B30/B31), and implementers shipping non-APS “acceptance programs” while Gherkin remains documentary. Six-pack already defined the correct coder duty; squad must not diverge.
-
-**Where:** `swarmforge/roles/coder.prompt` on `six-pack` (source of truth for intent); `swarmforge/role-templates/implementer.prompt` + contract; constitution `engineering.prompt` APS section; `swarmforge/templates/` acceptance/bb tasks; product `acceptance/runner.clj`, `bb/tasks/acceptance*.clj`; APS `README.md` / `acceptance-generator.md` pipeline.
-
-**Related:** B26 (mega runner hotspot — symptom of this model), B30 (worker/suite + IR binding), B31 (hardener kill-all needs real steps), B05 (suite command wired ≠ full APS), cleaner ownership of CRAP/DRY (six-pack coder does not own those).
-
 ---
-
-## P2 — Operator path, workflow gates, architecture foundation
 
 ### B10 — Dashboard answers truncate to first line of multiline response
 
@@ -466,6 +177,10 @@ feature → gherkin-parser → JSON IR → entrypoint generator
 **Where:** `squad_dashboard_request.clj`; `squadd/web.clj` request rendering.
 
 **Repro (live):** `dashboard-20260811T221429Z-001` — full answer in file; dashboard showed only first line.
+
+---
+
+---
 
 ---
 
@@ -512,6 +227,10 @@ feature → gherkin-parser → JSON IR → entrypoint generator
 
 ---
 
+---
+
+---
+
 ### B11 — Zombie tmux sessions after agent retire
 
 **Symptom:** Agent **retired**, worktree gone, not in `roles.tsv` — but **tmux sessions still exist**. Retire detail may claim session was not running while `tmux ls` lists it.
@@ -535,6 +254,10 @@ feature → gherkin-parser → JSON IR → entrypoint generator
 
 ---
 
+---
+
+---
+
 ### B12 — Hardener edits root tooling (`bb.edn`) against role rules
 
 **Symptom:** Hardener commits change root `bb.edn` (merge conflicts). Prompt says do **not** edit root tooling unless assignment requires it.
@@ -549,6 +272,10 @@ feature → gherkin-parser → JSON IR → entrypoint generator
 3. Prefer product layout that does not require hardener `bb.edn` edits (tasks under `bb/tasks/`).
 
 **Where:** `hardener.prompt` / contract; live hardener commits including `bb.edn`.
+
+---
+
+---
 
 ---
 
@@ -583,6 +310,10 @@ Theme + module map already require approval before analysis. Ordering and depend
 **Where:** `squad_approval` gates; `squad_theme` / durable order + product `dependency-checker.edn`; `squad_next` residual after analysis / before implementers; dashboard theme package + approval UI; analyst/architect handoffs that produce these files.
 
 **Related:** B13 (policy content), B14 (display), fixed P0 B03 (durable order must exist).
+
+---
+
+---
 
 ---
 
@@ -627,6 +358,10 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
+---
+
 ### B17 — Actions are shell strings, not structured ops
 
 **From architecture review.** Actions are strings like `squad_assign.sh accept-merge …`, then `bash -c`. Quoting, env, and authority leak everywhere (held-path finish, paths with spaces, role env).
@@ -642,6 +377,10 @@ Themes today are effectively never finished: analysis can add stories, packets a
 **Where:** `squad_next.clj` candidates / `apply-candidate!`; handoff mechanical steps.
 
 **Priority rationale (P2):** Foundational architecture. Land incrementally; do not block product delivery on a full rewrite.
+
+---
+
+---
 
 ---
 
@@ -674,6 +413,10 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
+---
+
 ### B16 — Control-plane ownership is implicit (env/prompt), not modeled
 
 **From architecture review.** `squadd` owns mechanical FSM work and main Git writes, but ownership is enforced through env vars (`SWARMFORGE_MAIN_GIT`, `SWARMFORGE_ROLE`) and prompt discipline. That is weak: unsafe ops remain reachable from the wrong entrypoint if env is wrong or a role invents a command.
@@ -690,6 +433,10 @@ Themes today are effectively never finished: analysis can add stories, packets a
 **Where:** `squad_next.clj`, `squadd.clj`, assign/merge scripts, residual-only path.
 
 **Priority rationale (P2):** Single-writer already works in practice; modeling ownership prevents regressions and makes B09 clean.
+
+---
+
+---
 
 ---
 
@@ -717,6 +464,12 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
+---
+
+---
+
 ## P3 — Product polish and deeper architecture
 
 ### B13 — Analyst dependency-checker policy is missing or pitifully coarse
@@ -730,6 +483,10 @@ Themes today are effectively never finished: analysis can add stories, packets a
 **Where:** `analyst.prompt` / contract; `theme-module-map.md`; product `dependency-checker.edn`.
 
 **Related:** B14, B25.
+
+---
+
+---
 
 ---
 
@@ -752,6 +509,10 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
+---
+
 ### B15 — Grok agent terminal window does not fill / scroll correctly
 
 **Symptom:** Grok-backed agent windows show ~25 lines pinned at top; rest empty; scroll unusable. Codex panes do not show this.
@@ -759,6 +520,10 @@ Themes today are effectively never finished: analysis can add stories, packets a
 **Expected:** Full geometry, usable scroll — or documented operator path if upstream TUI cannot.
 
 **Where:** Grok launch / terminal adapters / tmux size; `swarmforge/docs/grok-agent-window-scroll.md`.
+
+---
+
+---
 
 ---
 
@@ -794,6 +559,10 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
+---
+
 ### B20 — Shared lease primitive missing (locks are one-off)
 
 **From architecture review.** Main-git lock protects merge-ready/accept-merge, but spawn lock, handoff in-process/held, status files, and request queues each invent their own concurrency story.
@@ -815,6 +584,10 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
+---
+
 ### B21 — FSM transitions have hidden multi-file side effects
 
 **From architecture review.** e.g. `accept-merge` updates assignment status, merge state, accepted-merge, merger lineage, events, theme events. Hard to reason about as one transition.
@@ -828,6 +601,10 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 **Depends on:** B17–B18 help; B22 helps record shape.  
 **Priority rationale (P3):** Large; reduce risk after typed actions exist.
+
+---
+
+---
 
 ---
 
@@ -857,8 +634,36 @@ Shared safe readers (missing file → empty; no exists/slurp race).
 
 ---
 
+Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries. **Fix P1 B28, B29, B32, B33, B26, B30, B31, B27 before large control-plane rewrites** — dashboard stall visibility, batch replace ↔ result projection, implementer APS = six-pack coder model, modular acceptance layout, reliable Gherkin mutation facilities, hardener quality bar (CRAP/mutants/DRY), free merger slot. Theme finalize (B23) should stay a deliberate product approval, not an irreversible lockout of new stories. Dashboard IA (B24) should follow operator jobs, not grow as an uncurated status dump.
+
+---
+
+Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
+
+**Before large control-plane rewrites**, clear **P1**: **B28**, **B32**, **B27**, **B26**, **B30** (visibility, batch-result projection, merger slot, acceptance layout, mutator worker wiring). Then **P2 APS strategy** **B33**/**B31** so hardeners and implementers share one correct model. Theme finalize (**B23**) stays a deliberate product approval, not an irreversible lockout of new stories. Dashboard IA (**B24**) should follow operator jobs, not grow as an uncurated status dump.
+
+---
+
+Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
+
+**Before large control-plane rewrites**, clear **P1**: **B28**, **B32**, **B27**, **B26**, **B30** (visibility, batch-result projection, merger slot, acceptance layout, mutator worker wiring). Then **P2 APS strategy** **B33**/**B31** so hardeners and implementers share one correct model. Theme finalize (**B23**) stays a deliberate product approval, not an irreversible lockout of new stories. Dashboard IA (**B24**) should follow operator jobs, not grow as an uncurated status dump.
+
+---
+
+Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
+
+**Before large control-plane rewrites**, clear **P1**: **B28**, **B32**, **B27**, **B26**, **B30** (visibility, batch-result projection, merger slot, acceptance layout, mutator worker wiring). Then **P2 APS strategy** **B33**/**B31** so hardeners and implementers share one correct model. Theme finalize (**B23**) stays a deliberate product approval, not an irreversible lockout of new stories. Dashboard IA (**B24**) should follow operator jobs, not grow as an uncurated status dump.
+
+---
+
+Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
+
+**Before the next multi-story swarm**, clear **all P1**: **B28**, **B32**, **B27**, **B26**, **B30**, **B33**. Then **P2** hardener bar (**B31**) and operator UX (**B29**, **B10**, **B09**). Theme finalize (**B23**) stays a deliberate product approval. Dashboard IA (**B24**) should follow operator jobs, not grow as an uncurated status dump.
+
 ---
 
 ## Architecture north star (not a freeze)
 
-Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries. **Fix P1 B28, B29, B32, B33, B26, B30, B31, B27 before large control-plane rewrites** — dashboard stall visibility, batch replace ↔ result projection, implementer APS = six-pack coder model, modular acceptance layout, reliable Gherkin mutation facilities, hardener quality bar (CRAP/mutants/DRY), free merger slot. Theme finalize (B23) should stay a deliberate product approval, not an irreversible lockout of new stories. Dashboard IA (B24) should follow operator jobs, not grow as an uncurated status dump.
+Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
+
+**P1 complete** for the 2026-08-12 stuck-swarm class (visibility, batch replace projection, merger slot, APS six-pack model, mutator worker wiring). Next: **P2** hardener bar (**B31**) and operator UX (**B29**, **B10**, **B09**). Theme finalize (**B23**) stays a deliberate product approval. Dashboard IA (**B24**) should follow operator jobs, not grow as an uncurated status dump.

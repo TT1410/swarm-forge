@@ -284,6 +284,7 @@
                  :story-id (get metadata "story_id")
                  :requires (get metadata "requires")
                  :replaces (get metadata "replaces")
+                 :batch-id (get metadata "batch_id")
                  :merge-for (get metadata "merge_for")
                  :assignment-file (get metadata "assignment_file")
                  :created-at (get metadata "created_at")
@@ -480,14 +481,26 @@
        (not (and (= "handoff_sent" (:state agent))
                  (handoff-visible-agent? root (:agent agent))))))
 
+(defn merger-holds-capacity-slot?
+  "Merger agents that have only handed off while their assignment is merge_blocked
+  no longer monopolize the singleton merger slot (B27)."
+  [root agent]
+  (and (active-agent? agent)
+       (= "merger" (:template agent))
+       (not (and (= "handoff_sent" (:state agent))
+                 (= "merge_blocked"
+                    (get (file-map (fs/path root ".squad" "assignments" (:task-id agent) "status"))
+                         "state"))))))
+
 (defn capacity-active-template? [root agents template]
   "True when a live agent already holds this template for capacity/singleton purposes.
-  Merger uses any active agent (including handoff_sent) so only one merger runs."
+  Merger ignores handoff_sent agents whose assignment is merge_blocked so recovery
+  can start a second merger."
   (boolean
    (some (fn [agent]
            (and (= template (:template agent))
                 (if (= "merger" template)
-                  (active-agent? agent)
+                  (merger-holds-capacity-slot? root agent)
                   (capacity-counted-agent? root agent))))
          agents)))
 
@@ -1152,10 +1165,20 @@
            vec)
       [])))
 
+(defn assignment-batch-id
+  "Batch membership lives under batch_id (B32). Replacements set batch_id to the
+  original batch assignment id so merged replacements still project to members."
+  [assignment]
+  (or (not-empty (:batch-id assignment))
+      (when (= "batch" (:story-id assignment))
+        (:assignment-id assignment))
+      (:assignment-id assignment)))
+
 (defn batch-result-record-candidate [root packets-by-story assignment kind member]
   (let [story-id (:story-id member)
         packet (get packets-by-story story-id)
-        sha (batch-effective-sha root assignment)]
+        sha (batch-effective-sha root assignment)
+        batch-id (assignment-batch-id assignment)]
     (when (and packet
                (batch-result-available? root assignment)
                (packet-result-missing? packet kind)
@@ -1168,7 +1191,7 @@
        :template (:template assignment)
        :assignment-id (:assignment-id assignment)
        :batch-kind kind
-       :batch-id (:assignment-id assignment)
+       :batch-id batch-id
        :reason (str "merged " kind " batch result must be recorded in story packet")
        :command (str "squad_packet.sh record " story-id " " kind " "
                      (:assignment-id assignment) " master " sha)})))
@@ -1178,7 +1201,7 @@
     (->> (for [assignment assignments
                :let [kind (get result-assignment-rules (:template assignment))]
                :when (and kind (= "batch" (:story-id assignment)))
-               member (batch-manifest-rows root (:assignment-id assignment))
+               member (batch-manifest-rows root (assignment-batch-id assignment))
                :let [candidate (batch-result-record-candidate root packets-by-story assignment kind member)]
                :when candidate]
            candidate)
@@ -1194,7 +1217,7 @@
   #{"open" "closed" "result_received" "unknown"})
 
 (defn batch-complete-candidate [root packets-by-story assignment kind]
-  (let [batch-id (:assignment-id assignment)
+  (let [batch-id (assignment-batch-id assignment)
         members (batch-manifest-rows root batch-id)
         state (or (batch-status-value root batch-id) "unknown")]
     (when (and (seq members)
@@ -1210,7 +1233,7 @@
        :theme-id (:theme-id assignment)
        :story-id "batch"
        :template (:template assignment)
-       :assignment-id batch-id
+       :assignment-id (:assignment-id assignment)
        :batch-kind kind
        :batch-id batch-id
        :reason (str kind " batch results are recorded on all member packets")
@@ -1967,11 +1990,13 @@
 (defn merger-candidates [root rows]
   "At most one open merger lineage at a time (singleton). Prefer progressing an
   existing open merger (spawn or nested merge-merge); otherwise create for the
-  highest-priority merge_blocked product assignment."
+  highest-priority merge_blocked product assignment.
+  A merger that is only handoff_sent with merge_blocked assignment does not block
+  creating the next merger (B27)."
   (let [assignments (assignment-records root)
         agents (agent-records root rows)
         sort-key (juxt :priority :theme-id :story-id :stage-order :assignment-id)]
-    (if (active-template? agents "merger")
+    (if (capacity-active-template? root agents "merger")
       []
       (let [open (vec (open-merger-assignments assignments))]
         (if (seq open)

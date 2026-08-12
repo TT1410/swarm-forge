@@ -169,14 +169,27 @@
 (deftest hardener-tool-startup-includes-coverage-and-acceptance-prerequisites
   (let [startup (tools/startup-instructions
                  (tools/required-tools repo-root "hardener")
-                 (tools/verification-prerequisites repo-root "hardener"))]
+                 (tools/verification-prerequisites repo-root "hardener"))
+        hardener (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))]
     (is (str/includes? startup "## Tool Startup"))
     (is (str/includes? startup "## Verification Prerequisites"))
     (is (str/includes? startup "bb coverage"))
     (is (str/includes? startup "bb acceptance"))
+    (is (str/includes? startup "bb acceptance-worker"))
     (is (str/includes? startup "gherkin-mutator"))
     (is (str/includes? startup "lcov"))
+    (is (not (str/includes? startup "gherkin-mutator --runner-worker \"bb acceptance\"")))
+    (is (str/includes? hardener "bb acceptance-worker"))
+    (is (not (str/includes? hardener "--runner-worker \"bb acceptance\"")))
     (is (seq (tools/required-evidence repo-root "hardener")))))
+
+(deftest implementer-prompt-requires-six-pack-aps-model
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))]
+    (is (str/includes? prompt "six-pack"))
+    (is (str/includes? prompt "entrypoint generator"))
+    (is (str/includes? (str/lower-case prompt) "step handlers"))
+    (is (str/includes? prompt "bb acceptance-worker"))
+    (is (str/includes? prompt "acceptance/steps/"))))
 
 (deftest implementer-prompt-owns-acceptance-pipeline
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))]

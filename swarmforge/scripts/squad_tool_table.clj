@@ -81,7 +81,8 @@
          "\n"
          "Canonical project commands (from product templates):\n"
          "- `bb coverage` — produce `target/coverage/lcov.info` for CRAP/mutate\n"
-         "- `bb acceptance` — full Gherkin acceptance suite; also `gherkin-mutator --runner-worker \"bb acceptance\"`\n"
+         "- `bb acceptance` — full Gherkin acceptance suite (human output; not a mutator worker)\n"
+         "- `bb acceptance-worker` — APS gherkin-mutator --runner-worker (NDJSON stdin/stdout)\n"
          "- `bb test` — unit suite\n\n")))
 
 (defn startup-instructions

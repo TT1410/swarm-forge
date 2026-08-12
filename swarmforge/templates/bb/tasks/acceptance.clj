@@ -1,14 +1,15 @@
-;; Full Gherkin acceptance suite — canonical `bb acceptance` entrypoint.
-;; Used as gherkin-mutator --runner-worker and as late-role handoff verification.
+;; Full Gherkin acceptance suite — canonical `bb acceptance` entrypoint (human output).
+;; Not a gherkin-mutator worker — use `bb acceptance-worker` for --runner-worker.
 ;;
-;; Project-specific APS components (see constitution Acceptance Pipeline):
-;;   acceptance/runner.clj          — runner adapter (loads IR, runs steps)
-;;   acceptance/entrypoint_gen.clj  — optional: feature IR → executable entrypoints
-;;   acceptance/runtime.clj         — optional: scenario expansion / step dispatch
-;;   acceptance/steps.clj           — optional: project step handlers
+;; Six-pack / APS project components (implementer owns wiring when features exist):
+;;   acceptance/generator.clj   — JSON IR → thin generated entrypoints
+;;   acceptance/runtime.clj     — scenario expansion + step dispatch
+;;   acceptance/steps/*.clj     — project step handlers (regex captures by default)
+;;   acceptance/runner.clj      — thin shell: suite vs --worker
+;;   acceptance/generated/      — generated tests (separate from unit tests)
 ;;
-;; When features/ exists without a runner, exit 2 (blocker) so agents cannot
-;; pretend the suite passed.
+;; Normal run: features → gherkin-parser → generator → runtime + steps.
+;; When features/ exists without a runner, exit 2 (blocker).
 
 (require '[babashka.fs :as fs]
          '[clojure.string :as str])
@@ -31,8 +32,9 @@
     (do
       (binding [*out* *err*]
         (println "ACCEPTANCE_BLOCKER: features exist but acceptance/runner.clj is missing.")
-        (println "Implement APS project components (entrypoint generator, runtime, step handlers, runner adapter).")
-        (println "Canonical command after wiring: bb acceptance")
+        (println "Implement APS six-pack components: generator, runtime, step handlers, thin runner.")
+        (println "Scaffold: swarmforge/templates/acceptance/ and bb/tasks/acceptance*.clj")
+        (println "Suite: bb acceptance | Mutator worker: bb acceptance-worker")
         (println "See constitution Acceptance Pipeline and github.com/unclebob/Acceptance-Pipeline-Specification.")
         (println "Features found:")
         (doseq [f features] (println " " f)))

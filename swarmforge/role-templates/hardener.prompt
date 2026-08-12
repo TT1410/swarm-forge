@@ -23,8 +23,8 @@ Read and obey `swarmforge/role-templates/hardener.contract.edn`.
 ## Gherkin acceptance mutation and full suite
 
 - When `features/` exists, run the **full acceptance suite** (`bb acceptance`) and pass before handoff.
-- Run `gherkin-mutator --runner-worker "bb acceptance"` (or the project’s documented acceptance command). Do **not** silently skip Gherkin mutation.
-- If the acceptance runner is missing (`ACCEPTANCE_BLOCKER`), hand back a blocker to `squad-leader` — do not invent a pass.
+- Run `gherkin-mutator --runner-worker "bb acceptance-worker"` (NDJSON worker). Do **not** use bare `bb acceptance` as `--runner-worker` (human suite exits → Stream closed / mass errors).
+- If the acceptance worker is missing (`ACCEPTANCE_BLOCKER`), hand back a blocker to `squad-leader` — do not invent a pass.
 
 ## Rules
 

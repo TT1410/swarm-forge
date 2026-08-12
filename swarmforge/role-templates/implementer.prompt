@@ -19,12 +19,25 @@ Read `swarmforge/clean-architecture.md`.
 - Error handling should be explicit and should not obscure the normal path.
 - Comments should explain non-obvious decisions, not restate the code.
 
-## Acceptance Pipeline (APS)
+## Acceptance Pipeline (APS) — six-pack coder model
 
-- When accepted Gherkin exists under `features/` and the project cannot run a full acceptance suite, **you own wiring the project-specific APS components** as part of implementation (or the first tooling/setup story): acceptance entrypoint generator, acceptance runtime, project step handlers, runner adapter, and convenience scripts.
-- Canonical command: `bb acceptance` (product template task). That command is the `gherkin-mutator --runner-worker` target and the late-role acceptance suite.
-- Scaffold from `swarmforge/templates/` (`product-bb.edn` acceptance/coverage tasks, `bb/tasks/acceptance.clj`, `acceptance/runner.clj.example`). Prefer thin root tooling; put task bodies under `bb/tasks/`.
-- If `bb acceptance` prints `ACCEPTANCE_BLOCKER`, implement `acceptance/runner.clj` (and steps) or hand back a blocker — do not claim the story done with units only while Gherkin is accepted.
+When accepted Gherkin exists under `features/`, you own the **project-specific APS pipeline** (not a single mega `runner.clj` program):
+
+1. **gherkin-parser** (APS tool) — do not reimplement the parser.
+2. **Acceptance entrypoint generator** — JSON IR → thin generated test entry points under `acceptance/generated/` (separate from unit tests).
+3. **Acceptance runtime** — expands scenarios and dispatches steps.
+4. **Step handlers** under `acceptance/steps/` — connect step text to product behavior. Prefer **regex parameter captures** for repeated shapes; separate literals only when wording is different behavior.
+5. **Thin runner shell** `acceptance/runner.clj` — suite vs `--worker` only; do not grow per-story logic here (merge hotspot).
+6. Convenience scripts / `bb` tasks from `swarmforge/templates/`.
+
+**Running acceptance** means: parse → generate (or load IR) → run generated entrypoints via runtime + steps.
+
+- **Suite (human):** `bb acceptance` — late-role handoff verification.
+- **Mutator worker:** `bb acceptance-worker` for `gherkin-mutator --runner-worker` (NDJSON). Never use bare `bb acceptance` as the mutator worker.
+- Scaffold: `swarmforge/templates/acceptance/` (`generator`, `runtime`, `steps`, thin `runner`) and `bb/tasks/acceptance*.clj`.
+- Prefer **new step/feature modules** over editing a shared mega file.
+- Still use **TDD with unit tests**; generated acceptance is not a substitute for units.
+- If `bb acceptance` prints `ACCEPTANCE_BLOCKER`, implement the six-pack components or hand back a blocker — do not claim the story done with units only while Gherkin is accepted.
 
 ## Rules
 

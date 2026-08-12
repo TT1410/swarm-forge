@@ -1,0 +1,20 @@
+;; APS acceptance entrypoint generator — copy to acceptance/generator.clj.
+;; Turns gherkin-parser JSON IR into thin generated test entry points under
+;; acceptance/generated/. Does not embed product step logic.
+;;
+;; Usage (project convention):
+;;   bb acceptance-generate <json-ir> <generated-output-dir>
+;; or generate all features as part of `bb acceptance`.
+;;
+;; Generated entry points must:
+;; - embed or load the supplied JSON IR
+;; - not parse source .feature files
+;; - run every scenario execution via the acceptance runtime + step handlers
+;; - be deterministic for a fixed IR
+;;
+;; Prefer one generated file per feature, e.g.:
+;;   acceptance/generated/instructions_content_acceptance.clj
+
+(binding [*out* *err*]
+  (println "Replace acceptance/generator.clj.example with acceptance/generator.clj."))
+(System/exit 2)

@@ -57,6 +57,34 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest dashboard-shows-merge-blocked-hides-terminal-assignments
+  ;; Given merge_blocked (non-terminal) and merged (terminal) assignments
+  ;; When assignment-state is built
+  ;; Then merge_blocked is listed and merged is not (B28 terminal deny-list)
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad" "assignments" "blocked-impl" "metadata")
+                  "assignment_id: blocked-impl\ntemplate: implementer\nstory_id: cave\n")
+      (write-file (fs/path root ".squad" "assignments" "blocked-impl" "status")
+                  "state: merge_blocked\ndetail: dry-run merge failed\nupdated_at: 2026-08-12T00:00:00Z\n")
+      (write-file (fs/path root ".squad" "assignments" "done-impl" "metadata")
+                  "assignment_id: done-impl\ntemplate: implementer\nstory_id: other\n")
+      (write-file (fs/path root ".squad" "assignments" "done-impl" "status")
+                  "state: merged\ndetail: ok\nupdated_at: 2026-08-12T00:00:00Z\n")
+      (write-file (fs/path root ".squad" "assignments" "active-impl" "metadata")
+                  "assignment_id: active-impl\ntemplate: implementer\nstory_id: mid\n")
+      (write-file (fs/path root ".squad" "assignments" "active-impl" "status")
+                  "state: in_progress\ndetail: working\nupdated_at: 2026-08-12T00:00:00Z\n")
+      (let [ids (set (map #(get % "assignment_id") (web/assignment-state root)))]
+        (is (contains? ids "blocked-impl"))
+        (is (contains? ids "active-impl"))
+        (is (not (contains? ids "done-impl")))
+        (is (web/web-active-assignment? "merge_blocked"))
+        (is (not (web/web-active-assignment? "merged")))
+        (is (not (web/web-active-assignment? "superseded"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squadd-serves-web-status-and-registers-approvals
   (let [root (tmp-dir)
         bin (fs/path root "bin")

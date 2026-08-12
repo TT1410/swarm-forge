@@ -271,8 +271,17 @@
 </body>
 </html>")
 
-(def web-active-assignment-states
-  #{"created" "assignment_created" "in_progress" "handoff_sent" "result_received" "merge_ready" "blocked"})
+(def web-terminal-assignment-states
+  "Assignments in these states are finished for dashboard purposes and hidden
+  from the default active list. Everything else (including merge_blocked) stays visible."
+  #{"merged" "rejected" "superseded" "cancelled" "abandoned" "replacement_created"
+    "retired" "review_accepted" "review_changes_requested"})
+
+(defn web-active-assignment?
+  "True when the assignment should appear on the active dashboard list."
+  [state]
+  (let [s (or state "unknown")]
+    (not (contains? web-terminal-assignment-states s))))
 
 (defn dashboard-agent-visible?
   "Agents appear from spawn until retirement. Temporary states such as
@@ -599,7 +608,7 @@
                   (merge (map-with-id "assignment_id" (fs/file-name assignment-dir)
                                       (fs/path assignment-dir "metadata"))
                          (parse-kv-file (fs/path assignment-dir "status")))))
-           (filter #(contains? web-active-assignment-states (get % "state")))
+           (filter #(web-active-assignment? (get % "state")))
            (sort-by descending-value #(compare %2 %1))
            vec)
       [])))
