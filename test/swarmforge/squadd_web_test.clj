@@ -85,6 +85,23 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest agent-session-resolves-from-roles-tsv-for-persistent-roles
+  ;; Given a persistent troubleshooter with no .squad/agents metadata
+  ;; When resolving the tmux session for the dashboard pane
+  ;; Then roles.tsv supplies swarmforge-troubleshooter
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".swarmforge" "roles.tsv")
+                  (str "troubleshooter\tmaster\t" root
+                       "\tswarmforge-troubleshooter\tTroubleshooter\tcodex\ttask\n"))
+      (write-file (fs/path root ".swarmforge" "sessions.tsv")
+                  "2\ttroubleshooter\tswarmforge-troubleshooter\tTroubleshooter\tcodex\n")
+      (is (= "swarmforge-troubleshooter"
+             (web/agent-session-name root "troubleshooter")))
+      (is (= "codex" (web/agent-backend-name root "troubleshooter")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squadd-serves-web-status-and-registers-approvals
   (let [root (tmp-dir)
         bin (fs/path root "bin")

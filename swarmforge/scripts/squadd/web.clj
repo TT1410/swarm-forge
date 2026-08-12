@@ -1022,15 +1022,62 @@
     (when (fs/regular-file? socket-file)
       (str/trim (slurp (str socket-file))))))
 
+(defn session-from-roles-tsv [root agent-id]
+  "roles.tsv: role worktree path session display backend receive-mode"
+  (let [roles (fs/path root ".swarmforge" "roles.tsv")]
+    (when (fs/regular-file? roles)
+      (some (fn [line]
+              (let [cols (str/split line #"\t")]
+                (when (and (>= (count cols) 4)
+                           (= agent-id (nth cols 0)))
+                  (nth cols 3))))
+            (or (read-lines roles) [])))))
+
+(defn session-from-sessions-tsv [root agent-id]
+  "sessions.tsv: index role session display backend"
+  (let [sessions (fs/path root ".swarmforge" "sessions.tsv")]
+    (when (fs/regular-file? sessions)
+      (some (fn [line]
+              (let [cols (str/split line #"\t")]
+                (when (and (>= (count cols) 3)
+                           (= agent-id (nth cols 1)))
+                  (nth cols 2))))
+            (or (read-lines sessions) [])))))
+
+(defn agent-session-name
+  "Resolve tmux session for dashboard pane view.
+  Transient workers store session in agent metadata; persistent roles (SL,
+  Troubleshooter) only appear in roles.tsv / sessions.tsv."
+  [root agent-id]
+  (let [metadata (fs/path root ".squad" "agents" agent-id "metadata")]
+    (or (not-empty (read-value metadata "session"))
+        (session-from-roles-tsv root agent-id)
+        (session-from-sessions-tsv root agent-id)
+        (when-not (str/blank? agent-id)
+          (str "swarmforge-" agent-id)))))
+
+(defn agent-backend-name [root agent-id]
+  (let [metadata (fs/path root ".squad" "agents" agent-id "metadata")]
+    (or (not-empty (read-value metadata "backend"))
+        (not-empty (read-value metadata "agent"))
+        (let [roles (fs/path root ".swarmforge" "roles.tsv")]
+          (when (fs/regular-file? roles)
+            (some (fn [line]
+                    (let [cols (str/split line #"\t")]
+                      (when (and (>= (count cols) 6)
+                                 (= agent-id (nth cols 0)))
+                        (nth cols 5))))
+                  (or (read-lines roles) [])))))))
+
 (defn agent-pane-content [root agent-id]
-  (let [metadata (fs/path root ".squad" "agents" agent-id "metadata")
-        session (read-value metadata "session")
-        backend (or (read-value metadata "backend")
-                    (read-value metadata "agent"))
+  (let [session (agent-session-name root agent-id)
+        backend (agent-backend-name root agent-id)
         socket (socket-value root)]
     (or (not-empty (when (and socket (not (str/blank? session)))
                      (capture-pane-tail socket session backend)))
         (tail-section (fs/path root ".squad" "agents" agent-id "liveness"))
+        (when (and socket (not (str/blank? session)))
+          (str "(no pane capture yet for session " session ")\n"))
         "")))
 
 (defn pane-page [agent-id]
