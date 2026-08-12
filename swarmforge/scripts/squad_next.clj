@@ -573,6 +573,12 @@
           {}
           (str/split-lines (or text ""))))
 
+(defn implementation-order-recorded?
+  "True when durable theme implementation-order.md exists (even if empty)."
+  [root theme-id]
+  (and (not (str/blank? theme-id))
+       (fs/regular-file? (implementation-order-path root theme-id))))
+
 (defn load-implementation-order [root theme-id]
   (let [path (implementation-order-path root theme-id)]
     (if (fs/regular-file? path)
@@ -586,17 +592,51 @@
          (not (str/blank? (get (file-map packet-file) "implementation_sha"))))))
 
 (defn implementer-dependencies-satisfied?
-  "Hard gate: implementer for story-id waits until all colon-listed providers have implementation_sha."
+  "Hard gate: durable implementation order must be recorded; then providers listed
+  for story-id must each have implementation_sha. Missing durable order is not
+  treated as empty/satisfied — that was a no-op gate (P0 B03)."
   [root theme-id story-id]
-  (let [providers (get (load-implementation-order root theme-id) story-id)]
-    (or (empty? providers)
-        (every? #(story-implementation-complete? root %) providers))))
+  (if-not (implementation-order-recorded? root theme-id)
+    false
+    (let [providers (get (load-implementation-order root theme-id) story-id)]
+      (or (empty? providers)
+          (every? #(story-implementation-complete? root %) providers)))))
 
 (defn implementer-dependency-block-reason [root theme-id story-id]
-  (let [providers (get (load-implementation-order root theme-id) story-id)
-        pending (remove #(story-implementation-complete? root %) providers)]
-    (when (seq pending)
-      (str "implementation order: waiting on " (str/join ", " pending)))))
+  (cond
+    (not (implementation-order-recorded? root theme-id))
+    "implementation order not recorded for theme"
+
+    :else
+    (let [providers (get (load-implementation-order root theme-id) story-id)
+          pending (remove #(story-implementation-complete? root %) providers)]
+      (when (seq pending)
+        (str "implementation order: waiting on " (str/join ", " pending))))))
+
+(defn root-implementation-order-draft-path [root]
+  (fs/path root "implementation-order.md"))
+
+(defn implementation-order-record-candidate
+  "When root draft exists and durable theme order is missing, record it."
+  [root theme-id]
+  (when (and (not (str/blank? theme-id))
+             (not (implementation-order-recorded? root theme-id))
+             (fs/regular-file? (root-implementation-order-draft-path root)))
+    {:priority 26
+     :stage-order 1
+     :next-action "record_implementation_order"
+     :theme-id theme-id
+     :story-id "theme"
+     :reason "root implementation-order.md must be recorded into durable theme path before implementers"
+     :command (str "squad_theme.sh implementation-order " theme-id " implementation-order.md")}))
+
+(defn implementation-order-record-candidates [root]
+  (->> (packets root)
+       (map #(get % "theme_id"))
+       (remove str/blank?)
+       distinct
+       (keep #(implementation-order-record-candidate root %))
+       vec))
 
 (defn assignment-candidate [root assignments agents packet template assignment-suffix reason priority stage-order requirement]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
@@ -610,6 +650,41 @@
         (when (spawnable-assignment? root agents template assignment)
           (assignment-spawn-candidate assignment theme-id story-id template reason priority stage-order))
         (assignment-create-candidate theme-id story-id template assignment-id reason priority stage-order requirement)))))
+
+(defn implementer-rework-already-created?
+  "True when an implementer assignment exists beyond the packet's recorded
+  implementation_assignment — the one allowed rework for a current code_review
+  changes-requested cycle (P0 B01 thrash stop)."
+  [assignments packet story-id]
+  (let [recorded (get packet "implementation_assignment")]
+    (boolean
+     (some (fn [a]
+             (and (= story-id (:story-id a))
+                  (= "implementer" (:template a))
+                  (not= recorded (:assignment-id a))))
+           assignments))))
+
+(defn implementation-revision-candidate
+  "At most one implementer rework while code_review is currently changes-requested.
+  After that rework merges and is re-recorded, clear-downstream drops CR and a
+  fresh code-review cycle is required."
+  [root assignments agents packet reason priority stage-order]
+  (let [story-id (get packet "story_id" (get packet "_story_id"))
+        theme-id (get packet "theme_id")]
+    (when (and (field-changes-requested? packet "code_review")
+               (not (stale-changes-requested? packet "code_review"))
+               (approval-satisfied? root packet "story")
+               (approval-satisfied? root packet "gherkin")
+               (approval-satisfied? root packet "qa-procedure")
+               (approval-satisfied? root packet "implementation")
+               (implementer-dependencies-satisfied? root theme-id story-id))
+      (if-let [assignment (assignment-for assignments theme-id story-id "implementer")]
+        (when (spawnable-assignment? root agents "implementer" assignment)
+          (assignment-spawn-candidate assignment theme-id story-id "implementer" reason priority stage-order))
+        (when-not (implementer-rework-already-created? assignments packet story-id)
+          (assignment-create-candidate theme-id story-id "implementer"
+                                       (next-assignment-id assignments story-id "implementation")
+                                       reason priority stage-order nil))))))
 
 (defn one-cycle-revision-candidate [root assignments agents packet template assignment-suffix review-field reason priority stage-order]
   (let [story-id (get packet "story_id" (get packet "_story_id"))]
@@ -984,6 +1059,30 @@
 (defn assignment-effective-sha [assignment]
   (artifact-sha assignment))
 
+(defn packet-result-stale-for-assignment?
+  "True when a merged assignment should re-record its result on the packet.
+  Prevents implementer thrash: reworks never re-recorded while implementation_sha
+  already existed (P0 B01)."
+  [packet kind assignment]
+  (let [kind-key (gate-key kind)
+        sha-field (str kind-key "_sha")
+        assignment-field (str kind-key "_assignment")
+        current-sha (get packet sha-field)
+        current-assignment (get packet assignment-field)
+        new-id (:assignment-id assignment)
+        new-sha (assignment-effective-sha assignment)
+        new-rank (assignment-revision-rank new-id)
+        old-rank (assignment-revision-rank current-assignment)]
+    (cond
+      (str/blank? current-sha) true
+      (str/blank? new-id) false
+      (str/blank? current-assignment) true
+      (< new-rank old-rank) false
+      (> new-rank old-rank) true
+      (not= new-id current-assignment) true
+      :else (and (not (str/blank? new-sha))
+                 (not= new-sha current-sha)))))
+
 (defn batch-result-map [root batch-id]
   (file-map (fs/path root ".squad" "batches" batch-id "result")))
 
@@ -1000,7 +1099,8 @@
         sha (assignment-effective-sha assignment)]
     (when (and (merged-assignment? assignment)
                (= story-id (:story-id assignment))
-               (packet-result-missing? packet kind)
+               (or (packet-result-missing? packet kind)
+                   (packet-result-stale-for-assignment? packet kind assignment))
                (not (str/blank? sha)))
       {:priority 25
        :stage-order 3
@@ -1235,7 +1335,8 @@
 (defn packet-repair-candidates [root]
   (let [assignments (assignment-records root)
         packets (packets root)]
-    (vec (concat (analyst-story-registration-candidates root assignments)
+    (vec (concat (implementation-order-record-candidates root)
+                 (analyst-story-registration-candidates root assignments)
                  (direct-story-packet-candidates root)
                  (artifact-attachment-candidates root assignments packets)
                  (direct-result-record-candidates assignments packets)
@@ -1413,15 +1514,9 @@
     :priority 60
     :stage-order 95
     :candidate (fn [ctx packet]
-                 (when (and (field-changes-requested? packet "code_review")
-                            (approval-satisfied? (:root ctx) packet "story")
-                            (approval-satisfied? (:root ctx) packet "gherkin")
-                            (approval-satisfied? (:root ctx) packet "qa-procedure")
-                            (approval-satisfied? (:root ctx) packet "implementation"))
-                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                         "implementer" "implementation"
-                                         "code review requested implementation changes" 60 95
-                                         nil)))}
+                 (implementation-revision-candidate
+                  (:root ctx) (:assignments ctx) (:agents ctx) packet
+                  "code review requested implementation changes" 60 95))}
    {:id :cleaner-assignment
     :priority 60
     :stage-order 100
@@ -1947,7 +2042,8 @@
     "record_post_revision_review_acceptance"
     "record_auto_approval"
     "record_batch_membership"
-    "declare_merge_blocker"})
+    "declare_merge_blocker"
+    "record_implementation_order"})
 
 ;; Deterministic ready-actions the daemon applies under capacity/dependency scheduling.
 (def daemon-ready-actions
@@ -2590,20 +2686,28 @@
   (files-with-extension (fs/path (handoff-inbox-dir root) "held") ".handoff"))
 
 (defn apply-held-handoff-finish-step!
-  "When a parked merge_blocked assignment later merges, finish the held handoff."
+  "When a parked merge_blocked assignment later merges, finish the held handoff.
+  done_with_current only accepts in_process paths — move held → in_process first
+  when the active tray is free (P0 B02)."
   [root]
-  (some (fn [file]
-          (let [assignment-id (handoff-task file)
-                state (assignment-status-state root assignment-id)]
-            (when (or (= "merged" state)
-                      (assignment-accepted-merge? root assignment-id)
-                      (contains? resolved-handoff-assignment-states state))
-              [(apply-candidate! root
-                                 {:next-action "finish_held_handoff"
-                                  :assignment-id assignment-id
-                                  :command (str "SWARMFORGE_ROLE=squad-leader done_with_current.sh "
-                                                (pr-str (str file)))})])))
-        (held-handoff-files root)))
+  (let [in-process-dir (fs/path (handoff-inbox-dir root) "in_process")
+        existing (first (files-with-extension in-process-dir ".handoff"))]
+    (when (nil? existing)
+      (some (fn [file]
+              (let [assignment-id (handoff-task file)
+                    state (assignment-status-state root assignment-id)]
+                (when (or (= "merged" state)
+                          (assignment-accepted-merge? root assignment-id)
+                          (contains? resolved-handoff-assignment-states state))
+                  (fs/create-dirs in-process-dir)
+                  (let [dest (fs/path in-process-dir (fs/file-name file))]
+                    (fs/move file dest {:replace-existing true})
+                    [(apply-candidate! root
+                                       {:next-action "finish_held_handoff"
+                                        :assignment-id assignment-id
+                                        :command (str "SWARMFORGE_ROLE=squad-leader done_with_current.sh "
+                                                      (pr-str (str dest)))})]))))
+            (held-handoff-files root)))))
 
 (defn apply-in-process-handoff-step!
   "Apply at most one deterministic in-process handoff step."

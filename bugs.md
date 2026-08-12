@@ -1,103 +1,99 @@
 # Bugs
 
-## Spawn queue head-of-line block on template capacity
+Prioritized open issues. Priority is **impact on swarm correctness and operator unblock**, not chronological discovery.
 
-**Symptom:** Spawn requests for free templates sit in `.squad/spawn-requests/new/` while the daemon logs `spawn-queue-waiting … deferred this pass; N still queued`. Residual stays on `wait_for_spawn`. Other templates (e.g. `qa-procedure-writer` under cap, `qa-procedure-reviewer` idle) never spawn until the **head** request’s template frees a slot.
+| Pri | ID | Title | Area |
+|-----|-----|--------|------|
+| **P1** | B05 | No acceptance pipeline — Gherkin mutation and full suite cannot run | Quality / APS |
+| **P1** | B06 | Agents run CRAP / clj-mutate without coverage data | Quality tools |
+| **P1** | B07 | Late roles skip full acceptance suite before handoff | Role contracts |
+| **P1** | B08 | Mechanical apply crashes when agent heartbeat disappears mid-read | Daemon reliability |
+| **P2** | B09 | Operator unblock needs Troubleshooter (not SL) | Roles / dashboard |
+| **P2** | B10 | Dashboard SL answers truncate to first line | Dashboard IO |
+| **P2** | B11 | Zombie tmux sessions after agent retire | Lifecycle cleanup |
+| **P2** | B12 | Hardener edits root tooling (`bb.edn`) against role rules | Role policy |
+| **P3** | B13 | Analyst dependency-checker policy missing or coarse | Analysis quality |
+| **P3** | B14 | Theme package page missing `dependency-checker.edn` card | Dashboard UI |
+| **P3** | B15 | Grok agent terminal window does not fill / scroll correctly | Operator UX |
 
-**Cause:** `poll-spawn-requests!` in `squadd.clj` treats `template-capacity-full:<template>` as capacity pressure and **stops scanning the queue** for that poll (`:while (not @capacity-pressure?)`). FIFO head is often another `gherkin-writer` at max_active_template 3, so later requests that could spawn are never tried.
+**Fixed (removed):** P0 B01 implementer rework thrash; B02 held handoff finish; B03 durable implementation-order gate; B04 spawn queue template HOL.
 
-**Expected:** On `template-capacity-full` (and likely `group-capacity-full` for a single group), defer **that** request and **continue** the scan so other templates can spawn. Only total `capacity-full` (max_transient_agents) should stop early / back off the whole poll.
+**Suggested fix order:** B05–B07 as one **quality-gate cluster** (APS + coverage + handoff suite), then B08, then P2 operator/UX, then P3 architecture polish.
 
-**Where:** `swarmforge/scripts/squadd.clj` — `poll-spawn-requests!`, `process-spawn-request!`, `capacity-style-blocker?` / how `capacity-pressure?` is set.
+**Related clusters**
 
-**Repro (live pattern):** gherkin-writer at 3/3, queue head gherkin-writer, then qa-procedure-writer and qa-procedure-reviewer requests behind it; writers at 1/3 and reviewers at 0/3 stay unspawned for many minutes.
+| Cluster | Bugs | Note |
+|---------|------|------|
+| Acceptance / hardening false green | B05, B06, B07 | No runner, no LCOV, soft prompts |
+| Dependency-checker | B13, B14 | Analyst policy + theme UI |
 
-## Grok agent terminal window does not fill / scroll correctly
+---
 
-**Symptom:** When the operator opens (clicks into) a window for an agent running the **Grok** backend, the popped terminal shows only about **~25 lines of text**, all pinned to the **top** of the window. The rest of the window is empty. Scrolling moves within that short band from that top position **upward**; content does not fill or use the full window height like a normal shell pane.
+## P1 — Quality gates and daemon reliability
 
-**Likely cause:** Screen / TUI control from the Grok CLI (alternate screen buffer, fixed viewport rows, cursor addressing, or redraw sized to a small initial geometry rather than the real window). Related investigation notes: `swarmforge/docs/grok-agent-window-scroll.md` (alt screen, mouse capture, host terminal vs tmux). May also involve spawn-time rows/cols or terminal-adapter sizing if the session is created with a short height that Grok never re-queries.
+### B05 — No acceptance pipeline — Gherkin mutation and full acceptance suite cannot run
 
-**Expected:** Live Grok agent window uses the full terminal geometry; visible transcript fills the window and scrolls in a usable way (or documents a reliable operator path if the upstream TUI cannot).
+**Symptom:** Hardener (and similarly late roles) install `gherkin-mutator` / `gherkin-parser` but **do not run Gherkin mutation**. Agents report e.g. “Gherkin mutator not run because no acceptance runner worker is configured” or that the QA harness is a fixed transcript script, not a generated-feature runner. Full acceptance suite before handoff (B07) also fails for the same underlying gap: there is no project acceptance command to run.
 
-**Where to look:** Grok launch path (spawn / `launch.sh` / backend flags), terminal adapters under `swarmforge/scripts/terminal-adapters/`, tmux pane size at create, host terminal alt-screen behavior; compare with Codex-backed agent windows which do not show this.
+**Cause:** Product never gains the **Acceptance Pipeline Specification (APS)** wiring that constitution requires. Live product has:
+- `features/*.feature` (from gherkin-writers)
+- unit tests via `bb test`
+- optional batch QA script (`qa/scripts/…`) as a **hand-written transcript harness**
 
-**Repro:** Start a swarm with a Grok-backed role (e.g. `gherkin-reviewer` / `qa-procedure-reviewer` per `squad.conf`), open that agent’s terminal window while it is running, observe ~25-line top band and empty lower region.
+Missing (constitution **Acceptance Pipeline**): acceptance entrypoint/generator, acceptance runtime, project step handlers, **runner adapter**, convenience scripts, and a stable command usable as:
 
-## Implementation order ignored when only root draft exists
+```text
+gherkin-mutator --runner-worker <command>
+```
 
-**Symptom:** Implementers spawn and run for dependent stories (e.g. `crooked-arrow`, `replay-setup`) while the foundation story (`cave-setup`) has **no** `implementation_sha` and is still blocked (e.g. QA procedure changes-requested). Operators expect makefile-style order in `implementation-order.md` to hard-gate implementers so cave-setup is first.
+Implementer role says “if assigned acceptance tests fail, keep working,” but implementer **required tools** are only `dependency-checker`; assignments do not force APS setup. Implementers (and early tooling stories) ship units + features without a runnable acceptance pipeline. Hardener correctly cannot invent that stack at harden time.
 
-**Cause:** `squad_next.clj` only loads durable order from  
-`.squad/themes/<theme-id>/implementation-order.md` via `load-implementation-order`.  
-If that file was never recorded (`squad_theme.sh implementation-order …`), the map is `{}` and `implementer-dependencies-satisfied?` treats **empty providers as satisfied**. Root `implementation-order.md` (analyst draft / theme package draft) is **not** consulted by the gate—only by dashboard display. So the hard gate is a no-op until someone records the theme copy.
+**Expected:**  
+1. By the time stories are implementable (or as first implementation / project-setup work), the product has a **working acceptance runner** driven by accepted Gherkin (generate + run features).  
+2. Canonical command(s) exist (e.g. `bb` task or script) that execute one or all acceptance features.  
+3. Hardener runs **Gherkin mutation** with `--runner-worker` pointing at that command, plus code mutation / CRAP / DRY as today.  
+4. QA / hardener / architect / senior-implementer can run the **full acceptance suite** before handoff (B07).  
+5. Workflow or assignment text makes APS setup a **blocking** implementer (or dedicated setup) duty when features exist and the runner does not.
 
-**Expected:** Recording into the theme must not depend on SL memory. Durable theme order remains the sole gate input; missing durable order must not mean “no dependencies.”
+**Solution direction:**  
+- Prompt/contract: implementer (or first story / tooling story) owns APS project components, not only process units.  
+- Template product `bb.edn` / docs: acceptance tasks + runner-worker example.  
+- Gate hardener “Gherkin mutation complete” or fail soft with **blocker** to SL if runner missing (don’t silently skip).  
+- Align with B07 — same pipeline, two consumers.
 
-**Solution:**
+**Where:** `constitution/articles/engineering.prompt` (Acceptance Pipeline); `role-templates/implementer.*` (tools + duties); `hardener.contract.edn` / hardener assignment Tool Startup; product `bb.edn` / missing acceptance sources; live hardener-002/005 panes and tool-table `gherkin-mutator`.
 
-1. **Record without relying on memory** (primary)  
-   After analyst merge, when an order file is in the result artifacts (or root `implementation-order.md` exists) and `.squad/themes/<theme-id>/implementation-order.md` is missing:  
-   - **Preferred:** daemon mechanical apply runs  
-     `squad_theme.sh implementation-order <theme-id> implementation-order.md`  
-     (same class as story/packet bookkeeping), **or**  
-   - **Residual hard:** surface  
-     `NEXT_ACTION: record_implementation_order`  
-     `COMMAND: squad_theme.sh implementation-order <theme-id> <file>`  
-     until recorded (SL residual-only cannot skip past it forever).
+**Repro (live):** Hunt the Wumpus product: features present, `bb test` only in `bb.edn`; hardener-002/005 parse Gherkin and run `clj-mutate` but skip `gherkin-mutator` for lack of `--runner-worker` / acceptance runner.
 
-2. **Hard-block implementers until durable order exists** (belt)  
-   - Durable file **present** (even empty) → use it; empty edges = intentional no deps.  
-   - Durable file **missing** → do **not** treat as `{}` satisfied; block implementer create/spawn with reason like `implementation order not recorded`.  
-   Optional: if root draft exists, residual/mechanical points at that path as the record source.
+---
 
-3. **Do not**  
-   - Have the analyst write directly under `.squad/themes/…`  
-   - Rely on SL remembering after analysis  
-   - Load root draft as a second gate source of truth (OK as **input to record** only)
+### B06 — Agents run CRAP / clj-mutate without coverage data
 
-4. **Live workaround**  
-   `squad_theme.sh implementation-order hunt-the-wumpus implementation-order.md`  
-   Then decide whether out-of-order implementers should finish or be retired.
+**Symptom:** Hardener (and other roles that use **CRAP** / **clj-mutate**) report “covered” mutation sites or CRAP scores without having generated or reused real line coverage. Live Babashka products often have no `target/coverage/lcov.info`. `clj-mutate` then treats **all** mutation sites as covered (bb default when LCOV is missing). CRAP without Cloverage/LCOV is similarly meaningless or misleading. Agents still hand off as if hardening/verification quality gates passed.
 
-**Where:** `swarmforge/scripts/squad_next.clj` — `load-implementation-order`, `implementer-dependencies-satisfied?`, `assignment-candidate` (implementer branch), bookkeeping/residual after analysis; `squad_theme.clj` `implementation-order`; optional mechanical apply in daemon path. Dashboard already documents durable vs draft in `squadd/web.clj`.
+**Why it’s a bug:** Mutation and CRAP are **coverage-dependent** tools. Running them without coverage is not a valid quality signal. Coverage **can** be produced:
+- with **`clj`** (Cloverage / project `:cov` alias → `target/coverage/lcov.info`), and/or  
+- with **`bb`** where the project supports a coverage path (there is a Babashka-capable coverage approach; product must wire it or fall back to `clj`).
 
-**Repro (live):** Root `implementation-order.md` has `crooked-arrow: cave-setup` and `replay-setup: cave-setup`; `.squad/themes/hunt-the-wumpus/implementation-order.md` missing; cave-setup packet blocked on QA rework with no `implementation_sha`; crooked-arrow and replay-setup still get `implementation` auto-approved and running implementers.
+**Expected:** Every agent that runs **crap4clj** or **clj-mutate** must also be able to **run (or reuse valid) coverage** first:
+1. Ensure LCOV (or equivalent) exists and is fresh for the modules under test, **or** run the project coverage command before CRAP/mutate.  
+2. Prefer `clj-mutate --reuse-lcov` only after a successful coverage refresh—not as a way to skip coverage forever.  
+3. Assignment Tool Startup / role prompts: coverage is a **required prerequisite** for CRAP and mutation, not optional.  
+4. If neither `bb` nor `clj` coverage can be run in the worktree, record a **blocker** instead of faking full coverage / “N/N killed” without LCOV.
 
-## Held implementer handoff never finishes after merger — agent stuck, not retired
+**Solution direction:**  
+- Document the canonical coverage command for bb and clj product templates.  
+- hardener/cleaner/qa (any CRAP/mutate role): Tool Startup requires coverage before those tools.  
+- Fail or warn hard when mutate reports all-covered solely due to missing LCOV.  
+- Product `deps.edn` / `bb.edn` templates include a working `:cov` / coverage task aimed at **product** `src` + tests (not SwarmForge’s own scripts).
 
-**Symptom:** After a merger resolves a `merge_blocked` assignment and the original assignment is **merged** (e.g. `crooked-arrow-implementation` via `crooked-arrow-implementation-merge`), the **implementer** stays registered (`handoff_sent`, tmux still up). The merger is retired correctly. Residual may show `recover_agent` for the quiet implementer instead of `retire_agent`. Daemon repeatedly applies `finish_held_handoff` with **exit 1**.
+**Where:** `hardener` / `cleaner` / `qa` prompts and contracts; `tool-table.edn`; product templates; live `~/junk/squad` — mutate with `bb test` only, no LCOV until operator ran Cloverage manually; hardener handoffs claiming full kill rates without coverage artifacts.
 
-**Cause:**  
-1. On merge_block, the implementer’s in-process handoff is parked under `inbox/held/`.  
-2. When the assignment later becomes terminal (`merged` / merger resolves original), `apply-held-handoff-finish-step!` runs  
-   `SWARMFORGE_ROLE=squad-leader done_with_current.sh <held-path>`.  
-3. `done_with_current.clj` `ensure-current-handoff!` only accepts the path if it is under **`inbox/in_process`**. A **held** path always fails with `CURRENT_HANDOFF_MISMATCH`.  
-4. Handoff never moves to **completed**.  
-5. `retirement-candidates` only retires agents with a **completed** handoff for a terminal assignment → implementer never becomes retirable.
+**Repro (live):** `clj-mutate` on `movement.clj` with only `bb test` → “13 covered / 0 uncovered” and no `target/coverage/lcov.info`. Separate Cloverage run then produced 100% LCOV—showing coverage was never part of the agent path.
 
-**Expected:** After merger (or any resolution that leaves the original assignment terminal), the held handoff is finished into **completed** and the original agent is mechanically retired (same as a normal successful accept path).
+---
 
-**Solution (simple terms):**
-
-1. Implementer finished and sent a handoff.  
-2. Merge conflict → handoff put in a **holding tray** so other mail can flow.  
-3. Merger fixes it; work is on main; original assignment is **done**.  
-4. System tries to close the held handoff and retire the implementer.  
-5. Close-out only works if the handoff is in the **active** tray (`in_process`). File is still in **hold** → “wrong tray” every time.  
-6. Handoff never marked finished → agent never retired → looks stuck. Merger already left fine.
-
-**Fix:** When the assignment is already done, **move held → active tray** (or finish from hold on purpose), close the mail normally, then the usual **retire finished workers** step runs. Do not call `done_with_current` on a held path without moving or teaching it to accept hold. Do not rely on SL recover/manual retire every time.
-
-**Preferred implementation:** In `apply-held-handoff-finish-step!`, when assignment is terminal: move handoff `held/` → `in_process/`, then existing `done_with_current.sh` + mechanical `retire_agent`. Alternative: held-specific finish into `completed/`. Optional: don’t residual `recover_agent` for quiet `handoff_sent` when assignment is already merged and only held-finish is broken.
-
-**Live workaround:** Move held file to `in_process` (if empty) and `done_with_current`, or `squad_retire.sh <agent>` after confirming merged — product should do this automatically.
-
-**Where:** `squad_next.clj` — `park-merge-blocked-in-process-handoffs!`, `apply-held-handoff-finish-step!`, `retirement-candidates` / `completed-handoff-retirable?`; `done_with_current.clj` — `ensure-current-handoff!` (in_process only).
-
-**Repro (live):** Implementer handoff in `inbox/held/…from_implementer-001…`; assignment `crooked-arrow-implementation` state `merged` / resolved by merger; merger handoff completed and merger retired; mechanical log `finish_held_handoff … exit=1` + `CURRENT_HANDOFF_MISMATCH`; implementer still in `roles.tsv` and residual `recover_agent`.
-
-## Hardener, architect, QA, senior-implementer skip full acceptance suite before handoff
+### B07 — Hardener, architect, QA, senior-implementer skip full acceptance suite before handoff
 
 **Symptom:** Late-stage quality agents hand off after partial verification (e.g. unit tests + custom batch QA script / focused checks) without evidence that the **full acceptance suite** (accepted Gherkin / generated acceptance tests for the merged product) was run and passed. Live example: batch QA reported `bb test` + `bb qa/scripts/hunt_the_wumpus_batch_qa.clj` + CRAP/DRY, not a full Gherkin acceptance run over `features/`.
 
@@ -106,40 +102,51 @@ If that file was never recorded (`squad_theme.sh implementation-order …`), the
 **Cause / gap:**  
 - Role prompts are uneven: QA says run accepted Gherkin + full test suite; senior-implementer says full verification suite; hardener says “focused verification”; architect may not hard-require acceptance.  
 - Assignments / mechanical verification do not **gate** handoff on an acceptance-suite command.  
-- Agents reasonably optimize to units + local harness and still hand off.
+- Agents reasonably optimize to units + local harness and still hand off.  
+- **Blocked in practice by B05** when no acceptance runner exists.
 
 **Solution direction:**  
 1. **Prompt/contract:** Explicit same rule for hardener, architect, qa, senior-implementer: run full acceptance suite before handoff; record exact commands and results in the handoff/report.  
 2. **Assignment template / Tool Startup or Leader Instructions:** Name the canonical acceptance command(s) for the product (e.g. project-standard Gherkin/acceptance runner).  
-3. **Optional enforcement:** Require verification event / report section listing acceptance suite pass before `handoff_sent` is considered complete (or SL residual rejects incomplete QA/hardener/architect/senior handoffs).
+3. **Optional enforcement:** Require verification event / report section listing acceptance suite pass before `handoff_sent` is considered complete (or SL residual rejects incomplete QA/hardener/architect/senior handoffs).  
+4. Land **B05** first (or in parallel) so the command exists.
 
 **Where:** `swarmforge/role-templates/{hardener,architect,qa,senior-implementer}.prompt` (+ contracts); assignment generation for those templates; live batch QA reports under `qa/` as evidence of current behavior.
 
 **Repro (live):** `hunt-the-wumpus-qa` / `-r2` handoff reports pass via unit suite + batch procedure harness without documenting full Gherkin acceptance; hardener/architect/senior paths similarly weak on acceptance unless agent chooses to run it.
 
-## Implementer rework thrash after code-review changes-requested (one-cycle broken)
+---
 
-**Symptom:** A story racks up many implementer assignments in quick succession (`…-implementation`, `…-r2`, … `…-r14`) after a single code review **changes-requested**, each rework merging in ~2 minutes, without a new code-review accept (or a second deliberate review cycle). Looks like “14 revisions” but is scheduler churn, not fourteen full story redesigns. Packet can still show `code_review: changes-requested` and only the first implementation in `implementation_iterations` while later `-rN` keep spawning.
+### B08 — Mechanical apply crashes when agent heartbeat disappears mid-read
 
-**Expected (one-cycle rework):**  
-1. Code review: changes-requested  
-2. **One** implementer rework assignment  
-3. **Code review again** (accept or changes-requested)  
-4. Packet updates so the prior changes-requested is **consumed / stale** and does not authorize endless new implementers  
+**Symptom:** Daemon log shows `workflow-mechanical-failed` with a full stack:
 
-**Cause:** After implementer rework merges, packet `code_review: changes-requested` stays live. Ready-action / one-cycle revision logic keeps creating the next `implementation-rN` instead of scheduling **re-review** or treating the request as satisfied for one cycle. Related helpers: `one-cycle-revision-candidate`, `stale-changes-requested?`, `field-changes-requested?` in `squad_next.clj` — the “stale / one-cycle” path is not stopping further implementer creates.
+```text
+java.io.FileNotFoundException: …/.squad/agents/<agent>/heartbeat (No such file or directory)
+Location: squad_next.clj file-map → slurp
+```
+
+Mechanical poll fails that tick (exit non-zero). Later polls may recover.
+
+**Cause:** `file-map` in `squad_next.clj` does `(when (fs/exists? file) (slurp …))`. Between `exists?` and `slurp`, retire or another path can delete the agent’s `heartbeat`/`status` (TOCTOU). Same pattern anywhere agent files are slurped without a safe open.
+
+**Expected:** Missing agent telemetry is treated as empty/unknown state, not an uncaught exception. Mechanical apply never dies on a vanished heartbeat.
 
 **Solution direction:**  
-1. After a post-review implementer rework is **merged** (or result recorded), require **code-reviewer** again before any further implementer create.  
-2. Mark the changes-requested **consumed** (or stale) once the rework assignment for that review target is complete, until a new review writes a new decision.  
-3. Cap implementer revision depth (e.g. stop or escalate after N reworks without an intervening code-review accept).  
-4. Ensure packet `implementation_iterations` / review fields reflect each rework cycle so state matches reality.
+1. Catch `FileNotFoundException` / `IOException` in `file-map` (and similar readers) → return `{}`.  
+2. Or open with try/slurp in one step; treat missing file as empty map.  
+3. Prefer reading status/heartbeat under a stable agent lifecycle lock if races remain common.  
+4. Test: delete heartbeat between exists and slurp (or mock); mechanical apply continues.
 
-**Where:** `swarmforge/scripts/squad_next.clj` — implementer create after `code_review` changes-requested; `one-cycle-revision-candidate`, `stale-changes-requested?`; packet update on implementer merge / review re-record.
+**Where:** `swarmforge/scripts/squad_next.clj` (`file-map` ~line 50); any shared file-map helpers used during retirement races.
 
-**Repro (live):** `movement-hazards`: one code-review changes-requested; implementer assignments through `movement-hazards-implementation-r14` in ~40 minutes; packet still `code_review: changes-requested`; no intervening code-review accept between r2–r14.
+**Repro (live):** `2026-08-11T21:15:03Z` — `workflow-mechanical-failed` on `code-reviewer-003/heartbeat` during mechanical apply while agents were turning over.
 
-## Operator unblock and dashboard requests need a Troubleshooter (not the squad leader)
+---
+
+## P2 — Operator path and agent hygiene
+
+### B09 — Operator unblock and dashboard requests need a Troubleshooter (not the squad leader)
 
 **Symptom / gap:** When the workflow is stuck (e.g. implementer rework thrash, held-handoff never finishes, missing implementation-order record), an **operator** can reach in and fix state: force packet fields, block thrash assignments, retire agents, move held handoffs, etc. The **squad leader cannot** do the same under its rules even when it has the same helper tools on paper.
 
@@ -171,46 +178,14 @@ If that file was never recorded (`squad_theme.sh implementation-order …`), the
 2. Dashboard requests / SL-request wake path → **troubleshooter** session (not squad-leader).  
 3. Optional: residual or status alerts that look like “workflow stuck / thrash / held-finish failing” also notify troubleshooter.  
 4. Keep SL residual-only for normal orchestration so it stays deterministic and trustworthy.  
-5. Document: product bugs still get fixed in code; troubleshooter is the **in-swarm operator**, not a substitute for fixing FSM bugs.
+5. Document: product bugs still get fixed in code; troubleshooter is the **in-swarm operator**, not a substitute for fixing FSM bugs (B01–B04).
 
 **Where (today):** dashboard request wake in `squadd.clj` / `squadd/web.clj` → SL; SL prompt residual-only rules; no troubleshooter role.  
 **Repro:** movement-hazards thrash — residual never offered accept+stop; operator (or a troubleshooter) had to force `squad_packet.sh review … accepted`, block thrash assignments, and retire agents. SL following rules could not.
 
-## No acceptance pipeline — Gherkin mutation and full acceptance suite cannot run
+---
 
-**Symptom:** Hardener (and similarly late roles) install `gherkin-mutator` / `gherkin-parser` but **do not run Gherkin mutation**. Agents report e.g. “Gherkin mutator not run because no acceptance runner worker is configured” or that the QA harness is a fixed transcript script, not a generated-feature runner. Full acceptance suite before handoff (separate bug) also fails for the same underlying gap: there is no project acceptance command to run.
-
-**Cause:** Product never gains the **Acceptance Pipeline Specification (APS)** wiring that constitution requires. Live product has:
-- `features/*.feature` (from gherkin-writers)
-- unit tests via `bb test`
-- optional batch QA script (`qa/scripts/…`) as a **hand-written transcript harness**
-
-Missing (constitution **Acceptance Pipeline**): acceptance entrypoint/generator, acceptance runtime, project step handlers, **runner adapter**, convenience scripts, and a stable command usable as:
-
-```text
-gherkin-mutator --runner-worker <command>
-```
-
-Implementer role says “if assigned acceptance tests fail, keep working,” but implementer **required tools** are only `dependency-checker`; assignments do not force APS setup. Implementers (and early tooling stories) ship units + features without a runnable acceptance pipeline. Hardener correctly cannot invent that stack at harden time.
-
-**Expected:**  
-1. By the time stories are implementable (or as first implementation / project-setup work), the product has a **working acceptance runner** driven by accepted Gherkin (generate + run features).  
-2. Canonical command(s) exist (e.g. `bb` task or script) that execute one or all acceptance features.  
-3. Hardener runs **Gherkin mutation** with `--runner-worker` pointing at that command, plus code mutation / CRAP / DRY as today.  
-4. QA / hardener / architect / senior-implementer can run the **full acceptance suite** before handoff (see related bug).  
-5. Workflow or assignment text makes APS setup a **blocking** implementer (or dedicated setup) duty when features exist and the runner does not.
-
-**Solution direction:**  
-- Prompt/contract: implementer (or first story / tooling story) owns APS project components, not only process units.  
-- Template product `bb.edn` / docs: acceptance tasks + runner-worker example.  
-- Gate hardener “Gherkin mutation complete” or fail soft with **blocker** to SL if runner missing (don’t silently skip).  
-- Align with “full acceptance suite before handoff” bug — same pipeline, two consumers.
-
-**Where:** `constitution/articles/engineering.prompt` (Acceptance Pipeline); `role-templates/implementer.*` (tools + duties); `hardener.contract.edn` / hardener assignment Tool Startup; product `bb.edn` / missing acceptance sources; live hardener-002/005 panes and tool-table `gherkin-mutator`.
-
-**Repro (live):** Hunt the Wumpus product: features present, `bb test` only in `bb.edn`; hardener-002/005 parse Gherkin and run `clj-mutate` but skip `gherkin-mutator` for lack of `--runner-worker` / acceptance runner.
-
-## Dashboard SL answers truncate to first line of multiline response
+### B10 — Dashboard SL answers truncate to first line of multiline response
 
 **Symptom:** Operator asks via dashboard (e.g. “how do I run the game?”). SL writes a full answer file (multiple lines: intro, `bb run wumpus`, notes, related commands) and `squad_dashboard_request.sh answer` succeeds. **Dashboard UI only shows the first line**, e.g.  
 `Run it from the repository root with:`  
@@ -238,3 +213,108 @@ On read, **each line is parsed independently**; only the first line matches `res
 **Where:** `swarmforge/scripts/squad_dashboard_request.clj` (`render-request`, `parse-kv`, `file-map`, `answer-request`); `squadd/web.clj` `renderRequests` / `.req-sl` CSS.
 
 **Repro (live):** `dashboard-20260811T221429Z-001` — answer file had full `bb run wumpus` instructions; `.request` file has full text after first line; `response:` field as read by `file-map` is only `Run it from the repository root with:`; operator saw only that in the dashboard window.
+
+---
+
+### B11 — Zombie tmux sessions after agent retire
+
+**Symptom:** Agent status is **retired**, worktree removed, agent gone from `roles.tsv`, residual reports no active transients — but **tmux sessions still exist** (e.g. `swarmforge-cleaner-006`, `swarmforge-hardener-001`, `swarmforge-implementer-001`, `swarmforge-qa-011`). Retire detail sometimes says *“tmux session was not running”* even when the session is still listed in `tmux ls`.
+
+**Cause:** Retire path fails to kill or mis-detects session liveness (wrong socket, race, or “not running” check that disagrees with the swarm tmux server). Overlaps held-handoff incomplete cleanup (B02) but is a distinct **session leak**: windows keep consuming desktop/process resources and confuse operators.
+
+**Expected:** After successful `squad_retire.sh`, the agent’s tmux session is gone on the swarm socket; status detail matches reality; no orphan `swarmforge-<agent>` sessions for retired agents.
+
+**Solution direction:**  
+1. Retire always targets the project’s tmux socket; verify `has-session` after kill.  
+2. If session still present, force kill and log failure if still alive.  
+3. Periodic squadd reconcile: sessions named `swarmforge-*` with no non-retired agent → kill or alert.  
+4. Align with held-handoff finish so “soft” retires still clean sessions.
+
+**Where:** `squad_retire.clj` session stop / worktree removal; `squadd` role reconciliation; live: retired agents with `tmux=yes`, `worktree=no`.
+
+**Repro (live):** After swarm progress, only `squad-leader` in `roles.tsv`, residual `wait` with no actives, but `tmux ls` still shows cleaner-006, hardener-001/002, implementer-001/019, qa-011/012 — all agent records `state: retired`.
+
+---
+
+### B12 — Hardener edits root tooling (`bb.edn`) against role rules
+
+**Symptom:** Hardener commits change root `bb.edn` (and can cause merge conflicts on `bb.edn`). Role prompt says do **not** edit root tooling files (`bb.edn`, `deps.edn`, …) unless the assignment explicitly requires tooling work.
+
+**Cause:** Prompt/rule is soft; hardener follows local convenience (e.g. test task lists) without enforcement. Concurrent hardeners + mergers then fight over `bb.edn`.
+
+**Expected:** Hardener does not touch root tooling unless assignment says so; violations are rejected at review or blocked by policy/check. Hardening stays in `src/` / `test/` (and allowed artifact roots).
+
+**Solution direction:**  
+1. Strengthen hardener prompt + assignment Leader Instructions.  
+2. Optional pre-handoff check: hardener result commit must not modify denylisted paths.  
+3. Code review / mechanical gate on batch hardener artifacts.  
+4. Prefer product layout that doesn’t require hardener to edit `bb.edn` for tests (tasks under `bb/tasks/`).
+
+**Where:** `swarmforge/role-templates/hardener.prompt`; hardener contract `artifact-roots`; live commit e.g. `b873564` (*Harden Wumpus process random choice validation*) includes `bb.edn`; merge-errors also show `bb.edn` conflicts on hardener batches.
+
+---
+
+## P3 — Architecture polish and operator UX
+
+### B13 — Analyst dependency-checker policy is missing or pitifully coarse
+
+**Symptom:** Product `dependency-checker.edn` is a minimal two-component sketch, e.g.:
+
+```clojure
+{:allowed-dependencies {:main [:process]
+                        :process []}
+ :fail-on-cycles true
+ :fail-on-violations true}
+```
+
+That only says “main may depend on process; process may not depend on main.” Everything under process is one blob (`process → process` free-for-all). The checker stays green while the real module graph (many process namespaces, arch-view edges) has **no internal policy**. Not a useful Clean Architecture gate.
+
+**Who owns it:** The **analyst** is supposed to **create** `dependency-checker.edn` as a durable product artifact, aligned with the **theme module map** and story structure — a real allowed-dependency policy, not a stub for implementers to invent, and not a two-bucket placeholder that fails to encode use-case / cave / UI boundaries. Module map template already notes names should stay consistent with a future dependency-checker policy.
+
+**Expected:** Analyst delivers a dependency-checker input that:
+1. Names **real components** matching the module map (e.g. UI/main, process use-cases, pure cave/topology, IO if split) — not only `:main` and `:process`.  
+2. Lists **allowed edges** that enforce inward dependencies (UI → process → pure domain; no process → UI).  
+3. Constrains **within process** where the map requires it (e.g. movement/shooting may use cave; cave depends on nothing product-internal).  
+4. Is included in the **analysis handoff** so implementers, code reviewers, and hardeners **enforce** it rather than invent a pitiful default.  
+5. Grows when stories add components; not left frozen as a one-time stub.  
+6. Is good enough that a green checker run means something architectural, not just “two layers exist.”
+
+**Cause:** Analysis path does not require or review a real dependency-checker policy. Live swarm got a stub (likely first implementer) that satisfies “run the tool” without encoding architecture. Analyst prompt currently emphasizes stories/module-map guidance, not authoring `dependency-checker.edn`.
+
+**Solution direction:**  
+- Analyst prompt/contract: author `dependency-checker.edn` from the module map; list it among required analysis artifacts.  
+- SL/theme gates: analysis incomplete without a non-trivial policy (or explicit operator waiver).  
+- Code review / hardener: fail or flag if policy is only the two-bucket template while many process modules exist.  
+- Product/template example with multi-component `allowed-dependencies` for Clean Architecture apps.
+
+**Where:** `role-templates/analyst.prompt` / contract; `templates/theme-module-map.md`; analysis assignment artifacts; product root `dependency-checker.edn`; live product `dependency-checker.edn` vs process modules under `src/`.
+
+**Repro (live):** Hunt the Wumpus — many main/process modules, checker config only `:main`/`:process`; `dependency-checker` reports 2 components, 0 violations, while internal process dependencies are unconstrained.
+
+---
+
+### B14 — Theme package page should include dependency-checker.edn card
+
+**Symptom:** Clicking the **theme** link on the dashboard opens the theme package view (scheme, module map, implementation order, …). **`dependency-checker.edn` is not shown** as a card, so operators cannot inspect the architecture dependency policy next to the module map.
+
+**Expected:** Theme package UI includes a card for **`dependency-checker.edn`** (durable product path at project root, or wherever analysis records it), alongside theme scheme, module map, and implementation order. Missing file should show a clear empty/missing state (and ideally that analysis is incomplete — see B13).
+
+**Solution direction:** Extend theme package section builders in `squadd/web.clj` (same pattern as module map / implementation-order draft-vs-durable); load/display `dependency-checker.edn` content; TOC entry for the card.
+
+**Where:** `swarmforge/scripts/squadd/web.clj` theme package / artifact-content for `theme`; dashboard theme link.
+
+**Related:** B13 — analyst must author a real dependency-checker policy.
+
+---
+
+### B15 — Grok agent terminal window does not fill / scroll correctly
+
+**Symptom:** When the operator opens (clicks into) a window for an agent running the **Grok** backend, the popped terminal shows only about **~25 lines of text**, all pinned to the **top** of the window. The rest of the window is empty. Scrolling moves within that short band from that top position **upward**; content does not fill or use the full window height like a normal shell pane.
+
+**Likely cause:** Screen / TUI control from the Grok CLI (alternate screen buffer, fixed viewport rows, cursor addressing, or redraw sized to a small initial geometry rather than the real window). Related investigation notes: `swarmforge/docs/grok-agent-window-scroll.md` (alt screen, mouse capture, host terminal vs tmux). May also involve spawn-time rows/cols or terminal-adapter sizing if the session is created with a short height that Grok never re-queries.
+
+**Expected:** Live Grok agent window uses the full terminal geometry; visible transcript fills the window and scrolls in a usable way (or documents a reliable operator path if the upstream TUI cannot).
+
+**Where to look:** Grok launch path (spawn / `launch.sh` / backend flags), terminal adapters under `swarmforge/scripts/terminal-adapters/`, tmux pane size at create, host terminal alt-screen behavior; compare with Codex-backed agent windows which do not show this.
+
+**Repro:** Start a swarm with a Grok-backed role (e.g. `gherkin-reviewer` / `qa-procedure-reviewer` per `squad.conf`), open that agent’s terminal window while it is running, observe ~25-line top band and empty lower region.

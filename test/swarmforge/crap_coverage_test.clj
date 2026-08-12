@@ -922,6 +922,7 @@
                      "approval_required qa false\n"
                      "approval_required architecture false\n"
                      "approval_required final false\n"))
+    (write-file (fs/path root ".squad/themes/theme-a/implementation-order.md") "")
     (write-file (fs/path story-dir "packet")
                 (str "theme_id: theme-a\n"
                      "story_id: s1\n"

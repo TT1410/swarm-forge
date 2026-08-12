@@ -548,3 +548,65 @@
         (is (= "2" (str/trim (slurp (str (fs/path fake-state "returns")))))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest p0-spawn-queue-continues-past-template-capacity-head
+  ;; Given queue head blocked on template-capacity-full and a later free template
+  ;; When squadd --once processes the queue
+  ;; Then the later free-template request is processed (not HOL-blocked)
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "gherkin-writer-001\tgherkin-writer-001\t" root "/.worktrees/g1\tswarmforge-g1\tG1\tcodex\ttask\n"
+                       "gherkin-writer-002\tgherkin-writer-002\t" root "/.worktrees/g2\tswarmforge-g2\tG2\tcodex\ttask\n"
+                       "gherkin-writer-003\tgherkin-writer-003\t" root "/.worktrees/g3\tswarmforge-g3\tG3\tcodex\ttask\n"))
+      (write-file (fs/path root ".swarmforge/tmux-socket")
+                  "/tmp/swarmforge-test.sock\n")
+      (doseq [a ["gherkin-writer-001" "gherkin-writer-002" "gherkin-writer-003"]]
+        (write-agent-status! root a "running"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "max_transient_agents 20\n"
+                       "max_active_template gherkin-writer 3\n"
+                       "max_active_template qa-procedure-writer 3\n"))
+      (write-file (fs/path root "swarmforge/role-templates/gherkin-writer.prompt") "gw\n")
+      (write-file (fs/path root "swarmforge/role-templates/qa-procedure-writer.prompt") "qw\n")
+      (write-file (fs/path root "gherkin-assignment.md") "Write gherkin.\n")
+      (write-file (fs/path root "qa-assignment.md") "Write QA procedure.\n")
+      (run {:dir root}
+           (script "squad_spawn_request.sh")
+           "gherkin-writer"
+           "blocked-gherkin"
+           "gherkin-assignment.md")
+      (run {:dir root}
+           (script "squad_spawn_request.sh")
+           "qa-procedure-writer"
+           "free-qa-writer"
+           "qa-assignment.md")
+      (let [once (run {:dir root
+                       :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"
+                             "SWARMFORGE_SQUADD_SKIP_TMUX" "1"}}
+                      (script "squadd.sh")
+                      "--once"
+                      "--no-notify"
+                      (str root))
+            new-requests (when (fs/directory? (fs/path root ".squad/spawn-requests/new"))
+                           (mapv str (fs/list-dir (fs/path root ".squad/spawn-requests/new"))))
+            completed (when (fs/directory? (fs/path root ".squad/spawn-requests/completed"))
+                        (mapv str (fs/list-dir (fs/path root ".squad/spawn-requests/completed"))))
+            in-process (when (fs/directory? (fs/path root ".squad/spawn-requests/in_process"))
+                         (mapv str (fs/list-dir (fs/path root ".squad/spawn-requests/in_process"))))
+            daemon-log (slurp (str (fs/path root ".swarmforge/daemon/squadd.log")))
+            all-paths (str (str/join " " (concat (or new-requests [])
+                                                 (or completed [])
+                                                 (or in-process [])))
+                           " " daemon-log " " (:out once))]
+        (is (str/includes? daemon-log "template-capacity-full:gherkin-writer")
+            "head should still defer on template capacity")
+        (is (or (some #(str/includes? % "free-qa-writer") (or completed []))
+                (some #(str/includes? % "free-qa-writer") (or in-process []))
+                (str/includes? all-paths "free-qa-writer")
+                (not (some #(str/includes? % "free-qa-writer") (or new-requests []))))
+            "later free template must leave new/ (processed despite HOL head)"))
+      (finally
+        (fs/delete-tree root)))))

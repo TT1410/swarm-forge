@@ -457,6 +457,8 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root "swarmforge/squad.conf")
                   "approval_required implementation false\n")
+      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
+                  "")
       (write-file (fs/path root ".squad/stories/alpha/packet")
                   (str "story_id: alpha\n"
                        "theme_id: wumpus\n"
@@ -938,6 +940,7 @@
       (write-file (fs/path root "stories/cave-topology.md") "Story: cave topology and setup.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
+      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md") "")
       (let [sha (prepare-implementation-packet! root "wumpus" "cave-topology")]
         (run {:dir root} (script "squad_packet.sh") "approve" "cave-topology" "implementation" "approved")
         (run {:dir root} (script "squad_packet.sh") "record" "cave-topology" "implementation" "impl-1" "master" sha)
@@ -2105,5 +2108,185 @@
       (let [residual (run {:dir root} (script "squad_next.sh") "--residual-only")]
         (is (str/includes? (:out residual) "NEXT_ACTION: wait_for_daemon_main_git"))
         (is (str/includes? (:out residual) "DEFERRED_ACTION: check_merge_readiness")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest p0-implementer-one-rework-per-code-review-changes-requested
+  ;; Given current code_review changes-requested and original implementation recorded
+  ;; When a rework implementer already exists
+  ;; Then no second rework implementer is created (thrash stop)
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 10\napproval_required implementation false\n")
+      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
+                  "alpha:\n")
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "story_approval: approved\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_approval: approved\n"
+                       "gherkin_review: accepted\n"
+                       "qa_procedure_review: accepted\n"
+                       "implementation_approval: approved\n"
+                       "implementation_assignment: alpha-implementation\n"
+                       "implementation_sha: aaaaaaaaaa\n"
+                       "cleaner_sha: bbbbbbbbbb\n"
+                       "code_review: changes-requested\n"
+                       "code_review_assignment: alpha-code-review\n"
+                       "code_review_sha: cccccccccc\n"
+                       "code_review_target_sha: bbbbbbbbbb\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/metadata")
+                  (str "assignment_id: alpha-implementation\ntheme_id: wumpus\nstory_id: alpha\n"
+                       "template: implementer\nassignment_file: " root "/i.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/status")
+                  "assignment_id: alpha-implementation\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-implementation-r2/metadata")
+                  (str "assignment_id: alpha-implementation-r2\ntheme_id: wumpus\nstory_id: alpha\n"
+                       "template: implementer\nassignment_file: " root "/i2.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation-r2/status")
+                  "assignment_id: alpha-implementation-r2\nstate: merged\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "alpha-implementation-r3"))
+            "must not create endless implementer reworks while CR is open")
+        (is (not (re-find #"create_assignment.*implementer.*alpha-implementation-r[3-9]" out))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest p0-rework-implementer-re-records-implementation-result
+  ;; Given merged rework implementer after first implementation_sha is set
+  ;; When squad_next runs
+  ;; Then record_merged_result is offered for the rework assignment
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md") "")
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "story_approval: approved\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_approval: approved\n"
+                       "gherkin_review: accepted\n"
+                       "qa_procedure_review: accepted\n"
+                       "implementation_approval: approved\n"
+                       "implementation_assignment: alpha-implementation\n"
+                       "implementation_sha: aaaaaaaaaa\n"
+                       "cleaner_sha: bbbbbbbbbb\n"
+                       "code_review: changes-requested\n"
+                       "code_review_target_sha: bbbbbbbbbb\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation-r2/metadata")
+                  (str "assignment_id: alpha-implementation-r2\ntheme_id: wumpus\nstory_id: alpha\n"
+                       "template: implementer\nassignment_file: " root "/i2.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation-r2/status")
+                  "assignment_id: alpha-implementation-r2\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-implementation-r2/accepted-merge")
+                  (str "assignment_id: alpha-implementation-r2\n"
+                       "state: merged\n"
+                       "commit: dddddddddd\n"
+                       "merge_commit: eeeeeeeeee\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "record_merged_result")
+            "rework implementer must re-record even when implementation_sha exists")
+        (is (str/includes? out "alpha-implementation-r2")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest p0-held-handoff-finishes-after-assignment-merged
+  ;; Given held handoff for an assignment that later merged
+  ;; When apply-mechanical runs
+  ;; Then handoff moves to in_process and finish_held_handoff is applied
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "implementer-001\timplementer-001\t" root "/.worktrees/i\tswarmforge-i\tI\tcodex\ttask\n"))
+      (write-agent-status! root "implementer-001" "handoff_sent")
+      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                  "template: implementer\ntask_id: alpha-implementation\n")
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/metadata")
+                  (str "assignment_id: alpha-implementation\ntheme_id: wumpus\nstory_id: alpha\n"
+                       "template: implementer\nassignment_file: " root "/i.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/status")
+                  "assignment_id: alpha-implementation\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-implementation/accepted-merge")
+                  (str "assignment_id: alpha-implementation\nstate: merged\n"
+                       "commit: abcdef1234\nmerge_commit: fedcba4321\n"))
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/held/50_held.handoff")
+                  (str "type: git_handoff\nto: squad-leader\nfrom: implementer-001\npriority: 50\n"
+                       "task: alpha-implementation\ncommit: abcdef1234\nassignment: alpha-implementation\n"
+                       "agent: implementer-001\ntemplate: implementer\n\n"
+                       "merge_and_process implementer-001 abcdef1234\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
+        (is (or (str/includes? out "finish_held_handoff")
+                (str/includes? out "finish_in_process_handoff")
+                (not (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/held/50_held.handoff"))))
+            "held handoff for merged assignment must be finished")
+        (is (not (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/held/50_held.handoff")))
+            "held file must leave held tray"))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest p0-missing-durable-implementation-order-blocks-all-implementers
+  ;; Given root draft only — durable theme order missing
+  ;; When stories are ready for implementation
+  ;; Then implementers are not created; record_implementation_order is offered
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 10\napproval_required implementation false\n")
+      (write-file (fs/path root "implementation-order.md")
+                  "story-b: story-a\n")
+      (doseq [story ["story-a" "story-b"]]
+        (write-file (fs/path root ".squad/stories" story "packet")
+                    (str "story_id: " story "\n"
+                         "theme_id: wumpus\n"
+                         "story_approval: approved\n"
+                         "gherkin_approval: approved\n"
+                         "qa_procedure_approval: approved\n"
+                         "gherkin_review: accepted\n"
+                         "qa_procedure_review: accepted\n"
+                         "implementation_approval: approved\n")))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "record_implementation_order")
+            "must surface recording durable order")
+        (is (not (str/includes? out "story-a-implementation"))
+            "foundation implementer blocked until durable order exists")
+        (is (not (str/includes? out "story-b-implementation"))
+            "dependent implementer blocked until durable order exists"))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest p0-mechanical-records-root-implementation-order-draft
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "implementation-order.md")
+                  "story-b: story-a\n")
+      (write-file (fs/path root ".squad/stories/story-a/packet")
+                  (str "story_id: story-a\ntheme_id: wumpus\n"
+                       "story_approval: approved\n"))
+      ;; theme dir must exist for squad_theme.sh
+      (fs/create-dirs (fs/path root ".squad/themes/wumpus"))
+      (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            durable (str (fs/path root ".squad/themes/wumpus/implementation-order.md"))]
+        (is (or (fs/exists? durable)
+                (str/includes? out "record_implementation_order"))
+            "mechanical path records or offers durable order")
+        (when (fs/exists? durable)
+          (is (str/includes? (slurp durable) "story-b: story-a"))))
       (finally
         (fs/delete-tree root)))))

@@ -1094,14 +1094,17 @@
         (handle-active-spawn-request! root active base completed failed request-data)
         :processed))))
 
-(defn capacity-style-blocker? [blocker]
-  (or (= "capacity-full" blocker)
-      (and blocker (str/starts-with? (str blocker) "template-capacity-full"))
-      (and blocker (str/starts-with? (str blocker) "group-capacity-full"))))
+(defn total-capacity-pressure-blocker?
+  "Only global max_transient_agents pressure should stop the spawn queue scan.
+  Template/group capacity full must defer that request and continue so other
+  templates can spawn (P0 B04 head-of-line)."
+  [blocker]
+  (= "capacity-full" blocker))
 
 (defn poll-spawn-requests!
-  "Process new spawn requests. On capacity-full, stop the scan early and return
-  true so the daemon can back off. Deferred requests log once each, not every tick."
+  "Process new spawn requests. On total capacity-full, stop the scan early and
+  return true so the daemon can back off. Template/group full only defers that
+  request and continues scanning. Deferred requests log once each, not every tick."
   [root]
   (let [deferred (atom 0)
         capacity-pressure? (atom false)]
@@ -1115,7 +1118,7 @@
             (let [blocker (spawn-capacity-blocker
                            root
                            (get (parse-kv-file request) "template"))]
-              (when (capacity-style-blocker? blocker)
+              (when (total-capacity-pressure-blocker? blocker)
                 (reset! capacity-pressure? true))))
           :processed nil
           nil)
