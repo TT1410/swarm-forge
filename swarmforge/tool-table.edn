@@ -52,13 +52,15 @@
                "If clj-mutate reports all sites covered solely because LCOV is missing, treat that as invalid — fix coverage or hand back a blocker."
                "When features/ exists: run the full acceptance suite (`bb acceptance`) and pass before handoff."
                "When features/ exists: run gherkin-mutator with --runner-worker \"bb acceptance-worker\" (NDJSON worker). Do not use bare `bb acceptance` as --runner-worker (that is the human suite and causes Stream closed). If the worker is missing, hand back ACCEPTANCE_BLOCKER."
+               "Quality bar before handoff (or explicit blocker): CRAP ≤ 6 after real LCOV; kill all in-scope code mutants (clj-mutate); kill Gherkin mutants (not mass errors/empty manifests); reduce DRY duplication within scope."
                "Do not edit root bb.edn/deps.edn unless the assignment requires tooling for coverage/APS."]
               :required-evidence
               [{:header "coverage" :description "LCOV path produced before CRAP/mutation"}
                {:header "acceptance_suite" :description "Full acceptance suite command and pass result (or blocker)"}
-               {:header "gherkin_mutation" :description "gherkin-mutator with --runner-worker bb acceptance-worker; command/result or blocker"}
-               {:header "code_mutation" :description "clj-mutate result using real LCOV"}
-               {:header "crap" :description "CRAP tool summary after real coverage"}]}
+               {:header "gherkin_mutation" :description "gherkin-mutator --runner-worker bb acceptance-worker; killed/survived/errors (survivors=0 or blocker)"}
+               {:header "code_mutation" :description "clj-mutate with real LCOV; killed/survived (survivors=0 or blocker)"}
+               {:header "crap" :description "CRAP after real coverage; all reported scores ≤ 6 or blocker with residuals"}
+               {:header "dry" :description "DRY tool summary: candidates found, reduced, residual justified or blocker"}]}
   "architect" {:required-tools ["dependency-checker"]
                :verification-prerequisites
                ["Before handoff: run the full acceptance suite when features/ exist (`bb acceptance` or project equivalent) and record the result in the review/handoff. Architectural acceptance does not replace this check."

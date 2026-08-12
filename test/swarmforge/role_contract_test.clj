@@ -191,6 +191,28 @@
     (is (str/includes? prompt "bb acceptance-worker"))
     (is (str/includes? prompt "acceptance/steps/"))))
 
+(deftest hardener-prompt-requires-quality-bar
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))
+        lower (str/lower-case prompt)
+        prereqs (tools/verification-prerequisites repo-root "hardener")
+        evidence (map :header (tools/required-evidence repo-root "hardener"))]
+    (is (str/includes? prompt "CRAP ≤ 6") prompt)
+    (is (str/includes? lower "all mutants are killed") prompt)
+    (is (str/includes? lower "reduce duplication") prompt)
+    (is (str/includes? lower "hand back a blocker") prompt)
+    (is (some #(str/includes? % "CRAP ≤ 6") prereqs))
+    (is (some #(= "dry" %) evidence))))
+
+(deftest troubleshooter-role-prompt-is-short-and-operator-focused
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/roles/troubleshooter.prompt")))
+        contract (edn/read-string (slurp (str (fs/path repo-root "swarmforge/roles/troubleshooter.contract.edn"))))]
+    (is (< (count prompt) 2500) "prompt stays short")
+    (is (str/includes? (str/lower-case prompt) "look around"))
+    (is (str/includes? prompt "Squad Leader"))
+    (is (true? (:persistent contract)))
+    (is (true? (:idle-until-called contract)))
+    (is (true? (:elevated-ops contract)))))
+
 (deftest implementer-prompt-owns-acceptance-pipeline
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))]
     (is (str/includes? prompt "Acceptance Pipeline"))

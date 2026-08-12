@@ -127,7 +127,7 @@
   (let [role (first row)
         session (nth row 3 nil)
         state (read-value (fs/path root ".squad" "agents" role "status") "state")]
-    (and (not= "squad-leader" role)
+    (and (not (#{"squad-leader" "troubleshooter"} role))
          (not= "retired" state)
          (if (skip-tmux-capacity?)
            (contains? active-agent-states state)

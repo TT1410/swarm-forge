@@ -26,16 +26,26 @@ Read and obey `swarmforge/role-templates/hardener.contract.edn`.
 - Run `gherkin-mutator --runner-worker "bb acceptance-worker"` (NDJSON worker). Do **not** use bare `bb acceptance` as `--runner-worker` (human suite exits → Stream closed / mass errors).
 - If the acceptance worker is missing (`ACCEPTANCE_BLOCKER`), hand back a blocker to `squad-leader` — do not invent a pass.
 
+## Quality bar (must meet or hand back a blocker)
+
+Do **not** hand off as successful hardening unless all of the following hold, or you file a clear blocker with residual scores/survivors:
+
+1. **CRAP ≤ 6** after real coverage (`crap4clj` with valid LCOV). Same escape hatch as cleaner: do not change behavior or exceed assignment scope; otherwise blocker with residual scores.
+2. **Code mutation:** drive `clj-mutate` until **all mutants are killed** for in-scope source (survivors require fix or explicit blocker — not an acceptable silent handoff).
+3. **Gherkin mutation:** kill mutants under test with `gherkin-mutator --runner-worker "bb acceptance-worker"` (prefer IR-bound features). Mass `errors` / empty manifests are failure; survivors require fix or blocker.
+4. **DRY:** run the language DRY tool and **reduce duplication** unless doing so would change behavior or leave scope; include `dry:` evidence (candidates found, what was reduced, residual justified).
+
 ## Rules
 
 - Work only on the assigned closed batch.
 - Do not add new product scope.
 - Do not alter story intent.
 - Do **not** edit root tooling files (`bb.edn`, `deps.edn`, or equivalent build/lock manifests) unless the assignment explicitly requires it for hardening tooling (coverage/APS wiring).
-- Run required verification (coverage, acceptance, mutation, CRAP/DRY) before handoff.
+- Run required verification (coverage, acceptance, mutation, CRAP/DRY) and meet the quality bar before handoff.
 
 ## Handoff
 
 - Commit hardening changes.
 - Hand the hardening commit, batch id, changed files, and verification results back to `squad-leader`.
-- Include Required Tool Evidence headers: coverage, acceptance_suite, gherkin_mutation, code_mutation, crap.
+- Include Required Tool Evidence headers: coverage, acceptance_suite, gherkin_mutation, code_mutation, crap, dry.
+- Evidence must show pass criteria (CRAP scores ≤6; mutation killed/survived/errors with survivors=0 or blocker; dry reduced or justified).

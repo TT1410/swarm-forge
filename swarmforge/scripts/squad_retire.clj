@@ -28,8 +28,8 @@
 (defn validate-agent-id! [agent-id]
   (when-not (re-matches #"[a-z][a-z0-9-]*-[0-9][0-9][0-9]" agent-id)
     (exit! 2 "Agent ids must look like template-001 and use lowercase letters, digits, and hyphens."))
-  (when (= "squad-leader" agent-id)
-    (exit! 2 "Refusing to retire persistent role squad-leader.")))
+  (when (#{"squad-leader" "troubleshooter"} agent-id)
+    (exit! 2 (str "Refusing to retire persistent role " agent-id "."))))
 
 (defn read-role-rows [roles-file]
   (if (fs/exists? roles-file)

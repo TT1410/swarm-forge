@@ -13,6 +13,7 @@
             [swarmforge.role-contract-test]
             [swarmforge.simulator-test]
             [swarmforge.spawn-test]
+            [swarmforge.squad-actions-test]
             [swarmforge.squad-next-test]
             [swarmforge.squadd-test]
             [swarmforge.squadd-web-test]
@@ -30,6 +31,7 @@
     swarmforge.recover-test
     swarmforge.role-contract-test
     swarmforge.spawn-test
+    swarmforge.squad-actions-test
     swarmforge.squad-next-test
     swarmforge.squadd-test
     swarmforge.squadd-web-test

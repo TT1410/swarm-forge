@@ -80,7 +80,7 @@
   (for [line (read-lines (fs/path project-root ".swarmforge" "roles.tsv"))
         :when (not (str/blank? line))
         :let [[role _ worktree session _ _ _] (str/split line #"\t" -1)]
-        :when (not= "squad-leader" role)]
+        :when (not (#{"squad-leader" "troubleshooter"} role))]
     {:role role
      :worktree worktree
      :session session}))
@@ -192,7 +192,9 @@
 (defn keep-only-squad-leader-roles! [project-root]
   (let [roles-file (fs/path project-root ".swarmforge" "roles.tsv")
         lines (read-lines roles-file)
-        kept (filter #(str/starts-with? % "squad-leader\t") lines)]
+        kept (filter #(or (str/starts-with? % "squad-leader\t")
+                          (str/starts-with? % "troubleshooter\t"))
+                     lines)]
     (when (fs/exists? roles-file)
       (spit (str roles-file)
             (if (seq kept)
@@ -214,7 +216,7 @@
   [project-root]
   (set
    (for [agent-id (agent-ids-on-disk project-root)
-         :when (not= "squad-leader" agent-id)
+         :when (not (#{"squad-leader" "troubleshooter"} agent-id))
          :let [assignment (assignment-id project-root agent-id)
                worktree (agent-worktree project-root agent-id)]
          :when (and (assignment-merge-blocked? project-root assignment)

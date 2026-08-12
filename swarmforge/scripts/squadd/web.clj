@@ -56,12 +56,16 @@
     <section><h2>Blockers</h2><div id=\"blockers\"></div></section>
     <section><h2>Pending Approvals</h2><div id=\"approvals\"></div></section>
     <section>
-      <h2 id=\"sl-requests-title\">Squad Leader Requests</h2>
+      <h2 id=\"sl-requests-title\">Troubleshooter
+        <span id=\"ts-busy\" class=\"muted\" style=\"display:none;margin-left:0.5rem\" aria-live=\"polite\">…</span>
+        <a id=\"ts-open\" class=\"muted\" style=\"margin-left:0.75rem;font-size:0.85rem\" target=\"_blank\" href=\"/agent/troubleshooter\">Open window</a>
+      </h2>
+      <p class=\"muted\">Idle until you call. Firm answers only; use Open window for the session.</p>
       <div id=\"sl-requests\" class=\"req-history\"></div>
       <div class=\"composer-row\">
         <button type=\"button\" onclick=\"sendRequest()\">Submit</button>
       </div>
-      <textarea id=\"sl-message\" placeholder=\"Message for the squad leader…\"></textarea>
+      <textarea id=\"sl-message\" placeholder=\"Command or question for the Troubleshooter…\"></textarea>
     </section>
     <section><h2>Theme</h2><div id=\"theme\"></div></section>
     <section><h2>Stories</h2><div id=\"stories\"></div></section>
@@ -170,7 +174,7 @@
       return '<span class=\"pill pill-' + esc(s) + '\">' + esc(s) + '</span>';
     }
     function renderRequests(items) {
-      if (!items || !items.length) return '<p class=\"muted\">No squad leader requests yet.</p>';
+      if (!items || !items.length) return '<p class=\"muted\">No Troubleshooter requests yet.</p>';
       return items.map(r => {
         const cancel = r.status === 'pending'
           ? ' <button type=\"button\" onclick=\"cancelRequest(\\'' + esc(r.id) + '\\')\">Cancel</button>'
@@ -243,7 +247,16 @@
         blockersPanel.innerHTML = blockers(data.blockers || []);
         approvalsPanel.innerHTML = approvals((data.approvals && data.approvals.pending) || []);
         const slQueue = (data.sl_queue_depth != null) ? data.sl_queue_depth : 0;
-        requestsTitle.textContent = 'Squad Leader Requests (queue: ' + slQueue + ')';
+        requestsTitle.firstChild.textContent = 'Troubleshooter ';
+        const busy = document.getElementById('ts-busy');
+        if (busy) {
+          const working = !!(data.troubleshooter && data.troubleshooter.working);
+          busy.style.display = working ? 'inline' : 'none';
+          if (working) {
+            const dots = ((Date.now() / 400) | 0) % 3;
+            busy.textContent = '.'.repeat(dots + 1);
+          }
+        }
         updateRequestsPanel(data.sl_requests || []);
         if (data.current_theme_id) {
           themePanel.innerHTML = artifactLink('theme', data.current_theme_id,
@@ -765,6 +778,21 @@
            first
            fs/file-name))))
 
+(defn troubleshooter-session-name []
+  "swarmforge-troubleshooter")
+
+(defn troubleshooter-working?
+  "True when Troubleshooter heartbeat/liveness indicate active work (daemon-style)."
+  [root]
+  (let [status (parse-kv-file (fs/path root ".squad" "agents" "troubleshooter" "status"))
+        heartbeat (parse-kv-file (fs/path root ".squad" "agents" "troubleshooter" "heartbeat"))
+        liveness (parse-kv-file (fs/path root ".squad" "agents" "troubleshooter" "liveness"))
+        state (or (get status "state") (get heartbeat "state") "")
+        pane-idle (get liveness "pane_idle_prompt")]
+    (and (not (str/blank? state))
+         (not (#{"retired" "idle" "handoff_sent"} state))
+         (not= "true" pane-idle))))
+
 (defn web-state [root]
   (let [assignments (assignment-state root)
         agents (agent-state root)
@@ -779,7 +807,9 @@
              "blockers" (blocker-state root assignments agents)
              "approvals" {"pending" (approval-state-for root "pending")}
              "sl_requests" sl-requests
-             "sl_queue_depth" (sl-queue-depth root)}
+             "sl_queue_depth" (sl-queue-depth root)
+             "troubleshooter" {"working" (troubleshooter-working? root)
+                               "session" (troubleshooter-session-name)}}
       theme-id (assoc "current_theme_id" theme-id))))
 
 (defn response [status content-type body]
@@ -1081,21 +1111,31 @@
   (let [id (get request "id")
         kind (get request "kind" "command")
         body (get request "body" "")]
-    (str "Dashboard request pending. Run squad_next.sh --residual-only and answer it.\n"
+    (str "Operator request for Troubleshooter. Look around if needed, act, then answer firmly.\n"
          "REQUEST_ID: " id "\n"
          "KIND: " kind "\n"
          "BODY: " body "\n"
          "COMMAND: squad_dashboard_request.sh answer " id " <answer-file>\n"
          "A request is not complete until the helper succeeds.")))
 
-(defn wake-sl-for-request! [root request]
+(defn wake-troubleshooter-for-request! [root request]
   (if-let [socket (socket-value root)]
-    (if (tmux-notify! socket "swarmforge-squad-leader" (dashboard-request-wake-message request))
+    (if (tmux-notify! socket (troubleshooter-session-name) (dashboard-request-wake-message request))
       (do
-        (log! root "web-sl-request-created" (get request "id"))
+        (log! root "web-troubleshooter-request-created" (get request "id"))
         true)
-      false)
+      ;; Fall back to SL if Troubleshooter session is not up yet
+      (if (tmux-notify! socket "swarmforge-squad-leader"
+                        (str "Troubleshooter session missing. Operator request "
+                             (get request "id") " — spawn troubleshooter or handle residual.\n"
+                             (dashboard-request-wake-message request)))
+        (do (log! root "web-sl-request-fallback" (get request "id")) true)
+        false))
     false))
+
+(defn wake-sl-for-request! [root request]
+  "Legacy name: operator dashboard requests wake the Troubleshooter (B09)."
+  (wake-troubleshooter-for-request! root request))
 
 (defn create-sl-request-action! [root body]
   (let [{:keys [kind body]} (parse-sl-request-body body)

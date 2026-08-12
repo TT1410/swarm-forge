@@ -3,6 +3,7 @@
 (ns squad-next
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [squad-actions :as actions]
             [squad-config :as cfg]
             [squad-state :as squad-state]
             [clojure.set]
@@ -2020,6 +2021,8 @@
 
 (def story-candidate-fields
   [["NEXT_ACTION" :next-action true]
+   ["OP" :op false]
+   ["AUTHORITY" :authority false]
    ["THEME" :theme-id true]
    ["STORY" :story-id false]
    ["GATE" :gate false]
@@ -2035,13 +2038,16 @@
     (println (str label ":") value)))
 
 (defn print-story-candidate! [candidate total]
-  (doseq [field story-candidate-fields]
-    (print-candidate-field! candidate field))
-  (println "CANDIDATES:" total)
-  (println "COMMAND:" (:command candidate)))
+  (let [candidate (actions/ensure-typed candidate)]
+    (doseq [field story-candidate-fields]
+      (print-candidate-field! candidate field))
+    (println "CANDIDATES:" total)
+    (println "COMMAND:" (actions/shell-command candidate))))
 
 (def concurrent-action-fields
   [["CONCURRENT_ACTION_NAME" :next-action true]
+   ["CONCURRENT_OP" :op false]
+   ["CONCURRENT_AUTHORITY" :authority false]
    ["CONCURRENT_THEME" :theme-id false]
    ["CONCURRENT_STORY" :story-id false]
    ["CONCURRENT_GATE" :gate false]
@@ -2054,18 +2060,20 @@
    ["CONCURRENT_COMMAND" :command true]])
 
 (defn print-concurrent-action! [index candidate]
-  (println "CONCURRENT_ACTION:" index)
-  (doseq [field concurrent-action-fields]
-    (print-candidate-field! candidate field)))
+  (let [candidate (actions/ensure-typed candidate)]
+    (println "CONCURRENT_ACTION:" index)
+    (doseq [field concurrent-action-fields]
+      (print-candidate-field! candidate field))))
 
-(defn print-concurrent-actions! [actions]
-  (println "CONCURRENT_ACTIONS:" (count actions))
-  (println "CONCURRENT_ACTION_ORDER:"
-           (if (some #(= "retire_agent" (:next-action %)) actions)
-             "retire_agent commands share the registry lock and must run one at a time; other independent commands may run concurrently"
-             "execute listed order when capacity changes depend on prior actions; otherwise independent commands may run concurrently"))
-  (doseq [[index action] (map-indexed vector actions)]
-    (print-concurrent-action! (inc index) action)))
+(defn print-concurrent-actions! [action-list]
+  (let [typed (mapv actions/ensure-typed action-list)]
+    (println "CONCURRENT_ACTIONS:" (count typed))
+    (println "CONCURRENT_ACTION_ORDER:"
+             (if (some #(= "retire_agent" (actions/op-of %)) typed)
+               "retire_agent commands share the registry lock and must run one at a time; other independent commands may run concurrently"
+               "execute listed order when capacity changes depend on prior actions; otherwise independent commands may run concurrently"))
+    (doseq [[index action] (map-indexed vector typed)]
+      (print-concurrent-action! (inc index) action))))
 
 ;; Bookkeeping-only actions: safe to apply all ready instances without capacity scheduling.
 (def bookkeeping-actions

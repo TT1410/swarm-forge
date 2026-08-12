@@ -3,21 +3,18 @@
 Prioritized open issues. Priority is **impact on swarm correctness, operator unblock, and recurring defect classes** — not chronological discovery. Architecture debt and product/workflow defects share one list.
 
 **How to read priority**
-- **P1 — Fix before the next serious multi-story swarm.** Live deadlocks, false idle, invisible stuck state, merge hotspots, or hardener facilities that make quality gates fail.
-- **P2 — Important soon.** Operator UX, role contracts, theme gates, control-plane structure. Does not by itself freeze a running swarm the way P1 does.
+- **P1 — Fix before the next serious multi-story swarm.** (Currently clear for the 2026-08-12 stuck-swarm class.)
+- **P2 — Important soon.** Operator UX, theme gates, remaining control-plane structure.
 - **P3 — When capacity allows.** Polish, deep architecture, nice-to-have dashboard IA.
 
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
-| **P2** | B31 | Hardener quality bar not contracted (CRAP≤6, kill all mutants, reduce DRY) | Product quality | Role / hardener |
 | **P2** | B29 | When the swarm is stalled, the dashboard should explain why (usually stalled agents) | UX / design | Dashboard |
 | **P2** | B10 | Dashboard answers truncate to first line of multiline response | Reliability | Dashboard IO |
-| **P2** | B09 | Operator unblock needs Troubleshooter (not SL) | Operator + arch | Roles / dashboard |
 | **P2** | B11 | Zombie tmux sessions after agent retire | Hygiene | Lifecycle |
 | **P2** | B12 | Hardener edits root tooling (`bb.edn`) against role rules | Policy | Role enforcement |
 | **P2** | B25 | Implementation order and dependency-checker config must be user-approved | Workflow | Theme / analysis gates |
 | **P2** | B23 | Theme close / finalize is undefined (need approval that still allows more stories) | Workflow | Theme lifecycle |
-| **P2** | B17 | Actions are shell strings, not structured ops | Architecture | Integration boundary |
 | **P2** | B18 | `squad_next` mixes planning, policy, presentation, and execution | Architecture | Control plane |
 | **P2** | B16 | Control-plane ownership is implicit (env/prompt), not modeled | Architecture | Authority |
 | **P2** | B19 | Scheduling priority is emergent across many code paths | Architecture | Planner policy |
@@ -31,90 +28,32 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 **Fixed (removed):**
 - P0 B01–B04 (rework thrash, held handoff, impl-order gate, spawn HOL)
-- prior P1 B05–B08 (APS acceptance pipeline + templates; coverage before CRAP/mutate; full acceptance suite before late-role handoff; safe `file-map` TOCTOU)
-- **P1 B26–B28, B30, B32, B33** (dashboard terminal deny-list; batch replace re-links `batch_id` and projects results; merger slot ignores `handoff_sent`+`merge_blocked`; six-pack APS templates + implementer model; hardener/tool-table mutator worker `bb acceptance-worker`)
+- prior P1 B05–B08 (APS acceptance pipeline + templates; coverage; acceptance suite; safe `file-map`)
+- **P1 B26–B28, B30, B32, B33** (dashboard terminal deny-list; batch replace `batch_id`; merger slot; six-pack APS; mutator worker wiring)
+- **P2 first set B31, B09, B17** (hardener quality bar must-meet-or-block; Troubleshooter role + quiet dashboard chat/`...`/open-window; typed actions foundation with `:op`/`:authority`)
 
 **Suggested fix order**
 
-1. **P2 hardener contract / operator:** **B31** → **B29** → **B10** → **B09** → **B11** → **B12**.
-2. **P2 workflow design:** **B25** → **B23**.
-3. **P2 architecture foundation (incremental):** **B17** → **B18** → **B16** → **B19**.
+1. **P2 remaining operator/hygiene:** **B29** → **B10** → **B11** → **B12**.
+2. **P2 workflow:** **B25** → **B23**.
+3. **P2 architecture (next):** **B18** / **B16** / **B19** (build on typed actions from B17).
 4. **P3:** **B13**–**B15**, **B24**, **B20**–**B22**.
 
 **Related clusters**
 
 | Cluster | Bugs | Note |
 |---------|------|------|
-| Hardener / quality gates | **B31**, B12 | CRAP/mutants/DRY bar; no root tooling thrash |
-| Dashboard / operator | **B29**, B10, B09, B14, B24 | Stall reason, answers, troubleshooter, IA |
+| Dashboard / operator | **B29**, B10, B14, B24 | Stall reason, multiline answers, IA (Troubleshooter landed B09) |
 | Theme gates | B25, B23, B13, B14 | Approve order/checker; finalize; analyst policy; theme card |
-| Control plane | B16, B17, B18, B19, B20, B21 | Ownership, typed ops, planner split, priority, leases, transitions |
+| Control plane | B16, B18, B19, B20, B21 | Ownership, planner split, priority (typed actions B17 done) |
+| Hygiene / policy | B11, B12 | Zombie tmux; root tooling thrash |
 | Informal state | B10, B22 | Multiline + durable formats |
 
 Source notes for B16–B22: `architecture-improvements.md` (review findings folded in and re-prioritized).
 
 ---
 
-## P2 — Operator UX, hardener contract, workflow, architecture foundation
-
-### B31 — Hardener quality bar not contracted (CRAP≤6, kill all mutants, reduce DRY)
-
-**Symptom / gap:** Operator intent for the hardener is a real quality gate:
-
-1. **Maintain CRAP below 6** (after real coverage).  
-2. **Kill all mutants** for **both** code mutation (`clj-mutate`) and **Gherkin** mutation (`gherkin-mutator`).  
-3. **Reduce DRY** (run dry analysis and eliminate / reduce duplication within scope, behavior-preserving).
-
-What the role actually requires today is much weaker: *run* coverage / acceptance / mutation / CRAP / DRY and *report* evidence. Thresholds and “fix until green” language are missing or only live on the **cleaner**.
-
-**Evidence of gap (contracts today):**
-
-| Expectation | Cleaner | Hardener |
-|-------------|---------|----------|
-| CRAP ≤ 6 | Explicit in `cleaner.prompt` | Only “run crap4clj”; evidence is a summary, no score bar |
-| Kill all code mutants | N/A (must not mutate unless assigned) | Must run `clj-mutate`; no “survived=0 / kill all” bar |
-| Kill all Gherkin mutants | N/A | Must run mutator (B30 facilities); no kill-all bar; survives OK |
-| Reduce DRY | Explicit: eliminate duplication unless behavior/scope blocks | Required tool `dry4clj`; “run … CRAP/DRY”; **no** “reduce/eliminate” duty; **no** `dry` evidence header |
-| Owns | cleanup, names, cohesion, duplication | robustness, edge handling, mutation resistance, verification depth — DRY/CRAP bars not named |
-
-Also:
-
-- Hardener required-evidence in `tool-table.edn` has `coverage`, `acceptance_suite`, `gherkin_mutation`, `code_mutation`, `crap` — **no `dry`**, and no pass criteria on mutation/CRAP headers.  
-- `hardener.prompt` handoff lists the same headers; Rules say “Run required verification … before handoff,” not “do not hand off until CRAP≤6 / zero survivors / DRY reduced.”  
-- Tool-table install for `dry4clj` names binary `deintroverter` (SUT-grounding classifier), while dry4clj’s purpose is structural DRY candidate reporting — agents can “run dry” without doing DRY reduction at all.
-
-**Expected:**
-
-1. **CRAP:** After real LCOV, hardener reduces CRAP to **≤ 6** (same escape hatch as cleaner: do not change behavior / exceed scope; otherwise hand back a clear blocker with residual scores).  
-2. **Code mutation:** Hardener drives `clj-mutate` until **all mutants are killed** (or equivalent project policy: zero survives for in-scope source), fixing tests/code as needed within hardener scope; survivors are not an acceptable handoff without an explicit approved exception/blocker.  
-3. **Gherkin mutation:** Same bar once worker facilities work (B30): **kill mutants** under test (prefer IR-bound features); mass `errors` / empty manifests are failure, not pass; survivors require fix or blocker.  
-4. **DRY:** Hardener **runs dry4clj (true DRY tool)** and **reduces duplication** unless doing so would change behavior or leave scope; handoff includes **`dry:`** evidence (candidates found + what was reduced / residual justified).  
-5. Assignment generation, role prompt, contract, and tool-table verification/evidence lines all state these bars so SL/dashboard can treat incomplete bars as incomplete hardening.  
-6. Fix tool identity: `dry4clj` install/binary must be the DRY reporter (or separate tools if deintroverter is also required — do not alias them).
-
-**Solution direction:**
-
-- Update `hardener.prompt`, `hardener.contract.edn`, and `tool-table.edn` hardener `verification-prerequisites` + `required-evidence` to mirror cleaner’s CRAP≤6 / reduce-DRY language **plus** kill-all bars for code and Gherkin mutation.  
-- Evidence headers: keep existing; add `dry:`; tighten `crap` / `code_mutation` / `gherkin_mutation` descriptions to include pass criteria (score ≤6; killed/survived/errors summary with survivors=0 or blocker).  
-- Align with B30 (worker command) so Gherkin kill-all is achievable.  
-- Optionally teach residual/SL not to advance `hardening_approved` on evidence that only proves tools ran.  
-- Correct dry4clj vs deintroverter wiring in tool-table/install.
-
-**Priority rationale (P2):** Without this bar, “hardening complete” can mean “tools executed” while high CRAP, surviving mutants, and duplication remain — false quality gate for the whole theme. Demoted from P1: role-contract gap; pair with B30 facilities, not a control-plane deadlock.
-
-**Where:** `swarmforge/role-templates/hardener.prompt`, `hardener.contract.edn`, `swarmforge/tool-table.edn` (hardener role + dry4clj install), assignment generation / required evidence; contrast `cleaner.prompt`; live hardener handoffs that report runs without thresholds.
-
-**Related:** B30 (Gherkin mutator facilities prerequisite), B12 (hardener tooling thrash), cleaner as the role that already has CRAP≤6 + eliminate DRY.
-
----
-
----
-
----
-
----
-
----
+## P2 — Remaining operator, workflow, architecture
 
 ### B29 — When the swarm is stalled, the dashboard should explain why (usually stalled agents)
 
@@ -158,6 +97,8 @@ Most stalls are **one or more agents not making progress**. The dashboard should
 
 ---
 
+---
+
 ### B10 — Dashboard answers truncate to first line of multiline response
 
 **Architecture note:** Concrete instance of informal `key: value` records (B22). Fix the request/answer path now; formalize formats later.
@@ -179,47 +120,6 @@ Most stalls are **one or more agents not making progress**. The dashboard should
 **Repro (live):** `dashboard-20260811T221429Z-001` — full answer in file; dashboard showed only first line.
 
 ---
-
----
-
----
-
----
-
----
-
-### B09 — Operator unblock and dashboard requests need a Troubleshooter (not the squad leader)
-
-**Architecture note:** Same finding as control-plane role split — SL must not be both residual-only workflow participant and free-form operator (see B16).
-
-**Symptom / gap:** When the workflow is stuck, an **operator** can force packet fields, block thrash, retire agents, move held handoffs, etc. The **squad leader cannot** under residual-only rules. **Dashboard / SL requests** still wake and route to the **SL**.
-
-**Why the SL is too constrained:**  
-- Residual is the sole workflow driver; SL must not invent transitions.  
-- Stuck states often residual as `wait` / `recover_agent` / capacity waits.  
-- Well-behaved SL waits or reports — does not perform out-of-band surgery.
-
-**Expected:** A **Troubleshooter** (persistent or on-demand), **outside the product FSM**:
-
-| Property | Troubleshooter | Squad leader |
-|----------|----------------|--------------|
-| Part of story/pipeline FSM | **No** | Yes |
-| Bound to residual-only for all work | **No** | Yes |
-| May invent escape hatches / fix durable state | **Yes** when needed | No |
-| May retire/block/force packet/theme fixes | **Yes** | Only if residual directs |
-| Dashboard / debug requests | **Primary** | Product orchestration framing |
-| Collaborates with SL | When legitimate workflow action is needed | Receives handoffs when appropriate |
-
-**Solution direction:**  
-1. Role `troubleshooter` (prompt + contract): repair swarm state; no product authoring workers own.  
-2. Dashboard / SL-request wake → troubleshooter by default.  
-3. Optional stuck-pattern alerts to troubleshooter.  
-4. Keep SL residual-only for normal orchestration.  
-5. Code fixes still land in product; troubleshooter is in-swarm operator, not a substitute for B16–B19.
-
-**Where:** `squadd.clj` / `squadd/web.clj` request wake → SL; SL residual-only rules; no troubleshooter role.
-
-**Repro:** Stuck thrash / held-finish — residual never offered the escape hatch; operator had to force packet/review state. SL following rules could not.
 
 ---
 
@@ -258,6 +158,8 @@ Most stalls are **one or more agents not making progress**. The dashboard should
 
 ---
 
+---
+
 ### B12 — Hardener edits root tooling (`bb.edn`) against role rules
 
 **Symptom:** Hardener commits change root `bb.edn` (merge conflicts). Prompt says do **not** edit root tooling unless assignment requires it.
@@ -272,6 +174,8 @@ Most stalls are **one or more agents not making progress**. The dashboard should
 3. Prefer product layout that does not require hardener `bb.edn` edits (tasks under `bb/tasks/`).
 
 **Where:** `hardener.prompt` / contract; live hardener commits including `bb.edn`.
+
+---
 
 ---
 
@@ -310,6 +214,8 @@ Theme + module map already require approval before analysis. Ordering and depend
 **Where:** `squad_approval` gates; `squad_theme` / durable order + product `dependency-checker.edn`; `squad_next` residual after analysis / before implementers; dashboard theme package + approval UI; analyst/architect handoffs that produce these files.
 
 **Related:** B13 (policy content), B14 (display), fixed P0 B03 (durable order must exist).
+
+---
 
 ---
 
@@ -362,30 +268,6 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
-### B17 — Actions are shell strings, not structured ops
-
-**From architecture review.** Actions are strings like `squad_assign.sh accept-merge …`, then `bash -c`. Quoting, env, and authority leak everywhere (held-path finish, paths with spaces, role env).
-
-**Expected:** Actions are structured data, e.g. `{:op :accept-merge :assignment-id … :authority :daemon}`. Shell is rendered only at the outermost CLI boundary (or not at all for in-process executor).
-
-**Solution direction:**  
-1. Define a closed set of ops with required keys + authority.  
-2. Planner emits ops; executor dispatches; renderer pretty-prints for humans.  
-3. Migrate hot paths first (handoff steps, packet record, spawn request) without rewriting every script at once.
-
-**Enables:** B16, B18, safer held/finish class fixes.  
-**Where:** `squad_next.clj` candidates / `apply-candidate!`; handoff mechanical steps.
-
-**Priority rationale (P2):** Foundational architecture. Land incrementally; do not block product delivery on a full rewrite.
-
----
-
----
-
----
-
----
-
 ---
 
 ### B18 — `squad_next` mixes planning, policy, presentation, and execution
@@ -406,6 +288,8 @@ Themes today are effectively never finished: analysis can add stories, packets a
 **Where:** `swarmforge/scripts/squad_next.clj` (majority of control-plane complexity).
 
 **Priority rationale (P2):** Highest long-term leverage against recurring FSM bugs. Slice after structured actions start.
+
+---
 
 ---
 
@@ -444,6 +328,8 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
 ### B19 — Scheduling priority is emergent across many code paths
 
 **From architecture review.** Bookkeeping, daemon-ready actions, spawn requests, handoffs, SL/dashboard requests, status, watchdogs, and approvals each have their own ordering. Policy like “main Git before retire” or “operator request outranks FSM task” is emergent, not testable in one place.
@@ -459,6 +345,8 @@ Themes today are effectively never finished: analysis can add stories, packets a
 **Where:** mechanical pass ordering; spawn poll vs workflow; dashboard wake vs residual.
 
 **Priority rationale (P2):** Same foundation cluster as B18; do not invent a third priority scheme before structured planner exists.
+
+---
 
 ---
 
@@ -494,6 +382,8 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
 ### B14 — Theme package page should include dependency-checker.edn card
 
 **Symptom:** Theme package view omits `dependency-checker.edn`.
@@ -513,6 +403,8 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
 ### B15 — Grok agent terminal window does not fill / scroll correctly
 
 **Symptom:** Grok-backed agent windows show ~25 lines pinned at top; rest empty; scroll unusable. Codex panes do not show this.
@@ -520,6 +412,8 @@ Themes today are effectively never finished: analysis can add stories, packets a
 **Expected:** Full geometry, usable scroll — or documented operator path if upstream TUI cannot.
 
 **Where:** Grok launch / terminal adapters / tmux size; `swarmforge/docs/grok-agent-window-scroll.md`.
+
+---
 
 ---
 
@@ -563,6 +457,8 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
 ### B20 — Shared lease primitive missing (locks are one-off)
 
 **From architecture review.** Main-git lock protects merge-ready/accept-merge, but spawn lock, handoff in-process/held, status files, and request queues each invent their own concurrency story.
@@ -588,6 +484,8 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ---
 
+---
+
 ### B21 — FSM transitions have hidden multi-file side effects
 
 **From architecture review.** e.g. `accept-merge` updates assignment status, merge state, accepted-merge, merger lineage, events, theme events. Hard to reason about as one transition.
@@ -601,6 +499,8 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 **Depends on:** B17–B18 help; B22 helps record shape.  
 **Priority rationale (P3):** Large; reduce risk after typed actions exist.
+
+---
 
 ---
 
@@ -662,8 +562,14 @@ Keep the **single-writer** direction. Prefer **typed actions + planner/executor*
 
 ---
 
+Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
+
+**P1 complete** for the 2026-08-12 stuck-swarm class (visibility, batch replace projection, merger slot, APS six-pack model, mutator worker wiring). Next: **P2** hardener bar (**B31**) and operator UX (**B29**, **B10**, **B09**). Theme finalize (**B23**) stays a deliberate product approval. Dashboard IA (**B24**) should follow operator jobs, not grow as an uncurated status dump.
+
+---
+
 ## Architecture north star (not a freeze)
 
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
-**P1 complete** for the 2026-08-12 stuck-swarm class (visibility, batch replace projection, merger slot, APS six-pack model, mutator worker wiring). Next: **P2** hardener bar (**B31**) and operator UX (**B29**, **B10**, **B09**). Theme finalize (**B23**) stays a deliberate product approval. Dashboard IA (**B24**) should follow operator jobs, not grow as an uncurated status dump.
+**P1 complete.** First **P2 set complete** (B31 hardener bar, B09 Troubleshooter, B17 typed actions). Next: remaining operator UX (**B29**, **B10**), hygiene (**B11**, **B12**), theme gates (**B25**, **B23**), then control-plane split (**B18**/ **B16**/ **B19**).

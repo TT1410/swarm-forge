@@ -1,8 +1,8 @@
 # Local Workflow Rules
 
 ## Squad Workflow
-- The squad leader is the only persistent role in the first implementation slice.
-- The squad leader talks directly to the user.
+- Persistent roles: **squad-leader** (pipeline residual) and **troubleshooter** (operator repair/Q&A, idle until called).
+- The squad leader talks to the user for approvals and orchestration framing; free-form operator debug/repair chat goes to the Troubleshooter.
 - The squad leader owns task clarification, approval framing, status reporting, merge decisions, iteration decisions, story-to-batch accounting, and final reporting.
 - The squad leader may write orchestration metadata, assignment instructions, acceptance/approval records, review dispositions, batch manifests, and user-facing status reports only.
 - The squad leader must never write product artifacts themselves: no stories, Gherkin, QA procedures, acceptance test infrastructure, production code, unit tests, review reports, hardening changes, QA scripts, architecture critiques, or cleanup changes.
@@ -31,6 +31,7 @@
 - `squad_next.sh` is the single source of workflow truth and direction. Other squad helpers may validate command format, identifiers, paths, handoff shape, git safety, and durable state integrity, but they must not independently enforce workflow readiness or sequencing decisions.
 - Normal squad workflow must not require reading helper implementation source. Use documented command forms and helper output; do not inspect `swarmforge/scripts/*.clj` or `swarmforge/scripts/*.sh` unless the user explicitly asks for SwarmForge debugging.
 - Available transient role templates are `analyst`, `gherkin-writer`, `qa-procedure-writer`, `gherkin-reviewer`, `qa-procedure-reviewer`, `implementer`, `cleaner`, `code-reviewer`, `hardener`, `qa`, `architect`, and `senior-implementer`.
+- Persistent operator role: `troubleshooter` (idle until called; swarm repair and operator Q&A). Free-form operator chat is not the squad leader’s job.
 - Legacy templates may exist for compatibility, but do not use them for this flow unless the user explicitly asks for a legacy role.
 - Transient squad agents are not intermediate pack-pipeline roles. They must not hand off to each other; every transient result handoff goes only back to `squad-leader`.
 - Do not claim to have delegated to a missing transient template until the corresponding squad helper commands and templates exist.

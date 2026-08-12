@@ -1,0 +1,25 @@
+{:role "troubleshooter"
+ :persistent true
+ :may-talk-to-user true
+ :may-spawn false
+ :may-web-search false
+ :idle-until-called true
+ :operator-surface "quiet-answers"
+ :writes ["swarm-state-repair"
+          "assignment-status"
+          "packet-projection"
+          "blocker-clearance"
+          "status-reports"]
+ :forbidden-writes ["stories"
+                    "gherkin"
+                    "qa-procedures"
+                    "production-code"
+                    "unit-tests"
+                    "review-reports"
+                    "hardening-changes"
+                    "qa-scripts"
+                    "architecture-critiques"
+                    "cleanup-changes"]
+ :elevated-ops true
+ :handoff-targets ["squad-leader"]
+ :not-in-product-fsm true}
