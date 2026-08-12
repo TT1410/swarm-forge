@@ -61,7 +61,82 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-next-surfaces-pending-dashboard-request
+(deftest new-requests-default-to-troubleshooter-owner
+  ;; Given a new dashboard request from the operator chat
+  ;; When it is created
+  ;; Then owner is Troubleshooter (front door), not Squad Leader residual
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (let [created (dashreq/create-request root {:body "Why is merger stuck?"})
+            id (get-in created [:request "id"])]
+        (is (:ok created))
+        (is (= "troubleshooter" (get-in created [:request "owner"])))
+        (is (= "troubleshooter" (get (first (dashreq/pending-requests root)) "owner")))
+        (is (nil? (dashreq/oldest-pending-for-owner root "squad-leader"))
+            "SL residual must not see Troubleshooter-owned chat yet")
+        (is (= id (get (dashreq/oldest-pending-for-owner root "troubleshooter") "id"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest route-to-sl-hands-product-work-to-squad-leader
+  ;; Given a pending Troubleshooter-owned request that is product work
+  ;; When Troubleshooter routes it to the Squad Leader
+  ;; Then owner becomes squad-leader, request stays pending, and residual surfaces it
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (let [created (dashreq/create-request root {:body "Add story: player can leave the cave"})
+            id (get-in created [:request "id"])
+            routed (dashreq/route-to-sl root id)]
+        (is (:ok routed))
+        (is (= "squad-leader" (get-in routed [:request "owner"])))
+        (is (= "pending" (get-in routed [:request "status"])))
+        (is (fs/exists? (fs/path root ".swarmforge/dashboard/requests/pending" (str id ".request"))))
+        (is (= "squad-leader"
+               (get (dashreq/file-map
+                     (fs/path root ".swarmforge/dashboard/requests/pending" (str id ".request")))
+                    "owner")))
+        (let [cli (run {:dir root} (script "squad_dashboard_request.sh") "status" id)]
+          (is (str/includes? (:out cli) "OWNER: squad-leader")))
+        (let [next (run {:dir root} (script "squad_next.sh") "--residual-only")]
+          (is (str/includes? (:out next) "NEXT_ACTION: answer_dashboard_request"))
+          (is (str/includes? (:out next) (str "REQUEST_ID: " id)))
+          (is (str/includes? (:out next) "OWNER: squad-leader"))
+          (is (str/includes? (:out next) (str "squad_dashboard_request.sh answer " id)))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest route-to-sl-cli-and-reject-double-route
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "troubleshooter\tmaster\t" root "\tswarmforge-troubleshooter\tTroubleshooter\tcodex\ttask\n"))
+      (let [created (dashreq/create-request root {:body "New theme: Hunt the Wumpus"})
+            id (get-in created [:request "id"])
+            cli (run {:dir root} (script "squad_dashboard_request.sh") "route-to-sl" id)]
+        (is (str/includes? (:out cli) "STATE: pending"))
+        (is (str/includes? (:out cli) "OWNER: squad-leader"))
+        (is (str/includes? (:out cli) "ROUTED: squad-leader"))
+        (let [again (dashreq/route-to-sl root id)]
+          (is (:ok again) "idempotent re-route is ok")
+          (is (= "squad-leader" (get-in again [:request "owner"]))))
+        (write-file (fs/path root "answer.txt") "Routed story registered.\n")
+        (let [answered (run {:dir root} (script "squad_dashboard_request.sh") "answer" id "answer.txt")]
+          (is (str/includes? (:out answered) "STATE: answered")))
+        (is (not (:ok (dashreq/route-to-sl root id)))
+            "cannot route an already-answered request"))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-residual-ignores-troubleshooter-owned-requests
+  ;; Given only Troubleshooter-owned pending chat
+  ;; When SL runs residual
+  ;; Then it does not claim answer_dashboard_request (TS owns the front door)
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -69,11 +144,27 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (let [created (dashreq/create-request root {:kind "question" :body "Status?"})
             id (get-in created [:request "id"])
-            next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "NEXT_ACTION: answer_dashboard_request"))
-        (is (str/includes? (:out next) (str "REQUEST_ID: " id)))
-        (is (str/includes? (:out next) (str "squad_dashboard_request.sh answer " id)))
-        (is (not (str/includes? (:out next) "NEXT_ACTION: wait"))))
+            next (run {:dir root} (script "squad_next.sh") "--residual-only")]
+        (is (some? id))
+        (is (not (str/includes? (:out next) "NEXT_ACTION: answer_dashboard_request")))
+        (is (not (str/includes? (:out next) (str "REQUEST_ID: " id)))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest squad-next-surfaces-sl-owned-pending-dashboard-request
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (let [created (dashreq/create-request root {:kind "question" :body "Add story about bats"})
+            id (get-in created [:request "id"])]
+        (is (:ok (dashreq/route-to-sl root id)))
+        (let [next (run {:dir root} (script "squad_next.sh"))]
+          (is (str/includes? (:out next) "NEXT_ACTION: answer_dashboard_request"))
+          (is (str/includes? (:out next) (str "REQUEST_ID: " id)))
+          (is (str/includes? (:out next) (str "squad_dashboard_request.sh answer " id)))
+          (is (not (str/includes? (:out next) "NEXT_ACTION: wait")))))
       (finally
         (fs/delete-tree root)))))
 
@@ -85,6 +176,7 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (let [created (dashreq/create-request root {:kind "command" :body "Do the thing"})
             id (get-in created [:request "id"])]
+        (is (:ok (dashreq/route-to-sl root id)))
         ;; Simulate SL "replying" only in chat — no helper call.
         (is (fs/exists? (fs/path root ".swarmforge/dashboard/requests/pending" (str id ".request"))))
         (is (= "pending" (get (first (dashreq/pending-requests root)) "status")))
@@ -134,7 +226,7 @@
                                 "{\"kind\":\"command\",\"body\":\"Ship it\"}")
               state (slurp (str base-url "api/state"))
               list (slurp (str base-url "api/sl-requests"))]
-          (is (str/includes? page "Squad Leader Requests"))
+          (is (str/includes? page "Troubleshooter"))
           (is (not (str/includes? page "setKind(")))
           (is (not (str/includes? page "kind-command")))
           (is (str/includes? page "selectionInside"))
@@ -188,6 +280,6 @@
       (let [state (web/web-state root)]
         (is (= 4 (get state "sl_queue_depth")))
         (is (str/includes? web/dashboard-html "sl-requests-title"))
-        (is (str/includes? web/dashboard-html "sl_queue_depth")))
+        (is (str/includes? web/dashboard-html "ts-busy")))
       (finally
         (fs/delete-tree root)))))

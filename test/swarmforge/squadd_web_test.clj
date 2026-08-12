@@ -38,6 +38,24 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest dashboard-hides-troubleshooter-from-agent-list
+  ;; Given a persistent Troubleshooter under .squad/agents
+  ;; When the dashboard builds its agent list
+  ;; Then Troubleshooter is omitted (operator surface, not fleet)
+  (let [root (tmp-dir)]
+    (try
+      (write-agent! root "running-001" "implementer" "running")
+      (write-agent! root "troubleshooter" "troubleshooter" "running")
+      (write-file (fs/path root ".squad/agents/troubleshooter/recovery")
+                  "state: dirty_worktree\nchecked_at: 2026-08-12T00:00:00Z\n")
+      (let [ids (set (map #(get % "agent_id") (web/agent-state root)))]
+        (is (contains? ids "running-001"))
+        (is (not (contains? ids "troubleshooter")))
+        (is (false? (web/dashboard-agent-visible?
+                     {"agent_id" "troubleshooter" "state" "running"}))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest dashboard-links-assignments-to-assignment-documents
   ;; Given an assignment with assignment.md
   ;; When the dashboard serves artifact/assignment/<id> and the main page
@@ -99,6 +117,45 @@
       (is (= "swarmforge-troubleshooter"
              (web/agent-session-name root "troubleshooter")))
       (is (= "codex" (web/agent-backend-name root "troubleshooter")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest troubleshooter-working-when-pending-request-or-agent-signals
+  ;; Given a persistent Troubleshooter that does not write status/heartbeat
+  ;; When the operator has a pending dashboard request
+  ;; Then web-state reports troubleshooter.working true for the busy indicator
+  ;; And when idle with no pending work, working is false
+  ;; And daemon-style status/liveness still count as working
+  (let [root (tmp-dir)]
+    (try
+      (is (false? (web/troubleshooter-working? root))
+          "idle with no metadata is not working")
+      (is (false? (get-in (web/web-state root) ["troubleshooter" "working"])))
+      (write-file (fs/path root ".swarmforge/dashboard/requests/pending/dashboard-1.request")
+                  (str "id: dashboard-1\n"
+                       "kind: request\n"
+                       "status: pending\n"
+                       "created_at: 2026-08-12T00:00:00Z\n"
+                       "updated_at: 2026-08-12T00:00:00Z\n"
+                       "body: Why is this stuck?\n"))
+      (is (true? (web/troubleshooter-working? root))
+          "pending dashboard request means busy")
+      (is (true? (get-in (web/web-state root) ["troubleshooter" "working"])))
+      (fs/delete-if-exists (fs/path root ".swarmforge/dashboard/requests/pending/dashboard-1.request"))
+      (write-file (fs/path root ".squad/agents/troubleshooter/status")
+                  "state: running\ndetail: investigating\nupdated_at: 2026-08-12T00:00:00Z\n")
+      (is (true? (web/troubleshooter-working? root))
+          "active status still means busy without pending request")
+      (write-file (fs/path root ".squad/agents/troubleshooter/status")
+                  "state: idle\ndetail: waiting\nupdated_at: 2026-08-12T00:00:00Z\n")
+      (is (false? (web/troubleshooter-working? root))
+          "idle status without pending is not busy")
+      (write-file (fs/path root ".squad/agents/troubleshooter/status")
+                  "state: running\ndetail: thinking\nupdated_at: 2026-08-12T00:00:00Z\n")
+      (write-file (fs/path root ".squad/agents/troubleshooter/liveness")
+                  "state: running_pane_idle\npane_idle_prompt: true\nobserved_at: now\n")
+      (is (false? (web/troubleshooter-working? root))
+          "pane idle prompt overrides active-looking status")
       (finally
         (fs/delete-tree root)))))
 
@@ -271,7 +328,9 @@
 	          (is (str/includes? page "event.key === 'Enter' && !event.shiftKey"))
 	          (is (str/includes? page "localStorage.removeItem(slDraftKey)"))
 	          (is (str/includes? page "const messageInput = document.getElementById('sl-message')"))
-	          (is (str/includes? page "Squad Leader Requests"))
+	          (is (str/includes? page "Troubleshooter"))
+	          (is (str/includes? page "id=\"ts-busy\""))
+	          (is (str/includes? page "data.troubleshooter"))
 	          (is (str/includes? page "sendRequest()"))
 	          (is (not (str/includes? page "app.innerHTML")))
 	          (is (str/includes? page "/artifact/${encodeURIComponent(kind)}/${encodeURIComponent(id)}"))

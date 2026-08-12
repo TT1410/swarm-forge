@@ -15,7 +15,8 @@
    "wait_for_daemon_main_git" :sl-residual
    "wait_for_spawn" :sl-residual
    "request_user_approval" :sl-residual
-   "answer_dashboard_request" :troubleshooter
+   ;; Residual only after Troubleshooter route-to-sl (product). Repair chat is TS wake.
+   "answer_dashboard_request" :sl-residual
    "handle_durable_blocker" :sl-residual
    "recover_agent" :sl-residual
    "retire_agent" :daemon

@@ -82,7 +82,6 @@
     const agentsPanel = document.getElementById('agents');
     const assignmentsPanel = document.getElementById('assignments');
     const requestsPanel = document.getElementById('sl-requests');
-    const requestsTitle = document.getElementById('sl-requests-title');
     const slDraftKey = 'swarmforge.slMessageDraft';
     let slDraft = localStorage.getItem(slDraftKey) || '';
     let pressedApproval = null;
@@ -184,8 +183,9 @@
           : (r.status === 'rejected' && r.detail
              ? '<div class=\"req-sl short\">' + esc(r.detail) + '</div>'
              : '');
+        const owner = r.owner ? '<span class=\"muted\">→ ' + esc(r.owner) + '</span>' : '';
         return '<div class=\"req-item\">' +
-          '<div class=\"req-meta\"><strong>You</strong>' + statusPill(r.status) +
+          '<div class=\"req-meta\"><strong>You</strong>' + statusPill(r.status) + owner +
           '<span class=\"muted\">' + esc(r.id) + '</span>' + cancel + '</div>' +
           '<div class=\"req-you\">' + esc(r.body || '') + '</div>' +
           response +
@@ -211,14 +211,31 @@
         sendRequest();
       }
     });
+    let optimisticBusy = false;
+    function setBusyVisible(working) {
+      const busy = document.getElementById('ts-busy');
+      if (!busy) return;
+      busy.style.display = working ? 'inline' : 'none';
+      if (working) {
+        const dots = ((Date.now() / 400) | 0) % 3;
+        busy.textContent = '.'.repeat(dots + 1);
+      }
+    }
     async function sendRequest() {
       const text = messageInput.value.trim();
       if (!text) return;
+      optimisticBusy = true;
+      setBusyVisible(true);
       const payload = JSON.stringify({ body: text });
-      await post('/api/sl-requests', payload, 'application/json; charset=utf-8', false);
-      slDraft = '';
-      localStorage.removeItem(slDraftKey);
-      messageInput.value = '';
+      try {
+        await post('/api/sl-requests', payload, 'application/json; charset=utf-8', false);
+        slDraft = '';
+        localStorage.removeItem(slDraftKey);
+        messageInput.value = '';
+      } catch (err) {
+        optimisticBusy = false;
+        error.textContent = err.message;
+      }
       await render();
     }
     function selectionInside(el) {
@@ -246,17 +263,11 @@
         error.textContent = '';
         blockersPanel.innerHTML = blockers(data.blockers || []);
         approvalsPanel.innerHTML = approvals((data.approvals && data.approvals.pending) || []);
-        const slQueue = (data.sl_queue_depth != null) ? data.sl_queue_depth : 0;
-        requestsTitle.firstChild.textContent = 'Troubleshooter ';
-        const busy = document.getElementById('ts-busy');
-        if (busy) {
-          const working = !!(data.troubleshooter && data.troubleshooter.working);
-          busy.style.display = working ? 'inline' : 'none';
-          if (working) {
-            const dots = ((Date.now() / 400) | 0) % 3;
-            busy.textContent = '.'.repeat(dots + 1);
-          }
-        }
+        const serverWorking = !!(data.troubleshooter && data.troubleshooter.working);
+        const hasPending = (data.sl_requests || []).some(r => r.status === 'pending');
+        if (serverWorking || hasPending) optimisticBusy = true;
+        if (!serverWorking && !hasPending) optimisticBusy = false;
+        setBusyVisible(serverWorking || optimisticBusy);
         updateRequestsPanel(data.sl_requests || []);
         if (data.current_theme_id) {
           themePanel.innerHTML = artifactLink('theme', data.current_theme_id,
@@ -280,6 +291,10 @@
     }
     render();
     setInterval(render, 2000);
+    setInterval(() => {
+      const busy = document.getElementById('ts-busy');
+      if (busy && busy.style.display !== 'none') setBusyVisible(true);
+    }, 400);
   </script>
 </body>
 </html>")
@@ -296,11 +311,20 @@
   (let [s (or state "unknown")]
     (not (contains? web-terminal-assignment-states s))))
 
+(def dashboard-hidden-agent-ids
+  "Persistent operator roles shown elsewhere (Troubleshooter chat), not in fleet list."
+  #{"troubleshooter"})
+
 (defn dashboard-agent-visible?
-  "Agents appear from spawn until retirement. Temporary states such as
-  failed must remain visible while the agent is still registered."
+  "Transient fleet agents appear from spawn until retirement. Temporary states
+  such as failed must remain visible while registered. Persistent operator
+  roles (Troubleshooter) are omitted — they are not product workers."
   [agent]
-  (not= "retired" (get agent "state")))
+  (let [id (or (get agent "agent_id") "")
+        template (or (get agent "template") "")]
+    (and (not= "retired" (get agent "state"))
+         (not (contains? dashboard-hidden-agent-ids id))
+         (not (contains? dashboard-hidden-agent-ids template)))))
 (def status-reasons
   {200 "OK"
    404 "Not Found"
@@ -781,8 +805,10 @@
 (defn troubleshooter-session-name []
   "swarmforge-troubleshooter")
 
-(defn troubleshooter-working?
-  "True when Troubleshooter heartbeat/liveness indicate active work (daemon-style)."
+(defn troubleshooter-agent-working?
+  "True when Troubleshooter agent status/heartbeat/liveness say it is busy.
+  Persistent Troubleshooter sessions often omit these files; callers should
+  also treat pending dashboard requests as working."
   [root]
   (let [status (parse-kv-file (fs/path root ".squad" "agents" "troubleshooter" "status"))
         heartbeat (parse-kv-file (fs/path root ".squad" "agents" "troubleshooter" "heartbeat"))
@@ -792,6 +818,14 @@
     (and (not (str/blank? state))
          (not (#{"retired" "idle" "handoff_sent"} state))
          (not= "true" pane-idle))))
+
+(defn troubleshooter-working?
+  "True when the dashboard busy indicator should show.
+  Primary signal: pending operator request (chat wait). Secondary: agent
+  status/liveness when present (daemon-style workers)."
+  [root]
+  (or (pos? (pending-dashboard-request-count root))
+      (troubleshooter-agent-working? root)))
 
 (defn web-state [root]
   (let [assignments (assignment-state root)
@@ -1158,12 +1192,16 @@
   (let [id (get request "id")
         kind (get request "kind" "command")
         body (get request "body" "")]
-    (str "Operator request for Troubleshooter. Look around if needed, act, then answer firmly.\n"
+    (str "Operator request for Troubleshooter. Classify intent:\n"
+         "- Repair / Q&A / inspect: act, then answer firmly.\n"
+         "- Product (theme, story, orchestration): route-to-sl, then SL residual answers.\n"
          "REQUEST_ID: " id "\n"
          "KIND: " kind "\n"
+         "OWNER: " (or (get request "owner") "troubleshooter") "\n"
          "BODY: " body "\n"
-         "COMMAND: squad_dashboard_request.sh answer " id " <answer-file>\n"
-         "A request is not complete until the helper succeeds.")))
+         "COMMAND_REPAIR: squad_dashboard_request.sh answer " id " <answer-file>\n"
+         "COMMAND_PRODUCT: squad_dashboard_request.sh route-to-sl " id "\n"
+         "A request is not complete until answer/reject succeeds (route-to-sl keeps it pending).")))
 
 (defn wake-troubleshooter-for-request! [root request]
   (if-let [socket (socket-value root)]

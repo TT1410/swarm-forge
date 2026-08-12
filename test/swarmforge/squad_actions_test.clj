@@ -20,8 +20,11 @@
     (is (= :daemon (:authority a)))
     (is (= "retire_agent" (actions/op-of a)))))
 
-(deftest answer-dashboard-request-authority-is-troubleshooter
-  (is (= :troubleshooter (actions/authority-for "answer_dashboard_request"))))
+(deftest answer-dashboard-request-authority-is-sl-residual
+  ;; Residual only surfaces product requests owned by the Squad Leader after
+  ;; Troubleshooter route-to-sl. Repair chat is answered by Troubleshooter via
+  ;; dashboard wake, not this residual op.
+  (is (= :sl-residual (actions/authority-for "answer_dashboard_request"))))
 
 (deftest shell-command-is-outer-boundary-only
   (is (= "echo hi" (actions/shell-command {:command "echo hi" :op "wait"}))))

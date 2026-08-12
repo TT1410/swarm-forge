@@ -943,20 +943,26 @@
     (not due?) :throttled
     :else :notify))
 
-(defn oldest-pending-dashboard-request-id [root]
+(defn oldest-sl-owned-dashboard-request-id [root]
+  "Only product requests owned by Squad Leader (after Troubleshooter route-to-sl)."
   (let [dir (fs/path root ".swarmforge" "dashboard" "requests" "pending")]
     (when (fs/directory? dir)
-      (some->> (fs/list-dir dir)
-               (filter #(and (fs/regular-file? %)
-                             (str/ends-with? (fs/file-name %) ".request")))
-               (sort-by fs/file-name)
-               first
-               fs/file-name
-               (#(str/replace % #"\.request$" ""))))))
+      (some (fn [file]
+              (let [m (parse-kv-file file)
+                    owner (str/lower-case (str/trim (or (get m "owner") "")))
+                    id (or (get m "id")
+                           (str/replace (fs/file-name file) #"\.request$" ""))]
+                (when (= "squad-leader" owner)
+                  id)))
+            (->> (fs/list-dir dir)
+                 (filter #(and (fs/regular-file? %)
+                               (str/ends-with? (fs/file-name %) ".request")))
+                 (sort-by fs/file-name))))))
 
 (defn sl-watchdog-message-for [root]
-  (if-let [id (oldest-pending-dashboard-request-id root)]
-    (str "Pending dashboard request " id ". Run squad_next.sh --residual-only, then "
+  (if-let [id (oldest-sl-owned-dashboard-request-id root)]
+    (str "Pending product dashboard request " id " (owner: squad-leader). "
+         "Run squad_next.sh --residual-only, route product work, then "
          "squad_dashboard_request.sh answer " id " <answer-file>. "
          "The request is not complete until the helper succeeds.")
     sl-watchdog-message))

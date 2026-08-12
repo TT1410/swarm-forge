@@ -200,22 +200,38 @@
            vec)
       [])))
 
-(defn oldest-pending-dashboard-request [root]
-  (when-let [file (first (pending-dashboard-request-files root))]
-    (let [m (file-map file)
-          id (or (get m "id")
-                 (str/replace (fs/file-name file) #"\.request$" ""))]
-      (merge m {"id" id
-                "file" (str file)}))))
+(defn dashboard-request-owner
+  "Missing owner defaults to Troubleshooter (operator chat front door)."
+  [m]
+  (let [o (str/lower-case (str/trim (or (get m "owner") "")))]
+    (if (contains? #{"troubleshooter" "squad-leader"} o)
+      o
+      "troubleshooter")))
+
+(defn oldest-pending-dashboard-request
+  "Squad Leader residual only sees product requests re-owned via route-to-sl.
+  Troubleshooter-owned chat is answered from the TS wake path, not residual."
+  [root]
+  (some (fn [file]
+          (let [m (file-map file)
+                id (or (get m "id")
+                       (str/replace (fs/file-name file) #"\.request$" ""))]
+            (when (= "squad-leader" (dashboard-request-owner m))
+              (merge m {"id" id
+                        "owner" "squad-leader"
+                        "file" (str file)}))))
+        (pending-dashboard-request-files root)))
 
 (defn print-dashboard-request-action! [request]
   (let [id (get request "id")
-        kind (get request "kind" "command")]
+        kind (get request "kind" "command")
+        owner (dashboard-request-owner request)]
     (println "NEXT_ACTION: answer_dashboard_request")
     (println "REQUEST_ID:" id)
     (println "KIND:" kind)
+    (println "OWNER:" owner)
     (println "BODY:" (get request "body" ""))
-    (println "REASON: operator dashboard request is pending and must be answered via the helper")
+    (println "REASON: operator product request routed to Squad Leader; answer via the helper after orchestration")
     (println "COMMAND:" (str "squad_dashboard_request.sh answer " id " <answer-file>"))
     (println "COMMAND_ON_REJECTION:" (str "squad_dashboard_request.sh reject " id " <reason-file>"))
     (println "NOTE: request is not complete until the helper succeeds; pane text alone does not resolve it")))

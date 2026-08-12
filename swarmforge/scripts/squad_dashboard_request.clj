@@ -2,6 +2,7 @@
 
 (ns squad-dashboard-request
   (:require [babashka.fs :as fs]
+            [babashka.process :as process]
             [squad-config :as cfg]
             [clojure.string :as str]))
 
@@ -11,11 +12,16 @@
        "  squad_dashboard_request.sh complete <id> <answer-file>\n"
        "  squad_dashboard_request.sh reject <id> <reason-file>\n"
        "  squad_dashboard_request.sh cancel <id>\n"
+       "  squad_dashboard_request.sh route-to-sl <id>\n"
        "  squad_dashboard_request.sh status [id]\n"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
 ;; Single request type. Legacy "command"/"question" accepted and normalized to "request".
 (def valid-kinds #{"request" "command" "question"})
+;; Front-door chat is Troubleshooter; product intent is re-owned by Squad Leader.
+(def valid-owners #{"troubleshooter" "squad-leader"})
+(def default-owner "troubleshooter")
+(def product-owner "squad-leader")
 (def max-body-chars 8000)
 (def history-limit 50)
 
@@ -75,9 +81,18 @@
               {:state state :file file})))
         ["pending" "answered" "rejected"]))
 
+(defn normalize-owner [owner]
+  (let [o (str/lower-case (str/trim (or owner default-owner)))]
+    (if (contains? valid-owners o) o default-owner)))
+
+(defn request-owner
+  "Owner for residual routing. Missing/blank defaults to Troubleshooter (front door)."
+  [m]
+  (normalize-owner (get m "owner")))
+
 (defn render-request [m]
-  (let [ordered ["id" "kind" "status" "created_at" "updated_at" "answered_at"
-                 "body" "response" "detail"]
+  (let [ordered ["id" "kind" "status" "owner" "created_at" "updated_at" "answered_at"
+                 "routed_at" "body" "response" "detail"]
         emitted (set ordered)]
     (str
      (str/join "\n"
@@ -138,11 +153,12 @@
         (format "%s-%03d" base n)))))
 
 (defn create-request
-  "Create a pending dashboard request.
+  "Create a pending dashboard request owned by the Troubleshooter front door.
   Returns {:ok true :request m} or {:ok false :error msg}."
-  [root {:keys [kind body]}]
+  [root {:keys [kind body owner]}]
   (let [kind (normalize-kind kind)
-        body (normalize-body body)]
+        body (normalize-body body)
+        owner (normalize-owner (or owner default-owner))]
     (or (when-let [err (kind-error kind)]
           {:ok false :error err})
         (when-let [err (body-error body)]
@@ -152,6 +168,7 @@
               m {"id" id
                  "kind" kind
                  "status" "pending"
+                 "owner" owner
                  "created_at" now
                  "updated_at" now
                  "body" body}
@@ -180,9 +197,11 @@
            {"id" id
             "status" (or (get m "status") state)
             "kind" (get m "kind" "request")
+            "owner" (request-owner m)
             "created_at" (get m "created_at" "")
             "updated_at" (get m "updated_at" "")
             "answered_at" (get m "answered_at" "")
+            "routed_at" (get m "routed_at" "")
             "body" (get m "body" "")
             "response" (get m "response" "")
             "detail" (get m "detail" "")})))
@@ -203,14 +222,66 @@
        (vec (take-last limit sorted))
        (vec sorted)))))
 
-(defn pending-requests [root]
-  (->> (list-request-files root "pending")
-       (map #(request-summary % "pending"))
-       (sort-by (fn [r] [(get r "created_at" "") (get r "id" "")]))
-       vec))
+(defn pending-requests
+  ([root]
+   (->> (list-request-files root "pending")
+        (map #(request-summary % "pending"))
+        (sort-by (fn [r] [(get r "created_at" "") (get r "id" "")]))
+        vec))
+  ([root owner]
+   (let [want (normalize-owner owner)]
+     (vec (filter #(= want (request-owner %)) (pending-requests root))))))
 
 (defn oldest-pending [root]
   (first (pending-requests root)))
+
+(defn oldest-pending-for-owner [root owner]
+  (first (pending-requests root owner)))
+
+(defn rewrite-pending! [root id updates]
+  (let [pending (request-file root "pending" id)]
+    (cond
+      (not (valid-id? id))
+      {:ok false :error "Invalid request id."}
+
+      (not (fs/regular-file? pending))
+      (if-let [{:keys [state]} (find-request-file root id)]
+        {:ok false :error (str "Request is not pending (status=" state ").")}
+        {:ok false :error (str "Pending request not found: " id)})
+
+      :else
+      (let [now (timestamp)
+            m (merge (file-map pending)
+                     updates
+                     {"status" "pending"
+                      "updated_at" now})]
+        (write-atomic! pending (render-request m))
+        {:ok true :request (request-summary pending "pending")}))))
+
+(defn route-to-sl
+  "Re-own a pending request for Squad Leader product residual.
+  Keeps status pending so the operator busy indicator stays on until SL answers."
+  [root id]
+  (let [pending (request-file root "pending" id)]
+    (cond
+      (not (valid-id? id))
+      {:ok false :error "Invalid request id."}
+
+      (not (fs/regular-file? pending))
+      (if-let [{:keys [state]} (find-request-file root id)]
+        {:ok false :error (str "Request is not pending (status=" state ").")}
+        {:ok false :error (str "Pending request not found: " id)})
+
+      :else
+      (let [now (timestamp)
+            m (file-map pending)
+            already? (= product-owner (request-owner m))
+            updates (cond-> {"owner" product-owner}
+                      (not already?) (assoc "routed_at" now))
+            result (rewrite-pending! root id updates)]
+        (if (:ok result)
+          (assoc result :routed (not already?) :already-sl already?)
+          result)))))
 
 (defn source-file [path]
   (let [file (fs/path path)
@@ -337,6 +408,7 @@
       (println "REQUEST:" id)
       (println "STATE:" (get m "status" state))
       (println "KIND:" (get m "kind" "request"))
+      (println "OWNER:" (request-owner m))
       (println "BODY:" (get m "body" ""))
       (when-not (str/blank? (get m "response" ""))
         (println "RESPONSE:" (get m "response")))
@@ -350,10 +422,50 @@
     (println "REQUEST:" (get r "id"))
     (println "STATE:" (get r "status"))
     (println "KIND:" (get r "kind"))
+    (println "OWNER:" (request-owner r))
     (println "BODY:" (get r "body"))
     (when-not (str/blank? (get r "response"))
       (println "RESPONSE:" (get r "response")))
     (println "---")))
+
+(defn socket-value [root]
+  (let [socket-file (fs/path root ".swarmforge" "tmux-socket")]
+    (when (fs/regular-file? socket-file)
+      (str/trim (slurp (str socket-file))))))
+
+(defn wake-sl-for-product-request! [root request]
+  "Best-effort: notify Squad Leader residual after route-to-sl."
+  (when-let [socket (socket-value root)]
+    (let [id (get request "id")
+          body (get request "body" "")
+          msg (str "Product request routed from Troubleshooter. Run squad_next.sh --residual-only.\n"
+                   "REQUEST_ID: " id "\n"
+                   "OWNER: squad-leader\n"
+                   "BODY: " body "\n"
+                   "COMMAND: squad_dashboard_request.sh answer " id " <answer-file>\n"
+                   "Orchestrate theme/story work first; request stays pending until answer succeeds.")]
+      (try
+        (let [r (process/sh {:continue true}
+                            "tmux" "-S" socket "send-keys" "-t" "swarmforge-squad-leader" "-l" msg)]
+          (when (zero? (:exit r))
+            (process/sh {:continue true}
+                        "tmux" "-S" socket "send-keys" "-t" "swarmforge-squad-leader" "C-m")
+            true))
+        (catch Exception _ false)))))
+
+(defn route-to-sl! [id]
+  (let [root (fs/absolutize (project-root))
+        result (route-to-sl root id)]
+    (if (:ok result)
+      (let [m (:request result)
+            woke? (wake-sl-for-product-request! root m)]
+        (println "SQUAD_DASHBOARD_REQUEST:" (get m "id"))
+        (println "STATE: pending")
+        (println "OWNER:" (request-owner m))
+        (println "ROUTED: squad-leader")
+        (println "SL_NOTIFIED:" (if woke? "true" "false"))
+        (println "NOTE: stay pending until squad_dashboard_request.sh answer; run residual as SL"))
+      (exit! 2 (:error result)))))
 
 (defn status! [maybe-id]
   (let [root (fs/absolutize (project-root))]
@@ -378,6 +490,9 @@
    "cancel" (fn [args]
               (exact-count! args 2)
               (cancel! (second args)))
+   "route-to-sl" (fn [args]
+                   (exact-count! args 2)
+                   (route-to-sl! (second args)))
    "status" (fn [args]
               (when-not (<= 1 (count args) 2)
                 (exit! 1 usage-text))
