@@ -157,9 +157,16 @@
     [(first trailing) (rest trailing)]
     ["task" trailing]))
 
+(def window-directives
+  #{"window" "window-invisible"})
+
 (defn validate-directive! [line-no keyword]
-  (when-not (= "window" keyword)
-    (config-error! (str "Unknown config directive on line " line-no ": " keyword))))
+  (when-not (contains? window-directives keyword)
+    (config-error! (str "Unknown config directive on line " line-no ": " keyword
+                        " (expected window or window-invisible)"))))
+
+(defn visible-window-directive? [keyword]
+  (= "window" keyword))
 
 (defn validate-role-name! [line-no role]
   (when (str/includes? role "_")
@@ -204,7 +211,7 @@
     (:working-dir ctx)
     (worktree-path-for-name (:worktrees-dir ctx) worktree)))
 
-(defn config-row [ctx role agent worktree receive-mode extra-arg-tokens]
+(defn config-row [ctx role agent worktree receive-mode extra-arg-tokens visible?]
   {:role role
    :agent agent
    :session (session-name-for-role role)
@@ -212,15 +219,17 @@
    :worktree-name worktree
    :worktree-path (worktree-path ctx worktree)
    :receive-mode receive-mode
+   :visible? visible?
    :extra-args (when (seq extra-arg-tokens)
                  (str/join " " extra-arg-tokens))})
 
 (defn parse-config-row! [ctx line-no line roles worktrees]
   (let [[keyword role agent worktree & trailing] (config-line-fields! line-no line)
         agent (str/lower-case agent)
-        [receive-mode extra-arg-tokens] (receive-mode-and-extra trailing)]
+        [receive-mode extra-arg-tokens] (receive-mode-and-extra trailing)
+        visible? (visible-window-directive? keyword)]
     (validate-config-row! ctx line-no keyword role agent worktree receive-mode roles worktrees)
-    (config-row ctx role agent worktree receive-mode extra-arg-tokens)))
+    (config-row ctx role agent worktree receive-mode extra-arg-tokens visible?)))
 
 (defn active-config-line? [raw-line]
   (let [line (str/trim raw-line)]
@@ -583,8 +592,13 @@
         (format "%d\t%s\t%s\t%s\n" (inc index) window-id (:session row) (str "SwarmForge " (:display-name row)))
         :append true))
 
+(defn visible-roles [ctx]
+  "Roles that get a Terminal (or backend) surface at startup.
+  window-invisible roles still get a detached tmux session + agent process."
+  (filterv #(not= false (:visible? %)) (:roles ctx)))
+
 (defn open-role-surfaces! [ctx]
-  (loop [rows (:roles ctx)
+  (loop [rows (visible-roles ctx)
          index 0
          previous-window-id ""]
     (when-let [row (first rows)]
@@ -727,10 +741,12 @@
   (println "Working directory:" (str (:working-dir ctx)))
   (println "Sessions:")
   (doseq [row (:roles ctx)]
-    (println (str "  " (:display-name row) ": " (:session row))))
+    (println (str "  " (:display-name row) ": " (:session row)
+                  (when (false? (:visible? row)) " (invisible)"))))
   (println)
   (println (str green "Tip: Write a handoff draft and run swarm_handoff.sh while the swarm is running." reset))
   (println (str green "Tip: Reattach manually with 'tmux -S " (:tmux-socket ctx) " attach-session -t <session-name>' if needed." reset))
+  (println (str green "Tip: Troubleshooter is invisible; open via dashboard or tmux attach to swarmforge-troubleshooter." reset))
   (println))
 
 (defn start-runtime! [ctx]

@@ -1312,6 +1312,31 @@
       (fs/create-dirs (fs/parent (:window-ids-file ctx)))
       (forge/open-role-surfaces! ctx)
       (is (str/includes? (slurp (str (:window-state-file ctx))) "swarmforge-squad-leader")))
+    ;; window-invisible: session still configured, but no Terminal surface opened
+    (write-file (fs/path role-dir "troubleshooter.prompt") "troubleshoot\n")
+    (write-file (:config-file ctx)
+                (str "window squad-leader codex master task\n"
+                     "window-invisible troubleshooter codex master task\n"))
+    (let [cfg (forge/parse-config ctx)
+          by-role (into {} (map (juxt :role identity) (:roles cfg)))
+          opened (atom [])]
+      (is (= 2 (count (:roles cfg))))
+      (is (true? (get-in by-role ["squad-leader" :visible?])))
+      (is (false? (get-in by-role ["troubleshooter" :visible?])))
+      (is (= 1 (count (forge/visible-roles cfg))))
+      (with-redefs [forge/terminal-call-out (fn [_ command & args]
+                                              (when (= command "terminal_open_session")
+                                                (swap! opened conj (first args)))
+                                              (case command
+                                                "terminal_open_session" (str "win-" (first args))
+                                                "terminal_backend_label" "TestTerm"
+                                                ""))
+                    forge/tracks-windows? (constantly true)]
+        (spit (str (:window-state-file ctx)) "")
+        (forge/open-role-surfaces! cfg)
+        (is (= ["swarmforge-squad-leader"] @opened)
+            "invisible troubleshooter must not open a Terminal surface")
+        (is (not (str/includes? (slurp (str (:window-state-file ctx))) "troubleshooter")))))
     (fs/create-dirs (:prompts-dir ctx))
     (is (str/includes? (forge/launch-command ctx 1 (second (:roles ctx)))
                        "codex -C"))))
