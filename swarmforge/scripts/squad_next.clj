@@ -658,19 +658,53 @@
 (defn root-implementation-order-draft-path [root]
   (fs/path root "implementation-order.md"))
 
+(defn default-implementation-order-seed
+  "Comment-only order: valid to record, means no multi-story implementer gates."
+  []
+  (str "# No multi-story implementer dependencies declared for this theme.\n"
+       "# Stories may implement when story/spec gates allow.\n"))
+
+(defn packet-ready-for-implementer?
+  "True when a story would seek implementer work if order allowed it."
+  [root packet]
+  (and (approval-satisfied? root packet "implementation")
+       (squad-state/implementation-ready? packet)
+       (not (field-present? packet "implementation_sha"))))
+
+(defn theme-has-implementer-ready-story? [root theme-id]
+  (boolean
+   (some (fn [packet]
+           (and (= theme-id (get packet "theme_id"))
+                (packet-ready-for-implementer? root packet)))
+         (packets root))))
+
 (defn implementation-order-record-candidate
-  "When root draft exists and durable theme order is missing, record it."
+  "Durable theme order must exist before implementers (P0 B03).
+  - Root draft present → record it (even mid-pipeline).
+  - No draft → seed comment-only order only when some story is implementer-ready,
+    so missing analyst order does not permanently block; early pipeline stages
+    are not pre-empted by seed."
   [root theme-id]
   (when (and (not (str/blank? theme-id))
-             (not (implementation-order-recorded? root theme-id))
-             (fs/regular-file? (root-implementation-order-draft-path root)))
-    {:priority 26
-     :stage-order 1
-     :next-action "record_implementation_order"
-     :theme-id theme-id
-     :story-id "theme"
-     :reason "root implementation-order.md must be recorded into durable theme path before implementers"
-     :command (str "squad_theme.sh implementation-order " theme-id " implementation-order.md")}))
+             (not (implementation-order-recorded? root theme-id)))
+    (let [draft (root-implementation-order-draft-path root)
+          has-draft? (fs/regular-file? draft)
+          needs-impl? (theme-has-implementer-ready-story? root theme-id)]
+      (when (or has-draft? needs-impl?)
+        (let [seed-cmd (str "cat > implementation-order.md <<'SF_IMPL_ORDER_EOF'\n"
+                            (default-implementation-order-seed)
+                            "SF_IMPL_ORDER_EOF\n"
+                            "squad_theme.sh implementation-order " theme-id " implementation-order.md")
+              record-cmd (str "squad_theme.sh implementation-order " theme-id " implementation-order.md")]
+          {:priority 26
+           :stage-order 1
+           :next-action "record_implementation_order"
+           :theme-id theme-id
+           :story-id "theme"
+           :reason (if has-draft?
+                     "root implementation-order.md must be recorded into durable theme path before implementers"
+                     "durable implementation order missing; seed comment-only order so implementers are not stuck")
+           :command (if has-draft? record-cmd seed-cmd)})))))
 
 (defn implementation-order-record-candidates [root]
   (->> (packets root)
@@ -2216,8 +2250,13 @@
            vec)
       [])))
 
+(def persistent-role-names
+  "Static roles that are not transient workers. Must not occupy active-transient
+  wait capacity or retirement/recovery as if they were spawn fleet."
+  #{"squad-leader" "troubleshooter"})
+
 (defn transient-row? [row]
-  (not= "squad-leader" (first row)))
+  (not (contains? persistent-role-names (first row))))
 
 (defn agent-state [root agent]
   (get (file-map (fs/path root ".squad" "agents" agent "status")) "state" "unknown"))

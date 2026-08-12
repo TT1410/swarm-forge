@@ -212,6 +212,14 @@
       }
     });
     let optimisticBusy = false;
+    let pollMs = 2000;
+    let pollTimer = null;
+    function schedulePoll(ms) {
+      if (pollMs === ms && pollTimer) return;
+      pollMs = ms;
+      if (pollTimer) clearInterval(pollTimer);
+      pollTimer = setInterval(render, pollMs);
+    }
     function setBusyVisible(working) {
       const busy = document.getElementById('ts-busy');
       if (!busy) return;
@@ -220,6 +228,8 @@
         const dots = ((Date.now() / 400) | 0) % 3;
         busy.textContent = '.'.repeat(dots + 1);
       }
+      // Faster poll while a request is open so answers appear sooner.
+      schedulePoll(working ? 400 : 2000);
     }
     async function sendRequest() {
       const text = messageInput.value.trim();
@@ -290,10 +300,13 @@
       }
     }
     render();
-    setInterval(render, 2000);
+    schedulePoll(2000);
     setInterval(() => {
       const busy = document.getElementById('ts-busy');
-      if (busy && busy.style.display !== 'none') setBusyVisible(true);
+      if (busy && busy.style.display !== 'none') {
+        const dots = ((Date.now() / 400) | 0) % 3;
+        busy.textContent = '.'.repeat(dots + 1);
+      }
     }, 400);
   </script>
 </body>
@@ -421,11 +434,14 @@
 (defn sh-continue [& args]
   (apply process/sh (concat [{:continue true}] args)))
 
-(defn tmux-notify! [socket session message]
+(defn tmux-notify!
+  "Inject a short wake line into an agent pane. Keep messages tiny: long pastes
+  force a slow full model turn for every operator chat (measured ~8s for 'hi')."
+  [socket session message]
   (let [send-text (sh "tmux" "-S" socket "send-keys" "-t" session "-l" message)
-        _ (Thread/sleep 100)
+        _ (Thread/sleep 30)
         send-return (sh "tmux" "-S" socket "send-keys" "-t" session "C-m")
-        _ (Thread/sleep 100)
+        _ (Thread/sleep 30)
         send-second-return (sh "tmux" "-S" socket "send-keys" "-t" session "C-m")]
     (and (zero? (:exit send-text))
          (zero? (:exit send-return))
@@ -917,9 +933,9 @@
     (str "## " title "\n\n" content "\n")))
 
 (defn theme-package-parts [root theme-id]
-  "Ordered package sections that exist. Missing artifacts are omitted entirely.
-  Implementation order prefers the durable theme record; falls back to project
-  root implementation-order.md with a note when not yet recorded."
+  "Ordered package sections. Implementation order always appears: durable theme
+  record preferred, then root draft, else an explicit missing marker so operators
+  notice incomplete analysis (analyst must author implementation-order.md)."
   (let [theme (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md"))
         module-map (slurp-if-exists (fs/path root ".squad" "themes" theme-id "module-map.md"))
         durable-order (slurp-if-exists (fs/path root ".squad" "themes" theme-id "implementation-order.md"))
@@ -932,13 +948,17 @@
                           "/ — run `squad_theme.sh implementation-order "
                           theme-id " implementation-order.md`.)_\n\n"
                           draft-order)
-                     :else nil)]
+                     :else
+                     (str "_(Missing.)_ Analyst must commit root `implementation-order.md` "
+                          "(edges or comment-only “no multi-story gates”), then record with "
+                          "`squad_theme.sh implementation-order " theme-id
+                          " implementation-order.md`."))]
     (cond-> []
       (not (str/blank? theme))
       (conj {:id "theme" :title "Theme (scheme)" :body theme})
       (not (str/blank? module-map))
       (conj {:id "module-map" :title "Module Map" :body module-map})
-      (not (str/blank? impl-order))
+      true
       (conj {:id "implementation-order" :title "Implementation Order" :body impl-order}))))
 
 (defn theme-content [root theme-id]
@@ -1188,20 +1208,14 @@
       {:kind "request"
        :body text})))
 
-(defn dashboard-request-wake-message [request]
-  (let [id (get request "id")
-        kind (get request "kind" "command")
-        body (get request "body" "")]
-    (str "Operator request for Troubleshooter. Classify intent:\n"
-         "- Repair / Q&A / inspect: act, then answer firmly.\n"
-         "- Product (theme, story, orchestration): route-to-sl, then SL residual answers.\n"
-         "REQUEST_ID: " id "\n"
-         "KIND: " kind "\n"
-         "OWNER: " (or (get request "owner") "troubleshooter") "\n"
-         "BODY: " body "\n"
-         "COMMAND_REPAIR: squad_dashboard_request.sh answer " id " <answer-file>\n"
-         "COMMAND_PRODUCT: squad_dashboard_request.sh route-to-sl " id "\n"
-         "A request is not complete until answer/reject succeeds (route-to-sl keeps it pending).")))
+(defn dashboard-request-wake-message
+  "Minimal wake only. Body lives on disk — pasting it into the model doubles
+  latency for trivial chat. TS reads status/answer helpers for content."
+  [request]
+  (let [id (get request "id")]
+    (str "Dashboard request " id
+         ". Run: squad_dashboard_request.sh status " id
+         " then answer or route-to-sl. Reply via helper.")))
 
 (defn wake-troubleshooter-for-request! [root request]
   (if-let [socket (socket-value root)]

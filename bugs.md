@@ -10,6 +10,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
 | **P2** | B29 | When the swarm is stalled, the dashboard should explain why (usually stalled agents) | UX / design | Dashboard |
+| **P2** | B34 | Troubleshooter chat laggy — prefer raw id-prefixed tmux inject | UX / design | Troubleshooter chat |
 | **P2** | B10 | Dashboard answers truncate to first line of multiline response | Reliability | Dashboard IO |
 | **P2** | B11 | Zombie tmux sessions after agent retire | Hygiene | Lifecycle |
 | **P2** | B12 | Hardener edits root tooling (`bb.edn`) against role rules | Policy | Role enforcement |
@@ -34,7 +35,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 **Suggested fix order**
 
-1. **P2 remaining operator/hygiene:** **B29** → **B10** → **B11** → **B12**.
+1. **P2 remaining operator/hygiene:** **B29** → **B34** → **B10** → **B11** → **B12**.
 2. **P2 workflow:** **B25** → **B23**.
 3. **P2 architecture (next):** **B18** / **B16** / **B19** (build on typed actions from B17).
 4. **P3:** **B13**–**B15**, **B24**, **B20**–**B22**.
@@ -43,7 +44,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Cluster | Bugs | Note |
 |---------|------|------|
-| Dashboard / operator | **B29**, B10, B14, B24 | Stall reason, multiline answers, IA (Troubleshooter landed B09) |
+| Dashboard / operator | **B29**, **B34**, B10, B14, B24 | Stall reason, TS chat latency, multiline, IA (Troubleshooter landed B09) |
 | Theme gates | B25, B23, B13, B14 | Approve order/checker; finalize; analyst policy; theme card |
 | Control plane | B16, B18, B19, B20, B21 | Ownership, planner split, priority (typed actions B17 done) |
 | Hygiene / policy | B11, B12 | Zombie tmux; root tooling thrash |
@@ -86,6 +87,37 @@ Most stalls are **one or more agents not making progress**. The dashboard should
 **Where:** `squadd/web.clj` status JSON + agents/assignments UI; agent quiet/recovery signals; assignment status + merge-error; optional residual “wait” reason export.
 
 **Related:** B28 (show merge_blocked), B27, B26, B30, B24, B09 (troubleshooter).
+
+---
+
+### B34 — Troubleshooter chat is laggy; prefer raw id-prefixed tmux inject (not handoff ceremony)
+
+**Symptom / gap:** Operator ↔ Troubleshooter dashboard chat feels slow (~7–8s for a simple “hi”; probes have measured ~8–14s create→answer). Easy to misread as handoff-protocol lag. Actual path is already **not** handoffd mail: durable request file + tmux wake into the TS pane + `squad_dashboard_request.sh answer`. Latency is dominated by a **full coding-agent turn** after a wake paste (and historically a long instructional paste that forced extra tool/status work). Short wake + faster UI poll (while pending) only trim the margins.
+
+**Not the problem:** `.swarmforge/handoffs` outbox/inbox delivery for operator chat. Do **not** put chat on the handoff protocol (heavier, wrong abstraction).
+
+**Design direction (agreed, not yet implemented):**
+
+1. **Create** the durable pending request first (id, body, busy indicator, cancel, history stay as today).  
+2. **Raw tmux inject** into `swarmforge-troubleshooter`: operator text prefixed with the **dashboard request id** (e.g. `[dashboard-…-001] hi`) — light delivery, no multi-line classify essay every time.  
+3. **Response unchanged:** TS still closes with `squad_dashboard_request.sh answer <id> <file>` (or `route-to-sl` for product). Pane text alone does not complete the request.  
+4. Standing prompt rule: when you see an id-prefixed dashboard line, treat it as that request’s body and answer/route the same id (optional `status` only if needed).
+
+**Safety conditions:**
+
+- Never inject without a durable request id already written.  
+- Id prefix must be unambiguous and stable.  
+- Queue / single-flight rules when TS is mid-turn (inject into a non-idle prompt corrupts input).  
+- Product theme/story still uses `route-to-sl` → SL residual; inject is delivery only.  
+- Missing/busy session: fall back to short wake or queue, don’t drop the request.
+
+**Expected:** Lower ceremony and fewer wasted tool steps for chat; snappier feel for short messages. **Not** a promise of sub-second “hi” while Codex-in-tmux remains the backend (that needs a non-agent fast path if ever desired).
+
+**Priority rationale (P2):** Operator chat is the primary Troubleshooter surface (B09); multi-second lag on every line hurts live ops. Small, local change to wake path; answer protocol already correct.
+
+**Where:** `squadd/web.clj` (`tmux-notify!` / create-request wake); Troubleshooter prompt; optional idle/pane checks; dashboard request create remains in `squad_dashboard_request.clj`.
+
+**Related:** B09 (Troubleshooter surface), B10 (multiline answers), B29 (operator visibility), product `route-to-sl` ownership split.
 
 ---
 
@@ -362,13 +394,15 @@ Themes today are effectively never finished: analysis can add stories, packets a
 
 ### B13 — Analyst dependency-checker policy is missing or pitifully coarse
 
-**Symptom:** Product `dependency-checker.edn` is a minimal two-component sketch (`:main` / `:process`). Green checker while internal process graph is unconstrained.
+**Symptom:** Product `dependency-checker.edn` was often **absent** (analyst never required to write it) or a minimal two-component sketch (`:main` / `:process`). Green checker while internal process graph is unconstrained. Live hello-world swarm: stories landed, no checker file.
 
-**Who owns it:** Analyst should author a real policy from the theme module map.
+**Who owns it:** Analyst authors a real policy from the theme module map at analysis handoff; SL rejects incomplete analysis without it.
 
 **Expected:** Real components and allowed edges (UI → process → pure domain); analysis incomplete without non-trivial policy (or waiver). Policy should then be **user-approved** (B25), not only present on disk.
 
-**Where:** `analyst.prompt` / contract; `theme-module-map.md`; product `dependency-checker.edn`.
+**Status (prompt):** Analyst prompt/contract now **require** root `dependency-checker.edn` + template; SL review checklist mentions it. Remaining: residual/mechanical gate, quality bar beyond presence, and B25 user approval.
+
+**Where:** `analyst.prompt` / contract; `templates/dependency-checker.edn`; `theme-module-map.md`; product `dependency-checker.edn`; optional `squad_next` incomplete-analysis residual.
 
 **Related:** B14, B25.
 

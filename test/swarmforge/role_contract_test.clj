@@ -72,6 +72,9 @@
 (deftest squad-role-contracts-separate-artifact-ownership
   (let [by-role (into {} (map (juxt :role identity) (contracts)))]
     (is (= ["stories/"] (:artifact-roots (by-role "analyst"))))
+    (is (true? (:requires-dependency-checker (by-role "analyst"))))
+    (is (some #{"dependency-checker"} (:writes (by-role "analyst"))))
+    (is (some #{"dependency-checker.edn"} (:allowed-root-files (by-role "analyst"))))
     (is (= ["features/"] (:artifact-roots (by-role "gherkin-writer"))))
     (is (= ["qa/"] (:artifact-roots (by-role "qa-procedure-writer"))))
     (doseq [artifact-role ["gherkin-writer" "qa-procedure-writer" "gherkin-reviewer" "qa-procedure-reviewer"]]
@@ -139,6 +142,34 @@
     (is (str/includes? prompt "I.N.V.E.S.T."))
     (doseq [word ["independent" "negotiable" "valuable" "estimable" "small" "testable"]]
       (is (str/includes? prompt word)))))
+
+(deftest analyst-must-author-dependency-checker-config
+  ;; Given analysis is the place Clean Architecture components are cut into stories
+  ;; When the analyst role is specified
+  ;; Then dependency-checker.edn is required product policy at handoff (B13)
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))
+        template (slurp (str (fs/path repo-root "swarmforge/templates/dependency-checker.edn")))
+        c (contract "analyst")]
+    (is (str/includes? prompt "dependency-checker.edn"))
+    (is (str/includes? prompt ":allowed-dependencies"))
+    (is (str/includes? prompt "Analysis is incomplete without this file"))
+    (is (str/includes? template ":allowed-dependencies"))
+    (is (true? (:requires-dependency-checker c)))))
+
+(deftest analyst-must-author-implementation-order
+  ;; Given analysis cuts stories that may have implementer dependencies
+  ;; When the analyst role is specified
+  ;; Then implementation-order.md is always required (edges or comment-only)
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))
+        template (slurp (str (fs/path repo-root "swarmforge/templates/theme-implementation-order.md")))
+        c (contract "analyst")]
+    (is (str/includes? prompt "Always** commit root **`implementation-order.md`")
+        "order is always required, not only when deps exist")
+    (is (str/includes? prompt "comment header")
+        "single-story / no-gate themes still get an explicit file")
+    (is (str/includes? template "always** commits this file"))
+    (is (true? (:requires-implementation-order c)))
+    (is (some #{"implementation-order"} (:writes c)))))
 
 (deftest squad-architect-prompt-frames-principles-as-review-advice
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))]
@@ -264,6 +295,8 @@
     (is (str/includes? analyst "Theme Module Map"))
     (is (str/includes? analyst "Separate **process**, **UI**, and **IO**"))
     (is (str/includes? analyst "implementation-order"))
+    (is (str/includes? analyst "dependency-checker.edn"))
+    (is (str/includes? outline "**analyst** authors"))
     (is (str/includes? implementer "Theme Module Map"))
     (is (str/includes? implementer "root tooling files"))
     (is (str/includes? implementer "deps.edn"))

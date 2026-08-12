@@ -34,7 +34,18 @@ Do **not** use the word `after` (it can collide with a story id). Invalid edge
 lines are rejected when the file is recorded.
 
 Stories with no edge line may implement as soon as story/spec gates allow.
-Empty file or missing file means no implementation-order gates.
+
+Analyst **always** commits this file at analysis handoff (root `implementation-order.md`).
+When there are no multi-story implementer gates, use a comment-only file, for example:
+
+```text
+# No multi-story implementer dependencies for this theme.
+# Stories may implement when story/spec gates allow.
+```
+
+Missing root draft is incomplete analysis. Empty file (no comments, no edges) is rejected
+when recording. Comment-only is valid and means no implementation-order gates.
+Durable record: `squad_theme.sh implementation-order <theme-id> implementation-order.md`.
 
 ## Notes
 

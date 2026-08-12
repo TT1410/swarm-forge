@@ -70,7 +70,8 @@ exist once code lands, e.g.:
 - `:<use-case-or-process>` — …
 - `:io` or adapters — …
 
-These names should stay consistent with a future `dependency-checker` policy.
+These names must stay consistent with the product `dependency-checker.edn`
+policy the **analyst** authors at analysis handoff (not deferred to implementers).
 
 ## Tooling Layout (note)
 

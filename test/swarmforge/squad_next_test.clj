@@ -2345,6 +2345,66 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest missing-order-without-draft-offers-seed-record-not-silent-block
+  ;; Given implementer-ready story and no durable order and no root draft
+  ;; When squad_next runs
+  ;; Then record_implementation_order is offered (seed path) so the story is not stuck forever
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "troubleshooter\tmaster\t" root "\tswarmforge-troubleshooter\tTroubleshooter\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "max_transient_agents 10\napproval_required implementation false\n")
+      (write-file (fs/path root ".squad/stories/hello-world/packet")
+                  (str "story_id: hello-world\n"
+                       "theme_id: hello-world\n"
+                       "story_approval: approved\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_approval: approved\n"
+                       "gherkin_review: accepted\n"
+                       "qa_procedure_review: accepted\n"
+                       "implementation_approval: approved\n"))
+      (fs/create-dirs (fs/path root ".squad/themes/hello-world"))
+      (write-file (fs/path root ".squad/themes/hello-world/theme.md") "theme\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "record_implementation_order")
+            "must not silently skip order when draft is missing")
+        (is (str/includes? out "seed comment-only")
+            "reason explains seed path"))
+      (let [mech (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            durable (fs/path root ".squad/themes/hello-world/implementation-order.md")]
+        (is (or (fs/exists? durable)
+                (str/includes? mech "record_implementation_order"))
+            "mechanical records or still offers seed")
+        (when (fs/exists? durable)
+          (let [after (:out (run {:dir root} (script "squad_next.sh")))]
+            (is (str/includes? after "implementer")
+                "after seed order, implementer can schedule")
+            (is (str/includes? after "hello-world")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest troubleshooter-is-not-active-transient-for-wait
+  ;; Given only persistent roles in roles.tsv and no transient workers
+  ;; When residual would wait
+  ;; Then Troubleshooter is not listed as ACTIVE (not a product fleet agent)
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "troubleshooter\tmaster\t" root "\tswarmforge-troubleshooter\tTroubleshooter\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/agents/troubleshooter/recovery")
+                  "state: dirty_worktree\nchecked_at: now\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--residual-only"))]
+        (is (not (str/includes? out "ACTIVE: troubleshooter"))
+            "persistent Troubleshooter must not freeze residual wait")
+        (is (str/includes? out "NEXT_ACTION: wait")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest p0-mechanical-records-root-implementation-order-draft
   (let [root (tmp-dir)]
     (try

@@ -38,6 +38,28 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest theme-package-always-shows-implementation-order
+  ;; Given a theme with scheme and module map but no order file
+  ;; When building the theme package
+  ;; Then Implementation Order is still a section (explicit missing), not omitted
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad/themes/hello/theme.md") "Hello theme.\n")
+      (write-file (fs/path root ".squad/themes/hello/module-map.md") "Map.\n")
+      (let [parts (web/theme-package-parts root "hello")
+            titles (set (map :title parts))
+            order (first (filter #(= "Implementation Order" (:title %)) parts))]
+        (is (contains? titles "Implementation Order"))
+        (is (str/includes? (:body order) "Missing")))
+      (write-file (fs/path root "implementation-order.md")
+                  "# No multi-story implementer dependencies for this theme.\n")
+      (let [order (first (filter #(= "Implementation Order" (:title %))
+                                 (web/theme-package-parts root "hello")))]
+        (is (str/includes? (:body order) "Not yet recorded"))
+        (is (str/includes? (:body order) "No multi-story")))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest dashboard-hides-troubleshooter-from-agent-list
   ;; Given a persistent Troubleshooter under .squad/agents
   ;; When the dashboard builds its agent list

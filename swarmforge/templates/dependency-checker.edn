@@ -1,0 +1,19 @@
+;; Product dependency policy for check-dependencies (root dependency-checker.edn).
+;; Analyst authors this from the theme module map before handoff.
+;; Components are second namespace segments (keywords). Values = allowed deps.
+;;
+;; Dependency Rule: outer (UI/IO) may depend on process/domain; process must not
+;; depend on UI, concrete IO, or adapters. Prefer real components from the map —
+;; not a two-node :main/:process stub unless the theme truly has only those.
+;;
+;; Example for a tiny greeting theme:
+;; {:allowed-dependencies {:greeting []
+;;                         :ui [:greeting]}
+;;  :fail-on-cycles true
+;;  :fail-on-violations true}
+
+{:allowed-dependencies {;; :process-or-domain-component []
+                        ;; :ui [:process-or-domain-component]
+                        }
+ :fail-on-cycles true
+ :fail-on-violations true}

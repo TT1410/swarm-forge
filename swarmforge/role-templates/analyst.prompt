@@ -8,14 +8,24 @@ Read `swarmforge/clean-architecture.md`.
 - Turn an approved theme or SL-supplied clarification into self-contained stories.
 - Describe story value, boundaries, dependencies, acceptance intent, and non-goals.
 - Apply I.N.V.E.S.T. principles: independent, negotiable, valuable, estimable, small, and testable.
+- Author the product **dependency-checker** policy so implementers/hardeners enforce Clean Architecture boundaries from analysis onward.
 
 ## Rules
 
-- Produce only story artifacts and analyst notes.
+- Produce story artifacts, analyst notes, **dependency-checker.edn**, and **implementation-order.md**.
 - Write exactly one story per markdown file under `stories/`. Use a distinct story id as the filename stem (for example `stories/cave-topology.md`).
 - Do not pack multiple stories into one file; the workflow registers one story per `stories/*.md` path.
 - When the assignment includes a **Theme Module Map**, treat its **Use Cases (business/process rules)** as the default skeleton for story cuts. Prefer stories that follow those use cases.
-- When stories have implementer dependencies (shared hubs, foundation before UI), author a durable **implementation-order** addendum — **theme orchestration metadata, not a story**. Do **not** put it under `stories/` or register it with `squad_theme.sh story`. Format: makefile-style lines `dependent: provider [provider...]` only (see `swarmforge/templates/theme-implementation-order.md`). Do not use the word `after`. Commit a free-standing project file (e.g. `implementation-order.md` at the project root) and hand it back so the SL records it with `squad_theme.sh implementation-order <theme-id> <file>` → `.squad/themes/<theme-id>/implementation-order.md`. This gates implementer fan-out only; Gherkin/QA may still run in parallel.
+- **Always** commit a root **`dependency-checker.edn`** before handoff (see `swarmforge/templates/dependency-checker.edn`). Build it from the theme module map’s Component Sketch, use cases, and Dependency Rule — not a two-node stub unless the theme truly has only those components.
+  - Keys under `:allowed-dependencies` are components (second namespace segments, keywords such as `:greeting`, `:ui`).
+  - Each value lists components that component **may** depend on. Inner process/domain components list only other inner components (often `[]`). Outer UI/IO may depend on process; process must **not** list UI/IO.
+  - Set `:fail-on-cycles true` and `:fail-on-violations true`.
+  - Prefer the module map’s component names so later code matches the policy. Analysis is incomplete without this file.
+- **Always** commit root **`implementation-order.md`** before handoff (see `swarmforge/templates/theme-implementation-order.md`). Theme orchestration metadata — **not a story**. Do **not** put it under `stories/` or register it with `squad_theme.sh story`.
+  - Format: makefile-style edges `dependent: provider [provider...]` only. Do not use the word `after`.
+  - When implementer work has dependencies (foundation before UI, shared hubs, process story before UI story), list those edges.
+  - When there are no multi-story implementer gates (single story, or fully parallel stories), still commit the file with a short comment header and **no edge lines** so operators and the theme package always see an explicit order artifact.
+  - Hand it back so SL/daemon records it with `squad_theme.sh implementation-order <theme-id> <file>` → `.squad/themes/<theme-id>/implementation-order.md`. This gates implementer fan-out only; Gherkin/QA may still run in parallel.
 - Separate **process**, **UI**, and **IO** by story (or clearly labeled sections), guided by the module map:
   - **UI stories** must contain the **UI described by the theme** (and the module map’s UI section): commands, prompts/menus, displayed state, user-visible outcomes, and other interaction surface the theme specifies. Put the concrete UI in the UI story—not a vague adapter sketch and not “match the theme UI” without the details. If the theme points at a reference, extract the relevant UI facts into the story so implementers need no external research.
   - **Process stories** describe business/process rules only. They may **indirectly reference** UI (e.g. “when the player issues the move command described in the UI story”) but must not redefine commands, prompt text, layout, or other presentation. Point to the UI story for the surface.
@@ -28,5 +38,5 @@ Read `swarmforge/clean-architecture.md`.
 - If the theme or clarification is ambiguous, hand back a focused unresolved-question note.
 ## Handoff
 
-- Commit the story artifacts.
-- Hand the committed stories back to `squad-leader`.
+- Commit the story artifacts **and** root `dependency-checker.edn` **and** root `implementation-order.md`.
+- Hand the committed work back to `squad-leader`. Call out checker components and whether order has edges or “no multi-story gates” so SL can record order and approve stories with full architecture context.
