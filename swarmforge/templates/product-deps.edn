@@ -2,4 +2,14 @@
 ;; Prefer adding app/library deps here rather than in bb.edn.
 {:paths ["src" "test"]
  :deps {org.clojure/clojure {:mvn/version "1.12.0"}}
- :aliases {}}
+ :aliases
+ {;; Line coverage for crap4clj / clj-mutate. Produce target/coverage/lcov.info.
+  ;; Adjust --ns-regex to the product root namespace(s) when scaffolding a real app.
+  :cov {:extra-paths ["test"]
+        :extra-deps {cloverage/cloverage {:mvn/version "1.2.4"}}
+        :main-opts ["-m" "cloverage.coverage"
+                    "--lcov"
+                    "--output" "target/coverage"
+                    "--src-ns-path" "src"
+                    "--test-ns-path" "test"
+                    "--ns-regex" ".*"]}}}

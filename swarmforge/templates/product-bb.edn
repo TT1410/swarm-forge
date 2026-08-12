@@ -1,7 +1,16 @@
 ;; Thin Babashka runner for product projects.
 ;; Library and app deps live in deps.edn. Prefer task bodies under bb/tasks/.
 ;; Story agents should not edit this file unless the assignment is tooling/setup.
+;;
+;; Canonical verification commands (handoff / gherkin-mutator --runner-worker):
+;;   bb test         — unit suite
+;;   bb acceptance   — full Gherkin acceptance suite (APS)
+;;   bb coverage     — LCOV for CRAP / clj-mutate (requires deps.edn :cov)
 {:deps {app/root {:local/root "."}}
  :tasks
- {test {:doc "Run the project tests"
-        :task (load-file "bb/tasks/test.clj")}}}
+ {test {:doc "Run the project unit tests"
+        :task (load-file "bb/tasks/test.clj")}
+  acceptance {:doc "Run the full Gherkin acceptance suite (APS runner-worker)"
+              :task (load-file "bb/tasks/acceptance.clj")}
+  coverage {:doc "Generate target/coverage/lcov.info for CRAP and mutation tools"
+            :task (load-file "bb/tasks/coverage.clj")}}}

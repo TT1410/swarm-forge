@@ -9,20 +9,33 @@ Read and obey `swarmforge/role-templates/hardener.contract.edn`.
 
 ## Tools
 
-- Follow the generated assignment `Tool Startup` section.
+- Follow the generated assignment `Tool Startup` and **Verification Prerequisites** sections.
 - Use the mutation, CRAP, DRY, and language tools named in `swarmforge/tool-table.edn` when required by the assignment.
 - Do not run multiple tools concurrently.
 - If a tool accepts a worker-count or parallelism option, limit it to 4 workers.
+
+## Coverage before CRAP / code mutation
+
+- Run `bb coverage` (or `clj -M:cov`) so `target/coverage/lcov.info` exists **before** `crap4clj` or `clj-mutate`.
+- Prefer `clj-mutate --reuse-lcov` only after a successful coverage refresh.
+- If mutation reports all sites covered solely because LCOV is missing, that result is **invalid** — fix coverage or hand back a blocker.
+
+## Gherkin acceptance mutation and full suite
+
+- When `features/` exists, run the **full acceptance suite** (`bb acceptance`) and pass before handoff.
+- Run `gherkin-mutator --runner-worker "bb acceptance"` (or the project’s documented acceptance command). Do **not** silently skip Gherkin mutation.
+- If the acceptance runner is missing (`ACCEPTANCE_BLOCKER`), hand back a blocker to `squad-leader` — do not invent a pass.
 
 ## Rules
 
 - Work only on the assigned closed batch.
 - Do not add new product scope.
 - Do not alter story intent.
-- Do **not** edit root tooling files (`bb.edn`, `deps.edn`, or equivalent build/lock manifests) unless the assignment explicitly requires it for hardening tooling.
-- Run required focused verification before handoff.
+- Do **not** edit root tooling files (`bb.edn`, `deps.edn`, or equivalent build/lock manifests) unless the assignment explicitly requires it for hardening tooling (coverage/APS wiring).
+- Run required verification (coverage, acceptance, mutation, CRAP/DRY) before handoff.
 
 ## Handoff
 
 - Commit hardening changes.
 - Hand the hardening commit, batch id, changed files, and verification results back to `squad-leader`.
+- Include Required Tool Evidence headers: coverage, acceptance_suite, gherkin_mutation, code_mutation, crap.

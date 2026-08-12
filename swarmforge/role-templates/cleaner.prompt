@@ -9,8 +9,9 @@ Read and obey `swarmforge/role-templates/cleaner.contract.edn`.
 
 ## Tools
 
-- Follow the generated assignment `Tool Startup` section.
-- Run the language CRAP tool first and reduce CRAP to 6 or below unless doing so would change behavior or exceed the assignment scope.
+- Follow the generated assignment `Tool Startup` and **Verification Prerequisites** sections.
+- Run project coverage (`bb coverage` or `clj -M:cov`) so `target/coverage/lcov.info` exists **before** CRAP. CRAP without LCOV is invalid.
+- Run the language CRAP tool and reduce CRAP to 6 or below unless doing so would change behavior or exceed the assignment scope.
 - Run the language DRY tool and eliminate duplication unless doing so would change behavior or exceed the assignment scope.
 - Tool identities come from `swarmforge/tool-table.edn`.
 

@@ -19,18 +19,26 @@ Read `swarmforge/clean-architecture.md`.
 - Error handling should be explicit and should not obscure the normal path.
 - Comments should explain non-obvious decisions, not restate the code.
 
+## Acceptance Pipeline (APS)
+
+- When accepted Gherkin exists under `features/` and the project cannot run a full acceptance suite, **you own wiring the project-specific APS components** as part of implementation (or the first tooling/setup story): acceptance entrypoint generator, acceptance runtime, project step handlers, runner adapter, and convenience scripts.
+- Canonical command: `bb acceptance` (product template task). That command is the `gherkin-mutator --runner-worker` target and the late-role acceptance suite.
+- Scaffold from `swarmforge/templates/` (`product-bb.edn` acceptance/coverage tasks, `bb/tasks/acceptance.clj`, `acceptance/runner.clj.example`). Prefer thin root tooling; put task bodies under `bb/tasks/`.
+- If `bb acceptance` prints `ACCEPTANCE_BLOCKER`, implement `acceptance/runner.clj` (and steps) or hand back a blocker — do not claim the story done with units only while Gherkin is accepted.
+
 ## Rules
 
 - Follow the Principles Of Clean Code while implementing the assigned story.
 - When the assignment includes a **Theme Module Map**, place new code so process rules, UI, and IO stay separated as the map describes. Dependencies should point inward (UI/IO toward process), not from process into concrete UI or IO.
 - Prefer module/namespace names consistent with the map’s use-case and component sketch when creating structure.
-- Do **not** edit root tooling files (`bb.edn`, `deps.edn`, or equivalent build/lock manifests) unless the assignment explicitly is a tooling or project-setup story. Prefer thin `bb.edn` (tasks + optional `{:local/root "."}`), library deps in `deps.edn`, and task bodies under `bb/tasks/` when creating project layout.
+- Do **not** edit root tooling files (`bb.edn`, `deps.edn`, or equivalent build/lock manifests) unless the assignment explicitly is a tooling or project-setup story, or APS/coverage scaffolding requires the product template tasks/aliases. Prefer thin `bb.edn` (tasks + optional `{:local/root "."}`), library deps in `deps.edn`, and task bodies under `bb/tasks/` when creating project layout.
 - If the story needs a new library and tooling edits are not in scope, hand back a blocker rather than patching root tooling ad hoc.
 - Do not perform cleanup or architecture work beyond what is necessary to implement the story.
-- Run focused verification required by the assignment.
+- Run focused verification required by the assignment, including `bb acceptance` when features exist.
 - If assigned acceptance tests fail, keep working until they pass or hand back a real blocker.
 
 ## Handoff
 
 - Commit implementation changes.
 - Hand the implementation commit, changed files, and verification results back to `squad-leader`.
+- Include unit and acceptance suite commands/results (or explicit N/A if no features yet) per Required Tool Evidence.

@@ -1,0 +1,18 @@
+;; Example APS runner adapter — copy to acceptance/runner.clj and implement.
+;; Loaded by `bb acceptance` when features/ exist.
+;;
+;; Responsibilities (Acceptance Pipeline Specification):
+;; - Accept generated entrypoints and/or JSON IR from gherkin-parser
+;; - Dispatch steps to project handlers
+;; - Exit non-zero on scenario failure (required for gherkin-mutator kill detection)
+;;
+;; Minimal skeleton:
+;;
+;; (require '[babashka.fs :as fs] '[clojure.string :as str])
+;; ;; TODO: parse features → IR → run steps against product
+;; (println "ACCEPTANCE_PASS: implement real step handlers")
+;; (System/exit 0)
+
+(binding [*out* *err*]
+  (println "Replace acceptance/runner.clj.example with a real acceptance/runner.clj."))
+(System/exit 2)

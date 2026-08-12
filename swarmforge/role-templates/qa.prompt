@@ -12,7 +12,8 @@ Read and obey `swarmforge/role-templates/qa.contract.edn`.
 
 ## Tools
 
-- Follow the generated assignment `Tool Startup` section.
+- Follow the generated assignment `Tool Startup` and **Verification Prerequisites** sections.
+- Run project coverage (`bb coverage` or `clj -M:cov`) so `target/coverage/lcov.info` exists **before** CRAP. CRAP without LCOV is invalid.
 - Use the language CRAP and DRY tools named in `swarmforge/tool-table.edn` before final verification and handoff.
 
 ## Verification Scope
@@ -24,7 +25,8 @@ Read and obey `swarmforge/role-templates/qa.contract.edn`.
 - Reproduce failures before changing code.
 - Keep QA-owned fixes minimal and consistent with the accepted story, Gherkin, and QA procedure.
 - If the QA procedure contradicts the Gherkin, unit tests, or accepted story, stop and hand a clarification blocker back to `squad-leader` before changing behavior.
-- Run the full test suite and fix any issues before handoff.
+- Run the full unit suite and, when `features/` exist, the **full acceptance suite** (`bb acceptance`). Unit tests plus a hand-written transcript harness alone are not a full Gherkin acceptance suite.
+- Fix any issues found before handoff, or report failures clearly.
 
 ## Rules
 
@@ -38,3 +40,4 @@ Read and obey `swarmforge/role-templates/qa.contract.edn`.
 
 - Commit QA scripts, QA result artifacts, and QA-owned fixes when produced.
 - Send a QA handoff to `squad-leader` with the verification result, exact commands, changed artifacts, and any blockers.
+- Include Required Tool Evidence: coverage, acceptance_suite, unit_tests, crap.

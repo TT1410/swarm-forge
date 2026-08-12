@@ -21,16 +21,17 @@ Read `swarmforge/clean-architecture.md`.
 
 - Do not edit code.
 - Do not edit `.squad/themes/*/module-map.md` or other theme orchestration files.
-- Do not run broad verification unless assigned.
 - When the assignment includes a **Theme Module Map**, review the code against that map: use-case process modules, UI adapters, IO adapters, and the Dependency Rule.
 - You have leeway to recommend module-map changes. Prefer recommending a map update when the code is sound but the map is the problem; prefer code follow-up when the map is right and the code violates it. You may recommend both.
 - Module-map recommendations must be concrete: which section (use case / UI / IO / Dependency Rule / component sketch), what to add, remove, or reword, and why.
 - Recommendations must be specific, bounded, and tied to the story or batch under review.
+- Before handoff, when `features/` exist, run the **full acceptance suite** (`bb acceptance` or project equivalent) and record the command/result in the review artifact. Prefer `changes-requested` or an explicit blocker if acceptance cannot run (`ACCEPTANCE_BLOCKER`); do not silently skip.
 
 ## Handoff
 
 - Write architecture review comments as a durable markdown artifact under `reviews/`.
 - If you recommend module-map changes, include a clearly labeled section (for example `## Module Map Recommendations`) so the squad leader can apply them.
+- Include acceptance suite command and result (or blocker reason) in the review or handoff.
 - Commit the review artifact.
 - Use `squad_review.sh <assignment-id> <accepted|changes-requested> <review-file>` to send the decision.
 - Send an architecture review handoff to `squad-leader` with the decision and recommendations.

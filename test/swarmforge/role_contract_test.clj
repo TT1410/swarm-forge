@@ -78,7 +78,7 @@
       (is (false? (:may-run-broad-tests (by-role artifact-role))) artifact-role))
     (doseq [review-role ["gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"]]
       (is (= ["reviews/"] (:artifact-roots (by-role review-role))) review-role))
-    (is (= ["src/" "test/" "features/" "qa/"] (:artifact-roots (by-role "implementer"))))
+    (is (= ["src/" "test/" "features/" "qa/" "acceptance/" "bb/"] (:artifact-roots (by-role "implementer"))))
     (is (= ["src/" "test/" "features/" "qa/" ".squad/"] (:artifact-roots (by-role "merger"))))
     (is (= "squad_next.sh" (:workflow-readiness-source (by-role "implementer"))))
     (doseq [singleton-role ["hardener" "qa" "architect" "merger"]]
@@ -120,12 +120,11 @@
         hardener (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))
         gherkin (slurp (str (fs/path repo-root "swarmforge/role-templates/gherkin-writer.prompt")))
         qa (slurp (str (fs/path repo-root "swarmforge/role-templates/qa.prompt")))]
-    (doseq [prompt [cleaner qa]]
-      (is (str/includes? prompt "generated assignment `Tool Startup` section"))
+    (doseq [prompt [cleaner qa hardener]]
+      (is (str/includes? prompt "Tool Startup") prompt)
       (is (str/includes? prompt "swarmforge/tool-table.edn"))
       (is (not (str/includes? prompt "record `blocked`"))))
-    (is (str/includes? hardener "generated assignment `Tool Startup` section"))
-    (is (str/includes? hardener "swarmforge/tool-table.edn"))
+    (is (str/includes? hardener "Verification Prerequisites"))
     (is (str/includes? gherkin "generated assignment `Tool Startup` section"))
     (is (str/includes? gherkin "Acceptance Pipeline Specification"))))
 
@@ -153,7 +152,8 @@
 (deftest squad-senior-implementer-runs-full-verification-before-handoff
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/senior-implementer.prompt")))
         contract (contract "senior-implementer")]
-    (is (str/includes? prompt "Run the full verification suite before handoff."))
+    (is (str/includes? prompt "full acceptance suite"))
+    (is (str/includes? prompt "bb acceptance"))
     (is (not (str/includes? prompt "Run relevant verification before handoff.")))
     (is (true? (:may-run-broad-tests contract)))))
 
@@ -165,6 +165,33 @@
     (is (str/includes? startup (str "squad_tool.sh ensure gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest -- 'bash' '" helper "' '/Users/unclebob/projects/Acceptance-Pipeline-Specification' 'gherkin-parser'")))
     (is (str/includes? startup "squad_tool.sh require ir-dry-checker github.com/unclebob/Acceptance-Pipeline-Specification latest"))
     (is (str/includes? startup "record `blocked`"))))
+
+(deftest hardener-tool-startup-includes-coverage-and-acceptance-prerequisites
+  (let [startup (tools/startup-instructions
+                 (tools/required-tools repo-root "hardener")
+                 (tools/verification-prerequisites repo-root "hardener"))]
+    (is (str/includes? startup "## Tool Startup"))
+    (is (str/includes? startup "## Verification Prerequisites"))
+    (is (str/includes? startup "bb coverage"))
+    (is (str/includes? startup "bb acceptance"))
+    (is (str/includes? startup "gherkin-mutator"))
+    (is (str/includes? startup "lcov"))
+    (is (seq (tools/required-evidence repo-root "hardener")))))
+
+(deftest implementer-prompt-owns-acceptance-pipeline
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))]
+    (is (str/includes? prompt "Acceptance Pipeline"))
+    (is (str/includes? prompt "bb acceptance"))
+    (is (str/includes? prompt "ACCEPTANCE_BLOCKER"))))
+
+(deftest late-roles-require-full-acceptance-suite-before-handoff
+  (doseq [[template needle] [["hardener" "full acceptance suite"]
+                             ["qa" "full acceptance suite"]
+                             ["architect" "full acceptance suite"]
+                             ["senior-implementer" "full acceptance suite"]]]
+    (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
+      (is (str/includes? prompt needle) template)
+      (is (str/includes? prompt "bb acceptance") template))))
 
 (deftest squad-leader-contract-encodes-orchestration-boundary
   (let [contract-file (fs/path repo-root "swarmforge/roles/squad-leader.contract.edn")

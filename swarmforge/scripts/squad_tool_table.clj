@@ -56,6 +56,9 @@
 (defn required-evidence [root role]
   (get-in (table root) [:roles role :required-evidence] []))
 
+(defn verification-prerequisites [root role]
+  (vec (get-in (table root) [:roles role :verification-prerequisites] [])))
+
 (defn require-command [{:keys [name source version]}]
   (str "squad_tool.sh require " name " " source " " version))
 
@@ -67,19 +70,40 @@
     (str "squad_tool.sh ensure " name " " source " " version
          " -- " (str/join " " (map shell-quote install-command)))))
 
-(defn startup-instructions [tools]
-  (when (seq tools)
-    (str "## Tool Startup\n\n"
-         "- At startup, before artifact work, run each required tool check listed below.\n"
-         "- If a required tool is missing and an install command is listed below, run `squad_tool.sh ensure` with that exact command.\n"
-         "- If a required tool is missing and no listed install command can install it, record `blocked` and hand the blocker back to `squad-leader`.\n\n"
+(defn verification-instructions [prerequisites]
+  (when (seq prerequisites)
+    (str "## Verification Prerequisites\n\n"
+         "Complete these before CRAP, mutation, or handoff when they apply. "
+         "Hand back a blocker instead of faking results.\n\n"
          (apply str
-                (for [tool tools]
-                  (str "- `" (require-command tool) "`"
-                       (when-let [install (ensure-command tool)]
-                         (str "\n  If missing, run exactly: `" install "`"))
-                       "\n")))
-         "\n")))
+                (for [line prerequisites]
+                  (str "- " line "\n")))
+         "\n"
+         "Canonical project commands (from product templates):\n"
+         "- `bb coverage` — produce `target/coverage/lcov.info` for CRAP/mutate\n"
+         "- `bb acceptance` — full Gherkin acceptance suite; also `gherkin-mutator --runner-worker \"bb acceptance\"`\n"
+         "- `bb test` — unit suite\n\n")))
+
+(defn startup-instructions
+  "Render Tool Startup for required tools. Optional second arg is verification
+  prerequisite lines for the role (coverage, acceptance suite, mutation)."
+  ([tools]
+   (startup-instructions tools nil))
+  ([tools verification-prereqs]
+   (when (or (seq tools) (seq verification-prereqs))
+     (str (when (seq tools)
+            (str "## Tool Startup\n\n"
+                 "- At startup, before artifact work, run each required tool check listed below.\n"
+                 "- If a required tool is missing and an install command is listed below, run `squad_tool.sh ensure` with that exact command.\n"
+                 "- If a required tool is missing and no listed install command can install it, record `blocked` and hand the blocker back to `squad-leader`.\n\n"
+                 (apply str
+                        (for [tool tools]
+                          (str "- `" (require-command tool) "`"
+                               (when-let [install (ensure-command tool)]
+                                 (str "\n  If missing, run exactly: `" install "`"))
+                               "\n")))
+                 "\n"))
+          (verification-instructions verification-prereqs)))))
 
 (defn evidence-instructions [evidence]
   (when (seq evidence)

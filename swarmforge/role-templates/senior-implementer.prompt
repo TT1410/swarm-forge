@@ -14,9 +14,10 @@ Read `swarmforge/clean-architecture.md`.
 - Keep dependencies consistent with the architect's direction.
 - Separate large multi-responsibility modules into well-named single-responsibility modules when assigned.
 - Prefer thin root `bb.edn` and `deps.edn` for libraries; do not expand root tooling for story convenience unless assigned.
-- Run the full verification suite before handoff.
+- Run the full verification suite before handoff: unit tests (`bb test`) and, when `features/` exist, the **full acceptance suite** (`bb acceptance`).
 
 ## Handoff
 
 - Commit senior implementation changes.
 - Hand the commit, changed files, and verification results back to `squad-leader`.
+- Include unit and acceptance suite commands/results (or N/A if no features).

@@ -1815,3 +1815,19 @@
       (is (= 2 (exit-status #(batch/validate-kind! "bogus"))))
       (is (= 2 (exit-status #(batch/validate-sha! "bad"))))
       (is (= 2 (exit-status #(report/validate-id! "Theme id" "bad/id")))))))
+
+(deftest p1-file-map-survives-missing-and-vanished-files
+  ;; B08: missing or race-deleted agent files must not crash mechanical apply
+  (let [missing (fs/path "/tmp/swarmforge-no-such-file-map-test")
+        dir (fs/create-temp-dir {:prefix "swarmforge-file-map."})
+        path (fs/path dir "heartbeat")]
+    (try
+      (is (= {} (next/file-map missing)))
+      (fs/create-dirs dir)
+      (spit (str path) "state: running\n")
+      (is (= "running" (get (next/file-map path) "state")))
+      (fs/delete path)
+      (is (= {} (next/file-map path))
+          "vanished file must not throw")
+      (finally
+        (fs/delete-tree dir)))))

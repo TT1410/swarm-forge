@@ -313,8 +313,11 @@
                        ": `squad_tool.sh require " name " " source " " version "`\n")))
          "\n")))
 
-(defn tool-startup-lines [tools]
-  (tools/startup-instructions tools))
+(defn tool-startup-lines [template tools]
+  (tools/startup-instructions tools
+                              (tools/verification-prerequisites
+                               (cfg/project-root)
+                               template)))
 
 (defn tool-evidence-lines [evidence]
   (tools/evidence-instructions evidence))
@@ -355,7 +358,7 @@
               "```\n\n"))
        (tool-lines "Required Tools" required-tools)
        (tool-lines "Optional Tools" optional-tools)
-       (tool-startup-lines required-tools)
+       (tool-startup-lines template required-tools)
        (tool-evidence-lines required-evidence)
        (when merge-text
          (str "## Merge Source\n\n"

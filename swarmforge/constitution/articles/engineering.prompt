@@ -35,14 +35,20 @@
 - Prefer the Babashka APS tools for `gherkin-parser`, `gherkin-mutator`, and related APS support commands.
 - Use Go-based APS tools only if the Babashka APS tools do not work in the current project environment.
 - Project-specific acceptance pipeline components are the acceptance entrypoint generator, acceptance runtime, project step handlers, runner adapter, and convenience scripts.
+- Product scaffolds expose `bb acceptance` as the full suite command and as `gherkin-mutator --runner-worker`. Implementers own wiring those project components when features exist; hardeners/QA must not silently skip mutation or the suite when the runner is missing — hand back a blocker instead.
 - Gherkin acceptance mutation means running `gherkin-mutator` to mutate Gherkin example values.
 - Gherkin acceptance mutation runs must report periodic progress/status so agents can distinguish normal long-running work from a hang.
+
+## Coverage for CRAP and mutation
+- Roles that run crap4clj or clj-mutate must produce fresh line coverage (`bb coverage` / `clj -M:cov` → `target/coverage/lcov.info`) first.
+- Treat “all mutation sites covered” without LCOV as invalid; hand back a blocker rather than faking a pass.
 
 ## Verification
 - Before running language, build, or test commands, prefer project-local cache/configuration paths inside the assigned worktree. Avoid default cache locations that write outside the project and may trigger sandbox or permission restrictions.
 - Run acceptance generation and acceptance tests sequentially.
 - Avoid running whole-suite language test commands concurrently with acceptance generation.
 - Run the relevant local verification command before handoff whenever the project has one.
+- Late roles (hardener, qa, architect, senior-implementer) run the full acceptance suite when features exist, not only unit tests or ad-hoc transcript harnesses.
 
 ## Guardrails
 - Do not edit mutation testing or Gherkin acceptance mutation manifests by hand; allow approved mutation tools to update those manifests as part of their normal runs.

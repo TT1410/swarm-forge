@@ -5,6 +5,6 @@
  :may-spawn false
  :may-talk-to-user false
  :required-tool-ids ["dependency-checker"]
- :writes ["production-code" "unit-tests" "acceptance-tests"]
- :artifact-roots ["src/" "test/" "features/" "qa/"]
+ :writes ["production-code" "unit-tests" "acceptance-tests" "acceptance-pipeline"]
+ :artifact-roots ["src/" "test/" "features/" "qa/" "acceptance/" "bb/"]
  :workflow-readiness-source "squad_next.sh"}

@@ -40,15 +40,27 @@
          vec)
     []))
 
-(defn file-map [file]
-  (if (fs/exists? file)
-    (into {}
-          (keep (fn [line]
-                  (when-let [[_ k v] (re-matches #"([^:]+):\s*(.*)" line)]
-                    [k v])))
-          (take-while (complement str/blank?)
-                      (str/split-lines (slurp (str file)))))
-	    {}))
+(defn file-map
+  "Read a line-oriented `key: value` file into a map.
+
+  Missing files and races where the file disappears between exists? and slurp
+  (TOCTOU during agent retire) return {} — never throw (P1 B08)."
+  [file]
+  (try
+    (if (fs/exists? file)
+      (into {}
+            (keep (fn [line]
+                    (when-let [[_ k v] (re-matches #"([^:]+):\s*(.*)" line)]
+                      [k v])))
+            (take-while (complement str/blank?)
+                        (str/split-lines (slurp (str file)))))
+      {})
+    (catch java.io.FileNotFoundException _
+      {})
+    (catch java.nio.file.NoSuchFileException _
+      {})
+    (catch java.io.IOException _
+      {})))
 
 (defn parse-instant [value]
   (try
