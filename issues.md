@@ -13,8 +13,6 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
-| **P2** | B34 | Troubleshooter chat laggy — raw id-prefixed tmux inject | UX | Operator chat |
-| **P2** | B10 | Dashboard answers truncate to first line | Reliability | Dashboard IO |
 | **P2** | B29 | Stalled swarm not explained on dashboard | UX / design | Dashboard |
 | **P2** | B11 | Zombie tmux sessions after agent retire | Hygiene | Lifecycle |
 | **P2** | B12 | Hardener edits root tooling (`bb.edn`) | Policy | Role enforcement |
@@ -36,19 +34,16 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 ## Suggested fix order
 
-1. **Operator chat + IO:** **B34** → **B10**  
-   Snappy, correct Troubleshooter conversation (delivery + multiline answers).
-
-2. **Operator visibility + hygiene:** **B29** → **B11** → **B12**  
+1. **Operator visibility + hygiene:** **B29** → **B11** → **B12**  
    Know why the swarm is stuck; no session leaks; hardener doesn’t thrash root tooling.
 
-3. **Theme architecture control:** **B25** → **B14** → **B13** → **B23**  
+2. **Theme architecture control:** **B25** → **B14** → **B13** → **B23**  
    Approve order/checker (now that analysis must produce them), show checker on theme package, raise policy quality, then theme finalize/ship.
 
-4. **Control plane (after typed actions B17):** **B18** → **B16** → **B19**  
+3. **Control plane (after typed actions B17):** **B18** → **B16** → **B19**  
    Planner / executor / renderer; authority; single priority policy.
 
-5. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
+4. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
 
 ---
 
@@ -56,7 +51,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Cluster | Bugs | Note |
 |---------|------|------|
-| Operator chat / dashboard IO | **B34**, **B10**, B29, B14, B24 | Latency, multiline, stall reason, theme cards, later IA |
+| Operator chat / dashboard IO | B29, B14, B24 | Stall reason, theme cards, IA (B34/B10 done) |
 | Product intake | **B35** | Durable backlog → dispatch as theme/story to SL or TS |
 | Lifecycle hygiene | **B11**, B12 | Zombie sessions; hardener root-tooling |
 | Theme / architecture gates | **B25**, **B14**, **B13**, B23 | Approve + display + quality + finalize |
@@ -74,58 +69,16 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 | prior P1 | B05–B08 | APS pipeline/templates, coverage, acceptance suite, safe `file-map` |
 | P1 stuck-swarm | B26–B28, B30, B32, B33 | Terminal assignment deny-list, batch replace `batch_id`, merger slot, six-pack APS, mutator wiring |
 | P2 first set | B31, B09, B17 | Hardener quality bar; Troubleshooter role + dashboard chat; typed actions |
+| P2 operator chat batch | **B34**, **B10** | Id-prefixed raw tmux inject; multiline dashboard body/response (`key: \|` blocks + `pre-wrap`) |
 
 **Partial progress (still open under related IDs):**
 - Analysis must author `dependency-checker.edn` + `implementation-order.md` (prompt/contract); seed order when implementer-ready (B13/B25 remaining: quality + user approval).
 - Theme package always shows Implementation Order (missing state); checker card still B14.
-- Troubleshooter short wake + faster pending poll; B34 is the real delivery redesign.
 - Troubleshooter not counted as active transient; product chat `route-to-sl` to SL.
 
 ---
 
 ## P2 — Operator, hygiene, theme, control plane
-
-### B34 — Troubleshooter chat laggy; prefer raw id-prefixed tmux inject
-
-**Symptom:** Operator ↔ Troubleshooter chat ~7–14s even for “hi”. Easy to misread as handoff lag. Path is durable request file + tmux wake + `squad_dashboard_request.sh answer`. Latency is mostly a **full coding-agent turn** after paste (long instructional wakes made it worse). Short wake + 400ms pending poll only trim margins.
-
-**Not the problem:** Handoff outbox/inbox for operator chat. Do **not** put chat on the handoff protocol.
-
-**Design (agreed, not implemented):**
-1. Create durable pending request first (id, busy, cancel, history).
-2. **Raw tmux inject** into `swarmforge-troubleshooter`: body prefixed with dashboard id (e.g. `[dashboard-…-001] hi`).
-3. **Answer path unchanged:** `answer` / `route-to-sl` via helper; pane text alone does not complete.
-4. Prompt: id-prefixed line ⇒ that request’s body; answer/route same id.
-
-**Safety:** No inject without durable id; stable prefix; single-flight if mid-turn; product still `route-to-sl`; missing session falls back/queues.
-
-**Expected:** Less ceremony and fewer tool steps. Not sub-second “hi” while Codex-in-tmux is the backend.
-
-**Priority (P2):** Primary operator surface (B09); every message pays multi-second tax.
-
-**Where:** `squadd/web.clj` wake/inject; Troubleshooter prompt; `squad_dashboard_request.clj`.
-
-**Related:** B09, B10, B29, `route-to-sl`.
-
----
-
-### B10 — Dashboard answers truncate to first line
-
-**Architecture note:** Concrete instance of informal `key: value` records (B22). Fix the path now; formalize formats later.
-
-**Symptom:** Multiline answer written and helper succeeds; **UI shows only the first line**.
-
-**Cause:** Line-oriented parse keeps only first `response: …` line; no `pre-wrap` on render.
-
-**Expected:** Full multiline round-trip write → read → UI.
-
-**Direction:** Headers + body (or block scalar / sibling answer file); `pre-wrap` in UI; tests with blank lines and shell commands.
-
-**Where:** `squad_dashboard_request.clj`; `squadd/web.clj`.
-
-**Repro:** `dashboard-20260811T221429Z-001`.
-
----
 
 ### B29 — When the swarm is stalled, the dashboard should explain why
 
@@ -342,5 +295,5 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
 **Status:** P0/P1 stuck-swarm class and first P2 set (B31, B09, B17) are done.  
-**Next:** Operator chat/IO (**B34**, **B10**), visibility/hygiene (**B29**, **B11**, **B12**), theme gates (**B25**, **B14**, **B13**, **B23**), then control-plane split (**B18** / **B16** / **B19**).  
-Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump.
+**Next:** Operator visibility/hygiene (**B29**, **B11**, **B12**), theme gates (**B25**, **B14**, **B13**, **B23**), then control-plane split (**B18** / **B16** / **B19**).  
+Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat batch **B34**/**B10** is done.

@@ -42,8 +42,8 @@
     .pill-rejected { background: #f8d7da; }
     .error { color: #9b1c1c; }
     .req-history { max-height: 280px; overflow-y: auto; background: white; border: 1px solid #d9d9d2; padding: 10px 12px; display: grid; gap: 10px; }
-    .req-you { border-left: 3px solid #6b7c72; padding-left: 8px; }
-    .req-sl { color: #4a4f4c; padding-left: 16px; }
+    .req-you { border-left: 3px solid #6b7c72; padding-left: 8px; white-space: pre-wrap; }
+    .req-sl { color: #4a4f4c; padding-left: 16px; white-space: pre-wrap; }
     .req-sl.short { font-style: italic; }
     .req-meta { font-size: 11px; color: #68726c; margin-bottom: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .composer-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
@@ -1209,13 +1209,15 @@
        :body text})))
 
 (defn dashboard-request-wake-message
-  "Minimal wake only. Body lives on disk — pasting it into the model doubles
-  latency for trivial chat. TS reads status/answer helpers for content."
+  "B34: raw tmux inject of id-prefixed operator text. Durable request already
+  exists; answer still via squad_dashboard_request.sh answer (pane alone does not
+  complete). Single-line: [id] body. Multiline body: [id] then body on next lines."
   [request]
-  (let [id (get request "id")]
-    (str "Dashboard request " id
-         ". Run: squad_dashboard_request.sh status " id
-         " then answer or route-to-sl. Reply via helper.")))
+  (let [id (get request "id")
+        body (str (get request "body" ""))]
+    (if (str/includes? body "\n")
+      (str "[" id "]\n" body)
+      (str "[" id "] " body))))
 
 (defn wake-troubleshooter-for-request! [root request]
   (if-let [socket (socket-value root)]

@@ -200,7 +200,7 @@
 	                       "    test -f \"$count_file\" && read count < \"$count_file\"\n"
 	                       "    case \"$*\" in\n"
 	                       "      *\"web approval changed state\"*|*\"run squad_next.sh\"*) touch \"$FAKE_TMUX_STATE/web-approval-notify\" ;;\n"
-	                       "      *\"User message from dashboard\"*|*Dashboard*request*|*REQUEST_ID*|*squad_dashboard_request*) touch \"$FAKE_TMUX_STATE/sl-message\" ;;\n"
+	                       "      *\"User message from dashboard\"*|*dashboard-*|*Dashboard*request*|*REQUEST_ID*|*squad_dashboard_request*) touch \"$FAKE_TMUX_STATE/sl-message\" ;;\n"
 	                       "      *\" C-m\") count=$((count + 1)); echo \"$count\" > \"$count_file\" ;;\n"
 	                       "    esac\n"
 	                       "    exit 0\n"

@@ -50,6 +50,54 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest multiline-body-and-response-round-trip
+  ;; Given a dashboard request with multiline body and answer (B10)
+  ;; When answered and re-read via list/status helpers
+  ;; Then every line is preserved including blank lines and shell-like text
+  (let [root (tmp-dir)
+        body "Please run:\n\nbb run wumpus\n\nThen report."
+        answer "Done.\n\nCommand:\nbb run wumpus\n\nExit 0."]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (let [created (dashreq/create-request root {:body body})
+            id (get-in created [:request "id"])]
+        (is (:ok created))
+        (is (= body (get-in created [:request "body"])))
+        (is (= body (get (first (dashreq/pending-requests root)) "body")))
+        (write-file (fs/path root "answer.txt") answer)
+        (let [out (:out (run {:dir root} (script "squad_dashboard_request.sh") "answer" id "answer.txt"))
+              answered (dashreq/file-map
+                        (fs/path root ".swarmforge/dashboard/requests/answered" (str id ".request")))
+              listed (first (filter #(= id (get % "id")) (dashreq/list-all-requests root)))]
+          (is (str/includes? out "STATE: answered"))
+          (is (= answer (get answered "response")))
+          (is (= body (get answered "body")))
+          (is (= answer (get listed "response")))
+          (is (str/includes? (get listed "response") "bb run wumpus"))
+          (is (str/includes? (slurp (str (fs/path root ".swarmforge/dashboard/requests/answered"
+                                                   (str id ".request"))))
+                             "response: |"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest legacy-single-line-request-files-still-parse
+  (let [root (tmp-dir)
+        file (fs/path root ".swarmforge/dashboard/requests/answered/legacy.request")]
+    (try
+      (write-file file
+                  (str "id: legacy\n"
+                       "kind: request\n"
+                       "status: answered\n"
+                       "body: one line body\n"
+                       "response: one line response\n"))
+      (let [m (dashreq/file-map file)]
+        (is (= "one line body" (get m "body")))
+        (is (= "one line response" (get m "response"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest path-traversal-id-is-rejected
   (let [root (tmp-dir)]
     (try
@@ -200,7 +248,7 @@
                        "case \"$cmd\" in\n"
                        "  send-keys)\n"
                        "    case \"$*\" in\n"
-                       "      *Dashboard*request*|*squad_dashboard_request*|*REQUEST_ID*) touch \"$FAKE_TMUX_STATE/sl-request\" ;;\n"
+                       "      *dashboard-*|*Dashboard*request*|*squad_dashboard_request*|*REQUEST_ID*) touch \"$FAKE_TMUX_STATE/sl-request\" ;;\n"
                        "      *\"User message from dashboard\"*) touch \"$FAKE_TMUX_STATE/sl-message\" ;;\n"
                        "    esac\n"
                        "    exit 0\n"
@@ -263,6 +311,32 @@
           (is (seq (dashreq/pending-requests root)))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest troubleshooter-wake-is-id-prefixed-raw-body
+  ;; Given a new dashboard request (B34)
+  ;; When building the Troubleshooter wake paste
+  ;; Then it is raw inject: [id] body — not a long instructional essay
+  (let [req {"id" "dashboard-20260812T000000Z-001"
+             "body" "hi there"
+             "kind" "request"
+             "owner" "troubleshooter"}
+        msg (web/dashboard-request-wake-message req)]
+    (is (= "[dashboard-20260812T000000Z-001] hi there" msg))
+    (is (not (str/includes? msg "Run: squad_dashboard_request")))
+    (is (not (str/includes? msg "COMMAND_REPAIR"))))
+  (let [req {"id" "dashboard-m"
+             "body" "line one\nline two"}
+        msg (web/dashboard-request-wake-message req)]
+    (is (str/starts-with? msg "[dashboard-m]\n"))
+    (is (str/includes? msg "line one\nline two"))))
+
+(deftest dashboard-html-preserves-multiline-request-text
+  (is (str/includes? web/dashboard-html "white-space: pre-wrap")
+      "B10: request body/response must keep newlines in the UI")
+  (is (str/includes? web/dashboard-html "req-you")
+      "request body class present")
+  (is (str/includes? web/dashboard-html "req-sl")
+      "response class present"))
 
 (deftest sl-queue-depth-counts-requests-and-handoffs
   (let [root (tmp-dir)]

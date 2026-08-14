@@ -62,12 +62,34 @@
 (defn request-file [root state id]
   (fs/path (state-dir root state) (str id ".request")))
 
-(defn parse-kv [text]
-  (into {}
-        (keep (fn [line]
-                (let [[k v] (str/split line #": " 2)]
-                  (when (and k v) [k v]))))
-        (str/split-lines (or text ""))))
+(def multiline-field-keys
+  "Fields that may contain newlines. Written as key: | block form (B10)."
+  #{"body" "response" "detail"})
+
+(def header-key-line
+  #"^([A-Za-z0-9_]+): (.*)$")
+
+(defn parse-kv
+  "Parse request records. Single-line `key: value` plus multiline `key: |`
+  blocks for body/response/detail (B10). Legacy single-line files still parse."
+  [text]
+  (loop [lines (str/split-lines (or text ""))
+         acc {}]
+    (if (empty? lines)
+      acc
+      (let [line (first lines)
+            rest-lines (rest lines)]
+        (if-let [[_ k v] (re-matches header-key-line line)]
+          (if (and (= "|" v) (contains? multiline-field-keys k))
+            (let [[content more]
+                  (split-with (fn [l]
+                                (not (re-matches header-key-line l)))
+                              rest-lines)]
+              (recur (vec more)
+                     (assoc acc k (str/join "\n" content))))
+            (recur rest-lines (assoc acc k v)))
+          ;; Skip blank/malformed lines outside a block
+          (recur rest-lines acc))))))
 
 (defn file-map [file]
   (if (fs/regular-file? file)
@@ -90,6 +112,15 @@
   [m]
   (normalize-owner (get m "owner")))
 
+(defn render-field
+  "Single-line `key: value` unless value has a newline — then `key: |` block (B10)."
+  [k v]
+  (let [s (str v)]
+    (if (and (contains? multiline-field-keys k)
+             (str/includes? s "\n"))
+      (str k ": |\n" s)
+      (str k ": " s))))
+
 (defn render-request [m]
   (let [ordered ["id" "kind" "status" "owner" "created_at" "updated_at" "answered_at"
                  "routed_at" "body" "response" "detail"]
@@ -99,12 +130,12 @@
                (concat
                 (keep (fn [k]
                         (when-let [v (not-empty (str (get m k "")))]
-                          (str k ": " v)))
+                          (render-field k v)))
                       ordered)
                 (for [k (sort (remove emitted (keys m)))
                       :let [v (get m k)]
                       :when (not (str/blank? (str v)))]
-                  (str k ": " v))))
+                  (render-field k v))))
      "\n")))
 
 (defn normalize-body [text]
