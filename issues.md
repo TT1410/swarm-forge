@@ -14,7 +14,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
 | **P2** | B29 | Stalled swarm not explained on dashboard | UX / design | Dashboard |
-| **P2** | B11 | Zombie tmux sessions after agent retire | Hygiene | Lifecycle |
+| **P2** | B36 | Troubleshooter should post interim status before final answer | UX | Operator chat |
 | **P2** | B12 | Hardener edits root tooling (`bb.edn`) | Policy | Role enforcement |
 | **P2** | B25 | Order + dependency-checker need user approval | Workflow | Theme gates |
 | **P2** | B14 | Theme package missing `dependency-checker.edn` card | UX | Dashboard |
@@ -34,8 +34,8 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 ## Suggested fix order
 
-1. **Operator visibility + hygiene:** **B29** → **B11** → **B12**  
-   Know why the swarm is stuck; no session leaks; hardener doesn’t thrash root tooling.
+1. **Operator visibility + hygiene:** **B29** → **B36** → **B12**  
+   Know why the swarm is stuck; TS interim progress; hardener doesn’t thrash root tooling (B37 teardown + B11 zombie kill done).
 
 2. **Theme architecture control:** **B25** → **B14** → **B13** → **B23**  
    Approve order/checker (now that analysis must produce them), show checker on theme package, raise policy quality, then theme finalize/ship.
@@ -51,9 +51,9 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Cluster | Bugs | Note |
 |---------|------|------|
-| Operator chat / dashboard IO | B29, B14, B24 | Stall reason, theme cards, IA (B34/B10 done) |
+| Operator chat / dashboard IO | B29, **B36**, B14, B24 | Stall reason, TS interim status, theme cards, IA (B34/B10/B37 done) |
 | Product intake | **B35** | Durable backlog → dispatch as theme/story to SL or TS |
-| Lifecycle hygiene | **B11**, B12 | Zombie sessions; hardener root-tooling |
+| Lifecycle hygiene | B12 | Hardener root-tooling (B11 zombie kill + B37 teardown done) |
 | Theme / architecture gates | **B25**, **B14**, **B13**, B23 | Approve + display + quality + finalize |
 | Control plane | **B18**, **B16**, **B19**, B20–B22 | Split `squad_next`; ownership; priority; leases |
 
@@ -70,6 +70,7 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 | P1 stuck-swarm | B26–B28, B30, B32, B33 | Terminal assignment deny-list, batch replace `batch_id`, merger slot, six-pack APS, mutator wiring |
 | P2 first set | B31, B09, B17 | Hardener quality bar; Troubleshooter role + dashboard chat; typed actions |
 | P2 operator chat batch | **B34**, **B10** | Id-prefixed raw tmux inject; multiline dashboard body/response (`key: \|` blocks + `pre-wrap`) |
+| P2 lifecycle batch | **B37**, **B11** | Dashboard Teardown + confirm; exact/force session kill; squadd orphan session reconcile |
 
 **Partial progress (still open under related IDs):**
 - Analysis must author `dependency-checker.edn` + `implementation-order.md` (prompt/contract); seed order when implementer-ready (B13/B25 remaining: quality + user approval).
@@ -96,15 +97,27 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 
 ---
 
-### B11 — Zombie tmux sessions after agent retire
+### B36 — Troubleshooter should give status updates pursuant to its final response
 
-**Symptom:** Agent retired, worktree gone — **tmux session still listed**. Retire may claim session was not running.
+**Symptom / gap:** For non-trivial Troubleshooter work (inspect, repair, multi-step diagnosis), the operator only sees **busy `…`** until a single final `answer`. No intermediate progress appears in the dashboard chat history. Long waits feel frozen even when the agent is working.
 
-**Cause:** Kill/detect mismatch (socket, race, liveness). Session leak, not held-handoff finish (B02 fixed).
+**Expected:**
+1. While a request is still **pending**, Troubleshooter may post **short interim status** updates (what it is checking / doing next) that show in the same chat thread.
+2. Final outcome still uses `squad_dashboard_request.sh answer <id> …` (or `route-to-sl` / reject) — interim notes do **not** complete the request.
+3. Simple greetings / one-shot Q&A need **no** interim spam — status only when work is multi-step or will take a while.
+4. Updates stay firm and brief (same voice as final answers).
 
-**Expected:** Successful retire ⇒ session gone; status matches reality; optional squadd reconcile of orphan `swarmforge-*` sessions.
+**Direction (open design):**
+- Extend dashboard request model with append-only **status** / progress notes (e.g. `status:` lines, sibling log, or `progress` entries) that `list` / UI render under the pending item.
+- Helper e.g. `squad_dashboard_request.sh status-note <id> <file>` (name TBD) that leaves `status: pending`.
+- Prompt: for multi-step work, post 1–3 interim notes before final answer; never substitute notes for `answer`.
+- UI: show interim notes under the pending request; keep busy indicator until final answer/reject/route-close.
 
-**Where:** `squad_retire.clj`; squadd reconciliation.
+**Priority (P2):** Operator trust and perceived latency after B34/B10; same chat surface.
+
+**Where:** `squad_dashboard_request.clj`; `squadd/web.clj` request history; Troubleshooter prompt.
+
+**Related:** B34 (inject delivery), B10 (multiline), B09 (Troubleshooter surface), B29 (operator visibility).
 
 ---
 
@@ -295,5 +308,5 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
 **Status:** P0/P1 stuck-swarm class and first P2 set (B31, B09, B17) are done.  
-**Next:** Operator visibility/hygiene (**B29**, **B11**, **B12**), theme gates (**B25**, **B14**, **B13**, **B23**), then control-plane split (**B18** / **B16** / **B19**).  
-Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat batch **B34**/**B10** is done.
+**Next:** Operator visibility (**B29**, **B36**), hygiene **B12**, theme gates (**B25**, **B14**, **B13**, **B23**), then control-plane split (**B18** / **B16** / **B19**).  
+Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat **B34**/**B10** and lifecycle **B37**/**B11** are done.

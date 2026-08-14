@@ -846,7 +846,66 @@
       (reset! last-status-log-state :ok)
       (log! root "status-ok"))))
 
+(defn registered-tmux-sessions
+  "Sessions still claimed by roles.tsv or sessions.tsv."
+  [root]
+  (let [from-roles (for [line (when (fs/regular-file? (fs/path root ".swarmforge" "roles.tsv"))
+                                (str/split-lines (slurp (str (fs/path root ".swarmforge" "roles.tsv")))))
+                         :when (not (str/blank? line))
+                         :let [cols (str/split line #"\t" -1)]
+                         :when (>= (count cols) 4)
+                         :let [session (nth cols 3)]
+                         :when (not (str/blank? session))]
+                     session)
+        from-sessions (for [line (when (fs/regular-file? (fs/path root ".swarmforge" "sessions.tsv"))
+                                   (str/split-lines (slurp (str (fs/path root ".swarmforge" "sessions.tsv")))))
+                            :when (not (str/blank? line))
+                            :let [cols (str/split line #"\t" -1)]
+                            :when (>= (count cols) 3)
+                            :let [session (nth cols 2)]
+                            :when (not (str/blank? session))]
+                        session)]
+    (set (concat from-roles from-sessions))))
+
+(defn live-tmux-sessions [socket]
+  (when-not (str/blank? socket)
+    (let [result (sh-continue "tmux" "-S" socket "list-sessions" "-F" "#{session_name}")]
+      (when (zero? (:exit result))
+        (->> (str/split-lines (:out result))
+             (remove str/blank?)
+             set)))))
+
+(defn orphan-swarmforge-sessions [root socket]
+  "B11: swarmforge-* sessions not registered in roles/sessions (retire leak)."
+  (let [registered (registered-tmux-sessions root)
+        live (or (live-tmux-sessions socket) #{})]
+    (->> live
+         (filter #(str/starts-with? % "swarmforge-"))
+         (remove #(contains? registered %))
+         ;; Never kill persistent operator surfaces if still registered under alt name
+         (remove #(#{"swarmforge-squad-leader" "swarmforge-troubleshooter"} %))
+         sort
+         vec)))
+
+(defn kill-orphan-tmux-session! [root socket session]
+  (sh-continue "tmux" "-S" socket "kill-session" "-t" (str "=" session))
+  (sh-continue "tmux" "-S" socket "kill-session" "-t" session)
+  (if (tmux-session-exists? socket session)
+    (log! root "orphan-session-kill-failed" session)
+    (do
+      (log! root "orphan-session-killed" session)
+      (println "ORPHAN_SESSION_KILLED:" session))))
+
+(defn reconcile-orphan-tmux-sessions!
+  "B11: after retire leaks, kill swarmforge-* sessions not in roles.tsv."
+  [root skip-tmux?]
+  (when-not skip-tmux?
+    (when-let [socket (tmux-socket root)]
+      (doseq [session (orphan-swarmforge-sessions root socket)]
+        (kill-orphan-tmux-session! root socket session)))))
+
 (defn poll-status! [{:keys [root no-notify? skip-tmux?]}]
+  (reconcile-orphan-tmux-sessions! root skip-tmux?)
   (let [roles (reconcile-roles! root)
         socket-file (fs/path root ".swarmforge" "tmux-socket")
         socket (when (fs/exists? socket-file) (str/trim (slurp (str socket-file))))

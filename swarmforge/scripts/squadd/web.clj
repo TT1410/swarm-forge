@@ -7,7 +7,8 @@
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
             [squad-dashboard-request :as dashreq]
-            [squad-state :as squad-state])
+            [squad-state :as squad-state]
+            [stop-squadd :as stop-squadd])
   (:import [java.net InetAddress ServerSocket URLDecoder]))
 
 (def approval-wake-message
@@ -23,7 +24,9 @@
   <style>
     :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
     body { margin: 0; background: #f7f7f4; color: #202124; }
-    header { padding: 14px 18px; border-bottom: 1px solid #d9d9d2; display: flex; gap: 16px; align-items: baseline; }
+    header { padding: 14px 18px; border-bottom: 1px solid #d9d9d2; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+    #teardown-btn { border-color: #9b1c1c; color: #9b1c1c; }
+    #teardown-btn:hover { background: #9b1c1c; color: #fff; }
     h1 { font-size: 18px; margin: 0; }
     main { padding: 16px 18px 32px; display: grid; gap: 18px; }
     section { display: grid; gap: 8px; }
@@ -50,7 +53,12 @@
   </style>
 </head>
 <body>
-  <header><h1>SwarmForge Squad</h1><span id=\"meta\" class=\"muted\"></span></header>
+  <header>
+    <h1>SwarmForge Squad</h1>
+    <span id=\"meta\" class=\"muted\"></span>
+    <button type=\"button\" id=\"teardown-btn\" style=\"margin-left:auto\"
+            onclick=\"teardownSwarm()\" title=\"Stop squadd, agents, and tmux sessions\">Teardown</button>
+  </header>
   <main>
     <p id=\"error\" class=\"error\"></p>
     <section><h2>Blockers</h2><div id=\"blockers\"></div></section>
@@ -75,6 +83,26 @@
   <script>
     const meta = document.getElementById('meta');
     const error = document.getElementById('error');
+    async function teardownSwarm() {
+      if (!confirm('Stop this swarm? Squadd, agent sessions, and tmux windows will be terminated. Project files stay on disk.')) return;
+      if (prompt('Type TEARDOWN to confirm') !== 'TEARDOWN') {
+        error.textContent = 'Teardown cancelled.';
+        return;
+      }
+      try {
+        error.textContent = '';
+        const btn = document.getElementById('teardown-btn');
+        if (btn) { btn.disabled = true; btn.textContent = 'Tearing down…'; }
+        await post('/api/teardown', JSON.stringify({ confirm: 'TEARDOWN' }),
+                   'application/json; charset=utf-8', false);
+        meta.textContent = 'Swarm teardown started — this page will go offline.';
+        error.textContent = '';
+      } catch (err) {
+        error.textContent = err.message || String(err);
+        const btn = document.getElementById('teardown-btn');
+        if (btn) { btn.disabled = false; btn.textContent = 'Teardown'; }
+      }
+    }
     const blockersPanel = document.getElementById('blockers');
     const approvalsPanel = document.getElementById('approvals');
     const themePanel = document.getElementById('theme');
@@ -1302,6 +1330,56 @@
                  "squad_approval.sh resolve-rejection <approval-id> <detail> "
                  "after operator and squad-leader recovery work. Path=" path "\n")))
 
+(defn kill-all-sessions-on-socket! [socket]
+  (when-not (str/blank? socket)
+    (let [listed (sh-continue "tmux" "-S" socket "list-sessions" "-F" "#{session_name}")]
+      (when (zero? (:exit listed))
+        (doseq [session (->> (str/split-lines (:out listed))
+                             (remove str/blank?))]
+          (sh-continue "tmux" "-S" socket "kill-session" "-t" (str "=" session))
+          (sh-continue "tmux" "-S" socket "kill-session" "-t" session))))))
+
+(defn run-teardown! [root]
+  "Stop squadd (full teardown reconcile) and kill remaining tmux sessions on the
+  project socket. Same intent as ./close-swarm for process lifecycle."
+  (let [socket (socket-value root)]
+    (kill-all-sessions-on-socket! socket)
+    (stop-squadd/stop! (str (fs/absolutize root)) :full-teardown? true)
+    (kill-all-sessions-on-socket! socket)
+    (log! root "web-teardown-complete")
+    true))
+
+(defn schedule-teardown! [root]
+  "Respond to the operator first; run teardown shortly after so HTTP can flush
+  before this process is killed."
+  (future
+    (try
+      (Thread/sleep 250)
+      (run-teardown! root)
+      (catch Exception e
+        (try (log! root "web-teardown-failed" (.getMessage e))
+             (catch Exception _ nil)))))
+  true)
+
+(defn teardown-confirm-ok? [body]
+  (let [text (str/trim (or body ""))]
+    (or (= "TEARDOWN" text)
+        (= "TEARDOWN" (extract-json-string text "confirm"))
+        (and (str/includes? text "TEARDOWN")
+             (re-find #"(?i)\"confirm\"\\s*:\\s*\"TEARDOWN\"" text)))))
+
+(defn teardown-response [root body]
+  (if-not (teardown-confirm-ok? body)
+    (response 400 "text/plain; charset=utf-8"
+              "Teardown requires confirm=TEARDOWN (JSON {\"confirm\":\"TEARDOWN\"}).\n")
+    (do
+      (log! root "web-teardown-requested")
+      (schedule-teardown! root)
+      (response 200 "application/json; charset=utf-8"
+                (to-json {"ok" true
+                          "status" "teardown_started"
+                          "detail" "Swarm teardown started; dashboard will go offline."})))))
+
 (def web-routes
   [{:method "GET"
     :path "/"
@@ -1335,7 +1413,10 @@
     :handler (fn [root path _] (sl-request-cancel-response root path))}
    {:method "POST"
     :path "/api/sl-message"
-    :handler (fn [root _ body] (sl-message-response root body))}])
+    :handler (fn [root _ body] (sl-message-response root body))}
+   {:method "POST"
+    :path "/api/teardown"
+    :handler (fn [root _ body] (teardown-response root body))}])
 
 (defn route-matches? [{:keys [method path pattern]} request-method request-path]
   (and (= method request-method)

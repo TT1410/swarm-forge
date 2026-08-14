@@ -38,6 +38,29 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest teardown-requires-confirm-and-is-wired-in-ui
+  ;; B37: Teardown button + POST /api/teardown with TEARDOWN confirm
+  (is (str/includes? web/dashboard-html "teardownSwarm()"))
+  (is (str/includes? web/dashboard-html "id=\"teardown-btn\""))
+  (is (str/includes? web/dashboard-html "/api/teardown"))
+  (is (true? (web/teardown-confirm-ok? "{\"confirm\":\"TEARDOWN\"}")))
+  (is (true? (web/teardown-confirm-ok? "TEARDOWN")))
+  (is (false? (web/teardown-confirm-ok? "{}")))
+  (is (false? (web/teardown-confirm-ok? "{\"confirm\":\"no\"}")))
+  (let [root (tmp-dir)
+        scheduled (atom false)]
+    (try
+      (with-redefs [web/schedule-teardown! (fn [_] (reset! scheduled true) true)
+                    web/log! (fn [& _] nil)]
+        (let [bad (web/teardown-response root "{}")
+              good (web/teardown-response root "{\"confirm\":\"TEARDOWN\"}")]
+          (is (= 400 (:status bad)))
+          (is (= 200 (:status good)))
+          (is (true? @scheduled))
+          (is (str/includes? (:body good) "teardown_started"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest theme-package-always-shows-implementation-order
   ;; Given a theme with scheme and module map but no order file
   ;; When building the theme package

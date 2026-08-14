@@ -156,9 +156,16 @@
     {:deleted? (zero? (:exit result))
      :branch branch}))
 
+(defn session-target
+  "Exact tmux session target (B11: avoid prefix false matches / misses)."
+  [session]
+  (str "=" session))
+
 (defn session-exists? [socket session]
   (and (not (str/blank? socket))
-       (zero? (:exit (run-continue "tmux" "-S" socket "has-session" "-t" session)))))
+       (not (str/blank? session))
+       (zero? (:exit (run-continue "tmux" "-S" socket "has-session" "-t"
+                                   (session-target session))))))
 
 (defn stopped-session-result []
   {:stopped? true :detail "tmux session stopped"})
@@ -181,16 +188,34 @@
                (Thread/sleep 100)
                (recur (dec remaining))))))
 
+(defn kill-session-attempts! [socket session]
+  "Kill with exact target, then bare name (tmux version quirks)."
+  (run-continue "tmux" "-S" socket "kill-session" "-t" (session-target session))
+  (run-continue "tmux" "-S" socket "kill-session" "-t" session))
+
 (defn stop-running-session! [socket session]
-  (run-continue "tmux" "-S" socket "kill-session" "-t" session)
-  (wait-session-stopped socket session))
+  "B11: kill, wait, force kill again if lingering, wait once more."
+  (kill-session-attempts! socket session)
+  (let [first-wait (wait-session-stopped socket session)]
+    (if (:stopped? first-wait)
+      first-wait
+      (do
+        (kill-session-attempts! socket session)
+        (wait-session-stopped socket session)))))
 
 (defn stop-session! [socket session]
   (cond
     (or (str/blank? socket) (str/blank? session))
     {:stopped? false :detail "tmux socket or session metadata missing"}
+
     (not (session-exists? socket session))
-    {:stopped? false :detail "tmux session was not running"}
+    ;; Best-effort kill for has-session false-negatives; absent session is not a leak.
+    (do
+      (kill-session-attempts! socket session)
+      (if (session-exists? socket session)
+        (stop-running-session! socket session)
+        {:stopped? false :detail "tmux session was not running"}))
+
     :else
     (stop-running-session! socket session)))
 
@@ -248,16 +273,26 @@
                      (str/trim (slurp (str socket-file))))
             {:keys [stopped? detail]} (stop-session! socket session)
             worktree-cleanup (remove-worktree! root agent-id worktree)
-            branch-cleanup (delete-branch! root agent-id)]
+            branch-cleanup (delete-branch! root agent-id)
+            ;; B11: after kill path, session may still linger; role is gone so
+            ;; squadd orphan reconcile can finish it off.
+            leak? (and (not (str/blank? session))
+                       (not (str/blank? socket))
+                       (session-exists? socket session))
+            retire-detail (str detail "; " (:detail worktree-cleanup)
+                               "; branch " (:branch branch-cleanup)
+                               (if (:deleted? branch-cleanup) " deleted" " absent")
+                               (when leak?
+                                 "; session still live — orphan reconcile should kill"))]
         (fs/create-dirs agent-dir)
-        (let [retire-detail (str detail "; " (:detail worktree-cleanup)
-                                 "; branch " (:branch branch-cleanup)
-                                 (if (:deleted? branch-cleanup) " deleted" " absent"))]
-          (write-status! agent-dir "retired" retire-detail)
-          (write-heartbeat! agent-dir agent-id "retired" retire-detail))
+        (write-status! agent-dir "retired" retire-detail)
+        (write-heartbeat! agent-dir agent-id "retired" retire-detail)
         (println "SQUAD_AGENT_RETIRED:" agent-id)
         (println "SESSION:" session)
-        (println "SESSION_STOPPED:" stopped?)
+        (println "SESSION_STOPPED:" (boolean (and stopped? (not leak?))))
+        (when leak?
+          (println "SESSION_LEAK: true")
+          (println "SESSION_LEAK_DETAIL: tmux session still exists after kill; daemon orphan reconcile will retry"))
         (println "WORKTREE:" worktree)
         (println "WORKTREE_REMOVED:" (:removed? worktree-cleanup))
         (println "BRANCH:" (:branch branch-cleanup))
