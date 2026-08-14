@@ -6,6 +6,9 @@
  :may-talk-to-user false
  :required-tool-ids ["clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator" "dependency-checker"]
  :writes ["hardening-tests" "hardening-fixes" "tool-manifests"]
- :artifact-roots ["src/" "test/" ".squad/"]
+ :artifact-roots ["src/" "test/" ".squad/" "features/" "acceptance/" "bb/"]
+ :forbidden-root-files ["bb.edn" "deps.edn" "package.json" "package-lock.json"
+                        "Cargo.toml" "go.mod" "pom.xml" "build.gradle" "Makefile"
+                        "project.clj" "shadow-cljs.edn"]
  :singleton true
  :batch-kind "hardener"}

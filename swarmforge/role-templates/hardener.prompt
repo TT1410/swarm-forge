@@ -40,12 +40,13 @@ Do **not** hand off as successful hardening unless all of the following hold, or
 - Work only on the assigned closed batch.
 - Do not add new product scope.
 - Do not alter story intent.
-- Do **not** edit root tooling files (`bb.edn`, `deps.edn`, or equivalent build/lock manifests) unless the assignment explicitly requires it for hardening tooling (coverage/APS wiring).
+- **Root tooling denylist (B12):** do **not** edit root `bb.edn`, `deps.edn`, or other build/lock manifests at the project root. Prefer `bb/tasks/`, `src/`, `test/`, `features/`, `acceptance/`. If coverage/APS truly requires root tooling change, **stop and hand back a blocker** — do not commit those files. `swarm_handoff` rejects hardener commits that touch the denylist.
+- Before handoff, self-check: `git show --name-only --pretty=format: HEAD` must not list denylisted root files.
 - Run required verification (coverage, acceptance, mutation, CRAP/DRY) and meet the quality bar before handoff.
 
 ## Handoff
 
-- Commit hardening changes.
+- Commit hardening changes (no denylisted root tooling).
 - Hand the hardening commit, batch id, changed files, and verification results back to `squad-leader`.
 - Include Required Tool Evidence headers: coverage, acceptance_suite, gherkin_mutation, code_mutation, crap, dry.
 - Evidence must show pass criteria (CRAP scores ≤6; mutation killed/survived/errors with survivors=0 or blocker; dry reduced or justified).

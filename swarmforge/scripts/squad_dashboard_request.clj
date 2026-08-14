@@ -13,6 +13,7 @@
        "  squad_dashboard_request.sh reject <id> <reason-file>\n"
        "  squad_dashboard_request.sh cancel <id>\n"
        "  squad_dashboard_request.sh route-to-sl <id>\n"
+       "  squad_dashboard_request.sh note <id> <note-file>\n"
        "  squad_dashboard_request.sh status [id]\n"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -61,6 +62,11 @@
 
 (defn request-file [root state id]
   (fs/path (state-dir root state) (str id ".request")))
+
+(defn progress-file
+  "Append-only interim status notes for a request (B36). Sibling of .request."
+  [root state id]
+  (fs/path (state-dir root state) (str id ".progress")))
 
 (def multiline-field-keys
   "Fields that may contain newlines. Written as key: | block form (B10)."
@@ -220,29 +226,54 @@
            vec)
       [])))
 
-(defn request-summary [file state]
-  (let [m (file-map file)
-        id (or (get m "id")
-               (str/replace (fs/file-name file) #"\.request$" ""))]
-    (merge m
-           {"id" id
-            "status" (or (get m "status") state)
-            "kind" (get m "kind" "request")
-            "owner" (request-owner m)
-            "created_at" (get m "created_at" "")
-            "updated_at" (get m "updated_at" "")
-            "answered_at" (get m "answered_at" "")
-            "routed_at" (get m "routed_at" "")
-            "body" (get m "body" "")
-            "response" (get m "response" "")
-            "detail" (get m "detail" "")})))
+(defn parse-progress-line [line]
+  (let [line (str/trim (or line ""))]
+    (when-not (str/blank? line)
+      (if-let [[_ at text] (re-matches #"(\S+)\t(.*)" line)]
+        {"at" at "text" text}
+        {"at" "" "text" line}))))
+
+(defn read-progress
+  "Ordered interim notes for request id (B36)."
+  [root state id]
+  (let [file (progress-file root state id)]
+    (if (fs/regular-file? file)
+      (->> (str/split-lines (slurp (str file)))
+           (keep parse-progress-line)
+           vec)
+      [])))
+
+(defn project-root-from-request-file
+  "…/project/.swarmforge/dashboard/requests/<state>/<id>.request → project"
+  [file]
+  (-> file fs/parent fs/parent fs/parent fs/parent fs/parent))
+
+(defn request-summary
+  ([file state] (request-summary file state (project-root-from-request-file file)))
+  ([file state root]
+   (let [m (file-map file)
+         id (or (get m "id")
+                (str/replace (fs/file-name file) #"\.request$" ""))]
+     (merge m
+            {"id" id
+             "status" (or (get m "status") state)
+             "kind" (get m "kind" "request")
+             "owner" (request-owner m)
+             "created_at" (get m "created_at" "")
+             "updated_at" (get m "updated_at" "")
+             "answered_at" (get m "answered_at" "")
+             "routed_at" (get m "routed_at" "")
+             "body" (get m "body" "")
+             "response" (get m "response" "")
+             "detail" (get m "detail" "")
+             "progress" (read-progress root state id)}))))
 
 (defn list-all-requests
   ([root] (list-all-requests root history-limit))
   ([root limit]
    (let [rows (vec
                (mapcat (fn [state]
-                         (map #(request-summary % state)
+                         (map #(request-summary % state root)
                               (list-request-files root state)))
                        ["pending" "answered" "rejected"]))
          sorted (sort-by (fn [r]
@@ -256,7 +287,7 @@
 (defn pending-requests
   ([root]
    (->> (list-request-files root "pending")
-        (map #(request-summary % "pending"))
+        (map #(request-summary % "pending" root))
         (sort-by (fn [r] [(get r "created_at" "") (get r "id" "")]))
         vec))
   ([root owner]
@@ -287,7 +318,7 @@
                      {"status" "pending"
                       "updated_at" now})]
         (write-atomic! pending (render-request m))
-        {:ok true :request (request-summary pending "pending")}))))
+        {:ok true :request (request-summary pending "pending" root)}))))
 
 (defn route-to-sl
   "Re-own a pending request for Squad Leader product residual.
@@ -320,6 +351,13 @@
     (when (fs/regular-file? file)
       file)))
 
+(defn move-progress-sidecar! [root id from-state to-state]
+  (let [from (progress-file root from-state id)
+        to (progress-file root to-state id)]
+    (when (fs/regular-file? from)
+      (fs/create-dirs (fs/parent to))
+      (fs/move from to {:replace-existing true}))))
+
 (defn move-resolved [root id from-file target-state updates]
   (let [now (timestamp)
         m (merge (file-map from-file)
@@ -331,8 +369,42 @@
             m)
         target (request-file root target-state id)]
     (write-atomic! target (render-request m))
+    (move-progress-sidecar! root id "pending" target-state)
     (fs/delete-if-exists from-file)
     m))
+
+(defn append-progress-note!
+  "B36: interim status while request stays pending. Does not complete the request."
+  [root id note-text]
+  (cond
+    (not (valid-id? id))
+    {:ok false :error "Invalid request id."}
+
+    :else
+    (let [pending (request-file root "pending" id)
+          note (str/trim (or note-text ""))]
+      (cond
+        (not (fs/regular-file? pending))
+        (if-let [{:keys [state]} (find-request-file root id)]
+          {:ok false :error (str "Request is not pending (status=" state ").")}
+          {:ok false :error (str "Pending request not found: " id)})
+
+        (str/blank? note)
+        {:ok false :error "Progress note is empty."}
+
+        (> (count note) max-body-chars)
+        {:ok false :error (str "Progress note exceeds " max-body-chars " characters.")}
+
+        :else
+        (let [now (timestamp)
+              pfile (progress-file root "pending" id)
+              line (str now "\t" (str/replace note #"\t" " ") "\n")]
+          (fs/create-dirs (fs/parent pfile))
+          (spit (str pfile) line :append true)
+          (rewrite-pending! root id {})
+          {:ok true
+           :request (request-summary pending "pending" root)
+           :note {"at" now "text" note}})))))
 
 (defn normalize-answer [_kind text]
   "Single answer rule: blank answers become Done (intent lives in request body)."
@@ -435,12 +507,14 @@
   (when-not (valid-id? id)
     (exit! 2 "Invalid request id."))
   (if-let [{:keys [state file]} (find-request-file root id)]
-    (let [m (request-summary file state)]
+    (let [m (request-summary file state root)]
       (println "REQUEST:" id)
       (println "STATE:" (get m "status" state))
       (println "KIND:" (get m "kind" "request"))
       (println "OWNER:" (request-owner m))
       (println "BODY:" (get m "body" ""))
+      (doseq [n (get m "progress" [])]
+        (println "NOTE:" (get n "at") (get n "text")))
       (when-not (str/blank? (get m "response" ""))
         (println "RESPONSE:" (get m "response")))
       (when-not (str/blank? (get m "detail" ""))
@@ -484,6 +558,22 @@
             true))
         (catch Exception _ false)))))
 
+(defn note! [id note-path]
+  (let [root (fs/absolutize (project-root))
+        file (source-file note-path)]
+    (when-not file
+      (exit! 1 (str "Source file not found: " note-path)))
+    (let [result (append-progress-note! root id (slurp (str file)))]
+      (if (:ok result)
+        (let [m (:request result)
+              n (:note result)]
+          (println "SQUAD_DASHBOARD_REQUEST:" (get m "id"))
+          (println "STATE: pending")
+          (println "NOTE_AT:" (get n "at"))
+          (println "NOTE:" (get n "text"))
+          (println "PROGRESS_COUNT:" (count (get m "progress"))))
+        (exit! 2 (:error result))))))
+
 (defn route-to-sl! [id]
   (let [root (fs/absolutize (project-root))
         result (route-to-sl root id)]
@@ -524,6 +614,9 @@
    "route-to-sl" (fn [args]
                    (exact-count! args 2)
                    (route-to-sl! (second args)))
+   "note" (fn [args]
+            (exact-count! args 3)
+            (note! (second args) (nth args 2)))
    "status" (fn [args]
               (when-not (<= 1 (count args) 2)
                 (exit! 1 usage-text))

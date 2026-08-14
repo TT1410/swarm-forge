@@ -238,6 +238,38 @@
            :when (str/blank? (get headers field))]
        (format "Missing required header '%s' for git_handoff result manifest." field)))))
 
+(def hardener-forbidden-root-files
+  "B12: hardener must not thrash root build/lock manifests (merge conflicts)."
+  #{"bb.edn" "deps.edn" "package.json" "package-lock.json"
+    "Cargo.toml" "go.mod" "pom.xml" "build.gradle" "Makefile"
+    "project.clj" "shadow-cljs.edn"})
+
+(defn commit-changed-paths
+  "Paths changed in commit (full hash or 10-char abbrev)."
+  [commit]
+  (when-not (str/blank? commit)
+    (let [result (command "." "git" "diff-tree" "--no-commit-id" "--name-only" "-r" commit)]
+      (when (zero? (:exit result))
+        (->> (str/split-lines (:out result))
+             (remove str/blank?)
+             vec)))))
+
+(defn hardener-root-tooling-errors
+  "Reject hardener git_handoffs whose commit touches denylisted root files (B12)."
+  [headers canonical-commit]
+  (when (and (= "git_handoff" (get headers "type"))
+             (= "hardener" (get headers "template"))
+             (not (str/blank? canonical-commit)))
+    (let [paths (or (commit-changed-paths canonical-commit) [])
+          hits (filter (fn [p]
+                         (and (not (str/includes? p "/"))
+                              (contains? hardener-forbidden-root-files p)))
+                       paths)]
+      (when (seq hits)
+        [(str "Hardener commits must not change root tooling files (B12): "
+              (str/join ", " (sort hits))
+              ". Prefer bb/tasks/, src/, test/, acceptance/; hand back a blocker if root tooling is required.")]))))
+
 (defn git-field-errors [type commit task-name commit-error]
   (vec
    (concat (git-task-errors type task-name)
@@ -273,9 +305,10 @@
      :errors (vec (concat (base-errors type to priority)
                           recipient-errors
                           (field-errors type ordered)
-           (git-field-errors type commit task-name commit-error)
-           (git-manifest-errors type headers)
-           (note-field-errors type note-message)))}))
+                          (git-field-errors type commit task-name commit-error)
+                          (git-manifest-errors type headers)
+                          (hardener-root-tooling-errors headers canonical)
+                          (note-field-errors type note-message)))}))
 
 (declare acquire-sequence-lock! write-next-sequence!)
 

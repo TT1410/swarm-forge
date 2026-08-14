@@ -197,6 +197,15 @@
     (is (str/includes? startup "squad_tool.sh require ir-dry-checker github.com/unclebob/Acceptance-Pipeline-Specification latest"))
     (is (str/includes? startup "record `blocked`"))))
 
+(deftest hardener-forbids-root-tooling-files
+  ;; B12: hardener must not thrash root bb.edn/deps.edn
+  (let [c (contract "hardener")
+        prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))]
+    (is (some #{"bb.edn"} (:forbidden-root-files c)))
+    (is (some #{"deps.edn"} (:forbidden-root-files c)))
+    (is (str/includes? prompt "Root tooling denylist"))
+    (is (str/includes? prompt "swarm_handoff"))))
+
 (deftest hardener-tool-startup-includes-coverage-and-acceptance-prerequisites
   (let [startup (tools/startup-instructions
                  (tools/required-tools repo-root "hardener")

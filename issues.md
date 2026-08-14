@@ -13,11 +13,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
-| **P2** | B29 | Stalled swarm not explained on dashboard | UX / design | Dashboard |
-| **P2** | B36 | Troubleshooter should post interim status before final answer | UX | Operator chat |
-| **P2** | B12 | Hardener edits root tooling (`bb.edn`) | Policy | Role enforcement |
 | **P2** | B25 | Order + dependency-checker need user approval | Workflow | Theme gates |
-| **P2** | B14 | Theme package missing `dependency-checker.edn` card | UX | Dashboard |
 | **P2** | B13 | Checker policy quality (beyond mere presence) | Product quality | Analysis |
 | **P2** | B23 | Theme close / finalize undefined | Workflow | Theme lifecycle |
 | **P2** | B18 | `squad_next` mixes plan / policy / present / execute | Architecture | Control plane |
@@ -34,16 +30,13 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 ## Suggested fix order
 
-1. **Operator visibility + hygiene:** **B29** → **B36** → **B12**  
-   Know why the swarm is stuck; TS interim progress; hardener doesn’t thrash root tooling (B37 teardown + B11 zombie kill done).
+1. **Theme architecture control:** **B25** → **B13** → **B23**  
+   Approve order/checker; raise policy quality; theme finalize/ship (B14 checker card + B12 hardener denylist done).
 
-2. **Theme architecture control:** **B25** → **B14** → **B13** → **B23**  
-   Approve order/checker (now that analysis must produce them), show checker on theme package, raise policy quality, then theme finalize/ship.
-
-3. **Control plane (after typed actions B17):** **B18** → **B16** → **B19**  
+2. **Control plane (after typed actions B17):** **B18** → **B16** → **B19**  
    Planner / executor / renderer; authority; single priority policy.
 
-4. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
+3. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
 
 ---
 
@@ -51,10 +44,10 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Cluster | Bugs | Note |
 |---------|------|------|
-| Operator chat / dashboard IO | B29, **B36**, B14, B24 | Stall reason, TS interim status, theme cards, IA (B34/B10/B37 done) |
+| Operator chat / dashboard IO | B24 | IA (B34/B10/B37/B29/B36/B14 done) |
 | Product intake | **B35** | Durable backlog → dispatch as theme/story to SL or TS |
-| Lifecycle hygiene | B12 | Hardener root-tooling (B11 zombie kill + B37 teardown done) |
-| Theme / architecture gates | **B25**, **B14**, **B13**, B23 | Approve + display + quality + finalize |
+| Lifecycle hygiene | — | B11/B12/B37 done |
+| Theme / architecture gates | **B25**, **B13**, B23 | Approve + quality + finalize (B14 display done) |
 | Control plane | **B18**, **B16**, **B19**, B20–B22 | Split `squad_next`; ownership; priority; leases |
 
 Source notes for B16–B22: `architecture-improvements.md` (review findings folded in).
@@ -71,6 +64,8 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 | P2 first set | B31, B09, B17 | Hardener quality bar; Troubleshooter role + dashboard chat; typed actions |
 | P2 operator chat batch | **B34**, **B10** | Id-prefixed raw tmux inject; multiline dashboard body/response (`key: \|` blocks + `pre-wrap`) |
 | P2 lifecycle batch | **B37**, **B11** | Dashboard Teardown + confirm; exact/force session kill; squadd orphan session reconcile |
+| P2 visibility batch | **B29**, **B36** | Stall strip + stalled pills; TS `note` progress sidecar + chat UI |
+| P2 hardener + theme card | **B12**, **B14** | Root tooling denylist + handoff reject; dependency-checker theme package card |
 
 **Partial progress (still open under related IDs):**
 - Analysis must author `dependency-checker.edn` + `implementation-order.md` (prompt/contract); seed order when implementer-ready (B13/B25 remaining: quality + user approval).
@@ -79,59 +74,7 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 
 ---
 
-## P2 — Operator, hygiene, theme, control plane
-
-### B29 — When the swarm is stalled, the dashboard should explain why
-
-**Symptom:** Residual stuck for hours (merge_blocked, held handoffs, capacity deadlock) looks like ordinary busyness. Operators dig disk/logs by hand.
-
-**Expected:** Operational “stalled” definition; agents/assignments with **state + short reason** (detail, merge-error, held note); not only `handoff_sent`. Align with B24 (needs-you outranks noise).
-
-**Direction:** Status API `stalled?` / `stall_reason`; UI TBD (pill, hover, health strip). Prefer existing files over new ones.
-
-**Priority (P2):** Visibility is part of unblocking; demoted from P1 after B28 (merge_blocked visible).
-
-**Where:** `squadd/web.clj`; assignment/agent status; optional residual wait reason.
-
-**Related:** B28 (fixed), B11, B24, B09.
-
----
-
-### B36 — Troubleshooter should give status updates pursuant to its final response
-
-**Symptom / gap:** For non-trivial Troubleshooter work (inspect, repair, multi-step diagnosis), the operator only sees **busy `…`** until a single final `answer`. No intermediate progress appears in the dashboard chat history. Long waits feel frozen even when the agent is working.
-
-**Expected:**
-1. While a request is still **pending**, Troubleshooter may post **short interim status** updates (what it is checking / doing next) that show in the same chat thread.
-2. Final outcome still uses `squad_dashboard_request.sh answer <id> …` (or `route-to-sl` / reject) — interim notes do **not** complete the request.
-3. Simple greetings / one-shot Q&A need **no** interim spam — status only when work is multi-step or will take a while.
-4. Updates stay firm and brief (same voice as final answers).
-
-**Direction (open design):**
-- Extend dashboard request model with append-only **status** / progress notes (e.g. `status:` lines, sibling log, or `progress` entries) that `list` / UI render under the pending item.
-- Helper e.g. `squad_dashboard_request.sh status-note <id> <file>` (name TBD) that leaves `status: pending`.
-- Prompt: for multi-step work, post 1–3 interim notes before final answer; never substitute notes for `answer`.
-- UI: show interim notes under the pending request; keep busy indicator until final answer/reject/route-close.
-
-**Priority (P2):** Operator trust and perceived latency after B34/B10; same chat surface.
-
-**Where:** `squad_dashboard_request.clj`; `squadd/web.clj` request history; Troubleshooter prompt.
-
-**Related:** B34 (inject delivery), B10 (multiline), B09 (Troubleshooter surface), B29 (operator visibility).
-
----
-
-### B12 — Hardener edits root tooling (`bb.edn`) against role rules
-
-**Symptom:** Hardener commits thrash root `bb.edn` (merge conflicts). Prompt says not to unless assignment requires it.
-
-**Expected:** Denylisted root tooling untouched unless assignment says so; pre-handoff check or reject.
-
-**Direction:** Stronger prompt/contract; check result diff; product layout with tasks under `bb/tasks/`.
-
-**Where:** `hardener.prompt` / contract; merge path.
-
----
+## P2 — Theme, control plane
 
 ### B25 — Implementation order and dependency-checker must be user-approved
 
@@ -144,18 +87,6 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 **Where:** `squad_approval`; `squad_theme`; `squad_next`; theme package UI.
 
 **Related:** B13, B14, B03 (fixed — durable order exists).
-
----
-
-### B14 — Theme package should include dependency-checker.edn card
-
-**Symptom:** Theme package shows scheme, module map, implementation order — **not** checker config.
-
-**Expected:** Card next to map/order; clear missing state; approval badge when B25 lands.
-
-**Where:** `squadd/web.clj` `theme-package-parts`.
-
-**Related:** B13, B25.
 
 ---
 
@@ -308,5 +239,5 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
 **Status:** P0/P1 stuck-swarm class and first P2 set (B31, B09, B17) are done.  
-**Next:** Operator visibility (**B29**, **B36**), hygiene **B12**, theme gates (**B25**, **B14**, **B13**, **B23**), then control-plane split (**B18** / **B16** / **B19**).  
-Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat **B34**/**B10** and lifecycle **B37**/**B11** are done.
+**Next:** Theme gates (**B25**, **B13**, **B23**), then control-plane split (**B18** / **B16** / **B19**).  
+Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat, lifecycle, visibility, hardener denylist (**B12**), and checker card (**B14**) are done.

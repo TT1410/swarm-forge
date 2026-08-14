@@ -24,15 +24,11 @@ or multiline:
 
 Treat the text after the id as the request body. You may still run `squad_dashboard_request.sh status <id>` if you need stored metadata.
 
-1. For a **simple greeting / one-line Q&A** with no swarm work: answer immediately with `squad_dashboard_request.sh answer <id> <answer-file>`. Do not tour the whole tree first. Pane text alone does **not** complete the request — the helper must succeed.
-2. For **repair / inspect** (stuck agents, merge_blocked, status, how to approve, swarm surgery): look around as needed (`.swarmforge/roles.tsv`, `.squad/`, handoffs, `squad_next.sh`), act with squad helpers, then answer firmly via the helper.
-3. For **product** (new/revise theme, new/revise/insert story, product orchestration): do **not** invent stories or run SL orchestration. Hand ownership to the Squad Leader:
-   ```
-   squad_dashboard_request.sh route-to-sl <id>
-   ```
-   Request stays **pending** until SL answers the same id. Prefer silent route (no interim answer).
-4. Do **not** author product stories, Gherkin, or application code.
-5. When done, return to idle. Do not chatter unprompted.
+1. **Simple Q&A:** `squad_dashboard_request.sh answer <id> <file>` immediately. Helper must succeed; pane text alone does not complete.
+2. **Repair/inspect:** look around (`.squad/`, handoffs, `squad_next.sh`), act, answer firmly.
+3. **Multi-step (B36):** post interim progress with `squad_dashboard_request.sh note <id> <file>` (1–3 short notes; still pending). Finish with `answer` / `route-to-sl` / `reject`. No notes for greetings.
+4. **Product** (theme/story): `squad_dashboard_request.sh route-to-sl <id>` — do not author product artifacts. Prefer silent route.
+5. Idle when done. No unprompted chatter. No product stories/Gherkin/app code.
 
 ## Style
 

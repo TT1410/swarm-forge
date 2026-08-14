@@ -38,6 +38,47 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest stall-report-surfaces-merge-blocked-and-failed-agents
+  ;; B29: operators see why the swarm is stuck without shell archaeology
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  "assignment_id: cave-impl\ntemplate: implementer\nstory_id: cave\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  "state: merge_blocked\ndetail: dry-run failed\nupdated_at: 2026-08-14T00:00:00Z\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/merge-error")
+                  "CONFLICT (content): Merge conflict in src/core.clj\nAutomatic merge failed\n")
+      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
+                  "agent_id: implementer-001\ntemplate: implementer\ntask_id: cave-impl\n")
+      (write-file (fs/path root ".squad/agents/implementer-001/status")
+                  "state: failed\ndetail: tools missing\nupdated_at: 2026-08-14T00:00:00Z\n")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/held/50_held.handoff")
+                  "from: cleaner-001\ntask: cave-clean\ntype: git_handoff\n")
+      (let [assignments (web/assignment-state root)
+            agents (web/agent-state root)
+            report (web/stall-report root assignments agents)]
+        (is (true? (get report "stalled")))
+        (is (>= (get report "count") 2))
+        (is (str/includes? (get report "summary") "stalled"))
+        (is (some #(and (= "assignment" (get % "kind"))
+                        (= "cave-impl" (get % "id"))
+                        (str/includes? (get % "reason") "CONFLICT"))
+                  (get report "items")))
+        (is (some #(and (= "agent" (get % "kind"))
+                        (= "implementer-001" (get % "id")))
+                  (get report "items")))
+        (is (some #(= "held_handoff" (get % "kind"))
+                  (get report "items")))
+        (is (true? (get-in (web/web-state root) ["stalls" "stalled"]))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest dashboard-html-includes-stall-and-progress-ui
+  (is (str/includes? web/dashboard-html "stall-section"))
+  (is (str/includes? web/dashboard-html "data.stalls"))
+  (is (str/includes? web/dashboard-html "req-progress"))
+  (is (str/includes? web/dashboard-html "r.progress")))
+
 (deftest teardown-requires-confirm-and-is-wired-in-ui
   ;; B37: Teardown button + POST /api/teardown with TEARDOWN confirm
   (is (str/includes? web/dashboard-html "teardownSwarm()"))
@@ -80,6 +121,28 @@
                                  (web/theme-package-parts root "hello")))]
         (is (str/includes? (:body order) "Not yet recorded"))
         (is (str/includes? (:body order) "No multi-story")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest theme-package-includes-dependency-checker-card
+  ;; B14: theme package always shows dependency-checker (content or missing)
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad/themes/hello/theme.md") "Hello theme.\n")
+      (write-file (fs/path root ".squad/themes/hello/module-map.md") "Map.\n")
+      (let [parts (web/theme-package-parts root "hello")
+            titles (map :title parts)
+            checker (first (filter #(= "Dependency Checker" (:title %)) parts))]
+        (is (some #{"Dependency Checker"} titles))
+        (is (str/includes? (:body checker) "Missing"))
+        (is (str/includes? (:body checker) "dependency-checker.edn")))
+      (write-file (fs/path root "dependency-checker.edn")
+                  "{:allowed-dependencies {:greeting [] :ui [:greeting]}\n :fail-on-cycles true}\n")
+      (let [checker (first (filter #(= "Dependency Checker" (:title %))
+                                   (web/theme-package-parts root "hello")))]
+        (is (str/includes? (:body checker) ":greeting"))
+        (is (str/includes? (:body checker) ":ui"))
+        (is (not (str/includes? (:body checker) "Missing"))))
       (finally
         (fs/delete-tree root)))))
 

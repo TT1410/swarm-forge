@@ -338,6 +338,47 @@
   (is (str/includes? web/dashboard-html "req-sl")
       "response class present"))
 
+(deftest progress-notes-keep-request-pending
+  ;; B36: interim notes while Troubleshooter works; answer still closes
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (let [created (dashreq/create-request root {:body "Why is this stuck?"})
+            id (get-in created [:request "id"])]
+        (write-file (fs/path root "n1.txt") "Checking merge_blocked assignments.\n")
+        (let [n1 (run {:dir root} (script "squad_dashboard_request.sh") "note" id "n1.txt")]
+          (is (str/includes? (:out n1) "STATE: pending"))
+          (is (str/includes? (:out n1) "NOTE:"))
+          (is (str/includes? (:out n1) "Checking merge_blocked")))
+        (write-file (fs/path root "n2.txt") "Merger slot held by handoff_sent.\n")
+        (run {:dir root} (script "squad_dashboard_request.sh") "note" id "n2.txt")
+        (let [pending (first (dashreq/pending-requests root))]
+          (is (= "pending" (get pending "status")))
+          (is (= 2 (count (get pending "progress"))))
+          (is (str/includes? (get (first (get pending "progress")) "text") "merge_blocked")))
+        (write-file (fs/path root "answer.txt") "Root cause: merger merge_blocked on cave-impl.\n")
+        (run {:dir root} (script "squad_dashboard_request.sh") "answer" id "answer.txt")
+        (let [listed (first (filter #(= id (get % "id")) (dashreq/list-all-requests root)))]
+          (is (= "answered" (get listed "status")))
+          (is (= 2 (count (get listed "progress")))
+              "progress survives answer")
+          (is (str/includes? (get listed "response") "Root cause"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest note-on-answered-request-fails
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (let [created (dashreq/create-request root {:body "hi"})
+            id (get-in created [:request "id"])]
+        (is (:ok (dashreq/answer-request root id "hello")))
+        (is (not (:ok (dashreq/append-progress-note! root id "too late")))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest sl-queue-depth-counts-requests-and-handoffs
   (let [root (tmp-dir)]
     (try

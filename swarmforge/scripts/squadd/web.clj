@@ -48,6 +48,9 @@
     .req-you { border-left: 3px solid #6b7c72; padding-left: 8px; white-space: pre-wrap; }
     .req-sl { color: #4a4f4c; padding-left: 16px; white-space: pre-wrap; }
     .req-sl.short { font-style: italic; }
+    .req-progress { color: #68726c; padding-left: 16px; font-size: 12px; white-space: pre-wrap; border-left: 2px dashed #c6cbc5; margin: 4px 0; }
+    .pill-stalled { background: #f8d7da; color: #9b1c1c; }
+    #stall-section { background: #fff5f5; border: 1px solid #f5c2c7; padding: 10px 12px; border-radius: 8px; }
     .req-meta { font-size: 11px; color: #68726c; margin-bottom: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
     .composer-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   </style>
@@ -61,6 +64,11 @@
   </header>
   <main>
     <p id=\"error\" class=\"error\"></p>
+    <section id=\"stall-section\" style=\"display:none\">
+      <h2 style=\"color:#9b1c1c\">Stalled <span id=\"stall-count\" class=\"pill\" style=\"background:#f8d7da\"></span></h2>
+      <p id=\"stall-summary\" class=\"muted\"></p>
+      <div id=\"stalls\"></div>
+    </section>
     <section><h2>Blockers</h2><div id=\"blockers\"></div></section>
     <section><h2>Pending Approvals</h2><div id=\"approvals\"></div></section>
     <section>
@@ -104,6 +112,10 @@
       }
     }
     const blockersPanel = document.getElementById('blockers');
+    const stallSection = document.getElementById('stall-section');
+    const stallCount = document.getElementById('stall-count');
+    const stallSummary = document.getElementById('stall-summary');
+    const stallsPanel = document.getElementById('stalls');
     const approvalsPanel = document.getElementById('approvals');
     const themePanel = document.getElementById('theme');
     const storiesPanel = document.getElementById('stories');
@@ -206,6 +218,9 @@
         const cancel = r.status === 'pending'
           ? ' <button type=\"button\" onclick=\"cancelRequest(\\'' + esc(r.id) + '\\')\">Cancel</button>'
           : '';
+        const progress = (r.progress || []).map(n =>
+          '<div class=\"req-progress\"><span class=\"muted\">' + esc(n.at || '') +
+          '</span> ' + esc(n.text || '') + '</div>').join('');
         const response = r.response
           ? '<div class=\"req-sl' + (String(r.response).length < 40 ? ' short' : '') + '\">' + esc(r.response) + '</div>'
           : (r.status === 'rejected' && r.detail
@@ -216,6 +231,7 @@
           '<div class=\"req-meta\"><strong>You</strong>' + statusPill(r.status) + owner +
           '<span class=\"muted\">' + esc(r.id) + '</span>' + cancel + '</div>' +
           '<div class=\"req-you\">' + esc(r.body || '') + '</div>' +
+          progress +
           response +
           '</div>';
       }).join('');
@@ -299,6 +315,23 @@
         const data = await (await fetch('/api/state', { cache: 'no-store' })).json();
         meta.textContent = data.project_root + ' | ' + data.generated_at;
         error.textContent = '';
+        const stall = data.stalls || {};
+        if (stall.stalled && (stall.items || []).length) {
+          stallSection.style.display = '';
+          stallCount.textContent = String(stall.count || stall.items.length);
+          stallSummary.textContent = stall.summary || '';
+          stallsPanel.innerHTML = table(['Kind','Id','State','Reason'],
+            (stall.items || []).map(s => row([
+              esc(s.kind), esc(s.id),
+              '<span class=\"pill pill-stalled\">' + esc(s.state) + '</span>',
+              esc(s.reason || '')
+            ])));
+        } else {
+          stallSection.style.display = 'none';
+          stallsPanel.innerHTML = '';
+          stallSummary.textContent = '';
+          stallCount.textContent = '';
+        }
         blockersPanel.innerHTML = blockers(data.blockers || []);
         approvalsPanel.innerHTML = approvals((data.approvals && data.approvals.pending) || []);
         const serverWorking = !!(data.troubleshooter && data.troubleshooter.working);
@@ -317,12 +350,26 @@
           artifactLink('story', s.story_id, s.story_number ? ('#' + s.story_number + ' ' + s.story_id) : s.story_id),
           '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.stage_detail || s.final_state)
         ])));
-        agentsPanel.innerHTML = table(['Agent','Template','Task','State','Detail'], (data.agents || []).map(a => row([
-          `<a target=\"_blank\" href=\"/agent/${encodeURIComponent(a.agent_id)}\">${esc(a.agent_id)}</a>`, esc(a.template), esc(a.task_id), esc(a.state), esc(a.detail)
-        ])));
-        assignmentsPanel.innerHTML = table(['Assignment','Template','Story','State'], (data.assignments || []).map(a => row([
-          artifactLink('assignment', a.assignment_id, a.assignment_id), esc(a.template), esc(a.story_id), esc(a.state)
-        ])));
+        agentsPanel.innerHTML = table(['Agent','Template','Task','State','Detail'], (data.agents || []).map(a => {
+          const stalled = a.state === 'blocked' || a.state === 'failed';
+          const st = stalled
+            ? '<span class=\"pill pill-stalled\">' + esc(a.state) + '</span>'
+            : esc(a.state);
+          return row([
+            `<a target=\"_blank\" href=\"/agent/${encodeURIComponent(a.agent_id)}\">${esc(a.agent_id)}</a>`,
+            esc(a.template), esc(a.task_id), st, esc(a.detail)
+          ]);
+        }));
+        assignmentsPanel.innerHTML = table(['Assignment','Template','Story','State'], (data.assignments || []).map(a => {
+          const stalled = a.state === 'merge_blocked' || a.state === 'blocked';
+          const st = stalled
+            ? '<span class=\"pill pill-stalled\">' + esc(a.state) + '</span>'
+            : esc(a.state);
+          return row([
+            artifactLink('assignment', a.assignment_id, a.assignment_id),
+            esc(a.template), esc(a.story_id), st
+          ]);
+        }));
       } catch (err) {
         error.textContent = err.message;
       }
@@ -871,11 +918,94 @@
   (or (pos? (pending-dashboard-request-count root))
       (troubleshooter-agent-working? root)))
 
+(defn merge-error-snippet [root assignment-id]
+  (let [file (fs/path root ".squad" "assignments" assignment-id "merge-error")]
+    (when (fs/regular-file? file)
+      (->> (str/split-lines (slurp (str file)))
+           (remove str/blank?)
+           (take 2)
+           (str/join " | ")
+           not-empty))))
+
+(defn assignment-stall-item [root assignment]
+  (let [state (get assignment "state")
+        id (get assignment "assignment_id")
+        detail (str/trim (or (get assignment "detail") ""))]
+    (cond
+      (= "merge_blocked" state)
+      {"kind" "assignment"
+       "id" id
+       "state" state
+       "reason" (or (merge-error-snippet root id)
+                    (not-empty detail)
+                    "merge blocked — dry-run or accept-merge failed")}
+
+      (= "blocked" state)
+      {"kind" "assignment"
+       "id" id
+       "state" state
+       "reason" (or (not-empty detail) "assignment blocked")}
+
+      :else nil)))
+
+(defn agent-stall-item [agent]
+  (let [state (get agent "state")
+        id (get agent "agent_id")
+        detail (str/trim (or (get agent "detail") ""))]
+    (when (contains? #{"blocked" "failed"} state)
+      {"kind" "agent"
+       "id" id
+       "state" state
+       "reason" (or (not-empty detail) (str "agent " state))})))
+
+(defn held-handoff-stall-items [root]
+  (let [dir (fs/path root ".swarmforge" "handoffs" "inbox" "held")]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter #(and (fs/regular-file? %)
+                         (str/ends-with? (fs/file-name %) ".handoff")))
+           (map (fn [file]
+                  (let [m (parse-kv-file file)
+                        from (get m "from" "unknown")
+                        task (get m "task" (fs/file-name file))]
+                    {"kind" "held_handoff"
+                     "id" (fs/file-name file)
+                     "state" "held"
+                     "reason" (str "held handoff from " from
+                                   (when-not (str/blank? task)
+                                     (str " task=" task)))})))
+           vec)
+      [])))
+
+(defn stall-report
+  "B29: operator-facing stalled items derived from existing state files."
+  [root assignments agents]
+  (let [items (vec
+               (concat (keep #(assignment-stall-item root %) assignments)
+                       (keep agent-stall-item agents)
+                       (held-handoff-stall-items root)))
+        summary (if (seq items)
+                  (str (count items) " stalled — "
+                       (->> items
+                            (map #(str (get % "kind") " " (get % "id")
+                                       ": " (get % "reason")))
+                            (take 3)
+                            (str/join "; ")
+                            (#(if (> (count items) 3)
+                                (str % " …")
+                                %))))
+                  "")]
+    {"stalled" (boolean (seq items))
+     "count" (count items)
+     "items" items
+     "summary" summary}))
+
 (defn web-state [root]
   (let [assignments (assignment-state root)
         agents (agent-state root)
         sl-requests (dashreq/list-all-requests root)
-        theme-id (current-theme-id root)]
+        theme-id (current-theme-id root)
+        stalls (stall-report root assignments agents)]
     (cond-> {"generated_at" (now)
              "project_root" (str root)
              "stories" (story-state root)
@@ -883,6 +1013,7 @@
              "agents" agents
              "batches" (batch-state root)
              "blockers" (blocker-state root assignments agents)
+             "stalls" stalls
              "approvals" {"pending" (approval-state-for root "pending")}
              "sl_requests" sl-requests
              "sl_queue_depth" (sl-queue-depth root)
@@ -961,13 +1092,13 @@
     (str "## " title "\n\n" content "\n")))
 
 (defn theme-package-parts [root theme-id]
-  "Ordered package sections. Implementation order always appears: durable theme
-  record preferred, then root draft, else an explicit missing marker so operators
-  notice incomplete analysis (analyst must author implementation-order.md)."
+  "Ordered package sections. Implementation order and dependency-checker always
+  appear (explicit missing markers) so operators notice incomplete analysis."
   (let [theme (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md"))
         module-map (slurp-if-exists (fs/path root ".squad" "themes" theme-id "module-map.md"))
         durable-order (slurp-if-exists (fs/path root ".squad" "themes" theme-id "implementation-order.md"))
         draft-order (slurp-if-exists (fs/path root "implementation-order.md"))
+        checker (slurp-if-exists (fs/path root "dependency-checker.edn"))
         ;; "" is truthy in Clojure — never use (or durable draft) for optional text.
         impl-order (cond
                      (not (str/blank? durable-order)) durable-order
@@ -980,14 +1111,22 @@
                      (str "_(Missing.)_ Analyst must commit root `implementation-order.md` "
                           "(edges or comment-only “no multi-story gates”), then record with "
                           "`squad_theme.sh implementation-order " theme-id
-                          " implementation-order.md`."))]
+                          " implementation-order.md`."))
+        checker-body (if (not (str/blank? checker))
+                       checker
+                       (str "_(Missing.)_ Analyst must commit root `dependency-checker.edn` "
+                            "from the module map (real components/edges, not a hollow stub). "
+                            "See `swarmforge/templates/dependency-checker.edn`. "
+                            "User approval of non-trivial policy is tracked under B25."))]
     (cond-> []
       (not (str/blank? theme))
       (conj {:id "theme" :title "Theme (scheme)" :body theme})
       (not (str/blank? module-map))
       (conj {:id "module-map" :title "Module Map" :body module-map})
       true
-      (conj {:id "implementation-order" :title "Implementation Order" :body impl-order}))))
+      (conj {:id "implementation-order" :title "Implementation Order" :body impl-order})
+      true
+      (conj {:id "dependency-checker" :title "Dependency Checker" :body checker-body}))))
 
 (defn theme-content [root theme-id]
   "Plain-text package body (tests / simple readers). Prefer theme-package-page for HTML."
