@@ -18,6 +18,8 @@
        "  squad_theme.sh approved-story <theme-id> <story-id> <story-file> <assignment-id> <branch> <sha> <detail...>\n"
        "  squad_theme.sh acceptance <theme-id> <artifact-id> <acceptance-file>\n"
        "  squad_theme.sh approve <theme-id> <gate> <detail...>\n"
+       "  squad_theme.sh finalize <theme-id> <detail...>\n"
+       "  squad_theme.sh reopen <theme-id> <detail...>\n"
        "  squad_theme.sh status <theme-id>"))
 
 (def module-map-required-headings
@@ -228,6 +230,8 @@
                    (story-ref-files dir))]
     (inc (if (seq nums) (apply max nums) 0))))
 
+(declare maybe-reopen-on-new-story! read-lifecycle)
+
 (defn add-story! [theme-id story-id story-file]
   (validate-id! "Theme id" theme-id)
   (validate-id! "Story id" story-id)
@@ -241,6 +245,7 @@
     (when (fs/exists? story-path)
       (exit! 2 (str "Story already exists: " story-id)))
     (let [story-number (next-story-number dir)]
+      (maybe-reopen-on-new-story! dir theme-id story-id now)
       (write-atomic! story-path
                      (str "story_id: " story-id "\n"
                           "story_number: " story-number "\n"
@@ -249,6 +254,7 @@
       (write-atomic! (fs/path dir "status")
                      (str "theme_id: " theme-id "\n"
                           "state: story_added\n"
+                          "lifecycle: " (read-lifecycle dir) "\n"
                           "detail: " story-id " " relative-source "\n"
                           "updated_at: " now "\n"))
       (append-line! (fs/path dir "events.log")
@@ -257,7 +263,8 @@
       (println "STORY:" story-id)
       (println "STORY_NUMBER:" story-number)
       (println "PATH:" relative-source)
-      (println "STATE: story_added"))))
+      (println "STATE: story_added")
+      (println "LIFECYCLE:" (read-lifecycle dir)))))
 
 (defn parse-story-pair! [pair]
   (let [[story-id story-file extra] (str/split pair #":" 3)]
@@ -349,6 +356,29 @@
             sha (content-sha (slurp (str content-path)))]
         (write-atomic! (gate-fingerprint-path dir gate) (str sha "\n"))))))
 
+(defn lifecycle-path [dir]
+  (fs/path dir "lifecycle"))
+
+(defn read-lifecycle
+  "Theme slice lifecycle: open (default) or finalized (B23)."
+  [dir]
+  (or (read-value (lifecycle-path dir) "lifecycle")
+      (when (= "finalized"
+               (or (read-value (fs/path dir "status") "lifecycle")
+                   (read-value (fs/path dir "status") "state")))
+        "finalized")
+      "open"))
+
+(defn write-lifecycle! [dir theme-id lifecycle detail now]
+  (write-atomic! (lifecycle-path dir)
+                 (str "theme_id: " theme-id "\n"
+                      "lifecycle: " lifecycle "\n"
+                      "detail: " detail "\n"
+                      "updated_at: " now "\n")))
+
+(defn finalize-gate? [gate]
+  (contains? #{"finalize" "theme-finalize" "theme_finalize"} gate))
+
 (defn approve! [theme-id gate detail-parts]
   (validate-id! "Theme id" theme-id)
   (validate-id! "Gate" gate)
@@ -356,22 +386,71 @@
         dir (theme-dir root theme-id)
         detail (str/replace (str/join " " detail-parts) #"\R+" " ")
         detail (if (str/blank? detail) "approved" detail)
-        now (timestamp)]
+        now (timestamp)
+        gate-norm (if (finalize-gate? gate) "finalize" gate)]
     (ensure-theme! dir theme-id)
     (append-line! (fs/path dir "approvals.tsv")
-                  (str now "\t" gate "\t" detail))
+                  (str now "\t" gate-norm "\t" detail))
     (when (contains? content-gated-theme-gates gate)
       (write-gate-fingerprint! root theme-id gate))
+    (when (finalize-gate? gate)
+      (write-lifecycle! dir theme-id "finalized" detail now))
     (write-atomic! (fs/path dir "status")
                    (str "theme_id: " theme-id "\n"
-                        "state: approved_" gate "\n"
+                        "state: " (if (finalize-gate? gate)
+                                    "finalized"
+                                    (str "approved_" gate-norm)) "\n"
+                        (when (finalize-gate? gate)
+                          "lifecycle: finalized\n")
                         "detail: " detail "\n"
                         "updated_at: " now "\n"))
     (append-line! (fs/path dir "events.log")
-                  (str now "\tapproved_" gate "\t" detail))
+                  (str now "\t" (if (finalize-gate? gate)
+                                  "theme_finalized"
+                                  (str "approved_" gate-norm))
+                       "\t" detail))
     (println "SQUAD_THEME:" theme-id)
-    (println "GATE:" gate)
-    (println "STATE:" (str "approved_" gate))))
+    (println "GATE:" gate-norm)
+    (println "STATE:" (if (finalize-gate? gate) "finalized" (str "approved_" gate-norm)))
+    (when (finalize-gate? gate)
+      (println "LIFECYCLE: finalized"))))
+
+(defn finalize! [theme-id detail-parts]
+  "Mark current theme slice finalized (B23). Same as approve finalize."
+  (approve! theme-id "finalize" detail-parts))
+
+(defn reopen! [theme-id detail-parts]
+  "Re-open a finalized theme for a new story slice (B23)."
+  (validate-id! "Theme id" theme-id)
+  (let [root (fs/absolutize (project-root))
+        dir (theme-dir root theme-id)
+        detail (str/replace (str/join " " detail-parts) #"\R+" " ")
+        detail (if (str/blank? detail) "reopened-for-new-stories" detail)
+        now (timestamp)]
+    (ensure-theme! dir theme-id)
+    (write-lifecycle! dir theme-id "open" detail now)
+    (write-atomic! (fs/path dir "status")
+                   (str "theme_id: " theme-id "\n"
+                        "state: open\n"
+                        "lifecycle: open\n"
+                        "detail: " detail "\n"
+                        "updated_at: " now "\n"))
+    (append-line! (fs/path dir "events.log")
+                  (str now "\ttheme_reopened\t" detail))
+    (println "SQUAD_THEME:" theme-id)
+    (println "LIFECYCLE: open")
+    (println "STATE: open")
+    (println "DETAIL:" detail)))
+
+(defn maybe-reopen-on-new-story! [dir theme-id story-id now]
+  "If theme was finalized, registering a new story re-opens the slice (B23)."
+  (when (= "finalized" (read-lifecycle dir))
+    (let [detail (str "reopened-by-story " story-id)]
+      (write-lifecycle! dir theme-id "open" detail now)
+      (append-line! (fs/path dir "events.log")
+                    (str now "\ttheme_reopened\t" detail))
+      (println "LIFECYCLE: open")
+      (println "REOPENED: true"))))
 
 (defn story-ids [dir]
   (let [stories-dir (fs/path dir "stories")]
@@ -414,6 +493,7 @@
     (println "ACCEPTANCE:" (str/join "," (acceptance-ids dir)))
     (println "MODULE_MAP:" (if (module-map-exists? dir) "present" "missing"))
     (println "IMPLEMENTATION_ORDER:" (if (implementation-order-exists? dir) "present" "missing"))
+    (println "LIFECYCLE:" (read-lifecycle dir))
     (println "APPROVALS:" (count (approval-lines dir)))))
 
 (defn exact-count! [args n]
@@ -451,6 +531,12 @@
    "approve" (fn [args]
                (minimum-count! args 3)
                (approve! (second args) (nth args 2) (drop 3 args)))
+   "finalize" (fn [args]
+                (minimum-count! args 2)
+                (finalize! (second args) (drop 2 args)))
+   "reopen" (fn [args]
+              (minimum-count! args 2)
+              (reopen! (second args) (drop 2 args)))
    "status" (fn [args]
               (exact-count! args 2)
               (print-status! (second args)))})

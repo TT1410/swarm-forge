@@ -2433,6 +2433,51 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest b23-theme-finalize-and-reopen
+  ;; Given a theme with all stories final-approved
+  ;; When squad_next runs
+  ;; Then finalize approval is requested; after finalize residual idles with B23 reason
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required finalize true\n")
+      (write-file (fs/path root "theme.md") "Hello theme.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "hello" "theme.md")
+      (write-file (fs/path root "stories/alpha.md") "Story alpha.\n")
+      (run {:dir root} (script "squad_theme.sh") "story" "hello" "alpha" "stories/alpha.md")
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: hello\n"
+                       "state: final_approved\n"
+                       "final_state: final_approved\n"
+                       "final_approval: approved\n"
+                       "story_approval: approved\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "create_approval_request")
+            out)
+        (is (str/includes? out "finalize")
+            out)
+        (is (str/includes? out "theme-slice-ready-to-finalize")))
+      (run {:dir root} (script "squad_theme.sh") "finalize" "hello" "ship-it")
+      (let [status (:out (run {:dir root} (script "squad_theme.sh") "status" "hello"))]
+        (is (str/includes? status "LIFECYCLE: finalized")))
+      (let [wait (:out (run {:dir root} (script "squad_next.sh") "--residual-only"))]
+        (is (str/includes? wait "NEXT_ACTION: wait")
+            wait)
+        (is (str/includes? wait "finalized")
+            wait)
+        (is (str/includes? wait "FINALIZED_THEME: hello")))
+      (write-file (fs/path root "stories/beta.md") "Story beta.\n")
+      (run {:dir root} (script "squad_theme.sh") "story" "hello" "beta" "stories/beta.md")
+      (let [status (:out (run {:dir root} (script "squad_theme.sh") "status" "hello"))]
+        (is (str/includes? status "LIFECYCLE: open")
+            "new story re-opens finalized theme"))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest b13-hollow-or-missing-checker-is-incomplete-analysis-residual
   ;; Given stories exist but dependency-checker is missing or hollow
   ;; When squad_next runs

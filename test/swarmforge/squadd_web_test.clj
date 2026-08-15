@@ -160,9 +160,16 @@
                   "{:allowed-dependencies {:greeting [] :ui [:greeting]}\n :fail-on-cycles true}\n")
       (let [parts (web/theme-package-parts root "hello")
             order (first (filter #(= "Implementation Order" (:title %)) parts))
-            checker (first (filter #(= "Dependency Checker" (:title %)) parts))]
+            checker (first (filter #(= "Dependency Checker" (:title %)) parts))
+            life (first (filter #(= "Theme Lifecycle" (:title %)) parts))]
         (is (str/includes? (:body order) "awaiting user approval"))
-        (is (str/includes? (:body checker) "awaiting user approval")))
+        (is (str/includes? (:body checker) "awaiting user approval"))
+        (is (str/includes? (:body life) "open")))
+      (write-file (fs/path root ".squad/themes/hello/lifecycle")
+                  "theme_id: hello\nlifecycle: finalized\ndetail: shipped\n")
+      (let [life (first (filter #(= "Theme Lifecycle" (:title %))
+                                (web/theme-package-parts root "hello")))]
+        (is (str/includes? (:body life) "finalized")))
       (finally
         (fs/delete-tree root)))))
 

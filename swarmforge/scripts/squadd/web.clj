@@ -343,7 +343,7 @@
         updateRequestsPanel(data.sl_requests || []);
         if (data.current_theme_id) {
           themePanel.innerHTML = artifactLink('theme', data.current_theme_id,
-            'Theme package: ' + data.current_theme_id + ' (scheme, module map, implementation order)');
+            'Theme package: ' + data.current_theme_id + ' (lifecycle, scheme, module map, order, checker)');
         } else {
           themePanel.innerHTML = '<p class=\"muted\">No theme recorded yet.</p>';
         }
@@ -1147,15 +1147,36 @@
       approved? "approved"
       :else "awaiting user approval")))
 
+(defn theme-lifecycle-status [root theme-id]
+  "B23: open (default) or finalized."
+  (let [life (slurp-if-exists (fs/path root ".squad" "themes" theme-id "lifecycle"))
+        status (slurp-if-exists (fs/path root ".squad" "themes" theme-id "status"))]
+    (or (when (not (str/blank? life))
+          (second (re-find #"(?m)^lifecycle:\s*(.+)$" life)))
+        (when (not (str/blank? status))
+          (or (second (re-find #"(?m)^lifecycle:\s*(.+)$" status))
+              (when (re-find #"(?m)^state:\s*finalized\s*$" status) "finalized")))
+        "open")))
+
 (defn theme-package-parts [root theme-id]
   "Ordered package sections. Implementation order and dependency-checker always
   appear (explicit missing markers) so operators notice incomplete analysis.
-  B25: status line for approval of non-empty order / non-trivial checker."
+  B25: status line for approval of non-empty order / non-trivial checker.
+  B23: lifecycle open/finalized."
   (let [theme (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md"))
         module-map (slurp-if-exists (fs/path root ".squad" "themes" theme-id "module-map.md"))
         durable-order (slurp-if-exists (fs/path root ".squad" "themes" theme-id "implementation-order.md"))
         draft-order (slurp-if-exists (fs/path root "implementation-order.md"))
         checker (slurp-if-exists (fs/path root "dependency-checker.edn"))
+        lifecycle (theme-lifecycle-status root theme-id)
+        lifecycle-body (str "_Lifecycle: **" lifecycle "**_\n\n"
+                            (if (= "finalized" lifecycle)
+                              (str "Theme slice is finalized (shipped/accepted). "
+                                   "New stories re-open automatically, or run "
+                                   "`squad_theme.sh reopen " theme-id " <detail>`.")
+                              (str "Theme slice is open. When all stories are final-approved, "
+                                   "request finalize approval, or run "
+                                   "`squad_theme.sh finalize " theme-id " <detail>`.")))
         order-status (theme-content-gate-status
                       root theme-id "implementation-order"
                       (if (not (str/blank? durable-order)) durable-order ""))
@@ -1186,6 +1207,8 @@
                             "See `swarmforge/templates/dependency-checker.edn`. "
                             "Non-trivial policy requires user approval (B25)."))]
     (cond-> []
+      true
+      (conj {:id "lifecycle" :title "Theme Lifecycle" :body lifecycle-body})
       (not (str/blank? theme))
       (conj {:id "theme" :title "Theme (scheme)" :body theme})
       (not (str/blank? module-map))

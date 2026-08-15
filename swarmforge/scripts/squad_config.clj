@@ -24,7 +24,11 @@
    "implementation_order" true
    "implementation-order" true
    "dependency_checker" true
-   "dependency-checker" true})
+   "dependency-checker" true
+   ;; B23: theme slice finalize/ship requires user approval by default
+   "finalize" true
+   "theme_finalize" true
+   "theme-finalize" true})
 
 (defn squad-env-long [name default-value]
   (if-let [value (System/getenv name)]

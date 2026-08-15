@@ -556,6 +556,22 @@
 (defn theme-module-map-present? [theme-dir]
   (fs/regular-file? (theme-module-map-path theme-dir)))
 
+(defn theme-lifecycle
+  "B23: open (default) or finalized. Stored in lifecycle file or status."
+  [theme-dir]
+  (let [life (fs/path theme-dir "lifecycle")
+        status (fs/path theme-dir "status")]
+    (or (when (fs/regular-file? life)
+          (get (file-map life) "lifecycle"))
+        (when (fs/regular-file? status)
+          (or (get (file-map status) "lifecycle")
+              (when (= "finalized" (get (file-map status) "state"))
+                "finalized")))
+        "open")))
+
+(defn theme-finalized? [theme-dir]
+  (= "finalized" (theme-lifecycle theme-dir)))
+
 (defn theme-records [root]
   (->> (theme-dirs root)
        (map (fn [dir]
@@ -563,7 +579,70 @@
                 {:theme-id theme-id
                  :theme-dir dir
                  :module-map-present? (theme-module-map-present? dir)
-                 :approved-theme? (theme-approved? dir "theme")})))
+                 :approved-theme? (theme-approved? dir "theme")
+                 :lifecycle (theme-lifecycle dir)
+                 :finalized? (theme-finalized? dir)})))
+       vec))
+
+(defn packet-story-done?
+  "Story finished its product pipeline (final approved)."
+  [packet]
+  (or (= "final_approved" (get packet "state"))
+      (= "final_approved" (get packet "final_state"))
+      (field-approved? packet "final_approval")))
+
+(defn theme-packets [root theme-id]
+  (filterv #(= theme-id (get % "theme_id")) (packets root)))
+
+(defn theme-slice-complete?
+  "True when theme has at least one packet and every packet is final-approved."
+  [root theme-id]
+  (let [ps (theme-packets root theme-id)]
+    (and (seq ps) (every? packet-story-done? ps))))
+
+(defn theme-has-open-assignment?
+  [root theme-id]
+  (boolean
+   (some (fn [a]
+           (and (= theme-id (:theme-id a))
+                (not (contains? #{"merged" "rejected" "blocked" "cancelled" "abandoned"
+                                  "replacement_created" "superseded"}
+                                (:state a)))))
+         (assignment-records root))))
+
+(defn theme-finalize-candidate
+  "B23: when slice is done and theme not finalized, request finalize approval."
+  [root theme]
+  (when (and (not (:finalized? theme))
+             (theme-slice-complete? root (:theme-id theme))
+             (not (theme-has-open-assignment? root (:theme-id theme)))
+             (not (approval-record-exists-for? root "theme" (:theme-id theme) "finalize")))
+    (let [theme-id (:theme-id theme)
+          approval-id (str "finalize__" theme-id)]
+      (if (cfg/squad-approval-required? root "finalize")
+        {:priority 40
+         :stage-order 1
+         :next-action "create_approval_request"
+         :theme-id theme-id
+         :story-id "theme"
+         :gate "finalize"
+         :reason "theme slice complete; user finalize/ship approval"
+         :command (str "squad_approval.sh request " approval-id
+                       " theme " theme-id
+                       " finalize Approve_theme_finalize "
+                       "theme-slice-ready-to-finalize")}
+        {:priority 40
+         :stage-order 1
+         :next-action "record_auto_approval"
+         :theme-id theme-id
+         :story-id "theme"
+         :gate "finalize"
+         :reason "finalize approval not required by configuration"
+         :command (str "squad_theme.sh finalize " theme-id " auto-approved-by-config")}))))
+
+(defn theme-finalize-candidates [root]
+  (->> (theme-records root)
+       (keep #(theme-finalize-candidate root %))
        vec))
 
 (defn approval-candidate [root packet gate title reason priority stage-order]
@@ -1916,8 +1995,13 @@
   (let [ctx {:root root
              :rows rows
              :assignments (assignment-records root)
-             :agents (agent-records root rows)}]
+             :agents (agent-records root rows)}
+        finalized (->> (theme-records root)
+                       (filter :finalized?)
+                       (map :theme-id)
+                       set)]
     (->> (for [packet (packets root)
+               :when (not (contains? finalized (get packet "theme_id")))
                transition story-transition-table
                :let [candidate ((:candidate transition) ctx packet)]
                :when candidate]
@@ -2822,17 +2906,38 @@
          (filter active-agent?)
          vec)))
 
-(defn print-wait-action! [active]
-  (println "NEXT_ACTION: wait")
-  (println "REASON:" (if (seq active)
-                       "active agents are still working or awaiting handoff delivery"
-                       "no handoffs, pending approvals, active transient agents, or stale locks"))
-  (doseq [{:keys [agent task-id state quiet-for activity-source]} active]
-    (println "ACTIVE:" agent task-id state
-             (str "quiet_for=" (or quiet-for "unknown"))
-             (str "activity_source=" activity-source)))
-  (println "CHECK_AFTER_SECONDS: 30")
-  (println "COMMAND: sleep 30 && squad_next.sh"))
+(defn finalized-theme-ids [root]
+  (->> (theme-records root)
+       (filter :finalized?)
+       (map :theme-id)
+       sort
+       vec))
+
+(defn print-wait-action!
+  ([active] (print-wait-action! nil active))
+  ([root active]
+   (let [root (or root (fs/absolutize (project-root)))
+         finalized (try (finalized-theme-ids root) (catch Exception _ []))
+         reason (cond
+                  (seq active)
+                  "active agents are still working or awaiting handoff delivery"
+                  (seq finalized)
+                  (str "theme(s) finalized (" (str/join ", " finalized)
+                       "); no open product work — idle until reopen or new stories (B23)")
+                  :else
+                  "no handoffs, pending approvals, active transient agents, or stale locks")]
+     (println "NEXT_ACTION: wait")
+     (println "REASON:" reason)
+     (when (seq finalized)
+       (println "THEME_LIFECYCLE: finalized")
+       (doseq [id finalized]
+         (println "FINALIZED_THEME:" id)))
+     (doseq [{:keys [agent task-id state quiet-for activity-source]} active]
+       (println "ACTIVE:" agent task-id state
+                (str "quiet_for=" (or quiet-for "unknown"))
+                (str "activity_source=" activity-source)))
+     (println "CHECK_AFTER_SECONDS: 30")
+     (println "COMMAND: sleep 30 && squad_next.sh"))))
 
 (defn ready-actions [root rows]
   (sort-by (juxt :priority :theme-id :stage-order :story-id :assignment-id)
@@ -2841,7 +2946,8 @@
                    (story-candidates root rows)
                    (batch-candidates root rows)
                    (merger-candidates root rows)
-                   (generic-ready-assignment-candidates root rows))))
+                   (generic-ready-assignment-candidates root rows)
+                   (theme-finalize-candidates root))))
 
 (defn rows-without-agents [rows agents]
   (remove #(contains? agents (first %)) rows))
@@ -3022,7 +3128,7 @@
                    (print-story-candidate! (first ready-actions) (count ready-actions))
                    (print-concurrent-actions! concurrent-actions))
    :pending-approval (fn [{:keys [pending-approval-file]}] (print-approval-action! pending-approval-file))
-   :wait (fn [{:keys [root rows]}] (print-wait-action! (active-transients root rows)))})
+   :wait (fn [{:keys [root rows]}] (print-wait-action! root (active-transients root rows)))})
 
 (defn print-selected-action! [ctx]
   ((action-print-handlers (action-printer ctx)) ctx))

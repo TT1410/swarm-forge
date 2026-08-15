@@ -13,7 +13,6 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
-| **P2** | B23 | Theme close / finalize undefined | Workflow | Theme lifecycle |
 | **P2** | B18 | `squad_next` mixes plan / policy / present / execute | Architecture | Control plane |
 | **P2** | B16 | Control-plane ownership not modeled | Architecture | Authority |
 | **P2** | B19 | Scheduling priority is emergent | Architecture | Planner |
@@ -28,13 +27,10 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 ## Suggested fix order
 
-1. **Theme architecture control:** **B23**  
-   Theme finalize/ship (B25 order/checker approval + B13 quality + B14 checker card + B12 hardener denylist done; B38 dead-agent repair done).
-
-2. **Control plane (after typed actions B17):** **B18** → **B16** → **B19**  
+1. **Control plane (after typed actions B17):** **B18** → **B16** → **B19**  
    Planner / executor / renderer; authority; single priority policy.
 
-3. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
+2. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
 
 ---
 
@@ -45,7 +41,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | Operator chat / dashboard IO | B24 | IA (B34/B10/B37/B29/B36/B14 done) |
 | Product intake | **B35** | Durable backlog → dispatch as theme/story to SL or TS |
 | Lifecycle hygiene | — | B11/B12/B37/B38 done |
-| Theme / architecture gates | **B23** | Finalize (B25 approve + B13 quality + B14 display done) |
+| Theme / architecture gates | — | B23 finalize + B25/B13/B14 done |
 | Control plane | **B18**, **B16**, **B19**, B20–B22 | Split `squad_next`; ownership; priority; leases |
 
 Source notes for B16–B22: `architecture-improvements.md` (review findings folded in).
@@ -66,26 +62,18 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 | P2 hardener + theme card | **B12**, **B14** | Root tooling denylist + handoff reject; dependency-checker theme package card |
 | P2 theme architecture gates | **B13**, **B25** | Checker quality residual + implementer hard-gate; order/checker user approval + fingerprints + theme package status |
 | P1 agent death repair | **B38** | `session_dead` + residual `repair_dead_agent`; `squad_recover.sh repair` requeues task; SL vs TS owner |
+| P2 theme finalize | **B23** | Theme lifecycle open/finalized; finalize gate; residual idle; re-open on new story |
 
 **Partial progress (still open under related IDs):**
 - Analysis authors checker + order (prompt/contract); seed order when implementer-ready; quality + user approval (B13/B25) done.
 - Theme package shows Implementation Order and Dependency Checker with status (missing / hollow / awaiting approval / approved).
 - Troubleshooter not counted as active transient; product chat `route-to-sl` to SL.
 - Dead-agent repair (B38): classify + residual + repair command; SL/TS execute repair (not full daemon auto).
+- Theme finalize (B23): lifecycle file + finalize/reopen commands + package card + residual idle.
 
 ---
 
 ## P2 — Theme, control plane
-
-### B23 — Theme close / finalize is undefined
-
-**Symptom:** No durable “theme shipped / slice accepted” while still allowing later stories. Residual may thrash with no goal when packets are done.
-
-**Expected:** Finalize/ship approval for current slice; states `open` / `finalized` / re-open on new stories; residual idle or report when finalized; dashboard control.
-
-**Where:** `squad_theme`; `squad_approval`; `squad_next`; dashboard; SL prompt.
-
----
 
 ### B18 — `squad_next` mixes planning, policy, presentation, and execution
 
@@ -212,5 +200,5 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
 **Status:** P0/P1 stuck-swarm class and first P2 set (B31, B09, B17) are done.  
-**Next:** Theme finalize (**B23**), then control-plane split (**B18** / **B16** / **B19**).  
+**Next:** Control-plane split (**B18** / **B16** / **B19**).  
 Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat, lifecycle, visibility, hardener denylist (**B12**), checker card (**B14**), checker quality (**B13**), and order/checker approval (**B25**) are done.

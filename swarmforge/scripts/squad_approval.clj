@@ -23,7 +23,8 @@
 (def valid-gates #{"theme" "story" "gherkin" "qa_procedure" "qa-procedure" "implementation"
                    "code_review" "code-review" "hardening" "qa" "architecture" "final"
                    "implementation-order" "implementation_order"
-                   "dependency-checker" "dependency_checker"})
+                   "dependency-checker" "dependency_checker"
+                   "finalize" "theme_finalize" "theme-finalize"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -53,7 +54,7 @@
   (when-not (contains? valid-gates gate)
     (exit! 2 (str "Approval gate must be theme, story, gherkin, qa-procedure, implementation, "
                   "code-review, hardening, qa, architecture, final, implementation-order, "
-                  "or dependency-checker."))))
+                  "dependency-checker, or finalize."))))
 
 (defn write-atomic! [file content]
   (fs/create-dirs (fs/parent file))
