@@ -2721,13 +2721,55 @@
        (not= "unknown" assignment-id)
        (assignment-merge-blocked? root assignment-id)))
 
+(defn terminal-assignment-states-for-repair []
+  #{"merged" "rejected" "blocked" "replacement_created" "superseded"
+    "review_accepted" "review_changes_requested" "cancelled" "abandoned"})
+
+(defn assignment-open-for-repair? [root task-id]
+  (when (and task-id (not (str/blank? task-id)) (not= "unknown" task-id))
+    (let [state (get (file-map (fs/path root ".squad" "assignments" task-id "status")) "state")]
+      (boolean (and state (not (contains? (terminal-assignment-states-for-repair) state)))))))
+
+(defn agent-session-live? [root agent]
+  (let [meta (file-map (fs/path root ".squad" "agents" agent "metadata"))
+        session (get meta "session")
+        socket-file (fs/path root ".swarmforge" "tmux-socket")
+        socket (when (fs/regular-file? socket-file)
+                 (str/trim (slurp (str socket-file))))]
+    (and (not (str/blank? session))
+         (not (str/blank? socket))
+         (zero? (:exit (process/sh {:continue true}
+                                   "tmux" "-S" socket "has-session" "-t" session))))))
+
+(defn agent-worktree-dirty? [root agent]
+  (let [worktree (get (file-map (fs/path root ".squad" "agents" agent "metadata")) "worktree")]
+    (when (and worktree (fs/directory? worktree))
+      (let [out (:out (process/sh {:continue true}
+                                  "git" "-C" (str worktree)
+                                  "status" "--porcelain=v1" "--untracked-files=all"))]
+        (boolean (seq (remove str/blank? (str/split-lines out))))))))
+
+(defn session-dead-repair-candidate?
+  "B38: quiet agent, session gone, open assignment → repair residual (not vague recover)."
+  [root {:keys [agent task-id] :as record}]
+  (and (active-agent? record)
+       (not (held-for-merge-recovery? root task-id))
+       (assignment-open-for-repair? root task-id)
+       (not (agent-session-live? root agent))))
+
 (defn recovery-candidate-for-agent [root now threshold retry-threshold
                                     {:keys [agent task-id state last-activity-at activity-source] :as record}]
   (when (and (active-agent? record)
              (not (held-for-merge-recovery? root task-id)))
     (let [quiet-for (recovery-quiet-for last-activity-at now)]
       (when (recovery-agent-due? root now threshold retry-threshold agent quiet-for)
-        (recovery-candidate-record threshold retry-threshold quiet-for record)))))
+        (let [base (recovery-candidate-record threshold retry-threshold quiet-for record)
+              repair? (session-dead-repair-candidate? root record)
+              dirty? (boolean (agent-worktree-dirty? root agent))]
+          (cond-> base
+            repair? (assoc :repair? true
+                           :repair-owner (if dirty? "troubleshooter" "squad-leader")
+                           :dirty? dirty?)))))))
 
 (defn recovery-candidate [root rows]
   (let [now (now-instant)
@@ -2736,18 +2778,41 @@
     (some #(recovery-candidate-for-agent root now threshold retry-threshold %)
           (agent-records root rows))))
 
-(defn print-recovery-action! [{:keys [agent task-id state last-activity-at activity-source quiet-for threshold retry-threshold]}]
-  (println "NEXT_ACTION: recover_agent")
-  (println "AGENT:" agent)
-  (println "TASK_ID:" (or task-id "unknown"))
-  (println "STATE:" state)
-  (println "LAST_ACTIVITY_AT:" (or last-activity-at "none"))
-  (println "ACTIVITY_SOURCE:" activity-source)
-  (println "QUIET_FOR_SECONDS:" quiet-for)
-  (println "RECOVERY_QUIET_SECONDS:" threshold)
-  (println "RECOVERY_RETRY_SECONDS:" retry-threshold)
-  (println "REASON: active agent has no recent activity; classify recovery before waiting longer")
-  (println "COMMAND:" (str "squad_recover.sh " agent)))
+(defn print-recovery-action! [{:keys [agent task-id state last-activity-at activity-source quiet-for threshold retry-threshold
+                                      repair? repair-owner dirty?]}]
+  (if repair?
+    (do
+      (println "NEXT_ACTION: repair_dead_agent")
+      (println "OP: repair_dead_agent")
+      (println "AUTHORITY:" (if (= "troubleshooter" repair-owner) ":troubleshooter" ":sl-residual"))
+      (println "REPAIR_OWNER:" repair-owner)
+      (println "AGENT:" agent)
+      (println "TASK_ID:" (or task-id "unknown"))
+      (println "STATE:" state)
+      (println "DIRTY_WORKTREE:" (if dirty? "true" "false"))
+      (println "LAST_ACTIVITY_AT:" (or last-activity-at "none"))
+      (println "ACTIVITY_SOURCE:" activity-source)
+      (println "QUIET_FOR_SECONDS:" quiet-for)
+      (println "REASON: session dead with open assignment — remove agent, clear death blockers, requeue same task")
+      (println "REPAIR_PLAN: remove_dead_agent; clear_death_blockers; requeue_assignment")
+      (println "COMMAND:" (str "squad_recover.sh repair " agent))
+      (println "CLASSIFY_FIRST:" (str "squad_recover.sh " agent))
+      (when (= "troubleshooter" repair-owner)
+        (println "NOTE: Dirty worktree — Troubleshooter/operator should run repair (archives worktree then requeues)."))
+      (when (= "squad-leader" repair-owner)
+        (println "NOTE: Clean dead session — Squad Leader residual may run repair to free slot and requeue task.")))
+    (do
+      (println "NEXT_ACTION: recover_agent")
+      (println "AGENT:" agent)
+      (println "TASK_ID:" (or task-id "unknown"))
+      (println "STATE:" state)
+      (println "LAST_ACTIVITY_AT:" (or last-activity-at "none"))
+      (println "ACTIVITY_SOURCE:" activity-source)
+      (println "QUIET_FOR_SECONDS:" quiet-for)
+      (println "RECOVERY_QUIET_SECONDS:" threshold)
+      (println "RECOVERY_RETRY_SECONDS:" retry-threshold)
+      (println "REASON: active agent has no recent activity; classify recovery before waiting longer")
+      (println "COMMAND:" (str "squad_recover.sh " agent)))))
 
 (defn active-transients [root rows]
   (let [now (now-instant)]

@@ -13,7 +13,6 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
-| **P1** | B38 | Dead agent not detected / not restarted; voluntary exit → retire | Lifecycle / recovery | Agents |
 | **P2** | B23 | Theme close / finalize undefined | Workflow | Theme lifecycle |
 | **P2** | B18 | `squad_next` mixes plan / policy / present / execute | Architecture | Control plane |
 | **P2** | B16 | Control-plane ownership not modeled | Architecture | Authority |
@@ -29,16 +28,13 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 ## Suggested fix order
 
-1. **Agent death / restart:** **B38**  
-   Detect silent session death; restart into same worktree/assignment; do not retire voluntary/process exit while work remains.
+1. **Theme architecture control:** **B23**  
+   Theme finalize/ship (B25 order/checker approval + B13 quality + B14 checker card + B12 hardener denylist done; B38 dead-agent repair done).
 
-2. **Theme architecture control:** **B23**  
-   Theme finalize/ship (B25 order/checker approval + B13 quality + B14 checker card + B12 hardener denylist done).
-
-3. **Control plane (after typed actions B17):** **B18** → **B16** → **B19**  
+2. **Control plane (after typed actions B17):** **B18** → **B16** → **B19**  
    Planner / executor / renderer; authority; single priority policy.
 
-4. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
+3. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
 
 ---
 
@@ -48,7 +44,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 |---------|------|------|
 | Operator chat / dashboard IO | B24 | IA (B34/B10/B37/B29/B36/B14 done) |
 | Product intake | **B35** | Durable backlog → dispatch as theme/story to SL or TS |
-| Lifecycle hygiene | **B38** | Silent death + restart; no voluntary exit→retire (B11/B12/B37 done) |
+| Lifecycle hygiene | — | B11/B12/B37/B38 done |
 | Theme / architecture gates | **B23** | Finalize (B25 approve + B13 quality + B14 display done) |
 | Control plane | **B18**, **B16**, **B19**, B20–B22 | Split `squad_next`; ownership; priority; leases |
 
@@ -69,38 +65,13 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 | P2 visibility batch | **B29**, **B36** | Stall strip + stalled pills; TS `note` progress sidecar + chat UI |
 | P2 hardener + theme card | **B12**, **B14** | Root tooling denylist + handoff reject; dependency-checker theme package card |
 | P2 theme architecture gates | **B13**, **B25** | Checker quality residual + implementer hard-gate; order/checker user approval + fingerprints + theme package status |
+| P1 agent death repair | **B38** | `session_dead` + residual `repair_dead_agent`; `squad_recover.sh repair` requeues task; SL vs TS owner |
 
 **Partial progress (still open under related IDs):**
 - Analysis authors checker + order (prompt/contract); seed order when implementer-ready; quality + user approval (B13/B25) done.
 - Theme package shows Implementation Order and Dependency Checker with status (missing / hollow / awaiting approval / approved).
 - Troubleshooter not counted as active transient; product chat `route-to-sl` to SL.
-
----
-
-## P1 — Agent death / recovery
-
-### B38 — Dead agent not detected / not restarted; voluntary exit must not retire open work
-
-**Symptom (live playground, hardener-001 on `dnd-dice-app-hardener`):**  
-Agent finished quality tooling (`quality passed: dry4clj…`), then the **tmux session vanished** with **no** `failed` / `blocked` / `handoff_sent`. Records stayed `state: running` with a frozen heartbeat. Squadd only wrote `missing-session` (~5 min later). Recovery reported `dirty_worktree` (uncommitted product work, **0 commits ahead**, **no handoff**). Residual looped `recover_agent` / “ask user” instead of **restart**. Singleton hardener stayed occupied; later hardener batch (r2) could not progress cleanly.
-
-**Root gap:**
-1. **Silent death** is not a first-class recovery state with an automated **restart** path (same agent id, worktree, assignment, launch script).
-2. **Last status is a success line**, so “running” looks healthy forever after the process dies.
-3. **Voluntary process exit** (backend ends session without terminal lifecycle) is not distinguished from intentional completion; open assignments must not be **retired** or discarded — they must **restart** or stay held for operator decision when dirty.
-
-**Expected:**
-- Detect session-dead agents with open (non-terminal) assignments after quiet/grace: e.g. recovery state `session_dead` (not only `dirty_worktree` / `failed_no_work` / frozen `running`).
-- **Restart** command: re-launch tmux via existing `launch.sh` into the **same** worktree/assignment; clear `missing-session`; refresh status/heartbeat (`restarted` detail). Prefer daemon/mechanical residual `restart_agent` when safe.
-- Preserve dirty/committed work; never auto-retire while assignment is non-terminal.
-- Agents already cannot `squad_event retired`; strengthen worker prompt: **do not exit the process** before `handoff_sent`; control plane restarts if the session dies early.
-- Refuse / avoid retirement paths that clear open work because the process exited voluntarily.
-
-**Where:** `squad_recover` (classify + `restart`); `squad_next` / residual (prefer `restart_agent` over endless classify-only); `squad_retire` (already blocks non-terminal — keep + cover voluntary-exit cases); `squad_event` / `worker-common.prompt`; optional squadd missing-session → recovery nudge; simulator recovery apply path.
-
-**Related:** B11 (session kill / orphans), B37 (teardown), recovery quiet/retry config, hardener singleton.
-
-**Priority rationale (P1):** Live multi-story swarm stuck a singleton quality gate with good uncommitted work and no durable failure reason — same class as stuck-swarm unblocks.
+- Dead-agent repair (B38): classify + residual + repair command; SL/TS execute repair (not full daemon auto).
 
 ---
 
@@ -241,5 +212,5 @@ Agent finished quality tooling (`quality passed: dry4clj…`), then the **tmux s
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
 **Status:** P0/P1 stuck-swarm class and first P2 set (B31, B09, B17) are done.  
-**Next:** **B38** (dead agent detect + restart; no voluntary exit→retire), then theme finalize (**B23**), then control-plane split (**B18** / **B16** / **B19**).  
+**Next:** Theme finalize (**B23**), then control-plane split (**B18** / **B16** / **B19**).  
 Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat, lifecycle, visibility, hardener denylist (**B12**), checker card (**B14**), checker quality (**B13**), and order/checker approval (**B25**) are done.

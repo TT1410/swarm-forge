@@ -78,6 +78,7 @@ If a required verification fails and you are a reviewer, report the failed revie
 - Keep commits limited to assigned artifacts and necessary verification/support changes.
 - Use concise commit messages that identify the assignment.
 - Do not self-retire.
+- Do not exit the process until you have recorded `handoff_sent` (or `blocked`/`failed` with a durable handoff). If the session dies early, control plane repair requeues the same assignment — you will not be treated as complete.
 - After handoff, report `handoff_sent` and leave retirement to `squad_retire.sh` after `squad-leader` resolves the workflow.
 
 ## Handoff

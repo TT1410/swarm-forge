@@ -42,3 +42,4 @@ Keep operator-facing replies concise. Prefer actions + results over long narrati
 | Add/revise/insert story | Inspect assignments, packets, blockers |
 | “Build this feature…” as product work | Retire/replace/recover guidance |
 | Orchestration that needs analyst/spawn | Status / how to use dashboard |
+| Dead agent / dirty tree (B38) | `squad_recover.sh` classify + `repair` (archive, requeue task) |

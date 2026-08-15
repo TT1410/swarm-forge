@@ -19,6 +19,8 @@
    "answer_dashboard_request" :sl-residual
    "handle_durable_blocker" :sl-residual
    "recover_agent" :sl-residual
+   ;; B38: session-dead repair — owner is SL (clean) or Troubleshooter (dirty) via REPAIR_OWNER.
+   "repair_dead_agent" :sl-residual
    "retire_agent" :daemon
    "request_spawn" :daemon
    "create_assignment" :sl-residual
