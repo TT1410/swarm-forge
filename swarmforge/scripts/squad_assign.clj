@@ -4,7 +4,9 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
             [squad-config :as cfg]
+            [squad-lease :as lease]
             [squad-tool-table :as tools]
+            [squad-transition :as transition]
             [clojure.edn :as edn]
             [clojure.string :as str]))
 
@@ -1050,77 +1052,23 @@
            "Set SWARMFORGE_MAIN_GIT=1 (or SWARMFORGE_ROLE=squadd) from the daemon, or SWARMFORGE_MAIN_GIT_OWNER=any for tests.")))
 
 (defn main-git-lock-dir [root]
-  (fs/path root ".swarmforge" "squad" "main-git.lock"))
-
-(defn lock-owner-pid [lock-dir]
-  (let [owner (fs/path lock-dir "owner")]
-    (when (fs/exists? owner)
-      (some->> (str/split-lines (slurp (str owner)))
-               (some #(second (re-find #"^pid:\s*([0-9]+)" %)))
-               parse-long))))
-
-(defn pid-alive? [pid]
-  (when pid
-    (let [handle (java.lang.ProcessHandle/of pid)]
-      (and (.isPresent handle)
-           (.isAlive (.get handle))))))
-
-(defn cleanup-empty-main-git-lock! [lock-dir]
-  (when (and (fs/directory? lock-dir)
-             (or (not (fs/exists? lock-dir))
-                 (empty? (fs/list-dir lock-dir))))
-    (fs/delete-tree lock-dir)))
-
-(defn reclaim-stale-main-git-lock! [lock-dir]
-  (let [pid (lock-owner-pid lock-dir)]
-    (when (and (fs/directory? lock-dir)
-               (or (nil? pid) (not (pid-alive? pid))))
-      (fs/delete-tree lock-dir)
-      true)))
-
-(defn try-acquire-main-git-lock! [lock-dir]
-  (try
-    (fs/create-dirs (fs/parent lock-dir))
-    (fs/create-dir lock-dir)
-    (spit (str (fs/path lock-dir "owner"))
-          (str "pid: " (.pid (java.lang.ProcessHandle/current)) "\n"))
-    true
-    (catch java.nio.file.FileAlreadyExistsException _
-      (reclaim-stale-main-git-lock! lock-dir)
-      (cleanup-empty-main-git-lock! lock-dir)
-      false)))
-
-(defn acquire-main-git-lock! [root]
-  (let [lock-dir (main-git-lock-dir root)
-        deadline (+ (System/currentTimeMillis) main-git-lock-timeout-ms)]
-    (loop []
-      (cond
-        (try-acquire-main-git-lock! lock-dir)
-        lock-dir
-
-        (> (System/currentTimeMillis) deadline)
-        (exit! 2
-               (str "Timed out waiting for main-git lock: " lock-dir)
-               "If no squadd merge-ready/accept-merge is running, remove the stale lock and retry.")
-
-        :else
-        (do
-          (reclaim-stale-main-git-lock! lock-dir)
-          (Thread/sleep main-git-lock-poll-ms)
-          (recur))))))
-
-(defn release-main-git-lock! [lock-dir]
-  (when (and lock-dir (fs/directory? lock-dir))
-    (fs/delete-tree lock-dir)))
+  (lease/lease-dir root "main-git"))
 
 (defn with-main-git-lock
-  "Serialize main-repo dry-run worktree and accept-merge under one process lock."
+  "Serialize main-repo dry-run worktree and accept-merge under shared lease (B20)."
   [root f]
-  (let [lock-dir (acquire-main-git-lock! root)]
-    (try
-      (f)
-      (finally
-        (release-main-git-lock! lock-dir)))))
+  (try
+    (lease/with-lease root "main-git"
+                      {:timeout-ms main-git-lock-timeout-ms
+                       :poll-ms main-git-lock-poll-ms
+                       :timeout-message
+                       (str "Timed out waiting for main-git lock: "
+                            (lease/lease-dir root "main-git")
+                            "\nIf no squadd merge-ready/accept-merge is running, remove the stale lock and retry.")}
+                      f)
+    (catch clojure.lang.ExceptionInfo e
+      (exit! 2 (ex-message e)
+             (or (get (ex-data e) :lease) "")))))
 
 (defn transient-git-lock-error?
   "True when git failed in a way that is safe to retry (ref/lock races, EPERM on lock create)."
@@ -1357,22 +1305,20 @@
     (println "BLOCKER:" (str (fs/path dir "blocker.md")))))
 
 (defn record-accepted-merge! [root dir assignment-id commit detail now]
-  (let [head (str/trim (:out (sh-at root "git" "rev-parse" "--short=10" "HEAD")))]
-    (write-atomic! (fs/path dir "accepted-merge")
-                   (str "assignment_id: " assignment-id "\n"
-                        "state: merged\n"
-                        "commit: " commit "\n"
-                        "merge_commit: " head "\n"
-                        "detail: " detail "\n"
-                        "updated_at: " now "\n"))
-    (write-atomic! (fs/path dir "status")
-                   (str "assignment_id: " assignment-id "\n"
-                        "state: merged\n"
-                        "detail: " detail "\n"
-                        "updated_at: " now "\n"))
-    (append-line! (fs/path dir "events.log")
-                  (str now "\tmerged\t" commit "\t" head "\t" detail))
-    (assignment-theme-event! root dir "merged" assignment-id commit head)
+  "B21: durable accept-merge success via transition apply (multi-file side effects)."
+  (let [head (str/trim (:out (sh-at root "git" "rev-parse" "--short=10" "HEAD")))
+        metadata (fs/path dir "metadata")
+        theme-id (read-value metadata "theme_id")
+        story-id (read-value metadata "story_id")]
+    (transition/apply-transition!
+     root :accept-merge
+     {:assignment-id assignment-id
+      :commit commit
+      :merge-commit head
+      :detail detail
+      :now now
+      :theme-id theme-id
+      :story-id story-id})
     head))
 
 (defn mark-original-resolved-by-merger! [root merger-dir merger-assignment-id merger-commit merge-commit now]

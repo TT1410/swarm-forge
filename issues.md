@@ -16,15 +16,12 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | **P3** | B35 | Squad product backlog registry (list / select / dispatch) | Product / UX | Operator intake |
 | **P3** | B24 | Dashboard information architecture | UX / design | Dashboard |
 | **P3** | B15 | Grok terminal window geometry / scroll | UX | Terminal |
-| **P3** | B20 | Shared lease primitive missing | Architecture | Concurrency |
-| **P3** | B21 | FSM transitions have hidden multi-file side effects | Architecture | Persistence |
-| **P3** | B22 | Durable record formats informal | Architecture | State schema |
 
 ---
 
 ## Suggested fix order
 
-1. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
+1. **P3 product intake / polish:** **B35** (with B24), then **B15**.
 
 ---
 
@@ -36,7 +33,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | Product intake | **B35** | Durable backlog → dispatch as theme/story to SL or TS |
 | Lifecycle hygiene | — | B11/B12/B37/B38 done |
 | Theme / architecture gates | — | B23 finalize + B25/B13/B14 done |
-| Control plane | B20–B22 | B18/B16/B19 done (planner policy + authority + modules); leases/FSM/schema remain |
+| Control plane | — | B18/B16/B19 + B20 lease + B21 transition + B22 records done |
 
 Source notes for B16–B22: `architecture-improvements.md` (review findings folded in).
 
@@ -58,6 +55,7 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 | P1 agent death repair | **B38** | `session_dead` + residual `repair_dead_agent`; `squad_recover.sh repair` requeues task; SL vs TS owner |
 | P2 theme finalize | **B23** | Theme lifecycle open/finalized; finalize gate; residual idle; re-open on new story |
 | P2 control plane | **B18**, **B16**, **B19** | `squad_control_plane` priority policy; authority allow-lists; executor/renderer modules; residual class selection |
+| P3 deep architecture | **B20**, **B21**, **B22** | `squad_lease`; `squad_transition` accept-merge; `squad_records` kv/headers+body/edn/events |
 
 **Partial progress (still open under related IDs):**
 - Analysis authors checker + order (prompt/contract); seed order when implementer-ready; quality + user approval (B13/B25) done.
@@ -66,10 +64,11 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 - Dead-agent repair (B38): classify + residual + repair command; SL/TS execute repair (not full daemon auto).
 - Theme finalize (B23): lifecycle file + finalize/reopen commands + package card + residual idle.
 - Control plane (B18/B16/B19): policy + authority modules; squad_next still holds state scanning (further extraction optional).
+- Deep arch (B20–B22): lease used for main-git + spawn/retire; accept-merge durable writes via transition; shared records helpers (more call sites can migrate).
 
 ---
 
-## P3 — Product intake, polish, and deep architecture
+## P3 — Product intake and polish
 
 ### B35 — Squad product backlog registry (list / select / dispatch)
 
@@ -123,40 +122,10 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 
 ---
 
-### B20 — Shared lease primitive missing
-
-**From architecture review.** Merge, spawn, handoff each invent concurrency.
-
-**Expected:** Small common lease module (token, TTL, acquire/release); per-resource use — not one mega-lock.
-
-**Priority (P3):** After hot paths stabilize; after B17–B18 slices.
-
----
-
-### B21 — FSM transitions have hidden multi-file side effects
-
-**From architecture review.** e.g. accept-merge writes many records without one transition API.
-
-**Expected:** Explicit before→after; one persistence layer per transition; tests assert full after-state.
-
-**Depends on:** B17–B18; B22 helps shape.
-
----
-
-### B22 — Durable record formats are informal
-
-**From architecture review.** `key: value` until blank line; multiline (B10) and partial writes recur.
-
-**Expected:** Headers+body for messages; EDN for structured state; append-only events; shared safe readers.
-
-**Priority (P3) as a program:** Systemic. Concrete pain is P2 **B10**.
-
----
-
 ## Architecture north star
 
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
-**Status:** P0/P1 stuck-swarm class and first P2 set (B31, B09, B17) are done.  
-**Next:** P3 product intake (**B35** with B24), then polish (**B15**) and deep arch (**B20**–**B22**).  
-Theme finalize (**B23**) and control-plane policy (**B18**/**B16**/**B19**) are done. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat, lifecycle, visibility, hardener denylist (**B12**), checker card (**B14**), checker quality (**B13**), and order/checker approval (**B25**) are done.
+**Status:** P0–P2 control plane and deep arch foundation done.  
+**Next:** P3 product intake (**B35** with B24), then polish (**B15**).  
+Deep arch modules: `squad_lease` (B20), `squad_transition` (B21 accept-merge), `squad_records` (B22). Further migration of call sites is incremental. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute).

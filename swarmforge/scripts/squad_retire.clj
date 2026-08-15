@@ -4,6 +4,7 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
             [squad-config :as cfg]
+            [squad-lease :as lease]
             [clojure.string :as str]))
 
 (def usage-text
@@ -46,34 +47,20 @@
     (spit (str tmp) content)
     (fs/move tmp file {:replace-existing true})))
 
-(defn cleanup-empty-lock! [lock-dir]
-  (when (and (fs/directory? lock-dir)
-             (not (fs/exists? (fs/path lock-dir "owner")))
-             (empty? (fs/list-dir lock-dir)))
-    (fs/delete-tree lock-dir)))
-
-(defn try-acquire-lock! [lock-dir]
-  (try
-    (fs/create-dir lock-dir)
-    (spit (str (fs/path lock-dir "owner"))
-          (str "pid: " (.pid (java.lang.ProcessHandle/current)) "\n"))
-    true
-    (catch java.nio.file.FileAlreadyExistsException _
-      (cleanup-empty-lock! lock-dir)
-      false)))
-
-(defn acquire-lock! [lock-dir]
-  (let [deadline (+ (System/currentTimeMillis) 10000)]
-    (loop []
-      (when (> (System/currentTimeMillis) deadline)
-        (exit! 2
-               (str "Timed out waiting for squad registry lock: " lock-dir)
-               "If no squad_spawn.sh or squad_retire.sh process is running, remove the stale lock directory and retry."))
-    (if (try-acquire-lock! lock-dir)
+(defn acquire-lock!
+  "B20: shared spawn/registry lease."
+  [lock-dir]
+  (let [lock-dir (fs/path lock-dir)
+        root (-> lock-dir fs/parent fs/parent fs/parent)]
+    (try
+      (lease/acquire! root "spawn"
+                      {:timeout-ms 10000
+                       :timeout-message
+                       (str "Timed out waiting for squad registry lock: " lock-dir
+                            "\nIf no squad_spawn.sh or squad_retire.sh process is running, remove the stale lock directory and retry.")})
       nil
-      (do
-        (Thread/sleep 50)
-        (recur))))))
+      (catch clojure.lang.ExceptionInfo e
+        (exit! 2 (ex-message e))))))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
