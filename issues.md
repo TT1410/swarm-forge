@@ -13,9 +13,6 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
-| **P2** | B18 | `squad_next` mixes plan / policy / present / execute | Architecture | Control plane |
-| **P2** | B16 | Control-plane ownership not modeled | Architecture | Authority |
-| **P2** | B19 | Scheduling priority is emergent | Architecture | Planner |
 | **P3** | B35 | Squad product backlog registry (list / select / dispatch) | Product / UX | Operator intake |
 | **P3** | B24 | Dashboard information architecture | UX / design | Dashboard |
 | **P3** | B15 | Grok terminal window geometry / scroll | UX | Terminal |
@@ -27,10 +24,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 ## Suggested fix order
 
-1. **Control plane (after typed actions B17):** **B18** → **B16** → **B19**  
-   Planner / executor / renderer; authority; single priority policy.
-
-2. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
+1. **P3 product intake / polish / deep arch:** **B35** (with B24), **B15**, then **B20** → **B21** → **B22**.
 
 ---
 
@@ -42,7 +36,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | Product intake | **B35** | Durable backlog → dispatch as theme/story to SL or TS |
 | Lifecycle hygiene | — | B11/B12/B37/B38 done |
 | Theme / architecture gates | — | B23 finalize + B25/B13/B14 done |
-| Control plane | **B18**, **B16**, **B19**, B20–B22 | Split `squad_next`; ownership; priority; leases |
+| Control plane | B20–B22 | B18/B16/B19 done (planner policy + authority + modules); leases/FSM/schema remain |
 
 Source notes for B16–B22: `architecture-improvements.md` (review findings folded in).
 
@@ -63,6 +57,7 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 | P2 theme architecture gates | **B13**, **B25** | Checker quality residual + implementer hard-gate; order/checker user approval + fingerprints + theme package status |
 | P1 agent death repair | **B38** | `session_dead` + residual `repair_dead_agent`; `squad_recover.sh repair` requeues task; SL vs TS owner |
 | P2 theme finalize | **B23** | Theme lifecycle open/finalized; finalize gate; residual idle; re-open on new story |
+| P2 control plane | **B18**, **B16**, **B19** | `squad_control_plane` priority policy; authority allow-lists; executor/renderer modules; residual class selection |
 
 **Partial progress (still open under related IDs):**
 - Analysis authors checker + order (prompt/contract); seed order when implementer-ready; quality + user approval (B13/B25) done.
@@ -70,44 +65,7 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 - Troubleshooter not counted as active transient; product chat `route-to-sl` to SL.
 - Dead-agent repair (B38): classify + residual + repair command; SL/TS execute repair (not full daemon auto).
 - Theme finalize (B23): lifecycle file + finalize/reopen commands + package card + residual idle.
-
----
-
-## P2 — Theme, control plane
-
-### B18 — `squad_next` mixes planning, policy, presentation, and execution
-
-**From architecture review.** One module candidates, applies, prints, and encodes daemon vs residual policy.
-
-**Expected:** Planner (state → typed actions) · Executor (authority allow-lists) · Renderer (views).
-
-**Depends on:** B17 (done). Pairs with B19.
-
-**Where:** `squad_next.clj`.
-
----
-
-### B16 — Control-plane ownership is implicit, not modeled
-
-**From architecture review.** Daemon vs SL vs Troubleshooter ownership is env/prompt, not API.
-
-**Expected:** Actions tagged with authority; residual cannot reach accept-merge etc.; Troubleshooter elevated set explicit (B09).
-
-**Depends on:** B17 (done), B18.
-
-**Where:** `squad_next.clj`, `squadd.clj`, assign/merge scripts.
-
----
-
-### B19 — Scheduling priority is emergent
-
-**From architecture review.** Bookkeeping, spawn, handoffs, dashboard, watchdogs each order themselves.
-
-**Expected:** One planner priority policy; tests assert it.
-
-**Depends on:** B17–B18.
-
-**Where:** mechanical pass; spawn poll; residual vs operator.
+- Control plane (B18/B16/B19): policy + authority modules; squad_next still holds state scanning (further extraction optional).
 
 ---
 
@@ -200,5 +158,5 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
 **Status:** P0/P1 stuck-swarm class and first P2 set (B31, B09, B17) are done.  
-**Next:** Control-plane split (**B18** / **B16** / **B19**).  
-Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat, lifecycle, visibility, hardener denylist (**B12**), checker card (**B14**), checker quality (**B13**), and order/checker approval (**B25**) are done.
+**Next:** P3 product intake (**B35** with B24), then polish (**B15**) and deep arch (**B20**–**B22**).  
+Theme finalize (**B23**) and control-plane policy (**B18**/**B16**/**B19**) are done. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat, lifecycle, visibility, hardener denylist (**B12**), checker card (**B14**), checker quality (**B13**), and order/checker approval (**B25**) are done.

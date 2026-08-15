@@ -5,6 +5,8 @@
             [babashka.process :as process]
             [squad-actions :as actions]
             [squad-config :as cfg]
+            [squad-control-plane :as plane]
+            [squad-executor :as executor]
             [squad-state :as squad-state]
             [clojure.edn :as edn]
             [clojure.set]
@@ -620,7 +622,7 @@
     (let [theme-id (:theme-id theme)
           approval-id (str "finalize__" theme-id)]
       (if (cfg/squad-approval-required? root "finalize")
-        {:priority 40
+        {:priority (plane/ready-priority-of :theme-finalize)
          :stage-order 1
          :next-action "create_approval_request"
          :theme-id theme-id
@@ -631,7 +633,7 @@
                        " theme " theme-id
                        " finalize Approve_theme_finalize "
                        "theme-slice-ready-to-finalize")}
-        {:priority 40
+        {:priority (plane/ready-priority-of :theme-finalize)
          :stage-order 1
          :next-action "record_auto_approval"
          :theme-id theme-id
@@ -1231,7 +1233,7 @@
          assignments)))
 
 (defn theme-module-map-candidate [theme]
-  {:priority 18
+  {:priority (plane/ready-priority-of :theme-module-map)
    :stage-order 1
    :next-action "write_theme_module_map"
    :theme-id (:theme-id theme)
@@ -1257,7 +1259,7 @@
                      approval (when (and (:module-map-present? theme)
                                          (not (:approved-theme? theme))
                                          (not (approval-record-exists-for? root "theme" (:theme-id theme) "theme")))
-                                {:priority 20
+                                {:priority (plane/ready-priority-of :theme-approval)
                                  :stage-order 1
                                  :next-action "create_approval_request"
                                  :theme-id (:theme-id theme)
@@ -2400,6 +2402,7 @@
     (doseq [field story-candidate-fields]
       (print-candidate-field! candidate field))
     (println "CANDIDATES:" total)
+    (println "AUTHORITY:" (:authority candidate))
     (println "COMMAND:" (actions/shell-command candidate))))
 
 (def concurrent-action-fields
@@ -2471,12 +2474,10 @@
   (process/sh {:dir (str root) :continue true}
               "bash" "-c" (str "PATH=" script-dir ":$PATH; " command)))
 
-(defn apply-candidate! [root candidate]
-  (let [result (shell-command! root (:command candidate))]
-    (assoc candidate
-           :exit (:exit result)
-           :out (:out result)
-           :err (:err result))))
+(defn apply-candidate!
+  "B16/B18: apply via executor under :daemon authority by default."
+  [root candidate]
+  (executor/apply-candidate! root candidate :daemon))
 
 (defn print-applied-transition! [{:keys [next-action story-id assignment-id batch-id exit err]}]
   (println "APPLIED_TRANSITION:" next-action
@@ -2685,7 +2686,7 @@
 (defn print-in-process-handoff-action! [root file]
   (if-let [{:keys [action reason command]} (in-process-git-handoff-command root file)]
     (if (and *sl-facing-residual?*
-             (contains? #{"check_merge_readiness" "accept_merge"} action))
+             (plane/daemon-only-main-git-op? action))
       (print-daemon-owned-main-git-wait! action (handoff-task file))
       (print-handoff-action! action file reason command))
     (if (in-process-merge-blocked? root file)
@@ -3081,31 +3082,47 @@
       :pending-approval-file (pending-approval root)}
      concurrent)))
 
-(def action-rules
-  [[:finish-in-process in-process-needs-action?]
-   [:process-handoff :new-handoff]
-   [:stale-lock :stale-lock-info]
-   [:pending-spawn :pending-spawn-file]
+(def action-rule-predicates
+  "Predicates for residual classes. Order comes from plane/residual-class-order (B19)."
+  {:finish-in-process in-process-needs-action?
+   :process-handoff :new-handoff
+   :stale-lock :stale-lock-info
+   :pending-spawn :pending-spawn-file
    ;; Operator dashboard requests beat story FSM residual work and approval framing.
-   [:dashboard-request :pending-dashboard-request]
-   [:retire :retire-candidate]
-   [:recover :recover-candidate]
+   :dashboard-request :pending-dashboard-request
+   :retire :retire-candidate
+   :recover :recover-candidate
    ;; Durable blockers outrank ordinary story ready-actions so SL cannot claim "no blocker"
    ;; while .squad/blockers/ still has open rejection/assignment blockers.
-   [:durable-blocker :durable-blocker]
-   [:ready-action #(seq (:ready-actions %))]
-   [:pending-approval :pending-approval-file]])
+   :durable-blocker :durable-blocker
+   :ready-action #(seq (:ready-actions %))
+   :pending-approval :pending-approval-file})
+
+(def action-rules
+  "B19: residual ranking is plane/residual-class-order, not ad-hoc list order here."
+  (mapv (fn [class]
+          [class (get action-rule-predicates class (constantly false))])
+        (remove #{:wait} plane/residual-class-order)))
 
 (defn action-rule-matches? [ctx [_ predicate]]
   (if (keyword? predicate)
     (get ctx predicate)
     (predicate ctx)))
+
 (defn action-printer [ctx]
-  (or (some (fn [[action :as rule]]
-              (when (action-rule-matches? ctx rule)
-                action))
-            action-rules)
-      :wait))
+  "B18/B19: select residual class via control-plane policy."
+  (let [presence {:in-process-needs-action? (in-process-needs-action? ctx)
+                  :new-handoff (:new-handoff ctx)
+                  :stale-lock-info (:stale-lock-info ctx)
+                  :pending-spawn-file (:pending-spawn-file ctx)
+                  :pending-dashboard-request (:pending-dashboard-request ctx)
+                  :retire-candidate (:retire-candidate ctx)
+                  :recover-candidate (:recover-candidate ctx)
+                  :durable-blocker (:durable-blocker ctx)
+                  :ready-actions (:ready-actions ctx)
+                  :pending-approval-file (:pending-approval-file ctx)}
+        class (plane/select-residual-class presence)]
+    class))
 
 (def action-print-handlers
   {:finish-in-process

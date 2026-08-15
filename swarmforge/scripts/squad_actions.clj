@@ -10,7 +10,9 @@
   #{:daemon :sl-residual :troubleshooter :operator})
 
 (def op-authority
-  "Default authority for known ops. Unknown ops default to :sl-residual."
+  "Default authority for known ops (B16). Unknown ops default to :sl-residual.
+  Daemon-only main-git ops (accept_merge, merge_ready, check_merge_readiness) must
+  never default to SL residual."
   {"wait" :sl-residual
    "wait_for_daemon_main_git" :sl-residual
    "wait_for_spawn" :sl-residual
@@ -21,20 +23,34 @@
    "recover_agent" :sl-residual
    ;; B38: session-dead repair — owner is SL (clean) or Troubleshooter (dirty) via REPAIR_OWNER.
    "repair_dead_agent" :sl-residual
+   "write_theme_module_map" :sl-residual
+   "complete_dependency_checker" :sl-residual
    "retire_agent" :daemon
    "request_spawn" :daemon
-   "create_assignment" :sl-residual
-   "create_approval_request" :sl-residual
+   ;; Daemon owns mechanical create/spawn/approval-request; SL residual may still
+   ;; surface them when the advisor leaves COMMAND for judgment (allow-list has both).
+   "create_assignment" :daemon
+   "create_approval_request" :daemon
    "record_auto_approval" :daemon
    "record_merged_result" :daemon
    "record_merged_batch_result" :daemon
    "complete_batch" :daemon
    "record_batch_membership" :daemon
    "record_review_result" :daemon
+   "record_post_revision_review_acceptance" :daemon
+   "record_implementation_order" :daemon
+   "register_story_artifact" :daemon
+   "register_story_packet" :daemon
+   "attach_story_artifact" :daemon
+   "declare_merge_blocker" :daemon
    "merge_ready" :daemon
    "accept_merge" :daemon
+   "check_merge_readiness" :daemon
+   "record_assignment_result" :daemon
    "claim_handoff" :daemon
+   "process_handoff" :daemon
    "finish_held_handoff" :daemon
+   "finish_in_process_handoff" :daemon
    "clear_stale_lock" :daemon
    "park_merge_blocked" :daemon
    "hold_merge_blocked" :daemon})
