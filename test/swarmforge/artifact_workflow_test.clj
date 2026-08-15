@@ -412,9 +412,15 @@
              "swarmforge-analyst-001"
              sha))
       (let [theme-required (run {:dir root} (script "squad_approval.sh") "required" "theme")
-            implementation-required (run {:dir root} (script "squad_approval.sh") "required" "implementation")]
+            implementation-required (run {:dir root} (script "squad_approval.sh") "required" "implementation")
+            order-required (run {:dir root} (script "squad_approval.sh") "required" "implementation-order")
+            checker-required (run {:dir root} (script "squad_approval.sh") "required" "dependency-checker")]
         (is (str/includes? (:out theme-required) "REQUIRED: true"))
-        (is (str/includes? (:out implementation-required) "REQUIRED: false")))
+        (is (str/includes? (:out implementation-required) "REQUIRED: false"))
+        (is (str/includes? (:out order-required) "REQUIRED: true")
+            "B25: implementation-order requires approval by default")
+        (is (str/includes? (:out checker-required) "REQUIRED: true")
+            "B25: dependency-checker requires approval by default"))
       (write-file (fs/path root "swarmforge/squad.conf")
                   "approval_required implementation true\napproval_required gherkin false\n")
       (let [implementation-required (run {:dir root} (script "squad_approval.sh") "required" "implementation")

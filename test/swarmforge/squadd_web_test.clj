@@ -142,7 +142,27 @@
                                    (web/theme-package-parts root "hello")))]
         (is (str/includes? (:body checker) ":greeting"))
         (is (str/includes? (:body checker) ":ui"))
-        (is (not (str/includes? (:body checker) "Missing"))))
+        (is (str/includes? (:body checker) "Status:"))
+        (is (str/includes? (:body checker) "awaiting user approval"))
+        (is (not (str/includes? (:body checker) "_(Missing.)_"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest theme-package-shows-architecture-gate-status
+  ;; B25: order and checker sections show approval status
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad/themes/hello/theme.md") "Hello theme.\n")
+      (write-file (fs/path root ".squad/themes/hello/module-map.md") "Map.\n")
+      (write-file (fs/path root ".squad/themes/hello/implementation-order.md")
+                  "story-b: story-a\n")
+      (write-file (fs/path root "dependency-checker.edn")
+                  "{:allowed-dependencies {:greeting [] :ui [:greeting]}\n :fail-on-cycles true}\n")
+      (let [parts (web/theme-package-parts root "hello")
+            order (first (filter #(= "Implementation Order" (:title %)) parts))
+            checker (first (filter #(= "Dependency Checker" (:title %)) parts))]
+        (is (str/includes? (:body order) "awaiting user approval"))
+        (is (str/includes? (:body checker) "awaiting user approval")))
       (finally
         (fs/delete-tree root)))))
 

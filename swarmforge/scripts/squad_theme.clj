@@ -320,6 +320,35 @@
     (println "PATH:" relative-source)
     (println "STATE: acceptance_added")))
 
+(def content-gated-theme-gates
+  "Theme gates whose approval is bound to a content fingerprint (B25 re-approve on revision)."
+  #{"implementation-order" "implementation_order"
+    "dependency-checker" "dependency_checker"})
+
+(defn normalize-theme-gate [gate]
+  (str/replace gate "_" "-"))
+
+(defn content-sha [text]
+  (let [md (java.security.MessageDigest/getInstance "SHA-256")
+        digest (.digest md (.getBytes (str text) "UTF-8"))]
+    (.toString (BigInteger. 1 digest) 16)))
+
+(defn gate-content-path [root theme-id gate]
+  (case (normalize-theme-gate gate)
+    "implementation-order" (implementation-order-path (theme-dir root theme-id))
+    "dependency-checker" (fs/path root "dependency-checker.edn")
+    nil))
+
+(defn gate-fingerprint-path [theme-dir gate]
+  (fs/path theme-dir "approval-fingerprints" (str (normalize-theme-gate gate) ".sha")))
+
+(defn write-gate-fingerprint! [root theme-id gate]
+  (when-let [content-path (gate-content-path root theme-id gate)]
+    (when (fs/regular-file? content-path)
+      (let [dir (theme-dir root theme-id)
+            sha (content-sha (slurp (str content-path)))]
+        (write-atomic! (gate-fingerprint-path dir gate) (str sha "\n"))))))
+
 (defn approve! [theme-id gate detail-parts]
   (validate-id! "Theme id" theme-id)
   (validate-id! "Gate" gate)
@@ -331,6 +360,8 @@
     (ensure-theme! dir theme-id)
     (append-line! (fs/path dir "approvals.tsv")
                   (str now "\t" gate "\t" detail))
+    (when (contains? content-gated-theme-gates gate)
+      (write-gate-fingerprint! root theme-id gate))
     (write-atomic! (fs/path dir "status")
                    (str "theme_id: " theme-id "\n"
                         "state: approved_" gate "\n"

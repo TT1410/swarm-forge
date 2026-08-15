@@ -455,10 +455,10 @@
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  "approval_required implementation false\n")
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
       (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
                   "")
+      (write-nontrivial-checker! root)
       (write-file (fs/path root ".squad/stories/alpha/packet")
                   (str "story_id: alpha\n"
                        "theme_id: wumpus\n"
@@ -941,6 +941,8 @@
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md") "")
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
+      (write-nontrivial-checker! root)
       (let [sha (prepare-implementation-packet! root "wumpus" "cave-topology")]
         (run {:dir root} (script "squad_packet.sh") "approve" "cave-topology" "implementation" "approved")
         (run {:dir root} (script "squad_packet.sh") "record" "cave-topology" "implementation" "impl-1" "master" sha)
@@ -2085,10 +2087,10 @@
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  "max_transient_agents 10\napproval_required implementation false\n")
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
       (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
                   "story-b: story-a\n")
+      (write-nontrivial-checker! root)
       (doseq [story ["story-a" "story-b"]]
         (write-file (fs/path root ".squad/stories" story "packet")
                     (str "story_id: " story "\n"
@@ -2198,10 +2200,10 @@
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  "max_transient_agents 10\napproval_required implementation false\n")
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
       (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
                   "alpha:\n")
+      (write-nontrivial-checker! root)
       (write-file (fs/path root ".squad/stories/alpha/packet")
                   (str "story_id: alpha\n"
                        "theme_id: wumpus\n"
@@ -2245,6 +2247,8 @@
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md") "")
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
+      (write-nontrivial-checker! root)
       (write-file (fs/path root ".squad/stories/alpha/packet")
                   (str "story_id: alpha\n"
                        "theme_id: wumpus\n"
@@ -2321,8 +2325,8 @@
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  "max_transient_agents 10\napproval_required implementation false\n")
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
+      (write-nontrivial-checker! root)
       (write-file (fs/path root "implementation-order.md")
                   "story-b: story-a\n")
       (doseq [story ["story-a" "story-b"]]
@@ -2355,8 +2359,8 @@
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
                        "troubleshooter\tmaster\t" root "\tswarmforge-troubleshooter\tTroubleshooter\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  "max_transient_agents 10\napproval_required implementation false\n")
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
+      (write-nontrivial-checker! root)
       (write-file (fs/path root ".squad/stories/hello-world/packet")
                   (str "story_id: hello-world\n"
                        "theme_id: hello-world\n"
@@ -2426,5 +2430,165 @@
             "mechanical path records or offers durable order")
         (when (fs/exists? durable)
           (is (str/includes? (slurp durable) "story-b: story-a"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest b13-hollow-or-missing-checker-is-incomplete-analysis-residual
+  ;; Given stories exist but dependency-checker is missing or hollow
+  ;; When squad_next runs
+  ;; Then complete_dependency_checker residual surfaces and implementers do not
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
+      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md") "")
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "story_approval: approved\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_approval: approved\n"
+                       "gherkin_review: accepted\n"
+                       "qa_procedure_review: accepted\n"
+                       "implementation_approval: approved\n"))
+      (let [missing (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? missing "complete_dependency_checker")
+            "missing checker is incomplete analysis")
+        (is (not (str/includes? missing "alpha-implementation"))
+            "implementer blocked without non-trivial checker"))
+      (write-file (fs/path root "dependency-checker.edn") hollow-dependency-checker)
+      (let [hollow (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? hollow "complete_dependency_checker")
+            "hollow empty map is incomplete analysis")
+        (is (str/includes? hollow "hollow")))
+      (write-nontrivial-checker! root)
+      (let [ok (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? ok "complete_dependency_checker")))
+        (is (str/includes? ok "implementer")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest b25-nonempty-order-and-checker-require-user-approval
+  ;; Given non-empty durable order and non-trivial checker
+  ;; When approval is required (defaults)
+  ;; Then create_approval_request for both gates; implementers wait until approved
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "max_transient_agents 10\n"
+                       "approval_required implementation false\n"
+                       "approval_required implementation_order true\n"
+                       "approval_required dependency_checker true\n"))
+      (fs/create-dirs (fs/path root ".squad/themes/wumpus"))
+      (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
+      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
+                  "story-b: story-a\n")
+      (write-nontrivial-checker! root)
+      (write-file (fs/path root ".squad/stories/story-a/packet")
+                  (str "story_id: story-a\n"
+                       "theme_id: wumpus\n"
+                       "story_approval: approved\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_approval: approved\n"
+                       "gherkin_review: accepted\n"
+                       "qa_procedure_review: accepted\n"
+                       "implementation_approval: approved\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "create_approval_request")
+            "must request architecture gate approval")
+        (is (or (str/includes? out "implementation-order")
+                (str/includes? out "dependency-checker"))
+            "gate must be order or checker")
+        (is (not (str/includes? out "story-a-implementation"))
+            "implementer blocked until gates approved"))
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "implementation-order" "ok")
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "dependency-checker" "ok")
+      (let [after (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? after "implementer")
+            "after both content gates approved, implementer may schedule")
+        (is (str/includes? after "story-a")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest b25-comment-only-order-skips-order-approval
+  ;; Given comment-only durable order (no edges)
+  ;; When checker is approved or not required
+  ;; Then no implementation-order approval request
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "max_transient_agents 10\n"
+                       "approval_required implementation false\n"
+                       "approval_required implementation_order true\n"
+                       "approval_required dependency_checker false\n"))
+      (fs/create-dirs (fs/path root ".squad/themes/hello"))
+      (write-file (fs/path root ".squad/themes/hello/theme.md") "theme\n")
+      (write-file (fs/path root ".squad/themes/hello/implementation-order.md")
+                  "# No multi-story implementer dependencies.\n")
+      (write-nontrivial-checker! root)
+      (write-file (fs/path root ".squad/stories/hello/packet")
+                  (str "story_id: hello\n"
+                       "theme_id: hello\n"
+                       "story_approval: approved\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_approval: approved\n"
+                       "gherkin_review: accepted\n"
+                       "qa_procedure_review: accepted\n"
+                       "implementation_approval: approved\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "Approve_implementation_order"))
+            "empty order needs no approval")
+        (is (str/includes? out "implementer")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest b25-material-revision-invalidates-order-approval
+  ;; Given approved non-empty order, then content revised
+  ;; When squad_next runs
+  ;; Then approval is no longer satisfied and re-request is offered
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "max_transient_agents 10\n"
+                       "approval_required implementation false\n"
+                       "approval_required implementation_order true\n"
+                       "approval_required dependency_checker false\n"))
+      (fs/create-dirs (fs/path root ".squad/themes/wumpus"))
+      (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
+      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
+                  "story-b: story-a\n")
+      (write-nontrivial-checker! root)
+      (write-file (fs/path root ".squad/stories/story-a/packet")
+                  (str "story_id: story-a\n"
+                       "theme_id: wumpus\n"
+                       "story_approval: approved\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_approval: approved\n"
+                       "gherkin_review: accepted\n"
+                       "qa_procedure_review: accepted\n"
+                       "implementation_approval: approved\n"))
+      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "implementation-order" "ok")
+      (let [ok (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? ok "implementer")
+            "approved order allows implementer"))
+      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
+                  "story-b: story-a\nstory-c: story-b\n")
+      (let [revised (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? revised "create_approval_request")
+            "material revision re-opens approval")
+        (is (str/includes? revised "implementation-order"))
+        (is (not (str/includes? revised "story-a-implementation"))
+            "implementer stays blocked until re-approved"))
       (finally
         (fs/delete-tree root)))))

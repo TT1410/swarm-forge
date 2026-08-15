@@ -58,6 +58,28 @@
        "## IO (Interface Adapters / Drivers)\n\nStdin/stdout.\n\n"
        "## Out of Scope\n\nDetailed APIs.\n"))
 
+(def minimal-dependency-checker
+  "Non-trivial product policy for tests (B13 quality bar)."
+  (str "{:allowed-dependencies {:greeting []\n"
+       "                        :ui [:greeting]}\n"
+       " :fail-on-cycles true\n"
+       " :fail-on-violations true}\n"))
+
+(def hollow-dependency-checker
+  "{:allowed-dependencies {}\n :fail-on-cycles true\n :fail-on-violations true}\n")
+
+(defn write-nontrivial-checker!
+  "Install non-trivial root dependency-checker so implementer gates pass B13."
+  [root]
+  (write-file (fs/path root "dependency-checker.edn") minimal-dependency-checker))
+
+(def implementer-gate-conf
+  "Disable order/checker user approval in fixture tests that only exercise implementer FSM."
+  (str "max_transient_agents 10\n"
+       "approval_required implementation false\n"
+       "approval_required implementation_order false\n"
+       "approval_required dependency_checker false\n"))
+
 (defn wait-for-file [path timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []

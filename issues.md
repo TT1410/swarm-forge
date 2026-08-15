@@ -13,8 +13,6 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
-| **P2** | B25 | Order + dependency-checker need user approval | Workflow | Theme gates |
-| **P2** | B13 | Checker policy quality (beyond mere presence) | Product quality | Analysis |
 | **P2** | B23 | Theme close / finalize undefined | Workflow | Theme lifecycle |
 | **P2** | B18 | `squad_next` mixes plan / policy / present / execute | Architecture | Control plane |
 | **P2** | B16 | Control-plane ownership not modeled | Architecture | Authority |
@@ -30,8 +28,8 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 ## Suggested fix order
 
-1. **Theme architecture control:** **B25** → **B13** → **B23**  
-   Approve order/checker; raise policy quality; theme finalize/ship (B14 checker card + B12 hardener denylist done).
+1. **Theme architecture control:** **B23**  
+   Theme finalize/ship (B25 order/checker approval + B13 quality + B14 checker card + B12 hardener denylist done).
 
 2. **Control plane (after typed actions B17):** **B18** → **B16** → **B19**  
    Planner / executor / renderer; authority; single priority policy.
@@ -47,7 +45,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | Operator chat / dashboard IO | B24 | IA (B34/B10/B37/B29/B36/B14 done) |
 | Product intake | **B35** | Durable backlog → dispatch as theme/story to SL or TS |
 | Lifecycle hygiene | — | B11/B12/B37 done |
-| Theme / architecture gates | **B25**, **B13**, B23 | Approve + quality + finalize (B14 display done) |
+| Theme / architecture gates | **B23** | Finalize (B25 approve + B13 quality + B14 display done) |
 | Control plane | **B18**, **B16**, **B19**, B20–B22 | Split `squad_next`; ownership; priority; leases |
 
 Source notes for B16–B22: `architecture-improvements.md` (review findings folded in).
@@ -66,43 +64,16 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 | P2 lifecycle batch | **B37**, **B11** | Dashboard Teardown + confirm; exact/force session kill; squadd orphan session reconcile |
 | P2 visibility batch | **B29**, **B36** | Stall strip + stalled pills; TS `note` progress sidecar + chat UI |
 | P2 hardener + theme card | **B12**, **B14** | Root tooling denylist + handoff reject; dependency-checker theme package card |
+| P2 theme architecture gates | **B13**, **B25** | Checker quality residual + implementer hard-gate; order/checker user approval + fingerprints + theme package status |
 
 **Partial progress (still open under related IDs):**
-- Analysis must author `dependency-checker.edn` + `implementation-order.md` (prompt/contract); seed order when implementer-ready (B13/B25 remaining: quality + user approval).
-- Theme package always shows Implementation Order (missing state); checker card still B14.
+- Analysis authors checker + order (prompt/contract); seed order when implementer-ready; quality + user approval (B13/B25) done.
+- Theme package shows Implementation Order and Dependency Checker with status (missing / hollow / awaiting approval / approved).
 - Troubleshooter not counted as active transient; product chat `route-to-sl` to SL.
 
 ---
 
 ## P2 — Theme, control plane
-
-### B25 — Implementation order and dependency-checker must be user-approved
-
-**Symptom:** Order and `dependency-checker.edn` can drive the swarm **without user approval**. Theme + module map already require approve; order/checker do not.
-
-**Partial progress:** Analyst must author both; durable order required before implementers (seed if missing when implementer-ready). Still **no user gate**.
-
-**Expected:** Dashboard approvals for non-empty order and non-trivial checker; enforce only when approved (or residual blocks); re-approve on material revision; theme package shows status (with B14).
-
-**Where:** `squad_approval`; `squad_theme`; `squad_next`; theme package UI.
-
-**Related:** B13, B14, B03 (fixed — durable order exists).
-
----
-
-### B13 — Dependency-checker policy quality (beyond presence)
-
-**Symptom:** Checker often **absent** or a hollow two-node stub; green while process graph unconstrained.
-
-**Partial progress:** Analyst **must** commit root `dependency-checker.edn` (template + SL review checklist). Still missing: residual gate if absent, quality bar beyond presence, user approval (B25).
-
-**Expected:** Real components/edges from module map; incomplete analysis without non-trivial policy (or waiver); then B25 approve.
-
-**Where:** `analyst.prompt` / contract; template; optional `squad_next` incomplete-analysis residual.
-
-**Related:** B14, B25.
-
----
 
 ### B23 — Theme close / finalize is undefined
 
@@ -239,5 +210,5 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
 **Status:** P0/P1 stuck-swarm class and first P2 set (B31, B09, B17) are done.  
-**Next:** Theme gates (**B25**, **B13**, **B23**), then control-plane split (**B18** / **B16** / **B19**).  
-Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat, lifecycle, visibility, hardener denylist (**B12**), and checker card (**B14**) are done.
+**Next:** Theme finalize (**B23**), then control-plane split (**B18** / **B16** / **B19**).  
+Theme finalize (**B23**) is acceptance of a slice, not permanent lockout of new stories. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute), not an uncurated status dump. Operator chat, lifecycle, visibility, hardener denylist (**B12**), checker card (**B14**), checker quality (**B13**), and order/checker approval (**B25**) are done.

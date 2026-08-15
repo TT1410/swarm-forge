@@ -3,6 +3,7 @@
 (ns squadd.web
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
@@ -1091,33 +1092,99 @@
   (when-not (str/blank? content)
     (str "## " title "\n\n" content "\n")))
 
+(defn- theme-gate-approved-line? [theme-dir gate]
+  (let [file (fs/path theme-dir "approvals.tsv")
+        gate-norm (str/replace gate "_" "-")]
+    (and (fs/exists? file)
+         (some (fn [line]
+                 (let [[_ recorded] (str/split line #"\t" 3)]
+                   (or (= gate recorded)
+                       (= gate-norm recorded)
+                       (= (str/replace gate "-" "_") recorded))))
+               (str/split-lines (slurp (str file)))))))
+
+(defn- content-sha-web [text]
+  (let [md (java.security.MessageDigest/getInstance "SHA-256")
+        digest (.digest md (.getBytes (str text) "UTF-8"))]
+    (.toString (BigInteger. 1 digest) 16)))
+
+(defn- theme-content-gate-status
+  "Status badge for B25 content gates: missing | hollow | unapproved | approved | n/a."
+  [root theme-id gate content]
+  (let [theme-dir (fs/path root ".squad" "themes" theme-id)
+        gate-norm (str/replace gate "_" "-")
+        fp (fs/path theme-dir "approval-fingerprints" (str gate-norm ".sha"))
+        quality (if (= gate-norm "dependency-checker")
+                  (cond
+                    (str/blank? content) :missing
+                    :else
+                    (try
+                      (let [data (edn/read-string content)
+                            deps (when (map? data) (get data :allowed-dependencies))]
+                        (if (and (map? deps) (seq deps)) :ok :hollow))
+                      (catch Exception _ :hollow)))
+                  (cond
+                    (str/blank? content) :missing
+                    :else :ok))
+        nonempty-order?
+        (and (= gate-norm "implementation-order")
+             (not (str/blank? content))
+             (some #(re-matches #"([A-Za-z0-9][A-Za-z0-9._-]*)\s*:\s*(.+)"
+                                (str/trim (first (str/split % #"#" 2))))
+                   (str/split-lines content)))
+        needs-approval? (case gate-norm
+                          "dependency-checker" (= quality :ok)
+                          "implementation-order" (boolean nonempty-order?)
+                          false)
+        approved? (and (theme-gate-approved-line? theme-dir gate-norm)
+                       (fs/regular-file? fp)
+                       (not (str/blank? content))
+                       (= (str/trim (slurp (str fp))) (content-sha-web content)))]
+    (cond
+      (= quality :missing) "missing"
+      (= quality :hollow) "hollow — needs non-trivial policy"
+      (not needs-approval?) "present (no approval required — empty/comment-only)"
+      approved? "approved"
+      :else "awaiting user approval")))
+
 (defn theme-package-parts [root theme-id]
   "Ordered package sections. Implementation order and dependency-checker always
-  appear (explicit missing markers) so operators notice incomplete analysis."
+  appear (explicit missing markers) so operators notice incomplete analysis.
+  B25: status line for approval of non-empty order / non-trivial checker."
   (let [theme (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md"))
         module-map (slurp-if-exists (fs/path root ".squad" "themes" theme-id "module-map.md"))
         durable-order (slurp-if-exists (fs/path root ".squad" "themes" theme-id "implementation-order.md"))
         draft-order (slurp-if-exists (fs/path root "implementation-order.md"))
         checker (slurp-if-exists (fs/path root "dependency-checker.edn"))
+        order-status (theme-content-gate-status
+                      root theme-id "implementation-order"
+                      (if (not (str/blank? durable-order)) durable-order ""))
+        checker-status (theme-content-gate-status root theme-id "dependency-checker" checker)
+        status-line (fn [status]
+                      (str "_Status: " status "_\n\n"))
         ;; "" is truthy in Clojure — never use (or durable draft) for optional text.
         impl-order (cond
-                     (not (str/blank? durable-order)) durable-order
+                     (not (str/blank? durable-order))
+                     (str (status-line order-status) durable-order)
                      (not (str/blank? draft-order))
-                     (str "_(Not yet recorded under .squad/themes/" theme-id
+                     (str (status-line "draft — not yet recorded")
+                          "_(Not yet recorded under .squad/themes/" theme-id
                           "/ — run `squad_theme.sh implementation-order "
                           theme-id " implementation-order.md`.)_\n\n"
                           draft-order)
                      :else
-                     (str "_(Missing.)_ Analyst must commit root `implementation-order.md` "
+                     (str (status-line "missing")
+                          "_(Missing.)_ Analyst must commit root `implementation-order.md` "
                           "(edges or comment-only “no multi-story gates”), then record with "
                           "`squad_theme.sh implementation-order " theme-id
                           " implementation-order.md`."))
         checker-body (if (not (str/blank? checker))
-                       checker
-                       (str "_(Missing.)_ Analyst must commit root `dependency-checker.edn` "
+                       (str (status-line checker-status) checker)
+                       (str (status-line "missing")
+                            "_(Missing.)_ Analyst must commit root `dependency-checker.edn` "
                             "from the module map (real components/edges, not a hollow stub). "
                             "See `swarmforge/templates/dependency-checker.edn`. "
-                            "User approval of non-trivial policy is tracked under B25."))]
+                            "Non-trivial policy requires user approval (B25)."))]
     (cond-> []
       (not (str/blank? theme))
       (conj {:id "theme" :title "Theme (scheme)" :body theme})

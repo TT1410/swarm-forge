@@ -21,7 +21,9 @@
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
 (def valid-target-kinds #{"theme" "story"})
 (def valid-gates #{"theme" "story" "gherkin" "qa_procedure" "qa-procedure" "implementation"
-                   "code_review" "code-review" "hardening" "qa" "architecture" "final"})
+                   "code_review" "code-review" "hardening" "qa" "architecture" "final"
+                   "implementation-order" "implementation_order"
+                   "dependency-checker" "dependency_checker"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -49,7 +51,9 @@
 (defn validate-gate! [gate]
   (validate-id! "Approval gate" gate)
   (when-not (contains? valid-gates gate)
-    (exit! 2 "Approval gate must be theme, story, gherkin, qa-procedure, implementation, code-review, hardening, qa, architecture, or final.")))
+    (exit! 2 (str "Approval gate must be theme, story, gherkin, qa-procedure, implementation, "
+                  "code-review, hardening, qa, architecture, final, implementation-order, "
+                  "or dependency-checker."))))
 
 (defn write-atomic! [file content]
   (fs/create-dirs (fs/parent file))

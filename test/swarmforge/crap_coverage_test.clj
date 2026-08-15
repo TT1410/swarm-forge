@@ -464,7 +464,9 @@
     (write-file (fs/path root ".squad/assignments/blocker-001/blocker.md")
                 "Blocker text\n")
     (is (str/includes? (squadd-web/artifact-content root "theme" "wumpus")
-                       "## Theme\n\nTheme text\n"))
+                       "Theme text\n"))
+    (is (str/includes? (squadd-web/artifact-content root "theme" "wumpus")
+                       "Implementation Order"))
     (is (str/includes? (squadd-web/artifact-content root "theme" "wumpus")
                        "## Module Map\n\nModule map text\n"))
     (is (str/includes? (squadd-web/artifact-content root "story" "cave")
@@ -917,12 +919,16 @@
                      "approval_required gherkin false\n"
                      "approval_required qa_procedure false\n"
                      "approval_required implementation false\n"
+                     "approval_required implementation_order false\n"
+                     "approval_required dependency_checker false\n"
                      "approval_required code_review false\n"
                      "approval_required hardening false\n"
                      "approval_required qa false\n"
                      "approval_required architecture false\n"
                      "approval_required final false\n"))
     (write-file (fs/path root ".squad/themes/theme-a/implementation-order.md") "")
+    (write-file (fs/path root "dependency-checker.edn")
+                "{:allowed-dependencies {:domain [] :ui [:domain]}\n :fail-on-cycles true}\n")
     (write-file (fs/path story-dir "packet")
                 (str "theme_id: theme-a\n"
                      "story_id: s1\n"

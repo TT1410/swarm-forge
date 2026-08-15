@@ -6,6 +6,7 @@
             [squad-actions :as actions]
             [squad-config :as cfg]
             [squad-state :as squad-state]
+            [clojure.edn :as edn]
             [clojure.set]
             [clojure.string :as str]))
 
@@ -633,27 +634,9 @@
     (and (fs/regular-file? packet-file)
          (not (str/blank? (get (file-map packet-file) "implementation_sha"))))))
 
-(defn implementer-dependencies-satisfied?
-  "Hard gate: durable implementation order must be recorded; then providers listed
-  for story-id must each have implementation_sha. Missing durable order is not
-  treated as empty/satisfied — that was a no-op gate (P0 B03)."
-  [root theme-id story-id]
-  (if-not (implementation-order-recorded? root theme-id)
-    false
-    (let [providers (get (load-implementation-order root theme-id) story-id)]
-      (or (empty? providers)
-          (every? #(story-implementation-complete? root %) providers)))))
-
-(defn implementer-dependency-block-reason [root theme-id story-id]
-  (cond
-    (not (implementation-order-recorded? root theme-id))
-    "implementation order not recorded for theme"
-
-    :else
-    (let [providers (get (load-implementation-order root theme-id) story-id)
-          pending (remove #(story-implementation-complete? root %) providers)]
-      (when (seq pending)
-        (str "implementation order: waiting on " (str/join ", " pending))))))
+(declare implementer-dependencies-satisfied? implementer-dependency-block-reason
+         dependency-checker-nontrivial? theme-architecture-gate-satisfied?
+         dependency-checker-quality-at)
 
 (defn root-implementation-order-draft-path [root]
   (fs/path root "implementation-order.md"))
@@ -713,6 +696,245 @@
        distinct
        (keep #(implementation-order-record-candidate root %))
        vec))
+
+;;; --- B13 checker quality + B25 theme architecture approval gates ---
+
+(defn dependency-checker-path [root]
+  (fs/path root "dependency-checker.edn"))
+
+(defn parse-dependency-checker-edn [text]
+  (try
+    (edn/read-string {:readers *data-readers*} text)
+    (catch Exception _ nil)))
+
+(defn dependency-checker-quality
+  "Classify product dependency-checker policy text.
+  :missing — blank/absent content
+  :hollow  — unparseable, not a map, or empty :allowed-dependencies
+  :ok      — at least one component under :allowed-dependencies"
+  [text]
+  (if (str/blank? text)
+    :missing
+    (let [data (parse-dependency-checker-edn text)]
+      (if-not (map? data)
+        :hollow
+        (let [deps (get data :allowed-dependencies)]
+          (if (and (map? deps) (seq deps))
+            :ok
+            :hollow))))))
+
+(defn dependency-checker-quality-at [root]
+  (let [path (dependency-checker-path root)]
+    (if (fs/regular-file? path)
+      (dependency-checker-quality (slurp (str path)))
+      :missing)))
+
+(defn dependency-checker-nontrivial? [root]
+  (= :ok (dependency-checker-quality-at root)))
+
+(defn implementation-order-nonempty?
+  "True when durable order has at least one makefile edge (B25 non-empty order)."
+  [root theme-id]
+  (boolean (seq (load-implementation-order root theme-id))))
+
+(defn content-sha [text]
+  (let [md (java.security.MessageDigest/getInstance "SHA-256")
+        digest (.digest md (.getBytes (str text) "UTF-8"))]
+    (.toString (BigInteger. 1 digest) 16)))
+
+(defn theme-gate-content-path [root theme-id gate]
+  (case (str/replace gate "_" "-")
+    "implementation-order" (implementation-order-path root theme-id)
+    "dependency-checker" (dependency-checker-path root)
+    nil))
+
+(defn theme-gate-fingerprint-path [root theme-id gate]
+  (fs/path root ".squad" "themes" theme-id "approval-fingerprints"
+           (str (str/replace gate "_" "-") ".sha")))
+
+(defn theme-content-gate-approved?
+  "Theme gate approved in approvals.tsv and content fingerprint still matches (B25)."
+  [root theme-id gate]
+  (let [theme-dir (fs/path root ".squad" "themes" theme-id)
+        gate-norm (str/replace gate "_" "-")
+        approved? (or (theme-approved? theme-dir gate)
+                      (theme-approved? theme-dir gate-norm)
+                      (theme-approved? theme-dir (str/replace gate "-" "_")))
+        content-path (theme-gate-content-path root theme-id gate)
+        fp-path (theme-gate-fingerprint-path root theme-id gate)]
+    (and approved?
+         (fs/regular-file? content-path)
+         (fs/regular-file? fp-path)
+         (= (str/trim (slurp (str fp-path)))
+            (content-sha (slurp (str content-path)))))))
+
+(defn theme-architecture-gate-satisfied?
+  "Order/checker gate satisfied: not required, no material to approve, or approved with fingerprint."
+  [root theme-id gate]
+  (let [gate-norm (str/replace gate "_" "-")
+        required? (cfg/squad-approval-required? root gate-norm)
+        needs-material?
+        (case gate-norm
+          "implementation-order" (implementation-order-nonempty? root theme-id)
+          "dependency-checker" (dependency-checker-nontrivial? root)
+          false)]
+    (cond
+      (not required?) true
+      (not needs-material?) true
+      :else (theme-content-gate-approved? root theme-id gate-norm))))
+
+(defn pending-theme-gate-approval? [root theme-id gate]
+  (boolean
+   (some #(and (= "theme" (get % "target_kind"))
+               (= theme-id (get % "target_id"))
+               (or (= gate (get % "gate"))
+                   (= (str/replace gate "_" "-") (str/replace (get % "gate" "") "_" "-")))
+               (= "pending" (:state %)))
+         (approval-records root))))
+
+(defn approved-theme-gate-record [root theme-id gate]
+  (some #(when (and (= "theme" (get % "target_kind"))
+                    (= theme-id (get % "target_id"))
+                    (or (= gate (get % "gate"))
+                        (= (str/replace gate "_" "-") (str/replace (get % "gate" "") "_" "-")))
+                    (= "approved" (:state %)))
+           %)
+        (approval-records root)))
+
+(defn theme-ids-with-packets [root]
+  (->> (packets root)
+       (map #(get % "theme_id"))
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn incomplete-dependency-checker-candidate
+  "B13: when implementers would run but checker is missing/hollow, surface residual
+  (implementer hard-gate alone is silent). Earlier pipeline stages may proceed."
+  [root theme-id]
+  (when (and (not (str/blank? theme-id))
+             (not (dependency-checker-nontrivial? root))
+             ;; Only surface when implementers would otherwise schedule — earlier
+             ;; stages (story approval, Gherkin) may still proceed.
+             (theme-has-implementer-ready-story? root theme-id))
+    (let [q (dependency-checker-quality-at root)
+          reason (case q
+                   :missing "dependency-checker.edn is missing; analysis incomplete without product policy"
+                   :hollow "dependency-checker.edn is hollow (empty or unparseable :allowed-dependencies); author a real component graph from the module map"
+                   "dependency-checker.edn is not a non-trivial product policy")]
+      {:priority 27
+       :stage-order 1
+       :next-action "complete_dependency_checker"
+       :theme-id theme-id
+       :story-id "theme"
+       :gate "dependency-checker"
+       :reason reason
+       :command (str "echo 'Author non-trivial root dependency-checker.edn from the theme module map "
+                     "(see swarmforge/templates/dependency-checker.edn); reject hollow two-node stubs. "
+                     "Then user-approve via dashboard (B25).'")})))
+
+(defn incomplete-dependency-checker-candidates [root]
+  (->> (theme-ids-with-packets root)
+       (keep #(incomplete-dependency-checker-candidate root %))
+       vec))
+
+(defn theme-architecture-approval-candidate
+  "B25: request (or auto-record) approval for non-empty order / non-trivial checker."
+  [root theme-id gate title reason]
+  (let [gate-norm (str/replace gate "_" "-")
+        needs-material?
+        (case gate-norm
+          "implementation-order"
+          (and (implementation-order-recorded? root theme-id)
+               (implementation-order-nonempty? root theme-id))
+          "dependency-checker" (dependency-checker-nontrivial? root)
+          false)
+        satisfied? (theme-architecture-gate-satisfied? root theme-id gate-norm)
+        approval-id (str gate-norm "__" theme-id)
+        pending? (pending-theme-gate-approval? root theme-id gate-norm)
+        stale-approved (when (and needs-material? (not satisfied?))
+                         (approved-theme-gate-record root theme-id gate-norm))]
+    (when (and needs-material? (not satisfied?) (not pending?))
+      (if (cfg/squad-approval-required? root gate-norm)
+        (let [clear-cmd (when stale-approved
+                          (str "mkdir -p .squad/approvals/cleared && "
+                               "mv -f " (pr-str (:file stale-approved))
+                               " .squad/approvals/cleared/ 2>/dev/null; "))
+              request-cmd (str "squad_approval.sh request " approval-id
+                               " theme " theme-id " " gate-norm " "
+                               title " " reason)]
+          {:priority 28
+           :stage-order (if (= gate-norm "implementation-order") 1 2)
+           :next-action "create_approval_request"
+           :theme-id theme-id
+           :story-id "theme"
+           :gate gate-norm
+           :reason (if stale-approved
+                     (str reason " (content revised since prior approval)")
+                     reason)
+           :command (str clear-cmd request-cmd)})
+        {:priority 28
+         :stage-order (if (= gate-norm "implementation-order") 1 2)
+         :next-action "record_auto_approval"
+         :theme-id theme-id
+         :story-id "theme"
+         :gate gate-norm
+         :reason (str gate-norm " approval is not required by configuration")
+         :command (str "squad_theme.sh approve " theme-id " " gate-norm
+                       " auto-approved-by-config")}))))
+
+(defn theme-architecture-approval-candidates [root]
+  (vec
+   (mapcat
+    (fn [theme-id]
+      (keep identity
+            [(theme-architecture-approval-candidate
+              root theme-id "implementation-order"
+              "Approve_implementation_order"
+              "non-empty-implementation-order-ready-for-approval")
+             (theme-architecture-approval-candidate
+              root theme-id "dependency-checker"
+              "Approve_dependency_checker"
+              "non-trivial-dependency-checker-ready-for-approval")]))
+    (theme-ids-with-packets root))))
+
+(defn implementer-dependencies-satisfied?
+  "Hard gate (P0 B03 + B13 + B25):
+  - durable implementation order recorded
+  - non-trivial dependency-checker present (B13 quality)
+  - non-empty order / non-trivial checker user-approved when required (B25)
+  - providers listed for story-id each have implementation_sha"
+  [root theme-id story-id]
+  (and (implementation-order-recorded? root theme-id)
+       (dependency-checker-nontrivial? root)
+       (theme-architecture-gate-satisfied? root theme-id "implementation-order")
+       (theme-architecture-gate-satisfied? root theme-id "dependency-checker")
+       (let [providers (get (load-implementation-order root theme-id) story-id)]
+         (or (empty? providers)
+             (every? #(story-implementation-complete? root %) providers)))))
+
+(defn implementer-dependency-block-reason [root theme-id story-id]
+  (cond
+    (not (implementation-order-recorded? root theme-id))
+    "implementation order not recorded for theme"
+
+    (not (dependency-checker-nontrivial? root))
+    (case (dependency-checker-quality-at root)
+      :missing "dependency-checker.edn missing (analysis incomplete)"
+      :hollow "dependency-checker.edn hollow (analysis incomplete)"
+      "dependency-checker.edn not ready")
+
+    (not (theme-architecture-gate-satisfied? root theme-id "implementation-order"))
+    "implementation-order awaiting user approval"
+
+    (not (theme-architecture-gate-satisfied? root theme-id "dependency-checker"))
+    "dependency-checker awaiting user approval"
+
+    :else
+    (let [providers (get (load-implementation-order root theme-id) story-id)
+          pending (remove #(story-implementation-complete? root %) providers)]
+      (when (seq pending)
+        (str "implementation order: waiting on " (str/join ", " pending))))))
 
 (defn assignment-candidate [root assignments agents packet template assignment-suffix reason priority stage-order requirement]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
@@ -1422,6 +1644,8 @@
   (let [assignments (assignment-records root)
         packets (packets root)]
     (vec (concat (implementation-order-record-candidates root)
+                 (incomplete-dependency-checker-candidates root)
+                 (theme-architecture-approval-candidates root)
                  (analyst-story-registration-candidates root assignments)
                  (direct-story-packet-candidates root)
                  (artifact-attachment-candidates root assignments packets)

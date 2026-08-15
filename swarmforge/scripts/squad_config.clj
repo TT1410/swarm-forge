@@ -19,7 +19,12 @@
    "hardening" false
    "qa" false
    "architecture" false
-   "final" false})
+   "final" false
+   ;; B25: non-empty order and non-trivial checker require user approval by default
+   "implementation_order" true
+   "implementation-order" true
+   "dependency_checker" true
+   "dependency-checker" true})
 
 (defn squad-env-long [name default-value]
   (if-let [value (System/getenv name)]
