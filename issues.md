@@ -29,6 +29,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Cluster | Bugs | Note |
 |---------|------|------|
+| Packet repair / rework cycle | — | **B39** done (no superseded cleaner/CR re-record after clear-downstream) |
 | Operator chat / dashboard IO | B24 | IA (B34/B10/B37/B29/B36/B14 done) |
 | Product intake | **B35** | Durable backlog → dispatch as theme/story to SL or TS |
 | Lifecycle hygiene | — | B11/B12/B37/B38 done |
@@ -56,6 +57,7 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 | P2 theme finalize | **B23** | Theme lifecycle open/finalized; finalize gate; residual idle; re-open on new story |
 | P2 control plane | **B18**, **B16**, **B19** | `squad_control_plane` priority policy; authority allow-lists; executor/renderer modules; residual class selection |
 | P3 deep architecture | **B20**, **B21**, **B22** | `squad_lease`; `squad_transition` accept-merge; `squad_records` kv/headers+body/edn/events |
+| P1 post-rework packet repair | **B39** | Residual does not re-record superseded cleaner/CR after impl clear-downstream; iterations gate + missing review target |
 
 **Partial progress (still open under related IDs):**
 - Analysis authors checker + order (prompt/contract); seed order when implementer-ready; quality + user approval (B13/B25) done.
@@ -126,6 +128,6 @@ Source notes for B16–B22: `architecture-improvements.md` (review findings fold
 
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
-**Status:** P0–P2 control plane and deep arch foundation done.  
+**Status:** P0–P2 control plane and deep arch foundation done; **B39** post-rework packet repair done.  
 **Next:** P3 product intake (**B35** with B24), then polish (**B15**).  
 Deep arch modules: `squad_lease` (B20), `squad_transition` (B21 accept-merge), `squad_records` (B22). Further migration of call sites is incremental. Dashboard IA (**B24**) and product backlog registry (**B35**) follow operator jobs (plan → dispatch → execute).

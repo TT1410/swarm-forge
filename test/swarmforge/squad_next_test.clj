@@ -2280,6 +2280,80 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest b39-does-not-replay-superseded-cleaner-or-code-review-after-impl-rework
+  ;; Given: code_review changes-requested, one implementer rework already recorded,
+  ;;        clear-downstream left cleaner/CR empty, but old cleaner + CR still merged
+  ;;        and present in iterations history.
+  ;; When: mechanical residual runs
+  ;; Then: do not re-record old cleaner or re-apply old changes-requested;
+  ;;       offer create_assignment for a new cleaner instead.
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
+      (write-nontrivial-checker! root)
+      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
+                  "alpha:\n")
+      ;; Post clear-downstream state after implementation-r2 record (B39 live shape).
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\n"
+                       "theme_id: wumpus\n"
+                       "story_approval: approved\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_approval: approved\n"
+                       "gherkin_review: accepted\n"
+                       "qa_procedure_review: accepted\n"
+                       "implementation_approval: approved\n"
+                       "implementation_assignment: alpha-implementation-r2\n"
+                       "implementation_branch: master\n"
+                       "implementation_sha: dddddddddd\n"
+                       "implementation_iterations: alpha-implementation=recorded,alpha-implementation-r2=recorded\n"
+                       "cleaner_iterations: alpha-cleaner=recorded\n"
+                       "code_review_iterations: alpha-code-review=changes-requested\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-cleaner/metadata")
+                  (str "assignment_id: alpha-cleaner\ntheme_id: wumpus\nstory_id: alpha\n"
+                       "template: cleaner\nassignment_file: " root "/c.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-cleaner/status")
+                  "assignment_id: alpha-cleaner\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-cleaner/accepted-merge")
+                  (str "assignment_id: alpha-cleaner\n"
+                       "state: merged\n"
+                       "commit: bbbbbbbbbb\n"
+                       "merge_commit: bbbbbbbbbb\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/metadata")
+                  (str "assignment_id: alpha-code-review\ntheme_id: wumpus\nstory_id: alpha\n"
+                       "template: code-reviewer\nassignment_file: " root "/r.md\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/status")
+                  "assignment_id: alpha-code-review\nstate: merged\n")
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/accepted-merge")
+                  (str "assignment_id: alpha-code-review\n"
+                       "state: merged\n"
+                       "commit: cccccccccc\n"
+                       "merge_commit: cccccccccc\n"))
+      (write-file (fs/path root ".squad/assignments/alpha-code-review/review.md")
+                  "changes-requested\n")
+      (write-file (fs/path root "reviews/alpha-code-review.md")
+                  "changes-requested\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
+            packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
+        (is (not (str/includes? out "record_merged_result story=alpha assignment=alpha-cleaner"))
+            "B39: must not re-record superseded cleaner after impl rework clear")
+        (is (not (str/includes? out "record_review_result story=alpha assignment=alpha-code-review"))
+            "B39: must not re-apply superseded code_review changes-requested")
+        (is (not (str/includes? packet "cleaner_sha: bbbbbbbbbb"))
+            "packet must not regain old cleaner_sha")
+        (is (not (str/includes? packet "\ncode_review: changes-requested\n"))
+            "packet must not regain old changes-requested")
+        (is (or (str/includes? out "create_assignment")
+                (str/includes? out "TEMPLATE: cleaner")
+                (str/includes? out "alpha-cleaner-r2")
+                (str/includes? out "implemented story needs cleaning"))
+            "should progress toward a fresh cleaner cycle"))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest p0-held-handoff-finishes-after-assignment-merged
   ;; Given held handoff for an assignment that later merged
   ;; When apply-mechanical runs

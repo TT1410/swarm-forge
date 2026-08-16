@@ -1438,6 +1438,21 @@
 (defn assignment-effective-sha [assignment]
   (artifact-sha assignment))
 
+(defn packet-iteration-mentions-assignment?
+  "True when packet history lists assignment-id under the given iterations field
+  (e.g. cleaner_iterations: alpha-cleaner=recorded). Used so clear-downstream
+  does not get undone by re-recording the same merged assignment (B39)."
+  [packet iterations-field assignment-id]
+  (let [iters (str (get packet iterations-field ""))]
+    (and (not (str/blank? assignment-id))
+         (not (str/blank? iters))
+         (str/includes? iters (str assignment-id "=")))))
+
+(defn result-recorded-in-iterations?
+  [packet kind assignment-id]
+  (packet-iteration-mentions-assignment?
+   packet (str (gate-key kind) "_iterations") assignment-id))
+
 (defn packet-result-stale-for-assignment?
   "True when a merged assignment should re-record its result on the packet.
   Prevents implementer thrash: reworks never re-recorded while implementation_sha
@@ -1462,6 +1477,19 @@
       :else (and (not (str/blank? new-sha))
                  (not= new-sha current-sha)))))
 
+(defn should-record-merged-result?
+  "Whether residual should write this merged assignment onto the packet.
+  B39: if clear-downstream removed the sha but iterations still show this
+  assignment was already recorded, leave it cleared so a fresh cycle can start
+  (do not re-apply superseded cleaner/hardener/etc.)."
+  [packet kind assignment]
+  (let [missing? (packet-result-missing? packet kind)
+        already? (result-recorded-in-iterations? packet kind (:assignment-id assignment))]
+    (cond
+      (and missing? already?) false
+      missing? true
+      :else (packet-result-stale-for-assignment? packet kind assignment))))
+
 (defn batch-result-map [root batch-id]
   (file-map (fs/path root ".squad" "batches" batch-id "result")))
 
@@ -1478,8 +1506,7 @@
         sha (assignment-effective-sha assignment)]
     (when (and (merged-assignment? assignment)
                (= story-id (:story-id assignment))
-               (or (packet-result-missing? packet kind)
-                   (packet-result-stale-for-assignment? packet kind assignment))
+               (should-record-merged-result? packet kind assignment)
                (not (str/blank? sha)))
       {:priority 25
        :stage-order 3
@@ -1648,6 +1675,23 @@
   (or (squad-state/current-accepted? packet review-field)
       (stale-changes-requested? packet review-field)))
 
+(defn review-already-recorded-for-assignment?
+  "B39: after clear-downstream, review_* fields are gone but *_review_iterations
+  still lists the assignment decision. Do not re-apply that superseded decision."
+  [packet review-field assignment-id]
+  (packet-iteration-mentions-assignment?
+   packet (str review-field "_iterations") assignment-id))
+
+(defn review-target-stage-missing?
+  "True when the stage this review is about is intentionally absent (e.g. code
+  review after implementation rework cleared cleaner_sha)."
+  [kind packet]
+  (case kind
+    "code" (not (field-present? packet "cleaner_sha"))
+    "gherkin" (not (field-present? packet "gherkin_sha"))
+    "qa-procedure" (not (field-present? packet "qa_procedure_sha"))
+    false))
+
 (defn review-record-candidate-for-story [root packet assignment kind decision]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         review-field (str (gate-key kind) "_review")
@@ -1655,7 +1699,10 @@
     (when (and (not (str/blank? sha))
                decision
                (not (packet-review-current-for-assignment? packet review-field assignment))
-               (not (review-record-superseded? packet review-field)))
+               (not (review-record-superseded? packet review-field))
+               (not (review-already-recorded-for-assignment? packet review-field
+                                                             (:assignment-id assignment)))
+               (not (review-target-stage-missing? kind packet)))
       {:priority 25
        :stage-order 5
        :next-action "record_review_result"
