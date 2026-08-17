@@ -27,9 +27,9 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Cluster | Bugs | Note |
 |---------|------|------|
-| Packet repair / rework cycle | — | B73/B75/B79/B82 closed |
-| Operator chat / dashboard IO | — | B65–B67, B69, B71, B74, B76–B81 closed |
-| Product intake | — | B68/B70/B72 closed |
+| Packet repair / rework cycle | — | B85 analyst singleton closed |
+| Operator chat / dashboard IO | — | B83/B84/B86 closed |
+| Product intake | — | B85 closed |
 | Control plane | — | residual order, YOLO, dirty soft-defer, QA fail gate closed |
 | Lifecycle hygiene | — | B11/B12/B37/B38 done |
 | Theme / architecture gates | — | B23 finalize + B25/B13/B14 done |
@@ -37,6 +37,93 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | Terminal chrome | — | **B15**, **B41** done |
 
 Former free-standing notes (`architecture-improvements.md`) are superseded: foundations landed as B16–B22; residual call-site migration **B40** done.
+
+---
+
+## Open detail
+
+### B83 — Analyst WIF label: theme name (or story), not “Theme”
+
+**Symptom:** Work-in-flight rows for **analyst** assignments often show the story column as **`Theme`** (or similarly unhelpful). Theme-scoped analysts store `story_id: theme` in metadata (`htw-analysis`, `htw-command-syntax-analysis`, etc.), and WIF currently surfaces that literal instead of a human label.
+
+**Expected:**
+1. If the assignment is **theme-scoped** (`story_id` / scope is `theme`): WIF story label = **theme name** — prefer display title from theme package / `theme.md` header when available, else `theme_id` (e.g. `htw` or “HTW”).
+2. If the assignment is **single-story** (story-scoped analyst or story_id is a real story): WIF story label = **that story id** (or story title if cheap to resolve).
+3. Never show the bare placeholder **`theme`** / **`Theme`** as the only label when `theme_id` is known.
+4. Tooltip may still include assignment id; primary column should be scannable (which theme / which story).
+5. Same rule for any other role that uses `story_id: theme` as a placeholder.
+
+**Priority (P3):** Operator scanability on WIF.
+
+**Where:** `squadd/web.clj` `work-in-flight-rows` label selection; optional theme title helper from `.squad/themes/<id>/`; `dashboard.html` if it overrides display.
+
+**Related:** B46/B59 WIF columns; theme-scoped analyst create path; **B80** batch labels.
+
+---
+
+### B84 — WIF activity thermometer: six bars (not three)
+
+**Today (B66):** each Work-in-flight row with a live agent shows a **three-bar** activity thermometer (heat 0–3 → idle / quiet / busy / hot).
+
+**Expected:** Match SL observe resolution (**B65**): **six bars**, heat **0–6**.
+
+1. Server `agent-pane-heat` (or equivalent) supports heat **0–6** with the same decay/inc idea as B66/B56 (unchanged pane → cool; changed → heat up; cap 6).
+2. UI: six `.bar` elements on `.wif-therm`; light 1…n bars by heat; keep compact WIF sizing (bars may be slightly narrower than SL if needed).
+3. Level labels align with B65 where useful (e.g. idle → quiet → warm → busy → brisk → hot → max); tooltip still includes level + agent id.
+4. Observe only — no inject; only rows with a live agent/session.
+
+**Priority (P3):** Visual parity with SL thermometer; finer glance signal on WIF.
+
+**Where:** `squadd/web.clj` `agent-pane-heat` heat cap/level map; `squadd/dashboard.html` `.wif-therm` markup (three → six bars) + CSS nth-child rules.
+
+**Related:** **B66** three-bar WIF therm (supersede resolution); **B65** SL six-bar therm.
+
+---
+
+### B85 — Analyst is a singleton template (no parallel theme analysts)
+
+**Policy:** **`analyst` is a singleton** — at most one active analyst at a time (same class as hardener / qa / architect / merger).
+
+**Symptom (live htw):** Two theme-scoped analysts ran in parallel (`htw-analysis` + `htw-command-syntax-analysis`). First merged `dependency-checker.edn` + `implementation-order.md`; second handoff **`merge_blocked`** with add/add conflicts on those files. Operator can misread this as “story approval blocked the other analyst,” but the root cause is **parallel analysts both owning root architecture artifacts**.
+
+**Today:**
+- `squad.conf`: `max_active_template analyst 3`
+- `squad_next` `singleton-templates` = `#{hardener qa architect merger}` — **analyst omitted**
+- Spawn can run multiple analysts concurrently; residual may create/spawn a second while the first is still active
+
+**Expected:**
+1. **`max_active_template analyst 1`** in `squad.conf` (and comments: singletons stay at 1).
+2. **`singleton-templates` includes `"analyst"`** in residual/spawn capacity (`squad_next` and any squadd spawn gates that mirror it).
+3. Pending second analyst spawn defers with `template-capacity-full:analyst` until the first retires / handoff completes and capacity frees.
+4. Tests: one active analyst + pending analyst spawn → capacity full; after first retired, spawn proceeds.
+5. Optional: residual does not *create* a second analyst assignment while one is open (or creates but does not spawn until free) — at minimum spawn must enforce singleton.
+
+**Priority (P1):** Prevents false merge_blocked thrash and corrupted dual order/checker writes on multi-story intake.
+
+**Where:** `swarmforge/squad.conf`; `squad_next.clj` `singleton-templates` / `spawn-capacity?`; `squadd.clj` template caps if separate; spawn tests.
+
+**Related:** live dual-analyst conflict; **B70** mid-theme deps; **B73** singleton capacity parity pattern.
+
+---
+
+### B86 — Every session window scrolls to bottom on open (agent / SL / TS)
+
+**Policy:** When opening **any** session window — **Open SL**, **Open TS**, WIF agent open, `/agent/<id>` — the pane mirror must **scroll to the bottom** immediately after open so the latest output is visible.
+
+**Today:** **B69** / **B74** targeted agent-pane stick-to-bottom and open-at-end; still can land mid-history or fail for SL/TS if first paint / popup path differs. Operators expect one rule for all roles.
+
+**Expected:**
+1. **On first open / focus of a session window** (new popup or reusing existing): after first pane content is painted, **force `scrollTop = scrollHeight`** (or equivalent).
+2. Applies uniformly to **squad-leader**, **troubleshooter**, and **all transient** agent sessions.
+3. After open, keep **B74** behavior: stay at bottom when already near end; preserve position if the operator scrolls up.
+4. Cover both dashboard `openAgentWindow(...)` paths and direct `/agent/<id>` loads.
+5. Tests or manual checklist: Open SL, Open TS, open implementer from WIF — each lands at end of capture.
+
+**Priority (P3):** Operator chrome consistency.
+
+**Where:** `squadd/web.clj` `pane-page` first-paint scroll; `squadd/dashboard.html` `openAgentWindow` if it needs a post-load hook; any SL/TS-specific pane wrappers.
+
+**Related:** **B69** scroll to end on open; **B74** stick when at bottom; **B41** SL/TS window-invisible; Open SL/TS controls.
 
 ---
 
@@ -65,6 +152,8 @@ Former free-standing notes (`architecture-improvements.md`) are superseded: foun
 | P3 dashboard polish batch | **B42**–**B51**, **B54**, **B44**, **B56**–**B62**, **B64** | Theme/agent links; sorts; Finalizing/Specifying columns; glow; buttons; therm; remove Live agents; WIF icons/width; hold outline; splitter stable |
 | P1–P3 issue closeout | **B65**–**B82** (all) | Residual/dashboard priority; merger B27; dirt soft-defer; SL/TS YOLO; QA fail gate; senior-impl findings-first; WIF highlight+therm; reject→backlog; residual header; no double vision; TS Enter-only; mockup footer; stage labels; agent pane stick; SL six-bar therm; mid-theme analyst prompt |
 | P3 WIF therm | **B66** | Per-agent three-bar pane activity on WIF rows |
+| P1–P3 follow-up | **B83**–**B86** | Analyst singleton; WIF theme labels; WIF six-bar therm; session open scrolls to bottom |
+
 
 ---
 

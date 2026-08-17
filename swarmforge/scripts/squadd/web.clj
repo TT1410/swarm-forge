@@ -900,7 +900,7 @@
 (declare sl-activity socket-value agent-session-name)
 
 (defn agent-pane-heat
-  "B66: heat 0–3 for one agent pane (observe only)."
+  "B66/B84: heat 0–6 for one agent pane (observe only; six-bar WIF therm)."
   [root agent-id]
   (when-not (str/blank? agent-id)
     (let [socket (socket-value root)
@@ -915,9 +915,16 @@
                  (not live?) 0
                  (nil? h) 0
                  (nil? (:hash prev)) 1
-                 (not= h (:hash prev)) (min 3 (inc (long (or (:heat prev) 0))))
+                 (not= h (:hash prev)) (min 6 (inc (long (or (:heat prev) 0))))
                  :else (max 0 (dec (long (or (:heat prev) 0)))))
-          level (case (long heat) 0 "idle" 1 "quiet" 2 "busy" "hot")]
+          level (case (long heat)
+                  0 "idle"
+                  1 "quiet"
+                  2 "warm"
+                  3 "busy"
+                  4 "brisk"
+                  5 "hot"
+                  "max")]
       (swap! agent-activity-atom assoc agent-id {:hash h :heat heat})
       {"level" level "heat" heat "session_live" (boolean live?)})))
 
@@ -961,55 +968,93 @@
         (when-let [parent (parent-batch-id id)]
           (get batch-by-id parent)))))
 
-(defn work-in-flight-rows [assignments batches]
+(defn theme-display-name
+  "B83: human theme label from theme.md title or theme_id."
+  [root theme-id]
+  (when-not (str/blank? theme-id)
+    (let [theme-md (fs/path root ".squad" "themes" theme-id "theme.md")
+          from-file (when (fs/regular-file? theme-md)
+                      (when-let [line (first (filter #(re-find #"(?i)^#\s+" %)
+                                                     (str/split-lines (slurp (str theme-md)))))]
+                        (str/trim (str/replace line #"(?i)^#\s+" ""))))]
+      (or (not-empty from-file) theme-id))))
+
+(defn wif-story-label
+  "B83: never show bare theme/batch placeholders when better names exist."
+  [root a members batch-kind]
+  (let [id (get a "assignment_id" "")
+        story (get a "story_id" "")
+        theme-id (get a "theme_id" "")
+        scope (get a "scope" "")]
+    (cond
+      (seq members)
+      (str (or batch-kind "batch") " ×" (count members))
+
+      (or (= "theme" story)
+          (= "theme" scope)
+          (= "Theme" story))
+      (or (theme-display-name root theme-id)
+          (not-empty theme-id)
+          id)
+
+      (or (str/blank? story) (= "batch" story))
+      id
+
+      :else
+      story)))
+
+(defn work-in-flight-rows
   "Active assignments as WIF table rows; batch assignments include members.
   B46: later progress on top —
   1) assignment lifecycle (in_progress > created, …)
   2) pipeline role (implementer > gherkin-writer, …)
-  3) updated_at newest first."
-  (let [batch-by-id (into {} (map (fn [b] [(get b "batch_id") b]) batches))]
-    (->> assignments
-         (map (fn [a]
-                (let [id (get a "assignment_id" "")
-                      story (get a "story_id" "")
-                      template (get a "template" "")
-                      state (get a "state" "")
-                      b (resolve-wif-batch batch-by-id a)
-                      members (or (get b "members") [])
-                      label (if (and b (seq members))
-                              (str (or (get b "batch_kind") template) " ×" (count members))
-                              (if (or (str/blank? story) (= "batch" story)) id story))
-                      ;; Never highlight the literal story_id "batch"
-                      story-ids (if (seq members)
-                                  members
-                                  (if (or (str/blank? story) (= "batch" story))
-                                    []
-                                    [story]))
-                      agent (or (get a "agent_id") "")]
-                  {"assignment_id" id
-                   "story" label
-                   "story_id" story
-                   "story_ids" story-ids
-                   "is_batch" (boolean (seq members))
-                   "batch_id" (or (get b "batch_id") (when (seq members) id) "")
-                   "members" members
-                   "role" template
-                   "state" state
-                   "updated_at" (get a "updated_at" "")
-                   "agent_id" agent
-                   "state_rank" (assignment-progress-rank state)
-                   "pipeline_rank" (pipeline-rank template)})))
-         (sort-by (fn [row]
-                    [(- (long (or (get row "state_rank") 0)))
-                     (- (long (or (get row "pipeline_rank") 0)))
-                     (str (get row "updated_at" ""))])
-                  (fn [[sa ra ua] [sb rb ub]]
-                    (let [c (compare sa sb)]
-                      (if-not (zero? c)
-                        c
-                        (let [c2 (compare ra rb)]
-                          (if-not (zero? c2) c2 (compare ub ua)))))))
-         vec)))
+  3) updated_at newest first.
+  B83: pass root for theme display names."
+  ([assignments batches] (work-in-flight-rows nil assignments batches))
+  ([root assignments batches]
+   (let [batch-by-id (into {} (map (fn [b] [(get b "batch_id") b]) batches))]
+     (->> assignments
+          (map (fn [a]
+                 (let [id (get a "assignment_id" "")
+                       story (get a "story_id" "")
+                       template (get a "template" "")
+                       state (get a "state" "")
+                       b (resolve-wif-batch batch-by-id a)
+                       members (or (get b "members") [])
+                       label (wif-story-label root a members (get b "batch_kind"))
+                       ;; Never highlight the literal story_id "batch" / "theme"
+                       story-ids (if (seq members)
+                                   members
+                                   (if (or (str/blank? story)
+                                           (= "batch" story)
+                                           (= "theme" story))
+                                     []
+                                     [story]))
+                       agent (or (get a "agent_id") "")]
+                   {"assignment_id" id
+                    "story" label
+                    "story_id" story
+                    "story_ids" story-ids
+                    "is_batch" (boolean (seq members))
+                    "batch_id" (or (get b "batch_id") (when (seq members) id) "")
+                    "members" members
+                    "role" template
+                    "state" state
+                    "updated_at" (get a "updated_at" "")
+                    "agent_id" agent
+                    "state_rank" (assignment-progress-rank state)
+                    "pipeline_rank" (pipeline-rank template)})))
+          (sort-by (fn [row]
+                     [(- (long (or (get row "state_rank") 0)))
+                      (- (long (or (get row "pipeline_rank") 0)))
+                      (str (get row "updated_at" ""))])
+                   (fn [[sa ra ua] [sb rb ub]]
+                     (let [c (compare sa sb)]
+                       (if-not (zero? c)
+                         c
+                         (let [c2 (compare ra rb)]
+                           (if-not (zero? c2) c2 (compare ub ua)))))))
+          vec))))
 
 (defn product-pending-label
   "B71: short label for pending product/SL dashboard request."
@@ -1232,7 +1277,7 @@
         batches (batches-enriched root)
         backlog (list-backlog root)
         approvals {"pending" (approval-state-for root "pending")}
-        wif (->> (work-in-flight-rows assignments batches)
+        wif (->> (work-in-flight-rows root assignments batches)
                  (mapv (fn [row]
                          (if-let [heat (agent-pane-heat root (get row "agent_id"))]
                            (assoc row "activity" heat)
@@ -1660,6 +1705,7 @@
         "")))
 
 (defn pane-page [agent-id]
+  "B86: every session window (agent/SL/TS) scrolls to bottom on open."
   (str "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
        "<title>Agent " (html-escape agent-id) "</title>"
@@ -1670,7 +1716,8 @@
        "</head><body><header><h1>" (html-escape agent-id) "</h1></header><pre id=\"pane\"></pre>"
        "<button id=\"new-output\" onclick=\"pane.scrollTop=pane.scrollHeight;this.style.display='none'\">New output</button>"
        "<script>const pane=document.getElementById('pane');let stickBottom=true;let firstPaint=true;"
-       "/* B69/B74: open at end; stay stuck when near bottom */"
+       "function toEnd(){pane.scrollTop=pane.scrollHeight;stickBottom=true;}"
+       "/* B69/B74/B86: open at end; stay stuck when near bottom */"
        "pane.addEventListener('scroll',()=>{const dist=pane.scrollHeight-pane.scrollTop-pane.clientHeight;"
        "stickBottom=dist<=48;});"
        "async function refresh(){"
@@ -1679,15 +1726,20 @@
        "const prevTop=pane.scrollTop||0;"
        "const distFromBottom=Math.max(0,prevHeight-prevTop-pane.clientHeight);"
        "const r=await fetch('/api/agents/" (html-escape agent-id) "/pane',{cache:'no-store'});"
-       "const text=await r.text();if(text.length>0&&text!==pane.textContent){"
+       "const text=await r.text();"
+       "if(text.length>0&&text!==pane.textContent){"
        "pane.textContent=text;"
        "requestAnimationFrame(()=>{"
        "if(firstPaint||stickBottom||distFromBottom<=48){"
-       "pane.scrollTop=pane.scrollHeight;stickBottom=true;marker.style.display='none';firstPaint=false}"
+       "toEnd();marker.style.display='none';firstPaint=false}"
        "else{pane.scrollTop=Math.max(0,pane.scrollHeight-pane.clientHeight-distFromBottom);"
        "marker.style.display='block'}});}"
-       "else if(firstPaint){requestAnimationFrame(()=>{pane.scrollTop=pane.scrollHeight;firstPaint=false});}}"
-       "refresh();setInterval(refresh,1000);</script></body></html>"))
+       "else if(firstPaint){requestAnimationFrame(()=>{toEnd();firstPaint=false});}}"
+       "refresh();setInterval(refresh,1000);"
+       "window.addEventListener('load',()=>requestAnimationFrame(toEnd));"
+       "window.addEventListener('pageshow',()=>requestAnimationFrame(toEnd));"
+       "window.addEventListener('focus',()=>{if(firstPaint)requestAnimationFrame(toEnd);});"
+       "</script></body></html>"))
 (defn agent-pane-response [root path]
   (let [[_ encoded-id] (re-matches #"/api/agents/([^/]+)/pane" path)
         agent-id (url-decode encoded-id)]

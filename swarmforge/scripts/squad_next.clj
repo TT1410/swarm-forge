@@ -504,7 +504,8 @@
 (defn active-template? [agents template]
   (boolean (some #(and (= template (:template %)) (active-agent? %)) agents)))
 
-(def singleton-templates #{"hardener" "qa" "architect" "merger"})
+;; B85: analyst singleton — one theme/story analysis writer at a time
+(def singleton-templates #{"analyst" "hardener" "qa" "architect" "merger"})
 
 (defn handoff-visible-agent? [root agent]
   (contains? (visible-handoff-agents root) agent))

@@ -3,8 +3,10 @@
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
+            [squad-config :as cfg]
             [squad-control-plane :as plane]
             [squad-assign :as assign]
+            [squad-next :as next]
             [squad-packet :as packet]
             [squadd :as daemon]
             [squadd.web :as web]
@@ -93,3 +95,39 @@
   (with-redefs [packet/git-commit-subject
                 (fn [_ _] "Merge squad assignment htw-qa")]
     (is (false? (packet/qa-commit-failed? "/tmp" "abc")))))
+
+(deftest b83-wif-theme-label-not-placeholder
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad" "themes" "htw" "theme.md")
+                  "# Hunt the Wumpus\n\nScope text.\n")
+      (let [a {"assignment_id" "htw-analysis"
+               "story_id" "theme"
+               "scope" "theme"
+               "theme_id" "htw"
+               "template" "analyst"
+               "state" "in_progress"}
+            rows (web/work-in-flight-rows root [a] [])]
+        (is (= "Hunt the Wumpus" (get (first rows) "story"))
+            "B83: theme-scoped analyst shows theme title not Theme"))
+      (let [a {"assignment_id" "cave-analysis"
+               "story_id" "domain-cave-state"
+               "theme_id" "htw"
+               "template" "analyst"
+               "state" "in_progress"}
+            rows (web/work-in-flight-rows root [a] [])]
+        (is (= "domain-cave-state" (get (first rows) "story"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest b85-analyst-is-singleton-template
+  (is (contains? next/singleton-templates "analyst")
+      "B85: analyst in singleton-templates")
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root "swarmforge" "squad.conf")
+                  "max_active_template analyst 1\nmax_active_template implementer 3\n")
+      (is (= 1 (cfg/squad-template-limit root "analyst"))
+          "B85: max_active_template analyst 1")
+      (finally
+        (fs/delete-tree root)))))

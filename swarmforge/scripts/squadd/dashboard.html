@@ -104,11 +104,15 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .sl-therm.hot .bar:nth-child(-n+5){background:var(--green)}
 .sl-therm.max .bar{background:var(--green)}
 .sl-therm.max .bar:nth-child(6){animation:pulse-dot 0.9s ease-in-out infinite}
+/* B84: six-bar WIF therm (parity with SL B65) */
 .wif-therm{display:inline-flex;align-items:center;gap:1px;margin-left:4px;vertical-align:middle}
-.wif-therm .bar{width:3px;height:8px;border-radius:1px;background:#c5cbc2}
-.wif-therm.quiet .bar:nth-child(1){background:#c9851a}
-.wif-therm.busy .bar:nth-child(-n+2){background:var(--green)}
-.wif-therm.hot .bar{background:var(--green)}
+.wif-therm .bar{width:2px;height:8px;border-radius:1px;background:#c5cbc2}
+.wif-therm.quiet .bar:nth-child(-n+1){background:#c9851a}
+.wif-therm.warm .bar:nth-child(-n+2){background:#c9851a}
+.wif-therm.busy .bar:nth-child(-n+3){background:var(--green)}
+.wif-therm.brisk .bar:nth-child(-n+4){background:var(--green)}
+.wif-therm.hot .bar:nth-child(-n+5){background:var(--green)}
+.wif-therm.max .bar{background:var(--green)}
 .linkish{color:var(--accent);text-decoration:underline;background:none;border:0;font:inherit;padding:0;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;text-align:left}
 .ts-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}.ts-head h2{margin:0;flex:1}
 .history{flex:1;min-height:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;display:flex;flex-direction:column;gap:8px;font-size:11px;scrollbar-gutter:stable}
@@ -241,8 +245,11 @@ async function teardownSwarm() {
   }
 }
 function openAgentWindow(path, name) {
+  // B86: session panes scroll to bottom on open (pane-page also forces first paint)
   const w = 900, h = 700, left = Math.max(0, (screen.width-w)/2), top = Math.max(0, (screen.height-h)/2);
-  window.open(path, name || 'squad-agent', `popup=yes,width=${w},height=${h},left=${left},top=${top}`);
+  const win = window.open(path, name || 'squad-agent', `popup=yes,width=${w},height=${h},left=${left},top=${top}`);
+  try { if (win) win.focus(); } catch (_) {}
+  return win;
 }
 function bringFront(el) { zTop++; el.style.zIndex = String(zTop); }
 function makeDraggable(win, bar) {
@@ -498,7 +505,7 @@ function renderWork(data) {
       const act=w.activity||{};
       const alvl=act.level||'';
       const therm=agent
-        ? `<span class="wif-therm ${esc(alvl||'idle')}" title="${esc((alvl||'idle')+' · '+(agent||''))}"><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>`
+        ? `<span class="wif-therm ${esc(alvl||'idle')}" title="${esc((alvl||'idle')+' · '+(agent||''))}"><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>`
         : '';
       // B43 + B59: full role name on hover
       const agentCell=agent
