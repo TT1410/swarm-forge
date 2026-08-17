@@ -1,0 +1,2086 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Squad cockpit live mockup</title>
+  <style>
+    :root {
+      --bg: #eef0eb;
+      --panel: #fbfbf8;
+      --ink: #1e221f;
+      --muted: #68726c;
+      --line: #d5d9d2;
+      --line-soft: #e8ebe5;
+      --accent: #3d5a45;
+      --amber: #c9851a;
+      --amber-bg: #fff6e5;
+      --red: #9b1c1c;
+      --green: #2f6b3a;
+      --green-bg: #e7f3ea;
+      --chip: #e8eee9;
+      --shadow: 0 1px 2px rgba(0,0,0,.06), 0 8px 24px rgba(0,0,0,.06);
+      --card: #fffef9;
+      --rail: 340px;
+      --card-min-w: 148px;
+      --card-min-h: 72px;
+      --card-max-w: 200px;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, sans-serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { height: 100%; }
+    body {
+      margin: 0;
+      background: #cfd4cc;
+      color: var(--ink);
+      min-height: 100vh;
+      height: 100vh;
+      padding: 12px 18px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+    .label-banner {
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto 8px;
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      color: #3b413d;
+      font-size: 12px;
+      flex-wrap: wrap;
+      flex: 0 0 auto;
+    }
+    .label-banner strong { font-size: 13px; }
+    .desk {
+      max-width: 1280px;
+      width: 100%;
+      margin: 0 auto;
+      position: relative;
+      flex: 1 1 auto;
+      min-height: 0;
+      display: flex;
+      flex-direction: column;
+    }
+    .cockpit {
+      background: var(--bg);
+      border: 1px solid #b8bfb6;
+      border-radius: 12px;
+      box-shadow: var(--shadow);
+      overflow: hidden;
+      flex: 1 1 auto;
+      min-height: 0;
+      height: 100%;
+      display: flex;
+      flex-direction: column;
+    }
+    header.top { flex: 0 0 auto; }
+    header.top {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 10px 14px;
+      background: #f4f5f1;
+      border-bottom: 1px solid var(--line);
+      flex-wrap: wrap;
+    }
+    header.top h1 { margin: 0; font-size: 15px; }
+    .meta { color: var(--muted); font-size: 12px; }
+    .meta .dot { color: var(--green); }
+    .spacer { flex: 1; }
+    .btn {
+      border: 1px solid #9aa59e;
+      background: #fff;
+      color: var(--ink);
+      padding: 5px 10px;
+      border-radius: 7px;
+      font-size: 12px;
+      cursor: pointer;
+    }
+    .btn:hover { background: #f0f2ee; }
+    .btn:active { transform: translateY(1px); }
+    .btn:disabled { opacity: .45; cursor: not-allowed; }
+    .btn-danger { border-color: #c45c5c; color: var(--red); }
+    .btn-primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+    .btn-primary:hover { filter: brightness(1.05); background: var(--accent); }
+    .btn-approve { background: #2f6b3a; border-color: #2f6b3a; color: #fff; }
+    .btn-sm { padding: 4px 8px; font-size: 11px; }
+
+    .attention {
+      display: grid;
+      grid-template-columns: auto 1fr;
+      gap: 10px 14px;
+      padding: 8px 14px;
+      background: var(--amber-bg);
+      border-bottom: 1px solid #efd7a8;
+      font-size: 12px;
+      flex: 0 1 auto;
+      max-height: 120px;
+      overflow: auto;
+      min-height: 0;
+    }
+    .attention.clear {
+      background: #eef5ef;
+      border-bottom-color: #cfe0d2;
+    }
+    .attention .tag {
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: #8a5a0a;
+      padding-top: 4px;
+      font-size: 10px;
+    }
+    .attention.clear .tag { color: var(--green); }
+    .attention-rows { display: grid; gap: 4px; }
+    .att-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      align-items: center;
+      background: rgba(255,255,255,.65);
+      border: 1px solid #efd7a8;
+      border-radius: 6px;
+      padding: 4px 8px;
+    }
+    .pill {
+      display: inline-block;
+      padding: 1px 7px;
+      border-radius: 999px;
+      font-size: 10px;
+      font-weight: 600;
+      background: var(--chip);
+    }
+    .pill-warn { background: #ffe2a8; color: #7a4e00; }
+    .pill-ok { background: var(--green-bg); color: var(--green); }
+    .pill-bad { background: #f8d7da; color: var(--red); }
+    .pill-info { background: #e2eaf8; color: #274a7a; }
+    .pill-batch { background: #ebe4f7; color: #553c8b; }
+    .pill-sl { background: #e8e4f5; color: #4a3d7a; }
+
+    .body {
+      flex: 1 1 auto;
+      display: grid;
+      grid-template-columns: 1fr var(--rail);
+      min-height: 0;
+      overflow: hidden;
+    }
+    .board {
+      padding: 12px;
+      border-right: 1px solid var(--line);
+      overflow: auto;
+      min-height: 0;
+      min-width: 0;
+      background: linear-gradient(180deg, #e8ebe4 0%, var(--bg) 48px);
+    }
+    .board-toolbar {
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      margin-bottom: 10px;
+      font-size: 11px;
+      color: var(--muted);
+      flex-wrap: wrap;
+    }
+    .columns {
+      display: flex;
+      flex-wrap: nowrap;
+      gap: 12px;
+      align-items: flex-start;
+      min-width: min-content;
+      position: relative;
+      z-index: 1;
+    }
+    .col {
+      flex: 0 0 auto;
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      position: relative;
+      z-index: 1;
+    }
+    .col h3 {
+      margin: 0 0 8px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--muted);
+      font-weight: 700;
+    }
+    .col-body {
+      display: flex;
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 8px;
+      min-height: 120px;
+      max-height: min(520px, calc(100vh - 220px));
+      overflow-x: hidden;
+      overflow-y: auto;
+      padding: 8px;
+      background: rgba(255,255,255,.35);
+      border: 1px dashed #c5cbc2;
+      border-radius: 10px;
+      width: max-content;
+      min-width: var(--card-min-w);
+    }
+    .backlog-col .col-body {
+      align-items: center;
+      min-width: var(--card-min-w);
+    }
+
+    .deck-wrap {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 8px;
+    }
+    .deck {
+      width: var(--card-min-w);
+      height: 88px;
+      position: relative;
+      cursor: pointer;
+    }
+    .deck .sheet {
+      position: absolute;
+      inset: 0;
+      background: var(--card);
+      border: 1px solid #c9c2a8;
+      border-radius: 4px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.08);
+    }
+    .deck .sheet:nth-child(1) { transform: translate(6px, 6px); opacity: .55; }
+    .deck .sheet:nth-child(2) { transform: translate(3px, 3px); opacity: .8; }
+    .deck .sheet:nth-child(3) {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      text-align: center;
+      padding: 6px;
+    }
+    .deck .count { font-size: 16px; color: var(--accent); }
+    .deck:focus { outline: 2px solid var(--accent); outline-offset: 2px; }
+    .deck.menu-open {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+
+    /*
+     * Backlog menu is a fixed portal under #float-layer so board/column
+     * overflow and dashed outlines never clip it.
+     */
+    .backlog-menu-portal {
+      display: none;
+      position: fixed;
+      z-index: 150;
+      width: 280px;
+      max-height: min(280px, 50vh);
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #8a9188;
+      border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(0,0,0,.24);
+      padding: 4px 0;
+      text-align: left;
+      pointer-events: auto;
+    }
+    .backlog-menu-portal.open { display: block; }
+    .backlog-menu-portal .mi {
+      display: block;
+      width: 100%;
+      border: 0;
+      background: transparent;
+      text-align: left;
+      padding: 8px 12px;
+      cursor: pointer;
+      font: inherit;
+      font-size: 11px;
+      border-bottom: 1px solid var(--line-soft);
+    }
+    .backlog-menu-portal .mi:hover,
+    .backlog-menu-portal .mi:focus {
+      background: #f0f4f0;
+      outline: none;
+    }
+    .backlog-menu-portal .mi .t { font-weight: 700; display: block; }
+    .backlog-menu-portal .mi .d { color: var(--muted); font-size: 10px; margin-top: 2px; }
+    .backlog-menu-portal .empty {
+      padding: 12px;
+      color: var(--muted);
+      font-size: 11px;
+    }
+
+    .card {
+      background: var(--card);
+      border: 1px solid #d0cbb8;
+      border-radius: 8px;
+      padding: 7px 8px;
+      box-shadow: 0 1px 2px rgba(0,0,0,.05);
+      font-size: 11px;
+      width: max-content;
+      max-width: var(--card-max-w);
+      min-width: var(--card-min-w);
+      min-height: var(--card-min-h);
+      height: fit-content;
+      flex: 0 0 auto;
+      align-self: flex-start;
+      display: flex;
+      flex-direction: column;
+      gap: 3px;
+      cursor: pointer;
+    }
+    .card:hover { border-color: #a89f7e; }
+    .card.hl,
+    .batch.hl .card {
+      border-color: #2f6b3a !important;
+      box-shadow: 0 0 0 2px rgba(47, 107, 58, 0.35), 0 2px 8px rgba(47, 107, 58, 0.2);
+      background: #f3faf4;
+    }
+    .batch.hl::before,
+    .batch.hl::after {
+      border-color: #2f6b3a;
+      background: #e8f5ea;
+    }
+    .work tbody tr.hl {
+      background: #e8f5ea;
+    }
+    .work tbody tr.hl td {
+      border-bottom-color: #c5dfc9;
+    }
+    .work tbody tr[data-work-batch="1"] .linkish {
+      font-weight: 700;
+      color: #553c8b;
+    }
+    .card .title {
+      font-weight: 700;
+      font-size: 12px;
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      white-space: nowrap;
+    }
+    .card .title .name {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      max-width: 11rem;
+    }
+    .card .theme {
+      color: var(--muted);
+      font-size: 10px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .card .badges { display: flex; flex-wrap: wrap; gap: 3px; }
+    .card .foot {
+      display: flex;
+      justify-content: space-between;
+      gap: 8px;
+      color: var(--muted);
+      font-size: 10px;
+      margin-top: auto;
+    }
+    .timer { font-variant-numeric: tabular-nums; }
+    .timer.hot { color: var(--red); font-weight: 700; }
+
+    .batch {
+      position: relative;
+      padding: 0 6px 8px 0;
+      width: max-content;
+      flex: 0 0 auto;
+    }
+    .batch::before,
+    .batch::after {
+      content: "";
+      position: absolute;
+      left: 4px; right: 2px; top: 4px; bottom: 4px;
+      background: #f7f4ea;
+      border: 1px solid #d0cbb8;
+      border-radius: 8px;
+      z-index: 0;
+    }
+    .batch::after {
+      left: 7px; top: 7px; bottom: 1px; right: -1px;
+      background: #f3efe2;
+    }
+    .batch .card {
+      position: relative;
+      z-index: 1;
+      border-color: #9b7ed4;
+    }
+    .clip {
+      position: absolute;
+      top: -4px; left: 8px;
+      z-index: 2;
+      font-size: 11px;
+    }
+    /* Batch member list is a fixed portal (same idea as backlog menu) */
+    .batch-menu-portal {
+      display: none;
+      position: fixed;
+      z-index: 150;
+      min-width: 200px;
+      max-width: 280px;
+      max-height: min(240px, 40vh);
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #8a9188;
+      border-radius: 8px;
+      box-shadow: 0 12px 32px rgba(0,0,0,.24);
+      padding: 8px 10px;
+      font-size: 11px;
+      pointer-events: auto;
+    }
+    .batch-menu-portal.open { display: block; }
+    .batch-menu-portal strong { display: block; margin-bottom: 4px; }
+    .batch-menu-portal ul { margin: 4px 0 0; padding-left: 16px; }
+    .batch-menu-portal li { margin: 2px 0; }
+
+    .rail {
+      background: var(--panel);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      min-width: 0;
+      font-size: 12px;
+      overflow: hidden;
+    }
+    .rail section {
+      padding: 10px 12px;
+      border-bottom: 1px solid var(--line-soft);
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+    }
+    .rail section.shrink {
+      flex: 0 1 auto;
+      max-height: 22%;
+    }
+    .rail section.work-sec {
+      flex: 1 1 28%;
+      min-height: 100px;
+    }
+    .rail section.ts {
+      flex: 1 1 40%;
+      min-height: 200px;
+      background: #f7f8f5;
+      border-bottom: 0;
+    }
+    .rail h2 {
+      margin: 0 0 8px;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .06em;
+      color: var(--muted);
+      flex: 0 0 auto;
+    }
+    .scroll-body {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+    }
+    .theme-card {
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      margin-bottom: 6px;
+    }
+    .theme-card .name { font-weight: 700; font-size: 12px; }
+    .theme-card .row { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+    .agents { display: flex; flex-wrap: wrap; gap: 6px; }
+    .agent {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 11px;
+    }
+    .agent .led {
+      width: 7px; height: 7px; border-radius: 50%;
+      background: var(--green);
+    }
+    .agent .led.busy { background: var(--amber); }
+    .agent .led.dead { background: var(--red); }
+
+    /* Work in flight: fixed column widths, scroll body, abbreviate names */
+    .work-wrap {
+      flex: 1 1 auto;
+      min-height: 0;
+      overflow: auto;
+      border: 1px solid var(--line-soft);
+      border-radius: 6px;
+      background: #fff;
+    }
+    .work {
+      width: 100%;
+      table-layout: fixed;
+      border-collapse: collapse;
+      font-size: 11px;
+    }
+    .work th, .work td {
+      padding: 5px 4px;
+      border-bottom: 1px solid var(--line-soft);
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      vertical-align: middle;
+    }
+    .work th {
+      text-align: left;
+      color: var(--muted);
+      font-weight: 600;
+      font-size: 10px;
+      background: #f3f4f0;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+    }
+    /*
+     * Column widths fit full headers (Story / Role / State / Age).
+     * Story is flexible; Role/State/Age sized to header text + short values.
+     * Truncation is CSS-only when content exceeds the cell.
+     */
+    .work col.c-story { width: auto; }
+    .work col.c-role { width: 4.25rem; }   /* fits "Role" */
+    .work col.c-state { width: 4.5rem; }   /* fits "State" */
+    .work col.c-age { width: 2.75rem; }    /* fits "Age" / 47m */
+    .work th {
+      overflow: visible;
+      text-overflow: clip;
+      white-space: nowrap;
+    }
+    .work td:nth-child(4),
+    .work th:nth-child(4) { text-align: right; }
+    .work .pill {
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      vertical-align: middle;
+      padding: 1px 5px;
+      font-size: 10px;
+      display: inline-block;
+    }
+    .linkish {
+      color: var(--accent);
+      text-decoration: underline;
+      text-underline-offset: 2px;
+      cursor: pointer;
+      background: none;
+      border: 0;
+      font: inherit;
+      padding: 0;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+      display: block;
+      text-align: left;
+    }
+    .work td {
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .ts-head {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 6px;
+      flex: 0 0 auto;
+    }
+    .ts-head h2 { margin: 0; flex: 1; }
+    .history {
+      flex: 1 1 auto;
+      min-height: 0;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      padding: 8px;
+      overflow-x: hidden;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      font-size: 11px;
+    }
+    .bubble-you {
+      border-left: 3px solid #6b7c72;
+      padding-left: 8px;
+      white-space: pre-wrap;
+      flex: 0 0 auto;
+    }
+    .bubble-ts {
+      color: #4a4f4c;
+      padding-left: 12px;
+      font-style: italic;
+      white-space: pre-wrap;
+      flex: 0 0 auto;
+    }
+    .composer {
+      display: flex;
+      gap: 6px;
+      margin-top: 8px;
+      flex: 0 0 auto;
+      align-items: flex-end;
+    }
+    .composer textarea {
+      flex: 1 1 auto;
+      min-width: 0;
+      height: calc(1.35em * 4 + 16px); /* four lines + padding */
+      max-height: calc(1.35em * 4 + 16px);
+      line-height: 1.35;
+      border: 1px solid #c6cbc5;
+      border-radius: 6px;
+      padding: 6px 8px;
+      font: inherit;
+      font-size: 12px;
+      resize: none;
+      overflow-y: auto;
+      background: #fff;
+    }
+    .composer .btn { flex: 0 0 auto; align-self: flex-end; }
+
+    /* detached floating windows (not tabs) */
+    .float-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 100;
+    }
+    .float {
+      pointer-events: auto;
+      position: absolute;
+      background: #f8f8f5;
+      border: 1px solid #8a9188;
+      border-radius: 10px;
+      box-shadow: 0 12px 40px rgba(0,0,0,.2);
+      overflow: hidden;
+      min-width: 320px;
+      max-width: 420px;
+    }
+    .float .titlebar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 7px 10px;
+      background: linear-gradient(180deg, #eceee8, #e0e3dc);
+      border-bottom: 1px solid #b8bfb6;
+      cursor: grab;
+      user-select: none;
+      font-weight: 600;
+      font-size: 12px;
+    }
+    .float .titlebar:active { cursor: grabbing; }
+    .float .traffic { display: flex; gap: 4px; }
+    .float .traffic i {
+      width: 10px; height: 10px; border-radius: 50%;
+      display: block;
+      background: #d0d0d0;
+    }
+    .float .traffic i.r { background: #ff5f57; cursor: pointer; }
+    .float .traffic i.y { background: #febc2e; }
+    .float .traffic i.g { background: #28c840; }
+    .float .titlebar .ttl { flex: 1; }
+    .float .body-pad {
+      padding: 12px;
+      background: #fffef9;
+      max-height: min(70vh, 520px);
+      overflow: auto;
+    }
+    .float label {
+      display: block;
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: .04em;
+      color: var(--muted);
+      margin: 0 0 4px;
+      font-weight: 700;
+    }
+    .float input[type="text"],
+    .float textarea {
+      width: 100%;
+      border: 1px solid #c6cbc5;
+      border-radius: 6px;
+      padding: 8px;
+      font: inherit;
+      font-size: 13px;
+      margin-bottom: 10px;
+      background: #fff;
+    }
+    .float textarea { min-height: 120px; resize: vertical; }
+    .float .dates {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .float .note {
+      font-size: 11px;
+      color: var(--muted);
+      background: #f0f4f0;
+      border-radius: 6px;
+      padding: 8px;
+      margin-bottom: 12px;
+      line-height: 1.4;
+    }
+    .float .actions {
+      display: flex;
+      gap: 8px;
+      justify-content: flex-end;
+      flex-wrap: wrap;
+    }
+    .float.story-detail { max-width: 440px; min-width: 340px; }
+    .stat-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 4px 10px;
+      font-size: 11px;
+      margin: 8px 0 10px;
+      padding: 8px;
+      background: #f4f6f2;
+      border-radius: 8px;
+      border: 1px solid var(--line-soft);
+    }
+    .stat-grid .k { color: var(--muted); }
+    .stat-grid .v { font-weight: 600; text-align: right; }
+    .story-full {
+      display: none;
+      margin-top: 10px;
+      padding: 10px;
+      background: #fff;
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      max-height: 280px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+    .story-full.open { display: block; }
+    .story-full h1, .story-full h2 { font-size: 13px; margin: 0.6em 0 0.3em; }
+    .agent-link-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      padding: 8px 10px;
+      background: #eef5ff;
+      border: 1px solid #c5d6ef;
+      border-radius: 8px;
+      margin: 8px 0 10px;
+      font-size: 12px;
+    }
+    .agent-link-row.idle {
+      background: #f3f3f0;
+      border-color: var(--line-soft);
+      color: var(--muted);
+    }
+    .agent-link-row .role { font-weight: 700; }
+    .float.session .body-pad {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      font-family: ui-monospace, Menlo, monospace;
+      font-size: 11px;
+      min-height: 140px;
+    }
+    .toast {
+      position: fixed;
+      bottom: 20px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: #1e221f;
+      color: #fff;
+      padding: 8px 14px;
+      border-radius: 8px;
+      font-size: 12px;
+      z-index: 200;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity .2s;
+    }
+    .toast.show { opacity: 1; }
+    .legend {
+      max-width: 1280px;
+      width: 100%;
+      margin: 8px auto 0;
+      font-size: 11px;
+      color: #3b413d;
+      background: rgba(255,255,255,.55);
+      border: 1px dashed #a8b0a6;
+      border-radius: 8px;
+      padding: 8px 12px;
+      line-height: 1.45;
+      flex: 0 0 auto;
+      max-height: 56px;
+      overflow: auto;
+    }
+    @media (max-width: 1100px) {
+      .body { grid-template-columns: 1fr; }
+      .board { border-right: 0; max-height: 45vh; }
+      .rail { max-height: 45vh; }
+    }
+  </style>
+</head>
+<body>
+  <div class="label-banner">
+    <div><strong>Live mockup</strong> — simulated data; Add New Item → detached edit window</div>
+    <div>Add = backlog only · Approve = pipeline (SL classifies theme vs story)</div>
+  </div>
+
+  <div class="desk">
+    <div class="cockpit">
+      <header class="top">
+        <h1>SwarmForge Squad</h1>
+        <span class="meta"><span class="dot">●</span> squadd ok · slots <span id="slot-meta">3/8</span> · mock</span>
+        <span class="spacer"></span>
+        <button class="btn" type="button" id="btn-open-sl">Open SL</button>
+        <button class="btn" type="button" id="btn-open-ts">Open TS</button>
+        <button class="btn btn-danger" type="button" id="btn-teardown">Teardown</button>
+      </header>
+
+      <div class="attention" id="attention"></div>
+
+      <div class="body">
+        <main class="board">
+          <div class="board-toolbar">
+            <span>Board</span>
+            <span class="pill" id="theme-filter-pill">theme: hunt-the-wumpus</span>
+            <span class="spacer"></span>
+            <span>Cards hug content · backlog hover · batch hover</span>
+          </div>
+          <div class="columns" id="columns"></div>
+        </main>
+
+        <aside class="rail">
+          <section class="shrink">
+            <h2>Themes</h2>
+            <div class="scroll-body" id="themes"></div>
+          </section>
+          <section class="shrink">
+            <h2>Live agents</h2>
+            <div class="scroll-body agents" id="agents"></div>
+          </section>
+          <section class="work-sec">
+            <h2>Work in flight</h2>
+            <div class="work-wrap" id="work"></div>
+          </section>
+          <section class="ts">
+            <div class="ts-head">
+              <h2>Troubleshooter</h2>
+              <span class="pill pill-warn" id="ts-busy">busy</span>
+              <button class="btn btn-sm" type="button" id="btn-open-ts-2">Open TS</button>
+            </div>
+            <div class="history" id="chat-history" aria-label="Troubleshooter responses"></div>
+            <div class="composer">
+              <textarea id="chat-input" rows="4" placeholder="Command or question… (⌘/Ctrl+Enter to send)"></textarea>
+              <button class="btn btn-primary" type="button" id="chat-send">Send</button>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+  </div>
+
+  <div class="float-layer" id="float-layer"></div>
+  <!-- Portaled backlog menu: fixed, outside board overflow/outline -->
+  <div class="backlog-menu-portal" id="backlog-menu" role="menu" hidden></div>
+  <div class="batch-menu-portal" id="batch-menu" role="tooltip" hidden></div>
+  <div class="toast" id="toast"></div>
+
+  <div class="legend">
+    <strong>Try it:</strong> Under Backlog, click <em>Add New Item</em> → detached window →
+    type title/body → <em>Add</em> (stays in deck) or <em>Approve</em> (enters pipeline as
+    “awaiting SL classification” — SL decides new theme vs story on existing theme).
+    Hover the deck for item list + dates; click a row to edit. Drag window title bars to move.
+  </div>
+
+  <script>
+(function () {
+  const now = () => new Date().toISOString();
+  const fmt = (iso) => {
+    if (!iso) return "—";
+    const d = new Date(iso);
+    return d.toLocaleString(undefined, {
+      year: "numeric", month: "2-digit", day: "2-digit",
+      hour: "2-digit", minute: "2-digit"
+    });
+  };
+  const age = (iso) => {
+    if (!iso) return "—";
+    const m = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 60000));
+    if (m < 60) return m + "m";
+    if (m < 48 * 60) return Math.floor(m / 60) + "h";
+    return Math.floor(m / 1440) + "d";
+  };
+  const uid = (p) => p + "-" + Math.random().toString(36).slice(2, 8);
+
+  /** Simulated durable store */
+  const db = {
+    backlog: [
+      {
+        id: "bl-1",
+        title: "Wumpus terminal polish",
+        body: "Tighten last-arrow miss copy and tautology steps.",
+        status: "open",
+        created_at: "2026-08-10T14:00:00.000Z",
+        updated_at: "2026-08-15T18:20:00.000Z"
+      },
+      {
+        id: "bl-2",
+        title: "Dice app theme",
+        body: "New product: simple dice roller with history.",
+        status: "open",
+        created_at: "2026-08-12T09:00:00.000Z",
+        updated_at: "2026-08-12T09:00:00.000Z"
+      },
+      {
+        id: "bl-3",
+        title: "Fog / smell adjacency hints",
+        body: "Maybe extend room-perception with stronger cues.",
+        status: "open",
+        created_at: "2026-08-14T11:30:00.000Z",
+        updated_at: "2026-08-16T08:00:00.000Z"
+      },
+      {
+        id: "bl-4",
+        title: "Save/load cave seeds",
+        body: "Optional persistence for reproducible caves.",
+        status: "open",
+        created_at: "2026-08-16T16:00:00.000Z",
+        updated_at: "2026-08-16T16:00:00.000Z"
+      }
+    ],
+    stories: [
+      {
+        id: "cave-setup", num: 1, title: "cave-setup", theme: "hunt-the-wumpus", column: "done",
+        badges: ["Final"], detail: "final_approved", agent: "", agentId: "", agentRole: "",
+        created_at: "2026-08-15T17:34:00.000Z", updated_at: "2026-08-15T20:00:00.000Z",
+        stats: { gherkin: "accepted", qa_proc: "accepted", impl: "complete", cleaner: "done", code_review: "accepted", hardener: "approved", qa: "approved", arch: "accepted" },
+        story_md: "# Cave setup\n\n**Value:** Establish the 20-room cave graph and initial placement of hunter, Wumpus, pits, and bats.\n\n## Acceptance intent\n- Fixed topology of 20 rooms, each with 3 tunnels.\n- Random placement obeys classic constraints (Wumpus not in hunter start room, etc.).\n\n## Non-goals\n- UI presentation (see terminal-ui).\n- Combat resolution."
+      },
+      {
+        id: "player-move", num: 3, title: "player-move", theme: "hunt-the-wumpus", column: "done",
+        badges: ["Final"], detail: "final_approved", agent: "", agentId: "", agentRole: "",
+        created_at: "2026-08-15T17:34:00.000Z", updated_at: "2026-08-15T22:00:00.000Z",
+        stats: { gherkin: "accepted", qa_proc: "accepted", impl: "complete", cleaner: "done", code_review: "accepted", hardener: "approved", qa: "approved", arch: "accepted" },
+        story_md: "# Player movement\n\n**Value:** Hunter moves room-to-room along tunnels; process rules own adjacency, not the UI.\n\n## Acceptance intent\n- Move into an adjacent room updates position.\n- Illegal tunnel choices are rejected by process rules."
+      },
+      {
+        id: "cave-fog", num: 9, title: "cave-fog", theme: "hunt-the-wumpus", column: "specified",
+        badges: ["Gherkin done", "Review"], detail: "QA proc pending", agent: "gr-002", agentId: "gherkin-reviewer-002", agentRole: "gherkin-reviewer",
+        created_at: "2026-08-16T12:00:00.000Z", updated_at: "2026-08-17T01:00:00.000Z",
+        stats: { gherkin: "in review", qa_proc: "pending", impl: "—", cleaner: "—", code_review: "—", hardener: "—", qa: "—", arch: "—" },
+        story_md: "# Cave fog / cues\n\n**Value:** Stronger adjacency hints (draft smell/fog) without leaking UI wording into process.\n\n## Acceptance intent\n- Process exposes hazard proximity facts.\n- UI story maps those facts to displayed cues."
+      },
+      {
+        id: "replay-ui", num: 8, title: "replay-ui", theme: "hunt-the-wumpus", column: "ready",
+        badges: ["Specs ok", "Order-blocked"], detail: "waits: cave-setup", agent: "", agentId: "", agentRole: "",
+        created_at: "2026-08-15T17:34:00.000Z", updated_at: "2026-08-17T02:10:00.000Z",
+        stats: { gherkin: "accepted", qa_proc: "accepted", impl: "blocked", cleaner: "—", code_review: "—", hardener: "—", qa: "—", arch: "—" },
+        story_md: "# Replay UI\n\n**Value:** After win/loss, offer replay using the same interaction surface as terminal-ui.\n\n## Dependencies\n- Implementation order: after cave-setup (and process replay-flow)."
+      },
+      {
+        id: "terminal-ui", num: 7, title: "terminal-ui", theme: "hunt-the-wumpus", column: "coding",
+        badges: ["Rework", "Cleaned"], detail: "CR changes req.", agent: "i-010", agentId: "implementer-010", agentRole: "implementer",
+        created_at: "2026-08-15T17:34:00.000Z", updated_at: "2026-08-16T23:50:00.000Z", hot: true,
+        stats: { gherkin: "accepted", qa_proc: "accepted", impl: "r2 recorded", cleaner: "stale/cleared", code_review: "changes-requested", hardener: "blocked", qa: "blocked", arch: "blocked" },
+        story_md: "# Terminal UI\n\n**Value:** Concrete interaction surface for Hunt the Wumpus: commands, prompts, room status, miss/out-of-arrows copy.\n\n## UI surface (excerpt)\n- Commands: move, shoot, quit (as specified in theme).\n- On last-arrow miss: show MISSED then YOU RAN OUT OF ARROWS.\n- Display room tunnels and hazard sensations from process facts.\n\n## Non-goals\n- Process rules for wake/combat (other stories).\n- Concrete IO adapters beyond this surface.\n\n## Current review notes\n- Code review requested changes: last-arrow miss sequence; avoid tautological Gherkin steps."
+      },
+      {
+        id: "runtime-io", num: 6, title: "runtime-io", theme: "hunt-the-wumpus", column: "coding",
+        badges: ["Rework"], detail: "wake arity", agent: "", agentId: "", agentRole: "",
+        created_at: "2026-08-15T17:34:00.000Z", updated_at: "2026-08-17T00:10:00.000Z",
+        stats: { gherkin: "accepted", qa_proc: "accepted", impl: "r2 recorded", cleaner: "recorded", code_review: "changes-requested", hardener: "blocked", qa: "blocked", arch: "blocked" },
+        story_md: "# Runtime IO\n\n**Value:** Wire stdin/stdout (and RNG/clock ports) so the playable loop uses process + terminal-ui correctly.\n\n## Issue in flight\n- Wumpus wake path: move-into-Wumpus must resolve stay-or-move, not throw on port arity."
+      }
+    ],
+    batches: [
+      {
+        id: "hardener-r3",
+        kind: "Hardener",
+        count: 3,
+        column: "coding",
+        members: ["cave-setup", "room-perception", "wumpus-wake"],
+        agent: "h-003",
+        updated_at: "2026-08-16T23:50:00.000Z",
+        hot: true
+      }
+    ],
+    themes: [
+      { id: "hunt-the-wumpus", state: "open", order: true, checker: true, map: true }
+    ],
+    agents: [
+      { id: "SL", state: "idle" },
+      { id: "TS", state: "busy" },
+      { id: "hardener-003", state: "busy" },
+      { id: "cleaner-004", state: "dead" }
+    ],
+    work: [
+      {
+        story: "batch ×3",
+        storyIds: ["cave-setup", "room-perception", "wumpus-wake"],
+        batchId: "hardener-r3",
+        isBatch: true,
+        members: ["cave-setup", "room-perception", "wumpus-wake"],
+        role: "hardener",
+        state: "run",
+        age: "47m",
+        kind: "info"
+      },
+      {
+        story: "terminal-ui",
+        storyIds: ["terminal-ui"],
+        role: "implementer",
+        state: "rework",
+        age: "12m",
+        kind: "warn"
+      },
+      {
+        story: "cave-fog",
+        storyIds: ["cave-fog"],
+        role: "gherkin-rev",
+        state: "review",
+        age: "1h",
+        kind: ""
+      },
+      {
+        story: "runtime-io-implementation-r2",
+        storyIds: ["runtime-io"],
+        role: "cleaner",
+        state: "queued",
+        age: "5m",
+        kind: ""
+      },
+      {
+        story: "player-movement-qa-procedure",
+        storyIds: ["player-move"],
+        role: "qa-proc-rev",
+        state: "done",
+        age: "2h",
+        kind: "info"
+      },
+      {
+        story: "crooked-arrows",
+        storyIds: ["crooked-arrows"],
+        role: "code-reviewer",
+        state: "accept",
+        age: "3h",
+        kind: "ok"
+      },
+      {
+        story: "wumpus-wake",
+        storyIds: ["wumpus-wake"],
+        // no batchId — member of hardener-r3 on the board, but this WIF line is its own row
+        role: "hardener",
+        state: "batch",
+        age: "47m",
+        kind: "info"
+      }
+    ],
+    attention: [
+      { type: "approval", text: "story · terminal-ui · code-review", age: "12m", id: "ap-1" },
+      { type: "stall", text: "cleaner-004 · no heartbeat", age: "18m", id: "st-1" }
+    ],
+    chat: [
+      { who: "you", text: "Why is the squad stuck on terminal-ui?" },
+      { who: "ts", text: "code_review=changes-requested; residual idle until cleaner cycle (B39 fixed in forge)." },
+      { who: "you", text: "summarize blockers" },
+      { who: "ts", text: "1 approval · 1 stall · 2 stories in rework" },
+      { who: "you", text: "which agents are live?" },
+      { who: "ts", text: "SL idle · TS busy · hardener-003 busy · cleaner-004 dead (stall)." },
+      { who: "you", text: "open the implementer for terminal-ui when ready" },
+      { who: "ts", text: "Noted. Use story card → Open agent session for implementer-010 (mock)." }
+    ],
+    pipelineLog: [] // SL classification queue messages
+  };
+
+  const windows = new Map(); // id -> { el, kind, data }
+  let zTop = 100;
+  let storySeq = 10;
+  let batchMenuHideTimer = null;
+
+  function toast(msg) {
+    const el = document.getElementById("toast");
+    el.textContent = msg;
+    el.classList.add("show");
+    clearTimeout(toast._t);
+    toast._t = setTimeout(() => el.classList.remove("show"), 2200);
+  }
+
+  function esc(s) {
+    return String(s ?? "").replace(/[&<>"']/g, (c) =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function pillClass(b) {
+    const x = b.toLowerCase();
+    if (x.includes("rework") || x.includes("block") || x.includes("change")) return "pill-warn";
+    if (x.includes("final") || x.includes("done") || x.includes("ok") || x.includes("spec")) return "pill-ok";
+    if (x.includes("review") || x.includes("run")) return "pill-info";
+    if (x.includes("sl") || x.includes("await") || x.includes("classif")) return "pill-sl";
+    if (x.includes("batch")) return "pill-batch";
+    return "";
+  }
+
+  function renderAttention() {
+    const root = document.getElementById("attention");
+    if (!db.attention.length) {
+      root.className = "attention clear";
+      root.innerHTML = `<div class="tag">Attention</div>
+        <div class="meta">No stalls · No blockers · No pending approvals</div>`;
+      return;
+    }
+    root.className = "attention";
+    root.innerHTML = `<div class="tag">Attention</div><div class="attention-rows">${
+      db.attention.map((a) => {
+        const pill = a.type === "stall" ? "pill-bad" : "pill-warn";
+        const label = a.type === "stall" ? "Stall" : "Approval";
+        const actions = a.type === "approval"
+          ? `<button class="btn btn-sm btn-primary" data-act="approve-att" data-id="${esc(a.id)}">Approve</button>
+             <button class="btn btn-sm" data-act="reject-att" data-id="${esc(a.id)}">Reject</button>`
+          : `<button class="btn btn-sm" data-act="open-agent" data-id="${esc(a.id)}">Open agent</button>`;
+        return `<div class="att-row">
+          <span class="pill ${pill}">${label}</span>
+          <span>${esc(a.text)}</span>
+          <span class="meta">${esc(a.age)}</span>
+          <span class="spacer"></span>${actions}</div>`;
+      }).join("")
+    }</div>`;
+  }
+
+  function storyCard(s) {
+    const badges = (s.badges || []).map((b) =>
+      `<span class="pill ${pillClass(b)}">${esc(b)}</span>`).join("");
+    const hot = s.hot ? " hot" : "";
+    const num = s.num != null ? `#${s.num} ` : "";
+    const label = num + s.title;
+    return `<div class="card" data-story="${esc(s.id)}" data-hl-story="${esc(s.id)}"
+      title="${esc(label)} — click for details">
+      <div class="title"><span class="name">${esc(label)}</span>
+        <span class="timer${hot}">${esc(age(s.updated_at))}</span></div>
+      <div class="theme">${esc(s.theme || "—")}</div>
+      <div class="badges">${badges}</div>
+      <div class="foot"><span>${esc(s.detail || "")}</span><span>${esc(s.agent || "")}</span></div>
+    </div>`;
+  }
+
+  function batchCard(b) {
+    return `<div class="batch" data-batch-id="${esc(b.id)}" title="Hover for story names in this batch">
+      <span class="clip">📎</span>
+      <div class="card">
+        <div class="title"><span class="name">${esc(b.kind)} ×${b.count}</span>
+          <span class="timer${b.hot ? " hot" : ""}">${esc(age(b.updated_at))}</span></div>
+        <div class="theme">batch · ${esc(b.id)}</div>
+        <div class="badges"><span class="pill pill-batch">BATCH</span>
+          <span class="pill pill-info">Running</span></div>
+        <div class="foot"><span>hover → stories</span><span>${esc(b.agent || "")}</span></div>
+      </div>
+    </div>`;
+  }
+
+  function batchById(batchId) {
+    return db.batches.find((b) => b.id === batchId) || null;
+  }
+
+  function backlogMenuHtml() {
+    const openBacklog = db.backlog.filter((b) => b.status === "open");
+    if (!openBacklog.length) {
+      return `<div class="empty">Backlog empty — Add New Item</div>`;
+    }
+    return openBacklog
+      .slice()
+      .sort((a, b) => new Date(b.updated_at) - new Date(a.updated_at))
+      .map((b) => `<button type="button" class="mi" role="menuitem" data-edit-backlog="${esc(b.id)}">
+        <span class="t">${esc(b.title)}</span>
+        <span class="d">created ${esc(fmt(b.created_at))} · modified ${esc(fmt(b.updated_at))}</span>
+      </button>`).join("");
+  }
+
+  function positionBacklogMenu() {
+    const deck = document.getElementById("backlog-deck");
+    const menu = document.getElementById("backlog-menu");
+    if (!deck || !menu) return;
+    const r = deck.getBoundingClientRect();
+    const mw = 280;
+    const mh = Math.min(280, window.innerHeight * 0.5);
+    let left = r.right + 8;
+    let top = r.top;
+    if (left + mw > window.innerWidth - 8) left = Math.max(8, r.left - mw - 8);
+    if (top + mh > window.innerHeight - 8) top = Math.max(8, window.innerHeight - mh - 8);
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+  }
+
+  let backlogMenuHideTimer = null;
+  function showBacklogMenu() {
+    clearTimeout(backlogMenuHideTimer);
+    const menu = document.getElementById("backlog-menu");
+    const deck = document.getElementById("backlog-deck");
+    if (!menu) return;
+    menu.innerHTML = backlogMenuHtml();
+    menu.hidden = false;
+    menu.classList.add("open");
+    if (deck) deck.classList.add("menu-open");
+    positionBacklogMenu();
+  }
+  function hideBacklogMenuSoon() {
+    clearTimeout(backlogMenuHideTimer);
+    backlogMenuHideTimer = setTimeout(() => {
+      const menu = document.getElementById("backlog-menu");
+      const deck = document.getElementById("backlog-deck");
+      if (!menu) return;
+      menu.classList.remove("open");
+      menu.hidden = true;
+      if (deck) deck.classList.remove("menu-open");
+    }, 180);
+  }
+  function cancelHideBacklogMenu() {
+    clearTimeout(backlogMenuHideTimer);
+  }
+
+  function bindBacklogMenuChrome() {
+    const deck = document.getElementById("backlog-deck");
+    const menu = document.getElementById("backlog-menu");
+    if (!deck || !menu) return;
+    if (!deck.dataset.menuBound) {
+      deck.dataset.menuBound = "1";
+      deck.addEventListener("mouseenter", showBacklogMenu);
+      deck.addEventListener("focus", showBacklogMenu);
+      deck.addEventListener("mouseleave", hideBacklogMenuSoon);
+      deck.addEventListener("blur", hideBacklogMenuSoon);
+    }
+    if (!menu.dataset.menuBound) {
+      menu.dataset.menuBound = "1";
+      menu.addEventListener("mouseenter", () => {
+        cancelHideBacklogMenu();
+        showBacklogMenu();
+      });
+      menu.addEventListener("mouseleave", hideBacklogMenuSoon);
+    }
+    if (!window.__backlogMenuViewportBound) {
+      window.__backlogMenuViewportBound = true;
+      window.addEventListener("scroll", () => {
+        const m = document.getElementById("backlog-menu");
+        if (m && m.classList.contains("open")) positionBacklogMenu();
+      }, true);
+      window.addEventListener("resize", () => {
+        const m = document.getElementById("backlog-menu");
+        if (m && m.classList.contains("open")) positionBacklogMenu();
+      });
+    }
+  }
+
+  function renderBoard() {
+    const openBacklog = db.backlog.filter((b) => b.status === "open");
+    const newest = openBacklog.slice().sort((a, b) =>
+      new Date(b.updated_at) - new Date(a.updated_at))[0];
+
+    const cols = [
+      { key: "backlog", title: "Backlog", special: true },
+      { key: "specified", title: "Specified" },
+      { key: "ready", title: "Ready to Code" },
+      { key: "coding", title: "Coding" },
+      { key: "done", title: "Done" }
+    ];
+
+    document.getElementById("columns").innerHTML = cols.map((c) => {
+      if (c.special) {
+        return `<div class="col backlog-col">
+          <h3>${c.title}</h3>
+          <div class="col-body">
+            <div class="deck-wrap" id="deck-wrap">
+              <div class="deck" id="backlog-deck" tabindex="0" title="Hover for items">
+                <div class="sheet"></div>
+                <div class="sheet"></div>
+                <div class="sheet">
+                  <div>Backlog</div>
+                  <div class="count">×${openBacklog.length}</div>
+                  <div class="timer">${newest ? esc(age(newest.updated_at)) : "—"}</div>
+                </div>
+              </div>
+              <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add New Item</button>
+            </div>
+          </div>
+        </div>`;
+      }
+      const cards = db.stories.filter((s) => s.column === c.key).map(storyCard).join("");
+      const batches = db.batches.filter((b) => b.column === c.key).map(batchCard).join("");
+      return `<div class="col">
+        <h3>${c.title}</h3>
+        <div class="col-body">${batches}${cards || ""}</div>
+      </div>`;
+    }).join("");
+
+    // Deck is recreated each render; rebind hover (portal menu stays in document)
+    const deck = document.getElementById("backlog-deck");
+    if (deck) delete deck.dataset.menuBound;
+    bindBacklogMenuChrome();
+    bindBatchMenuChrome();
+    const menuEl = document.getElementById("backlog-menu");
+    if (menuEl && menuEl.classList.contains("open")) {
+      menuEl.innerHTML = backlogMenuHtml();
+      positionBacklogMenu();
+    }
+  }
+
+  function renderThemes() {
+    document.getElementById("themes").innerHTML = db.themes.map((t) => `
+      <div class="theme-card" data-theme="${esc(t.id)}" title="Detach theme window">
+        <div class="name">${esc(t.id)} <span class="pill pill-ok">${esc(t.state)}</span></div>
+        <div class="row">
+          <span class="pill ${t.order ? "pill-ok" : "pill-warn"}">order ${t.order ? "✓" : "—"}</span>
+          <span class="pill ${t.checker ? "pill-ok" : "pill-warn"}">checker ${t.checker ? "✓" : "—"}</span>
+          <span class="pill ${t.map ? "pill-ok" : "pill-warn"}">map ${t.map ? "✓" : "—"}</span>
+        </div>
+      </div>`).join("") || `<div class="meta">No themes</div>`;
+  }
+
+  function renderAgents() {
+    document.getElementById("agents").innerHTML = db.agents.map((a) => {
+      const led = a.state === "dead" ? "dead" : a.state === "busy" ? "busy" : "";
+      return `<span class="agent"><i class="led ${led}"></i> ${esc(a.id)} · ${esc(a.state)}</span>`;
+    }).join("");
+  }
+
+  function clearHighlights() {
+    document.querySelectorAll(".card.hl, .batch.hl, .work tbody tr.hl").forEach((el) => {
+      el.classList.remove("hl");
+    });
+  }
+
+  /**
+   * workMode:
+   *  - "batch-wif"   only the batch Work-in-flight row (not member story WIF lines)
+   *  - "stories"     WIF rows by story id; batch WIF row if story is a batch member
+   *  - "board-batch" board batch + member cards + batch WIF row only
+   */
+  function setHighlights({ storyIds, batchId, workMode }) {
+    clearHighlights();
+    const ids = new Set(storyIds || []);
+    const bmeta = batchId ? batchById(batchId) : null;
+
+    ids.forEach((id) => {
+      document.querySelectorAll('.card[data-story="' + id + '"]').forEach((el) => el.classList.add("hl"));
+    });
+
+    document.querySelectorAll(".batch[data-batch-id]").forEach((el) => {
+      const bid = el.getAttribute("data-batch-id");
+      const meta = batchById(bid);
+      const members = (meta && meta.members) || [];
+      if (batchId && bid === batchId) el.classList.add("hl");
+      else if (members.some((m) => ids.has(m))) el.classList.add("hl");
+    });
+
+    document.querySelectorAll(".work tbody tr[data-work-idx]").forEach((tr) => {
+      const isBatchRow = tr.getAttribute("data-work-batch") === "1";
+      const rowBatch = tr.getAttribute("data-batch-id") || "";
+      let rowIds = [];
+      try { rowIds = JSON.parse(tr.getAttribute("data-story-ids") || "[]"); } catch (_) {}
+
+      if (workMode === "batch-wif" || workMode === "board-batch") {
+        // Only the batch×N WIF line for this batch — not wumpus-wake etc.
+        if (isBatchRow && batchId && rowBatch === batchId) tr.classList.add("hl");
+      } else {
+        if (!isBatchRow && rowIds.some((id) => ids.has(id))) tr.classList.add("hl");
+        // Batch WIF row when hovering a member story
+        if (isBatchRow && rowIds.some((id) => ids.has(id))) tr.classList.add("hl");
+      }
+    });
+  }
+
+  function showMembersPopup(anchorEl, { kind, count, id, members }) {
+    clearTimeout(batchMenuHideTimer);
+    const menu = document.getElementById("batch-menu");
+    if (!menu || !anchorEl) return;
+    const list = members || [];
+    menu.innerHTML = "<strong>" + esc(kind || "Batch") + " ×" + esc(String(count != null ? count : list.length)) +
+      (id ? " · " + esc(id) : "") + "</strong>" +
+      "<ul>" + (list.length
+        ? list.map((m) => "<li>" + esc(m) + "</li>").join("")
+        : "<li>(no members)</li>") + "</ul>";
+    menu.hidden = false;
+    menu.classList.add("open");
+    const r = anchorEl.getBoundingClientRect();
+    const mw = 240;
+    let left = r.right + 10;
+    let top = r.top;
+    if (left + mw > window.innerWidth - 8) left = Math.max(8, r.left - mw - 10);
+    if (top + 160 > window.innerHeight - 8) top = Math.max(8, window.innerHeight - 180);
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+  }
+
+  function hideBatchMenuSoon() {
+    clearTimeout(batchMenuHideTimer);
+    batchMenuHideTimer = setTimeout(() => {
+      const menu = document.getElementById("batch-menu");
+      if (!menu) return;
+      menu.classList.remove("open");
+      menu.hidden = true;
+    }, 160);
+  }
+  function cancelHideBatchMenu() {
+    clearTimeout(batchMenuHideTimer);
+  }
+
+  function renderWork() {
+    document.getElementById("work").innerHTML = "<table class=\"work\">" +
+      "<colgroup>" +
+        "<col class=\"c-story\"><col class=\"c-role\"><col class=\"c-state\"><col class=\"c-age\">" +
+      "</colgroup>" +
+      "<thead><tr><th>Story</th><th>Role</th><th>State</th><th>Age</th></tr></thead>" +
+      "<tbody>" + db.work.map((w, i) => {
+        const pill = w.kind === "warn" ? "pill-warn" : w.kind === "info" ? "pill-info" : w.kind === "ok" ? "pill-ok" : "";
+        const ids = w.storyIds || [];
+        const isBatch = !!w.isBatch;
+        const batchId = w.batchId || "";
+        return "<tr data-work-idx=\"" + i + "\"" +
+          " data-story-ids=\"" + esc(JSON.stringify(ids)) + "\"" +
+          " data-batch-id=\"" + esc(batchId) + "\"" +
+          " data-work-batch=\"" + (isBatch ? "1" : "0") + "\">" +
+          "<td title=\"" + esc(w.story) + "\"><button type=\"button\" class=\"linkish\" data-focus=\"" +
+            esc(w.story) + "\" title=\"" + esc(w.story) + "\">" + esc(w.story) + "</button></td>" +
+          "<td title=\"" + esc(w.role) + "\">" + esc(w.role) + "</td>" +
+          "<td title=\"" + esc(w.state) + "\"><span class=\"pill " + pill + "\">" + esc(w.state) + "</span></td>" +
+          "<td title=\"" + esc(w.age) + "\">" + esc(w.age) + "</td>" +
+          "</tr>";
+      }).join("") + "</tbody></table>";
+  }
+
+  function bindHoverChromeOnce() {
+    if (window.__squadHoverBound) return;
+    window.__squadHoverBound = true;
+
+    const workHost = document.getElementById("work");
+    workHost.addEventListener("mouseover", (e) => {
+      const tr = e.target.closest("tr[data-work-idx]");
+      if (!tr || !workHost.contains(tr)) return;
+      if (e.relatedTarget && tr.contains(e.relatedTarget)) return;
+
+      const isBatch = tr.getAttribute("data-work-batch") === "1";
+      const batchId = tr.getAttribute("data-batch-id") || "";
+      let storyIds = [];
+      try { storyIds = JSON.parse(tr.getAttribute("data-story-ids") || "[]"); } catch (_) {}
+
+      if (isBatch && batchId) {
+        const b = batchById(batchId);
+        const members = (b && b.members) || storyIds;
+        setHighlights({ storyIds: members, batchId, workMode: "batch-wif" });
+        showMembersPopup(tr, {
+          kind: (b && b.kind) || "Batch",
+          count: members.length,
+          id: batchId,
+          members
+        });
+      } else {
+        setHighlights({ storyIds, workMode: "stories" });
+        hideBatchMenuSoon();
+      }
+    });
+    workHost.addEventListener("mouseout", (e) => {
+      const tr = e.target.closest("tr[data-work-idx]");
+      if (!tr || !workHost.contains(tr)) return;
+      if (e.relatedTarget && tr.contains(e.relatedTarget)) return;
+      if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("#batch-menu")) return;
+      clearHighlights();
+      hideBatchMenuSoon();
+    });
+
+    const board = document.querySelector(".board");
+    board.addEventListener("mouseover", (e) => {
+      const batch = e.target.closest(".batch[data-batch-id]");
+      if (batch && board.contains(batch)) {
+        if (e.relatedTarget && batch.contains(e.relatedTarget)) return;
+        const batchId = batch.getAttribute("data-batch-id");
+        const b = batchById(batchId);
+        if (!b) return;
+        setHighlights({ storyIds: b.members.slice(), batchId, workMode: "board-batch" });
+        showMembersPopup(batch, {
+          kind: b.kind,
+          count: b.count || b.members.length,
+          id: batchId,
+          members: b.members
+        });
+        return;
+      }
+      const card = e.target.closest(".card[data-story]");
+      if (card && board.contains(card) && !card.closest(".batch")) {
+        if (e.relatedTarget && card.contains(e.relatedTarget)) return;
+        const id = card.getAttribute("data-story");
+        setHighlights({ storyIds: [id], workMode: "stories" });
+        hideBatchMenuSoon();
+      }
+    });
+    board.addEventListener("mouseout", (e) => {
+      const batch = e.target.closest(".batch[data-batch-id]");
+      if (batch && board.contains(batch)) {
+        if (e.relatedTarget && batch.contains(e.relatedTarget)) return;
+        if (e.relatedTarget && e.relatedTarget.closest && e.relatedTarget.closest("#batch-menu")) return;
+        clearHighlights();
+        hideBatchMenuSoon();
+        return;
+      }
+      const card = e.target.closest(".card[data-story]");
+      if (card && board.contains(card) && !card.closest(".batch")) {
+        if (e.relatedTarget && card.contains(e.relatedTarget)) return;
+        clearHighlights();
+      }
+    });
+
+    const menu = document.getElementById("batch-menu");
+    menu.addEventListener("mouseenter", cancelHideBatchMenu);
+    menu.addEventListener("mouseleave", () => {
+      hideBatchMenuSoon();
+      clearHighlights();
+    });
+  }
+
+  function bindBatchMenuChrome() {
+    bindHoverChromeOnce();
+  }
+
+  function renderChat() {
+    const h = document.getElementById("chat-history");
+    const stick = h.scrollHeight - h.scrollTop - h.clientHeight < 40;
+    h.innerHTML = db.chat.map((m) =>
+      m.who === "you"
+        ? `<div class="bubble-you">${esc(m.text)}</div>`
+        : `<div class="bubble-ts">${esc(m.text)}</div>`
+    ).join("");
+    if (stick) h.scrollTop = h.scrollHeight;
+  }
+
+  function renderAll() {
+    renderAttention();
+    renderBoard();
+    renderThemes();
+    renderAgents();
+    renderWork();
+    renderChat();
+    document.getElementById("slot-meta").textContent =
+      db.agents.filter((a) => a.state === "busy").length + "/8";
+  }
+
+  function bringFront(el) {
+    zTop += 1;
+    el.style.zIndex = String(zTop);
+  }
+
+  function makeDraggable(win, bar) {
+    let ox = 0, oy = 0, dragging = false;
+    bar.addEventListener("pointerdown", (e) => {
+      if (e.target.closest(".traffic")) return;
+      dragging = true;
+      bringFront(win);
+      const r = win.getBoundingClientRect();
+      ox = e.clientX - r.left;
+      oy = e.clientY - r.top;
+      bar.setPointerCapture(e.pointerId);
+    });
+    bar.addEventListener("pointermove", (e) => {
+      if (!dragging) return;
+      win.style.left = Math.max(0, e.clientX - ox) + "px";
+      win.style.top = Math.max(0, e.clientY - oy) + "px";
+    });
+    bar.addEventListener("pointerup", () => { dragging = false; });
+  }
+
+  function closeWindow(id) {
+    const w = windows.get(id);
+    if (!w) return;
+    w.el.remove();
+    windows.delete(id);
+  }
+
+  function openFloat(opts) {
+    const id = opts.id;
+    if (windows.has(id)) {
+      bringFront(windows.get(id).el);
+      return windows.get(id);
+    }
+    const layer = document.getElementById("float-layer");
+    const el = document.createElement("div");
+    el.className = "float" + (opts.session ? " session" : "");
+    el.dataset.winId = id;
+    const left = opts.left ?? (120 + windows.size * 28);
+    const top = opts.top ?? (80 + windows.size * 24);
+    el.style.left = left + "px";
+    el.style.top = top + "px";
+    el.innerHTML = `
+      <div class="titlebar">
+        <span class="traffic"><i class="r" data-close title="Close"></i><i class="y"></i><i class="g"></i></span>
+        <span class="ttl">${esc(opts.title)}</span>
+      </div>
+      <div class="body-pad">${opts.bodyHtml}</div>`;
+    layer.appendChild(el);
+    bringFront(el);
+    makeDraggable(el, el.querySelector(".titlebar"));
+    el.querySelector("[data-close]").addEventListener("click", () => closeWindow(id));
+    const rec = { el, kind: opts.kind, data: opts.data };
+    windows.set(id, rec);
+    if (opts.onMount) opts.onMount(el, rec);
+    return rec;
+  }
+
+  /** Detached edit window for new or existing backlog item */
+  function openBacklogEditor(item) {
+    const isNew = !item;
+    const draft = item
+      ? { ...item }
+      : { id: null, title: "", body: "", status: "open", created_at: null, updated_at: null };
+    const winId = isNew ? "backlog-new" : "backlog-edit-" + draft.id;
+
+    if (windows.has(winId)) {
+      bringFront(windows.get(winId).el);
+      return;
+    }
+
+    openFloat({
+      id: winId,
+      kind: "backlog-edit",
+      title: isNew ? "New backlog item" : "Edit · " + (draft.title || draft.id),
+      left: Math.max(40, window.innerWidth / 2 - 180),
+      top: 100,
+      bodyHtml: `
+        <label for="be-title">Title</label>
+        <input type="text" id="be-title" value="${esc(draft.title)}" placeholder="Short name for the item">
+        <label for="be-body">Description</label>
+        <textarea id="be-body" placeholder="What should the swarm analyze or build?">${esc(draft.body)}</textarea>
+        <div class="dates" id="be-dates">${
+          isNew
+            ? "Not saved yet — no created/modified timestamps."
+            : `Created ${esc(fmt(draft.created_at))} · Modified ${esc(fmt(draft.updated_at))}`
+        }</div>
+        <div class="note">
+          <strong>Add</strong> stores the item on the backlog only.<br>
+          <strong>Approve</strong> enters the pipeline. The <strong>Squad Leader</strong> decides
+          whether this becomes a <em>new theme</em> or a <em>story on an existing theme</em>
+          (operator does not choose here).
+        </div>
+        <div class="actions">
+          <button type="button" class="btn" data-be="cancel">Cancel</button>
+          ${!isNew ? `<button type="button" class="btn btn-danger" data-be="delete">Delete</button>` : ""}
+          <button type="button" class="btn" data-be="add">${isNew ? "Add" : "Save"}</button>
+          <button type="button" class="btn btn-approve" data-be="approve">Approve</button>
+        </div>`,
+      onMount(el) {
+        const titleEl = el.querySelector("#be-title");
+        const bodyEl = el.querySelector("#be-body");
+        titleEl.focus();
+
+        const read = () => ({
+          title: titleEl.value.trim(),
+          body: bodyEl.value.trim()
+        });
+
+        el.querySelector('[data-be="cancel"]').onclick = () => closeWindow(winId);
+
+        el.querySelector('[data-be="add"]').onclick = () => {
+          const { title, body } = read();
+          if (!title) { toast("Title required"); titleEl.focus(); return; }
+          const t = now();
+          if (isNew) {
+            db.backlog.push({
+              id: uid("bl"),
+              title,
+              body,
+              status: "open",
+              created_at: t,
+              updated_at: t
+            });
+            toast("Added to backlog");
+          } else {
+            const row = db.backlog.find((b) => b.id === draft.id);
+            if (row) {
+              row.title = title;
+              row.body = body;
+              row.updated_at = t;
+            }
+            toast("Backlog item saved");
+          }
+          closeWindow(winId);
+          renderAll();
+        };
+
+        const del = el.querySelector('[data-be="delete"]');
+        if (del) {
+          del.onclick = () => {
+            if (!confirm("Delete this backlog item?")) return;
+            db.backlog = db.backlog.filter((b) => b.id !== draft.id);
+            toast("Deleted");
+            closeWindow(winId);
+            renderAll();
+          };
+        }
+
+        el.querySelector('[data-be="approve"]').onclick = () => {
+          const { title, body } = read();
+          if (!title) { toast("Title required"); titleEl.focus(); return; }
+          approveIntoPipeline({ id: draft.id, title, body, isNew });
+          closeWindow(winId);
+          renderAll();
+        };
+      }
+    });
+  }
+
+  /**
+   * Approve = enter pipeline. SL (simulated) classifies theme vs story.
+   * Operator does not pick; we log SL judgment and place a board card.
+   */
+  function approveIntoPipeline({ id, title, body, isNew }) {
+    const t = now();
+    // Remove or mark backlog item
+    if (!isNew && id) {
+      const row = db.backlog.find((b) => b.id === id);
+      if (row) {
+        row.status = "dispatched";
+        row.updated_at = t;
+        row.title = title;
+        row.body = body;
+      }
+    } else {
+      // new item approved without Add — still record as dispatched for audit
+      db.backlog.push({
+        id: uid("bl"),
+        title,
+        body,
+        status: "dispatched",
+        created_at: t,
+        updated_at: t
+      });
+    }
+
+    // Simulated SL classification
+    const existingTheme = db.themes[0]?.id || "hunt-the-wumpus";
+    const looksLikeNewProduct = /theme|app|product|new game|dice/i.test(title + " " + body);
+    const classification = looksLikeNewProduct
+      ? { kind: "theme", themeId: title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || uid("theme") }
+      : { kind: "story", themeId: existingTheme };
+
+    if (classification.kind === "theme" && !db.themes.some((th) => th.id === classification.themeId)) {
+      db.themes.push({
+        id: classification.themeId,
+        state: "open",
+        order: false,
+        checker: false,
+        map: false
+      });
+    }
+
+    const sid = uid("story");
+    storySeq += 1;
+    db.stories.push({
+      id: sid,
+      num: storySeq,
+      title: title.length > 24 ? title.slice(0, 22) + "…" : title,
+      theme: classification.themeId,
+      column: "specified",
+      badges: ["Awaiting analysis", classification.kind === "theme" ? "SL: new theme" : "SL: story"],
+      detail: classification.kind === "theme"
+        ? "SL: new theme · analyst next"
+        : "SL: story on " + classification.themeId,
+      agent: "SL",
+      agentId: "squad-leader",
+      agentRole: "squad-leader",
+      created_at: t,
+      updated_at: t,
+      stats: {
+        gherkin: "—", qa_proc: "—", impl: "—", cleaner: "—",
+        code_review: "—", hardener: "—", qa: "—", arch: "—"
+      },
+      story_md: "# " + title + "\n\n" + (body || "_(no body)_") +
+        "\n\n## Pipeline\nApproved from backlog. SL classification: **" +
+        classification.kind + "** → `" + classification.themeId + "`.",
+      pipelineBody: body
+    });
+
+    db.work.unshift({
+      story: title,
+      storyIds: [sid],
+      role: "analyst?",
+      state: "queued",
+      age: "0m",
+      kind: "info"
+    });
+
+    db.chat.push({
+      who: "ts",
+      text: `Approved “${title}”. SL classified as ${
+        classification.kind === "theme"
+          ? "NEW THEME “" + classification.themeId + "”"
+          : "STORY on theme “" + classification.themeId + "”"
+      }. (Mock SL — real SL owns this judgment.)`
+    });
+
+    db.pipelineLog.push({ title, classification, at: t });
+    toast(
+      classification.kind === "theme"
+        ? "Approved → pipeline (SL: new theme)"
+        : "Approved → pipeline (SL: story on " + classification.themeId + ")"
+    );
+  }
+
+  function statRows(stats) {
+    const order = [
+      ["gherkin", "Gherkin"],
+      ["qa_proc", "QA procedure"],
+      ["impl", "Implementation"],
+      ["cleaner", "Cleaner"],
+      ["code_review", "Code review"],
+      ["hardener", "Hardener"],
+      ["qa", "QA"],
+      ["arch", "Architecture"]
+    ];
+    const s = stats || {};
+    return order.map(([k, label]) =>
+      `<div class="k">${esc(label)}</div><div class="v">${esc(s[k] != null ? s[k] : "—")}</div>`
+    ).join("");
+  }
+
+  /** Map board agent face → session open id */
+  function sessionKeyForStory(s) {
+    if (s.agentId) return s.agentId;
+    if (!s.agent) return "";
+    const a = s.agent;
+    if (a === "SL") return "squad-leader";
+    if (a === "TS") return "troubleshooter";
+    if (/^i-/.test(a)) return "implementer-" + a.slice(2).padStart(3, "0");
+    if (/^h-/.test(a)) return "hardener-" + a.slice(2).padStart(3, "0");
+    if (/^gr-/.test(a)) return "gherkin-reviewer-" + a.slice(3).padStart(3, "0");
+    return a;
+  }
+
+  function openAgentSessionForStory(s) {
+    const key = sessionKeyForStory(s);
+    if (!key) {
+      toast("No agent working this story right now");
+      return;
+    }
+    const role = s.agentRole || "agent";
+    openFloat({
+      id: "session-" + key,
+      kind: "session",
+      session: true,
+      title: "Session · " + key,
+      left: 48,
+      top: Math.max(60, window.innerHeight - 340),
+      bodyHtml: `<div>$ session — ${esc(key)}</div>
+        <div style="opacity:.75;margin-top:6px">role: ${esc(role)} · story: ${esc(s.id)}</div>
+        <div style="margin-top:10px">Working on <strong style="color:#fff">${esc(s.title)}</strong></div>
+        <div style="margin-top:8px;opacity:.8">${esc(s.detail || "")}</div>
+        <div style="margin-top:14px;opacity:.85">▌ detached agent session (mock) — not a browser tab</div>`
+    });
+    toast("Opened session " + key);
+  }
+
+  function openStoryWindow(storyId) {
+    const s = db.stories.find((x) => x.id === storyId);
+    if (!s) return;
+    const winId = "story-" + storyId;
+    // Refresh content if already open
+    if (windows.has(winId)) closeWindow(winId);
+
+    const working = !!(s.agentId || s.agent);
+    const sessionLabel = sessionKeyForStory(s);
+    const agentBlock = working
+      ? `<div class="agent-link-row">
+           <span class="role">${esc(s.agentRole || "agent")}</span>
+           <span>${esc(sessionLabel)}</span>
+           <span class="pill pill-info">in session</span>
+           <span class="spacer"></span>
+           <button type="button" class="btn btn-sm btn-primary" data-open-session>Open agent session</button>
+         </div>`
+      : `<div class="agent-link-row idle">No agent session on this story right now.</div>`;
+
+    const fullText = s.story_md || s.pipelineBody || "_No full story text in mock data._";
+
+    openFloat({
+      id: winId,
+      kind: "story",
+      title: "Story · " + s.title,
+      left: Math.max(40, window.innerWidth - 460),
+      top: 100,
+      bodyHtml: `
+        <div style="font-weight:700;font-size:14px;margin-bottom:4px">${esc((s.num != null ? "#" + s.num + " " : "") + s.title)}</div>
+        <div class="dates">
+          Created ${esc(fmt(s.created_at))} · Modified ${esc(fmt(s.updated_at))} · age ${esc(age(s.updated_at))}
+        </div>
+        <p style="margin:0 0 6px;font-size:12px">
+          Theme: <strong>${esc(s.theme)}</strong>
+          · Board: <strong>${esc(s.column)}</strong>
+          · Packet: <strong>${esc(s.detail || "—")}</strong>
+        </p>
+        <div class="badges" style="display:flex;flex-wrap:wrap;gap:4px;margin-bottom:4px">${
+          (s.badges || []).map((b) => `<span class="pill ${pillClass(b)}">${esc(b)}</span>`).join("")
+        }</div>
+
+        <div class="stat-grid">${statRows(s.stats)}</div>
+
+        ${agentBlock}
+
+        <div class="actions" style="justify-content:flex-start;margin-bottom:4px">
+          <button type="button" class="btn btn-sm" data-toggle-full>View full story</button>
+          ${s.story_path ? `<span class="meta">path: ${esc(s.story_path)}</span>` : `<span class="meta">stories/${esc(s.id)}.md (mock)</span>`}
+        </div>
+        <div class="story-full" data-full-story>${esc(fullText)}</div>
+        <div class="note" style="margin-top:10px;margin-bottom:0">
+          Detached movable window — not a browser tab. Stats are packet-derived (mock).
+        </div>`,
+      onMount(el) {
+        el.classList.add("story-detail");
+        const full = el.querySelector("[data-full-story]");
+        const toggle = el.querySelector("[data-toggle-full]");
+        toggle.addEventListener("click", () => {
+          const open = full.classList.toggle("open");
+          toggle.textContent = open ? "Hide full story" : "View full story";
+        });
+        const sess = el.querySelector("[data-open-session]");
+        if (sess) {
+          sess.addEventListener("click", () => openAgentSessionForStory(s));
+        }
+      }
+    });
+  }
+
+  function openThemeWindow(themeId) {
+    const t = db.themes.find((x) => x.id === themeId);
+    if (!t) return;
+    openFloat({
+      id: "theme-" + themeId,
+      kind: "theme",
+      title: "Theme · " + t.id,
+      left: 80,
+      top: 160,
+      bodyHtml: `
+        <div style="font-weight:700">${esc(t.id)}</div>
+        <div class="dates">Lifecycle: ${esc(t.state)}</div>
+        <div class="row" style="display:flex;gap:4px;flex-wrap:wrap;margin:8px 0">
+          <span class="pill ${t.order ? "pill-ok" : "pill-warn"}">order ${t.order ? "✓" : "missing"}</span>
+          <span class="pill ${t.checker ? "pill-ok" : "pill-warn"}">checker ${t.checker ? "✓" : "missing"}</span>
+          <span class="pill ${t.map ? "pill-ok" : "pill-warn"}">map ${t.map ? "✓" : "missing"}</span>
+        </div>
+        <div class="note">Package detail (mock). Detached window.</div>`
+    });
+  }
+
+  function openSession(role) {
+    const id = "session-" + role;
+    openFloat({
+      id,
+      kind: "session",
+      session: true,
+      title: "Session · " + (role === "ts" ? "Troubleshooter" : "Squad Leader"),
+      left: role === "ts" ? 40 : 360,
+      top: role === "ts" ? window.innerHeight - 320 : 200,
+      bodyHtml: `<div>$ codex — ${role === "ts" ? "troubleshooter" : "squad-leader"}</div>
+        <div style="opacity:.7;margin-top:6px"># full agent session (mock)</div>
+        <div style="margin-top:8px">${role === "ts"
+          ? "NEXT_ACTION: wait<br>REASON: no handoffs (sim)"
+          : "Watching residual · theme hunt-the-wumpus"}</div>
+        <div style="margin-top:12px;opacity:.85">▌ movable window — not a tab</div>`
+    });
+  }
+
+  // Events
+  document.getElementById("float-layer").addEventListener("mousedown", (e) => {
+    const win = e.target.closest(".float");
+    if (win) bringFront(win);
+  });
+
+  document.getElementById("backlog-menu").addEventListener("click", (e) => {
+    const editBl = e.target.closest("[data-edit-backlog]");
+    if (!editBl) return;
+    const id = editBl.getAttribute("data-edit-backlog");
+    const item = db.backlog.find((b) => b.id === id);
+    if (item) {
+      hideBacklogMenuSoon();
+      clearTimeout(backlogMenuHideTimer);
+      document.getElementById("backlog-menu").classList.remove("open");
+      document.getElementById("backlog-menu").hidden = true;
+      openBacklogEditor(item);
+    }
+  });
+
+  document.querySelector(".cockpit").addEventListener("click", (e) => {
+    const add = e.target.closest("#btn-add-item");
+    if (add) {
+      openBacklogEditor(null);
+      return;
+    }
+    const editBl = e.target.closest("[data-edit-backlog]");
+    if (editBl) {
+      const id = editBl.getAttribute("data-edit-backlog");
+      const item = db.backlog.find((b) => b.id === id);
+      if (item) openBacklogEditor(item);
+      return;
+    }
+    const story = e.target.closest("[data-story]");
+    if (story) {
+      openStoryWindow(story.getAttribute("data-story"));
+      return;
+    }
+    const theme = e.target.closest("[data-theme]");
+    if (theme) {
+      openThemeWindow(theme.getAttribute("data-theme"));
+      return;
+    }
+    const att = e.target.closest("[data-act]");
+    if (att) {
+      const act = att.getAttribute("data-act");
+      const id = att.getAttribute("data-id");
+      if (act === "approve-att" || act === "reject-att") {
+        db.attention = db.attention.filter((a) => a.id !== id);
+        toast(act === "approve-att" ? "Approval recorded (mock)" : "Rejected (mock)");
+        renderAll();
+      } else if (act === "open-agent") {
+        openSession("ts");
+      }
+      return;
+    }
+  });
+
+  document.getElementById("btn-open-sl").onclick = () => openSession("sl");
+  document.getElementById("btn-open-ts").onclick = () => openSession("ts");
+  document.getElementById("btn-open-ts-2").onclick = () => openSession("ts");
+  document.getElementById("btn-teardown").onclick = () => {
+    if (confirm("Mock teardown — clear floating windows only?")) {
+      [...windows.keys()].forEach(closeWindow);
+      toast("Floating windows closed (mock)");
+    }
+  };
+
+  document.getElementById("chat-send").onclick = () => {
+    const input = document.getElementById("chat-input");
+    const text = input.value.trim();
+    if (!text) return;
+    db.chat.push({ who: "you", text });
+    db.chat.push({
+      who: "ts",
+      text: "Mock reply: received “" + text.slice(0, 80) + (text.length > 80 ? "…" : "") + "”."
+    });
+    input.value = "";
+    renderChat();
+    const h = document.getElementById("chat-history");
+    h.scrollTop = h.scrollHeight;
+  };
+  document.getElementById("chat-input").addEventListener("keydown", (e) => {
+    // Enter = newline in 4-line box; ⌘/Ctrl+Enter sends
+    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+      e.preventDefault();
+      document.getElementById("chat-send").click();
+    }
+  });
+
+  renderAll();
+})();
+  </script>
+</body>
+</html>

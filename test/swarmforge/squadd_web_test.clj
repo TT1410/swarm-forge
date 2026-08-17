@@ -79,6 +79,32 @@
   (is (str/includes? web/dashboard-html "req-progress"))
   (is (str/includes? web/dashboard-html "r.progress")))
 
+(deftest backlog-crud-and-approve-for-analysis
+  ;; B35: durable backlog under .squad/backlog; approve creates SL-owned request
+  (let [root (tmp-dir)]
+    (try
+      (let [created (web/create-backlog! root {:title "Fog cues" :body "Stronger adjacency hints."})]
+        (is (true? (:ok created)))
+        (is (= "open" (get-in created [:item "status"])))
+        (is (seq (get-in created [:item "created_at"])))
+        (let [id (get-in created [:item "id"])
+              listed (web/list-backlog root)
+              approved (web/approve-backlog! root id)]
+          (is (= 1 (count listed)))
+          (is (true? (:ok approved)))
+          (is (= "dispatched" (get-in approved [:item "status"])))
+          (is (= "squad-leader" (get-in approved [:request "owner"])))
+          (is (str/includes? (get-in approved [:request "body"] "") "Fog cues"))
+          (is (str/includes? (get-in approved [:request "body"] "") "NEW THEME"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest board-column-mapping-for-stories
+  (is (= "done" (web/board-column "final_approved")))
+  (is (= "coding" (web/board-column "cleaned")))
+  (is (= "ready" (web/board-column "implementation_approved")))
+  (is (= "specified" (web/board-column "specification_in_progress"))))
+
 (deftest teardown-requires-confirm-and-is-wired-in-ui
   ;; B37: Teardown button + POST /api/teardown with TEARDOWN confirm
   (is (str/includes? web/dashboard-html "teardownSwarm()"))
@@ -205,8 +231,9 @@
                   "state: created\ndetail: active\nupdated_at: 2026-08-10T00:00:00Z\n")
       (is (str/includes? (web/artifact-content root "assignment" "story-1-implementer")
                          "Leader instructions for implementer"))
-      (is (str/includes? web/dashboard-html
-                         "artifactLink('assignment', a.assignment_id, a.assignment_id)"))
+      ;; Combined cockpit (B24): work-in-flight table + artifact routes still available
+      (is (str/includes? web/dashboard-html "work_in_flight"))
+      (is (str/includes? web/dashboard-html "/artifact/"))
       (finally
         (fs/delete-tree root)))))
 
@@ -457,20 +484,18 @@
 	          (is (< (str/index-of state "\"assignment_id\":\"newer-assignment\"")
 	                 (str/index-of state "\"assignment_id\":\"active-assignment\"")))
 	          (is (not (str/includes? state "\"assignment_id\":\"merged-assignment\"")))
-	          (is (str/includes? page "localStorage.getItem(slDraftKey)"))
-	          (is (str/includes? page "messageInput.addEventListener('input'"))
-	          (is (str/includes? page "messageInput.addEventListener('keydown'"))
-	          (is (str/includes? page "event.key === 'Enter' && !event.shiftKey"))
-	          (is (str/includes? page "localStorage.removeItem(slDraftKey)"))
-	          (is (str/includes? page "const messageInput = document.getElementById('sl-message')"))
+	          ;; Combined cockpit UI (B24/B35) — markers, not legacy table JS
 	          (is (str/includes? page "Troubleshooter"))
 	          (is (str/includes? page "id=\"ts-busy\""))
 	          (is (str/includes? page "data.troubleshooter"))
-	          (is (str/includes? page "sendRequest()"))
-	          (is (not (str/includes? page "app.innerHTML")))
-	          (is (str/includes? page "/artifact/${encodeURIComponent(kind)}/${encodeURIComponent(id)}"))
-	          (is (str/includes? page "artifactLink('assignment', a.assignment_id, a.assignment_id)"))
-	          (is (str/includes? page "/agent/${encodeURIComponent(a.agent_id)}"))
+	          (is (str/includes? page "id=\"sl-message\""))
+	          (is (str/includes? page "Add New Item"))
+	          (is (str/includes? page "work_in_flight"))
+	          (is (str/includes? page "backlog"))
+	          (is (str/includes? page "/api/backlog"))
+	          (is (str/includes? page "/agent/troubleshooter"))
+	          (is (str/includes? page "/agent/squad-leader"))
+	          (is (str/includes? page "teardownSwarm()"))
 	          (is (str/includes? theme-page "faithful Hunt the Wumpus"))
 	          (is (str/includes? theme-page "Module Map"))
 	          (is (str/includes? theme-page "Use Cases (Business / Process Rules)"))

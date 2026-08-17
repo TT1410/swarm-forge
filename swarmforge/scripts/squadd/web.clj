@@ -15,378 +15,22 @@
 (def approval-wake-message
   "A web approval changed state. If idle, run squad_next.sh --residual-only and handle only residual judgment or user-facing work. The daemon owns merge-ready/accept-merge and other mechanical applies.")
 
+(defn dashboard-html-path []
+  "Prefer dashboard.html beside this script (squadd/dashboard.html)."
+  (let [candidates (cond-> []
+                     *file* (conj (fs/path (fs/parent *file*) "dashboard.html"))
+                     true (conj (fs/path (System/getProperty "user.dir")
+                                         "swarmforge" "scripts" "squadd" "dashboard.html")))]
+    (first (filter #(and % (fs/regular-file? %)) candidates))))
+
 (def dashboard-html
-  "<!doctype html>
-<html lang=\"en\">
-<head>
-  <meta charset=\"utf-8\">
-  <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">
-  <title>SwarmForge Squad</title>
-  <style>
-    :root { color-scheme: light dark; font-family: ui-sans-serif, system-ui, sans-serif; }
-    body { margin: 0; background: #f7f7f4; color: #202124; }
-    header { padding: 14px 18px; border-bottom: 1px solid #d9d9d2; display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
-    #teardown-btn { border-color: #9b1c1c; color: #9b1c1c; }
-    #teardown-btn:hover { background: #9b1c1c; color: #fff; }
-    h1 { font-size: 18px; margin: 0; }
-    main { padding: 16px 18px 32px; display: grid; gap: 18px; }
-    section { display: grid; gap: 8px; }
-    h2 { font-size: 14px; margin: 0; text-transform: uppercase; color: #59615b; }
-    table { width: 100%; border-collapse: collapse; background: white; border: 1px solid #d9d9d2; }
-    th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid #ecece6; font-size: 13px; vertical-align: top; }
-    th { background: #f0f0ea; color: #3b413d; }
-    textarea { width: 100%; min-height: 90px; resize: vertical; box-sizing: border-box; border: 1px solid #c6cbc5; padding: 8px; font: inherit; }
-    button { border: 1px solid #9aa59e; background: #fff; color: #202124; padding: 5px 9px; border-radius: 6px; cursor: pointer; }
-    button:active, button.pressed { background: #202124; color: #fff; transform: translateY(1px); }
-    button + button { margin-left: 6px; }
-    .muted { color: #68726c; }
-    .pill { display: inline-block; padding: 2px 6px; border-radius: 999px; background: #e8eee9; font-size: 11px; }
-    .pill-pending { background: #fff3cd; }
-    .pill-answered { background: #d4edda; }
-    .pill-rejected { background: #f8d7da; }
-    .error { color: #9b1c1c; }
-    .req-history { max-height: 280px; overflow-y: auto; background: white; border: 1px solid #d9d9d2; padding: 10px 12px; display: grid; gap: 10px; }
-    .req-you { border-left: 3px solid #6b7c72; padding-left: 8px; white-space: pre-wrap; }
-    .req-sl { color: #4a4f4c; padding-left: 16px; white-space: pre-wrap; }
-    .req-sl.short { font-style: italic; }
-    .req-progress { color: #68726c; padding-left: 16px; font-size: 12px; white-space: pre-wrap; border-left: 2px dashed #c6cbc5; margin: 4px 0; }
-    .pill-stalled { background: #f8d7da; color: #9b1c1c; }
-    #stall-section { background: #fff5f5; border: 1px solid #f5c2c7; padding: 10px 12px; border-radius: 8px; }
-    .req-meta { font-size: 11px; color: #68726c; margin-bottom: 2px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .composer-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-  </style>
-</head>
-<body>
-  <header>
-    <h1>SwarmForge Squad</h1>
-    <span id=\"meta\" class=\"muted\"></span>
-    <button type=\"button\" id=\"teardown-btn\" style=\"margin-left:auto\"
-            onclick=\"teardownSwarm()\" title=\"Stop squadd, agents, and tmux sessions\">Teardown</button>
-  </header>
-  <main>
-    <p id=\"error\" class=\"error\"></p>
-    <section id=\"stall-section\" style=\"display:none\">
-      <h2 style=\"color:#9b1c1c\">Stalled <span id=\"stall-count\" class=\"pill\" style=\"background:#f8d7da\"></span></h2>
-      <p id=\"stall-summary\" class=\"muted\"></p>
-      <div id=\"stalls\"></div>
-    </section>
-    <section><h2>Blockers</h2><div id=\"blockers\"></div></section>
-    <section><h2>Pending Approvals</h2><div id=\"approvals\"></div></section>
-    <section>
-      <h2 id=\"sl-requests-title\">Troubleshooter
-        <span id=\"ts-busy\" class=\"muted\" style=\"display:none;margin-left:0.5rem\" aria-live=\"polite\">…</span>
-        <a id=\"ts-open\" class=\"muted\" style=\"margin-left:0.75rem;font-size:0.85rem\" target=\"_blank\" href=\"/agent/troubleshooter\">Open window</a>
-      </h2>
-      <p class=\"muted\">Idle until you call. Firm answers only; use Open window for the session.</p>
-      <div id=\"sl-requests\" class=\"req-history\"></div>
-      <div class=\"composer-row\">
-        <button type=\"button\" onclick=\"sendRequest()\">Submit</button>
-      </div>
-      <textarea id=\"sl-message\" placeholder=\"Command or question for the Troubleshooter…\"></textarea>
-    </section>
-    <section><h2>Theme</h2><div id=\"theme\"></div></section>
-    <section><h2>Stories</h2><div id=\"stories\"></div></section>
-    <section><h2>Agents</h2><div id=\"agents\"></div></section>
-    <section><h2>Assignments</h2><div id=\"assignments\"></div></section>
-  </main>
-  <script>
-    const meta = document.getElementById('meta');
-    const error = document.getElementById('error');
-    async function teardownSwarm() {
-      if (!confirm('Stop this swarm? Squadd, agent sessions, and tmux windows will be terminated. Project files stay on disk.')) return;
-      if (prompt('Type TEARDOWN to confirm') !== 'TEARDOWN') {
-        error.textContent = 'Teardown cancelled.';
-        return;
-      }
-      try {
-        error.textContent = '';
-        const btn = document.getElementById('teardown-btn');
-        if (btn) { btn.disabled = true; btn.textContent = 'Tearing down…'; }
-        await post('/api/teardown', JSON.stringify({ confirm: 'TEARDOWN' }),
-                   'application/json; charset=utf-8', false);
-        meta.textContent = 'Swarm teardown started — this page will go offline.';
-        error.textContent = '';
-      } catch (err) {
-        error.textContent = err.message || String(err);
-        const btn = document.getElementById('teardown-btn');
-        if (btn) { btn.disabled = false; btn.textContent = 'Teardown'; }
-      }
-    }
-    const blockersPanel = document.getElementById('blockers');
-    const stallSection = document.getElementById('stall-section');
-    const stallCount = document.getElementById('stall-count');
-    const stallSummary = document.getElementById('stall-summary');
-    const stallsPanel = document.getElementById('stalls');
-    const approvalsPanel = document.getElementById('approvals');
-    const themePanel = document.getElementById('theme');
-    const storiesPanel = document.getElementById('stories');
-    const agentsPanel = document.getElementById('agents');
-    const assignmentsPanel = document.getElementById('assignments');
-    const requestsPanel = document.getElementById('sl-requests');
-    const slDraftKey = 'swarmforge.slMessageDraft';
-    let slDraft = localStorage.getItem(slDraftKey) || '';
-    let pressedApproval = null;
-    const esc = value => String(value ?? '').replace(/[&<>\"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','\"':'&quot;','\\'':'&#39;'}[c] || c));
-    async function post(path, body = null, contentType = null, refresh = true) {
-      const options = { method: 'POST' };
-      if (body !== null) options.body = body;
-      if (contentType) options.headers = { 'Content-Type': contentType };
-      const response = await fetch(path, options);
-      if (!response.ok) throw new Error(await response.text());
-      if (refresh) await render();
-      return response;
-    }
-    function row(cells) { return '<tr>' + cells.map(c => '<td>' + c + '</td>').join('') + '</tr>'; }
-    function table(headers, rows) {
-      return '<table><thead><tr>' + headers.map(h => '<th>' + esc(h) + '</th>').join('') + '</tr></thead><tbody>' + rows.join('') + '</tbody></table>';
-    }
-    function artifactKindForApproval(a) {
-      const gate = String(a.gate || '').replaceAll('_', '-');
-      if (gate === 'theme') return 'theme';
-      if (gate === 'story' || gate === 'implementation' || gate === 'final') return 'story';
-      if (gate === 'gherkin') return 'gherkin';
-      if (gate === 'qa-procedure' || gate === 'qa') return 'qa-procedure';
-      if (gate === 'code-review' || gate === 'architecture') return 'review';
-      if (gate === 'hardening') return 'story';
-      return String(a.target_kind || 'story').replaceAll('_', '-');
-    }
-    function artifactLink(kind, id, label) {
-      return `<a target=\"_blank\" href=\"/artifact/${encodeURIComponent(kind)}/${encodeURIComponent(id)}\">${esc(label)}</a>`;
-    }
-    function approvalButton(id, action, label) {
-      const pressed = pressedApproval && pressedApproval.id === id && pressedApproval.action === action;
-      const cls = pressed ? ' class=\"pressed\"' : '';
-      return `<button type=\"button\" data-approval-id=\"${esc(id)}\" data-approval-action=\"${action}\"${cls}` +
-        ` onpointerdown=\"window.__sfPressApproval(event,'${esc(id)}','${action}')\"` +
-        ` onpointerup=\"window.__sfReleaseApproval(event,'${esc(id)}','${action}')\"` +
-        ` onpointerleave=\"window.__sfCancelApproval(event,'${esc(id)}','${action}')\"` +
-        ` onpointercancel=\"window.__sfCancelApproval(event,'${esc(id)}','${action}')\">${label}</button>`;
-    }
-    window.__sfPressApproval = (event, id, action) => {
-      event.preventDefault();
-      pressedApproval = {id, action};
-      const btn = event.currentTarget;
-      if (btn) btn.classList.add('pressed');
-    };
-    window.__sfCancelApproval = (event, id, action) => {
-      if (pressedApproval && pressedApproval.id === id && pressedApproval.action === action) {
-        pressedApproval = null;
-      }
-      const btn = event.currentTarget;
-      if (btn) btn.classList.remove('pressed');
-    };
-    window.__sfReleaseApproval = async (event, id, action) => {
-      const match = pressedApproval && pressedApproval.id === id && pressedApproval.action === action;
-      pressedApproval = null;
-      const btn = event.currentTarget;
-      if (btn) btn.classList.remove('pressed');
-      if (!match) return;
-      try {
-        await post('/api/approvals/' + encodeURIComponent(id) + '/' + action);
-      } catch (err) {
-        error.textContent = err.message;
-      }
-    };
-    function approvals(items) {
-      if (!items.length) return '<p class=\"muted\">No pending approvals.</p>';
-      return table(['Approval', 'Target', 'Gate', 'Reason', 'Actions'], items.map(a => row([
-        esc(a.approval_id),
-        artifactLink(artifactKindForApproval(a), a.target_id, a.target_kind + ' ' + a.target_id),
-        esc(a.gate), esc(a.reason),
-        approvalButton(a.approval_id, 'approve', 'Approve') +
-        approvalButton(a.approval_id, 'reject', 'Reject')
-      ])));
-    }
-    function blockers(items) {
-      if (!items.length) return '<p class=\"muted\">No blockers.</p>';
-      // No one-click Resolve: operator + SL clear via squad_approval.sh resolve-rejection after recovery.
-      return table(['Id','Kind','Detail'], items.map(b => {
-        const id = b.assignment_id || b.blocker_id || b.approval_id || '';
-        return row([
-          artifactLink('blocker', id, id),
-          esc(b.kind || 'blocked'),
-          esc(b.detail || '')
-        ]);
-      }));
-    }
-    function statusPill(status) {
-      const s = String(status || 'pending');
-      return '<span class=\"pill pill-' + esc(s) + '\">' + esc(s) + '</span>';
-    }
-    function renderRequests(items) {
-      if (!items || !items.length) return '<p class=\"muted\">No Troubleshooter requests yet.</p>';
-      return items.map(r => {
-        const cancel = r.status === 'pending'
-          ? ' <button type=\"button\" onclick=\"cancelRequest(\\'' + esc(r.id) + '\\')\">Cancel</button>'
-          : '';
-        const progress = (r.progress || []).map(n =>
-          '<div class=\"req-progress\"><span class=\"muted\">' + esc(n.at || '') +
-          '</span> ' + esc(n.text || '') + '</div>').join('');
-        const response = r.response
-          ? '<div class=\"req-sl' + (String(r.response).length < 40 ? ' short' : '') + '\">' + esc(r.response) + '</div>'
-          : (r.status === 'rejected' && r.detail
-             ? '<div class=\"req-sl short\">' + esc(r.detail) + '</div>'
-             : '');
-        const owner = r.owner ? '<span class=\"muted\">→ ' + esc(r.owner) + '</span>' : '';
-        return '<div class=\"req-item\">' +
-          '<div class=\"req-meta\"><strong>You</strong>' + statusPill(r.status) + owner +
-          '<span class=\"muted\">' + esc(r.id) + '</span>' + cancel + '</div>' +
-          '<div class=\"req-you\">' + esc(r.body || '') + '</div>' +
-          progress +
-          response +
-          '</div>';
-      }).join('');
-    }
-    async function cancelRequest(id) {
-      try {
-        await post('/api/sl-requests/' + encodeURIComponent(id) + '/cancel', null, null, true);
-      } catch (err) {
-        error.textContent = err.message;
-      }
-    }
-    const messageInput = document.getElementById('sl-message');
-    messageInput.value = slDraft;
-    messageInput.addEventListener('input', () => {
-      slDraft = messageInput.value;
-      localStorage.setItem(slDraftKey, slDraft);
-    });
-    messageInput.addEventListener('keydown', event => {
-      if (event.key === 'Enter' && !event.shiftKey) {
-        event.preventDefault();
-        sendRequest();
-      }
-    });
-    let optimisticBusy = false;
-    let pollMs = 2000;
-    let pollTimer = null;
-    function schedulePoll(ms) {
-      if (pollMs === ms && pollTimer) return;
-      pollMs = ms;
-      if (pollTimer) clearInterval(pollTimer);
-      pollTimer = setInterval(render, pollMs);
-    }
-    function setBusyVisible(working) {
-      const busy = document.getElementById('ts-busy');
-      if (!busy) return;
-      busy.style.display = working ? 'inline' : 'none';
-      if (working) {
-        const dots = ((Date.now() / 400) | 0) % 3;
-        busy.textContent = '.'.repeat(dots + 1);
-      }
-      // Faster poll while a request is open so answers appear sooner.
-      schedulePoll(working ? 400 : 2000);
-    }
-    async function sendRequest() {
-      const text = messageInput.value.trim();
-      if (!text) return;
-      optimisticBusy = true;
-      setBusyVisible(true);
-      const payload = JSON.stringify({ body: text });
-      try {
-        await post('/api/sl-requests', payload, 'application/json; charset=utf-8', false);
-        slDraft = '';
-        localStorage.removeItem(slDraftKey);
-        messageInput.value = '';
-      } catch (err) {
-        optimisticBusy = false;
-        error.textContent = err.message;
-      }
-      await render();
-    }
-    function selectionInside(el) {
-      const sel = window.getSelection();
-      if (!sel || sel.isCollapsed || sel.rangeCount === 0) return false;
-      const node = sel.anchorNode;
-      if (!node) return false;
-      const element = node.nodeType === 3 ? node.parentNode : node;
-      return !!(element && el.contains(element));
-    }
-    function updateRequestsPanel(items) {
-      const html = renderRequests(items);
-      // Skip rebuild while the operator has a text selection (copy/paste).
-      if (selectionInside(requestsPanel)) return;
-      if (requestsPanel.dataset.lastHtml === html) return;
-      const nearBottom = requestsPanel.scrollHeight - requestsPanel.scrollTop - requestsPanel.clientHeight <= 24;
-      requestsPanel.innerHTML = html;
-      requestsPanel.dataset.lastHtml = html;
-      if (nearBottom) requestsPanel.scrollTop = requestsPanel.scrollHeight;
-    }
-    async function render() {
-      try {
-        const data = await (await fetch('/api/state', { cache: 'no-store' })).json();
-        meta.textContent = data.project_root + ' | ' + data.generated_at;
-        error.textContent = '';
-        const stall = data.stalls || {};
-        if (stall.stalled && (stall.items || []).length) {
-          stallSection.style.display = '';
-          stallCount.textContent = String(stall.count || stall.items.length);
-          stallSummary.textContent = stall.summary || '';
-          stallsPanel.innerHTML = table(['Kind','Id','State','Reason'],
-            (stall.items || []).map(s => row([
-              esc(s.kind), esc(s.id),
-              '<span class=\"pill pill-stalled\">' + esc(s.state) + '</span>',
-              esc(s.reason || '')
-            ])));
-        } else {
-          stallSection.style.display = 'none';
-          stallsPanel.innerHTML = '';
-          stallSummary.textContent = '';
-          stallCount.textContent = '';
-        }
-        blockersPanel.innerHTML = blockers(data.blockers || []);
-        approvalsPanel.innerHTML = approvals((data.approvals && data.approvals.pending) || []);
-        const serverWorking = !!(data.troubleshooter && data.troubleshooter.working);
-        const hasPending = (data.sl_requests || []).some(r => r.status === 'pending');
-        if (serverWorking || hasPending) optimisticBusy = true;
-        if (!serverWorking && !hasPending) optimisticBusy = false;
-        setBusyVisible(serverWorking || optimisticBusy);
-        updateRequestsPanel(data.sl_requests || []);
-        if (data.current_theme_id) {
-          themePanel.innerHTML = artifactLink('theme', data.current_theme_id,
-            'Theme package: ' + data.current_theme_id + ' (lifecycle, scheme, module map, order, checker)');
-        } else {
-          themePanel.innerHTML = '<p class=\"muted\">No theme recorded yet.</p>';
-        }
-        storiesPanel.innerHTML = table(['Story','State','Substate'], (data.stories || []).map(s => row([
-          artifactLink('story', s.story_id, s.story_number ? ('#' + s.story_number + ' ' + s.story_id) : s.story_id),
-          '<span class=\"pill\">' + esc(s.stage_label || s.state) + '</span>', esc(s.stage_detail || s.final_state)
-        ])));
-        agentsPanel.innerHTML = table(['Agent','Template','Task','State','Detail'], (data.agents || []).map(a => {
-          const stalled = a.state === 'blocked' || a.state === 'failed';
-          const st = stalled
-            ? '<span class=\"pill pill-stalled\">' + esc(a.state) + '</span>'
-            : esc(a.state);
-          return row([
-            `<a target=\"_blank\" href=\"/agent/${encodeURIComponent(a.agent_id)}\">${esc(a.agent_id)}</a>`,
-            esc(a.template), esc(a.task_id), st, esc(a.detail)
-          ]);
-        }));
-        assignmentsPanel.innerHTML = table(['Assignment','Template','Story','State'], (data.assignments || []).map(a => {
-          const stalled = a.state === 'merge_blocked' || a.state === 'blocked';
-          const st = stalled
-            ? '<span class=\"pill pill-stalled\">' + esc(a.state) + '</span>'
-            : esc(a.state);
-          return row([
-            artifactLink('assignment', a.assignment_id, a.assignment_id),
-            esc(a.template), esc(a.story_id), st
-          ]);
-        }));
-      } catch (err) {
-        error.textContent = err.message;
-      }
-    }
-    render();
-    schedulePoll(2000);
-    setInterval(() => {
-      const busy = document.getElementById('ts-busy');
-      if (busy && busy.style.display !== 'none') {
-        const dots = ((Date.now() / 400) | 0) % 3;
-        busy.textContent = '.'.repeat(dots + 1);
-      }
-    }, 400);
-  </script>
-</body>
-</html>")
+  "Live combined cockpit (B24/B35). Source: squadd/dashboard.html — see ui-design.md
+  and dashboard-mockup.html for behavior."
+  (if-let [p (dashboard-html-path)]
+    (slurp (str p))
+    (str "<!doctype html><html><body><h1>Missing squadd/dashboard.html</h1>"
+         "<p>Install swarmforge/scripts/squadd/dashboard.html next to web.clj.</p>"
+         "</body></html>")))
 
 (def web-terminal-assignment-states
   "Assignments in these states are finished for dashboard purposes and hidden
@@ -1001,18 +645,265 @@
      "items" items
      "summary" summary}))
 
+;;; --- Board columns + backlog (B24 / B35) ---
+
+(def board-column-by-state
+  "Map packet state → board column (ui-design.md)."
+  {"final_approved" "done"
+   "architecture_approved" "coding"
+   "architecture_reviewed" "coding"
+   "architecture_revision_returned" "coding"
+   "architecture_returned" "coding"
+   "qa_approved" "coding"
+   "qa_returned" "coding"
+   "hardening_approved" "coding"
+   "hardener_returned" "coding"
+   "code_review_approved" "coding"
+   "code_reviewed" "coding"
+   "cleaned" "coding"
+   "implemented" "coding"
+   "implementation_approved" "ready"
+   "implementation_approval_ready" "ready"
+   "specification_in_progress" "specified"
+   "story_approved" "specified"
+   "story_recorded" "specified"})
+
+(defn board-column [state]
+  (get board-column-by-state state "specified"))
+
+(defn story-board-row [story]
+  (let [state (get story "state" "story_recorded")]
+    (assoc story
+           "board_column" (board-column state)
+           "created_at" (or (get story "created_at") (get story "story_recorded_at") "")
+           "updated_at" (or (get story "updated_at") ""))))
+
+(defn batch-manifest-members [root batch-id]
+  (let [manifest (fs/path root ".squad" "batches" batch-id "manifest.tsv")]
+    (if (fs/regular-file? manifest)
+      (->> (str/split-lines (slurp (str manifest)))
+           rest
+           (map #(first (str/split % #"\t" -1)))
+           (remove str/blank?)
+           vec)
+      [])))
+
+(defn batches-enriched [root]
+  (->> (batch-state root)
+       (mapv (fn [b]
+               (let [id (get b "batch_id" "")
+                     members (batch-manifest-members root id)
+                     kind (or (get b "template") (get b "kind") "batch")]
+                 (assoc b
+                        "members" members
+                        "member_count" (count members)
+                        "batch_kind" kind))))))
+
+(defn work-in-flight-rows [assignments batches]
+  "Active assignments as WIF table rows; batch assignments include members."
+  (let [batch-by-id (into {} (map (fn [b] [(get b "batch_id") b]) batches))]
+    (->> assignments
+         (mapv (fn [a]
+                 (let [id (get a "assignment_id" "")
+                       story (get a "story_id" "")
+                       template (get a "template" "")
+                       batch? (or (= "batch" story)
+                                  (contains? batch-by-id id)
+                                  (str/includes? (str template) "hardener")
+                                  (and (contains? #{"hardener" "qa" "architect"} template)
+                                       (= "batch" story)))
+                       b (or (get batch-by-id id)
+                             (get batch-by-id (get a "batch_id")))
+                       members (or (get b "members") [])
+                       label (if (and b (seq members))
+                               (str (or (get b "batch_kind") template) " ×" (count members))
+                               (if (str/blank? story) id story))]
+                   {"assignment_id" id
+                    "story" label
+                    "story_id" story
+                    "story_ids" (if (seq members) members (if (str/blank? story) [] [story]))
+                    "is_batch" (boolean (seq members))
+                    "batch_id" (or (get b "batch_id") (when (seq members) id) "")
+                    "members" members
+                    "role" template
+                    "state" (get a "state" "")
+                    "updated_at" (get a "updated_at" "")
+                    "agent_id" (get a "agent_id" "")})))
+         vec)))
+
+(defn backlog-dir [root]
+  (fs/path root ".squad" "backlog"))
+
+(defn backlog-file [root id]
+  (fs/path (backlog-dir root) (str id ".item")))
+
+(defn backlog-valid-id? [id]
+  (and (string? id)
+       (re-matches #"[A-Za-z0-9][A-Za-z0-9._-]*" id)
+       (not (str/includes? id ".."))))
+
+(defn next-backlog-id [root]
+  (let [base (str "bl-" (.format java.time.format.DateTimeFormatter/BASIC_ISO_DATE
+                                  (java.time.LocalDate/now)))]
+    (loop [n 1]
+      (let [id (format "%s-%03d" base n)]
+        (if (fs/regular-file? (backlog-file root id))
+          (recur (inc n))
+          id)))))
+
+(defn write-backlog-item! [root item]
+  (let [id (get item "id")
+        body (get item "body" "")
+        ;; body as multiline block
+        content (str "id: " id "\n"
+                     "title: " (str/replace (str (get item "title" "")) #"\R+" " ") "\n"
+                     "status: " (get item "status" "open") "\n"
+                     "created_at: " (get item "created_at") "\n"
+                     "updated_at: " (get item "updated_at") "\n"
+                     (when-let [req (not-empty (get item "request_id"))]
+                       (str "request_id: " req "\n"))
+                     (when-let [th (not-empty (get item "theme_id"))]
+                       (str "theme_id: " th "\n"))
+                     (when-let [st (not-empty (get item "story_id"))]
+                       (str "story_id: " st "\n"))
+                     "body: |\n"
+                     (->> (str/split-lines (str body))
+                          (map #(str "  " %))
+                          (str/join "\n"))
+                     "\n")]
+    (fs/create-dirs (backlog-dir root))
+    (write-atomic! (backlog-file root id) content)
+    item))
+
+(defn parse-backlog-item [file]
+  (let [text (slurp (str file))
+        lines (str/split-lines text)
+        headers (atom {})
+        body-lines (atom [])
+        in-body? (atom false)]
+    (doseq [line lines]
+      (cond
+        @in-body?
+        (swap! body-lines conj (if (str/starts-with? line "  ") (subs line 2) line))
+
+        (str/starts-with? line "body: |")
+        (reset! in-body? true)
+
+        :else
+        (when-let [[_ k v] (re-matches #"^([A-Za-z0-9_]+): (.*)$" line)]
+          (swap! headers assoc k v))))
+    (assoc @headers "body" (str/join "\n" @body-lines))))
+
+(defn list-backlog [root]
+  (let [dir (backlog-dir root)]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter #(and (fs/regular-file? %)
+                         (str/ends-with? (fs/file-name %) ".item")))
+           (map parse-backlog-item)
+           (sort-by #(get % "updated_at" "") #(compare %2 %1))
+           vec)
+      [])))
+
+(defn get-backlog [root id]
+  (when (backlog-valid-id? id)
+    (let [f (backlog-file root id)]
+      (when (fs/regular-file? f)
+        (parse-backlog-item f)))))
+
+(defn create-backlog! [root {:keys [title body]}]
+  (let [title (str/trim (or title ""))
+        body (or body "")]
+    (cond
+      (str/blank? title) {:ok false :error "title required" :status 400}
+      :else
+      (let [now (now)
+            id (next-backlog-id root)
+            item {"id" id
+                  "title" title
+                  "body" body
+                  "status" "open"
+                  "created_at" now
+                  "updated_at" now}]
+        (write-backlog-item! root item)
+        {:ok true :item item}))))
+
+(defn update-backlog! [root id {:keys [title body status]}]
+  (if-let [item (get-backlog root id)]
+    (let [updated (cond-> (assoc item "updated_at" (now))
+                    (some? title) (assoc "title" (str/trim title))
+                    (some? body) (assoc "body" body)
+                    (some? status) (assoc "status" status))]
+      (if (str/blank? (get updated "title"))
+        {:ok false :error "title required" :status 400}
+        (do (write-backlog-item! root updated)
+            {:ok true :item updated})))
+    {:ok false :error "not found" :status 404}))
+
+(defn delete-backlog! [root id]
+  (if-let [item (get-backlog root id)]
+    (do (write-backlog-item! root (assoc item
+                                         "status" "cancelled"
+                                         "updated_at" (now)))
+        (fs/delete-if-exists (backlog-file root id))
+        {:ok true})
+    {:ok false :error "not found" :status 404}))
+
+(defn approve-backlog! [root id]
+  "Mark item dispatched and open a product request owned by squad-leader.
+  SL decides theme vs story (ui-design.md)."
+  (if-let [item (get-backlog root id)]
+    (let [title (get item "title" id)
+          body (get item "body" "")
+          msg (str "PRODUCT BACKLOG APPROVED FOR ANALYSIS\n"
+                   "backlog_id: " id "\n"
+                   "title: " title "\n\n"
+                   body "\n\n"
+                   "Operator approved this backlog item for analysis.\n"
+                   "Squad Leader: classify as a NEW THEME or a STORY on an existing theme, "
+                   "then drive analyst/theme workflow. Do not ask the operator to re-classify.")
+          created (dashreq/create-request root {:kind "request"
+                                                :body msg
+                                                :owner dashreq/product-owner})]
+      (if-not (:ok created)
+        {:ok false :error (:error created) :status 400}
+        (let [req-id (get-in created [:request "id"])
+              updated (assoc item
+                             "status" "dispatched"
+                             "request_id" req-id
+                             "updated_at" (now))]
+          (write-backlog-item! root updated)
+          (log! root "backlog-approved" id req-id)
+          {:ok true :item updated :request (:request created)})))
+    {:ok false :error "not found" :status 404}))
+
+(defn extract-json-field [body key]
+  (or (when-let [m (re-find (re-pattern (str "(?s)\"" key "\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"")) body)]
+        (-> (second m)
+            (str/replace #"\\n" "\n")
+            (str/replace #"\\\"" "\"")
+            (str/replace #"\\\\" "\\")))
+      (when-let [m (re-find (re-pattern (str "(?s)\"" key "\"\\s*:\\s*\"([^\"]*)\"")) body)]
+        (second m))))
+
 (defn web-state [root]
   (let [assignments (assignment-state root)
         agents (agent-state root)
         sl-requests (dashreq/list-all-requests root)
         theme-id (current-theme-id root)
-        stalls (stall-report root assignments agents)]
+        stalls (stall-report root assignments agents)
+        stories (mapv story-board-row (story-state root))
+        batches (batches-enriched root)
+        backlog (list-backlog root)
+        wif (work-in-flight-rows assignments batches)]
     (cond-> {"generated_at" (now)
              "project_root" (str root)
-             "stories" (story-state root)
+             "stories" stories
              "assignments" assignments
              "agents" agents
-             "batches" (batch-state root)
+             "batches" batches
+             "work_in_flight" wif
+             "backlog" backlog
              "blockers" (blocker-state root assignments agents)
              "stalls" stalls
              "approvals" {"pending" (approval-state-for root "pending")}
@@ -1609,6 +1500,47 @@
                           "status" "teardown_started"
                           "detail" "Swarm teardown started; dashboard will go offline."})))))
 
+(defn backlog-list-response [root]
+  (response 200 "application/json; charset=utf-8"
+            (to-json {"items" (list-backlog root)})))
+
+(defn backlog-create-response [root body]
+  (let [title (or (extract-json-field body "title") "")
+        b (or (extract-json-field body "body") body "")
+        result (create-backlog! root {:title title :body b})]
+    (if (:ok result)
+      (response 200 "application/json; charset=utf-8" (to-json {"ok" true "item" (:item result)}))
+      (response (:status result 400) "text/plain; charset=utf-8" (str (:error result) "\n")))))
+
+(defn backlog-item-response [root path body]
+  (let [[_ id action] (re-matches #"/api/backlog/([^/]+)(?:/(approve|delete))?" path)
+        id (when id (url-decode id))]
+    (cond
+      (nil? id)
+      (response 400 "text/plain; charset=utf-8" "bad backlog path\n")
+
+      (= action "approve")
+      (let [r (approve-backlog! root id)]
+        (if (:ok r)
+          (response 200 "application/json; charset=utf-8"
+                    (to-json {"ok" true "item" (:item r) "request" (:request r)}))
+          (response (:status r 400) "text/plain; charset=utf-8" (str (:error r) "\n"))))
+
+      (= action "delete")
+      (let [r (delete-backlog! root id)]
+        (if (:ok r)
+          (response 200 "application/json; charset=utf-8" (to-json {"ok" true}))
+          (response (:status r 404) "text/plain; charset=utf-8" (str (:error r) "\n"))))
+
+      :else
+      (let [title (extract-json-field body "title")
+            b (extract-json-field body "body")
+            r (update-backlog! root id {:title title :body b})]
+        (if (:ok r)
+          (response 200 "application/json; charset=utf-8" (to-json {"ok" true "item" (:item r)}))
+          (response (:status r 400) "text/plain; charset=utf-8" (str (:error r) "\n")))))))
+
+
 (def web-routes
   [{:method "GET"
     :path "/"
@@ -1645,7 +1577,16 @@
     :handler (fn [root _ body] (sl-message-response root body))}
    {:method "POST"
     :path "/api/teardown"
-    :handler (fn [root _ body] (teardown-response root body))}])
+    :handler (fn [root _ body] (teardown-response root body))}
+   {:method "GET"
+    :path "/api/backlog"
+    :handler (fn [root _ _] (backlog-list-response root))}
+   {:method "POST"
+    :path "/api/backlog"
+    :handler (fn [root _ body] (backlog-create-response root body))}
+   {:method "POST"
+    :pattern #"/api/backlog/[^/]+(?:/(approve|delete))?"
+    :handler (fn [root path body] (backlog-item-response root path body))}])
 
 (defn route-matches? [{:keys [method path pattern]} request-method request-path]
   (and (= method request-method)
