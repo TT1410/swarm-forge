@@ -6,6 +6,7 @@
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
             [squad-config :as cfg]
+            [squad-records :as rec]
             [squadd.web :as web]))
 
 (def usage-text
@@ -103,12 +104,10 @@
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
 
-(defn parse-kv-file [file]
-  (into {}
-        (for [line (or (read-lines file) [])
-              :let [[k v] (str/split line #": " 2)]
-              :when (and k v)]
-          [k v])))
+(defn parse-kv-file
+  "Flat key:value status/metadata via squad-records (B40)."
+  [file]
+  (rec/read-kv-file file))
 
 (declare agent-dirs log! tmux-session-exists? idle-prompt-tail?)
 
@@ -126,12 +125,10 @@
                  :agent agent
                  :receive-mode (or receive-mode "task")}])))
 
-(defn write-atomic! [file content]
-  (fs/create-dirs (fs/parent file))
-  (let [tmp (fs/create-temp-file {:dir (fs/parent file)
-                                  :prefix (str "." (fs/file-name file) ".")})]
-    (spit (str tmp) content)
-    (fs/move tmp file {:replace-existing true})))
+(defn write-atomic!
+  "Atomic write via squad-records (B40)."
+  [file content]
+  (rec/write-atomic! file content))
 
 (defn write-roles! [root roles]
   (let [roles-file (fs/path root ".swarmforge" "roles.tsv")]

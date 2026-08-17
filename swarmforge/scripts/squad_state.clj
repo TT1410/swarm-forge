@@ -1,6 +1,8 @@
 (ns squad-state
+  "Squad packet/assignment state helpers. Kv reads go through squad-records (B40)."
   (:require [babashka.fs :as fs]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [squad-records :as rec]))
 
 (def terminal-batch-states
   #{"result_received" "rejected" "merged" "closed" "complete" "failed"})
@@ -62,21 +64,18 @@
               "final_approval" "final_approval_detail"]
    "senior-implementer" ["final_approval" "final_approval_detail"]})
 
-(defn parse-kv-lines [text]
-  (into {}
-        (keep (fn [line]
-                (let [[k v] (str/split line #": " 2)]
-                  (when (and k v)
-                    [k v]))))
-        (str/split-lines (or text ""))))
+(defn parse-kv-lines
+  "Parse flat key: value lines. Delegates to squad-records (B40)."
+  [text]
+  (rec/parse-kv-text text))
 
-(defn read-kv-file [file]
-  (if (fs/regular-file? file)
-    (parse-kv-lines (slurp (str file)))
-    {}))
+(defn read-kv-file
+  "Read a flat key:value file. Delegates to squad-records (B40)."
+  [file]
+  (rec/read-kv-file file))
 
 (defn read-value [file field]
-  (get (read-kv-file file) field))
+  (rec/kv-get file field))
 
 (defn accepted? [packet field]
   (= "accepted" (get packet field)))

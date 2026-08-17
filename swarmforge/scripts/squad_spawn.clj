@@ -299,7 +299,9 @@
        " -i \"$(cat " (sq (str prompt-file)) ")\""))
 
 (defn grok-command [prompt-file worktree _ _]
+  ;; --minimal / --no-alt-screen: scrollable agent panes (B15); see docs/grok-agent-window-scroll.md
   (str "grok --cwd " (sq (str worktree))
+       " --minimal --no-alt-screen"
        " --permission-mode bypassPermissions --rules \"$(cat " (sq (str prompt-file))
        ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\""))
 
@@ -332,8 +334,10 @@
     (exit! 1 "Cannot launch transient agent: .swarmforge/tmux-socket is empty."))
   (when (sh-ok? "tmux" "-S" socket "has-session" "-t" session)
     (exit! 2 (str "Transient tmux session already exists: " session)))
-  (run! "tmux" "-S" socket "new-session" "-d" "-s" session "-n" display (str launch-script))
-  (run! "tmux" "-S" socket "set-window-option" "-t" session "allow-rename" "off"))
+  ;; Large geometry + deep history so Grok/Codex panes are not stuck at default ~25 lines (B15).
+  (run! "tmux" "-S" socket "new-session" "-d" "-s" session "-n" display "-x" "200" "-y" "50" (str launch-script))
+  (run! "tmux" "-S" socket "set-window-option" "-t" session "allow-rename" "off")
+  (run! "tmux" "-S" socket "set-option" "-t" session "history-limit" "50000"))
 
 (defn acquire-lock!
   "B20: registry spawn lease (directory name spawn.lock via resource \"spawn\")."

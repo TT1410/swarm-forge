@@ -15,6 +15,7 @@
             [squad-batch :as batch]
             [squad-packet :as packet-tool]
             [squad-config :as config]
+            [squad-lease :as lease]
             [squad-next :as next]
             [squad-recover :as recover]
             [squad-report :as report]
@@ -669,9 +670,9 @@
         (is (nil? (retire/acquire-lock! lock-dir)))
         (is (fs/directory? lock-dir))
         (fs/delete-tree lock-dir))
-      (with-redefs [retire/try-acquire-lock! (constantly false)
-                    retire/acquire-lock! (fn [lock-dir]
-                                           (retire/exit! 2 (str "Timed out waiting for squad registry lock: " lock-dir)))]
+      (with-redefs [lease/acquire! (fn [_ _ & _]
+                                     (throw (ex-info "Timed out waiting for squad registry lock: never.lock"
+                                                     {:lease "never.lock"})))]
         (is (= 2 (exit-status #(retire/acquire-lock! (fs/path root "never.lock")))))))
     (is (= {:ok? false :detail "worktree metadata missing"}
            (retire/worktree-removable? root "agent-001" "")))
@@ -688,9 +689,9 @@
         (is (nil? (spawn/acquire-lock! lock-dir)))
         (is (fs/directory? lock-dir))
         (fs/delete-tree lock-dir))
-      (with-redefs [spawn/try-acquire-lock! (constantly false)
-                    spawn/acquire-lock! (fn [lock-dir]
-                                          (spawn/exit! 2 (str "Timed out waiting for squad registry lock: " lock-dir)))]
+      (with-redefs [lease/acquire! (fn [_ _ & _]
+                                     (throw (ex-info "Timed out waiting for squad registry lock: never.lock"
+                                                     {:lease "never.lock"})))]
         (is (= 2 (exit-status #(spawn/acquire-lock! (fs/path root "never.lock")))))))))
 
 (deftest packet-map-and-validation-helper-branches

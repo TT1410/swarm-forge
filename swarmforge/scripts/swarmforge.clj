@@ -396,9 +396,11 @@
     (check-dependency! agent)))
 
 (defn create-role-session! [ctx session title]
-  (sh "tmux" "-S" (:tmux-socket ctx) "new-session" "-d" "-s" session "-n" agent-window)
+  ;; Large default size + deep history so detached/agent panes are not stuck at ~25 lines (B15).
+  (sh "tmux" "-S" (:tmux-socket ctx) "new-session" "-d" "-s" session "-n" agent-window "-x" "200" "-y" "50")
   (sh "tmux" "-S" (:tmux-socket ctx) "rename-window" "-t" (str session ":" agent-window) title)
-  (sh "tmux" "-S" (:tmux-socket ctx) "set-window-option" "-t" (str session ":" title) "allow-rename" "off"))
+  (sh "tmux" "-S" (:tmux-socket ctx) "set-window-option" "-t" (str session ":" title) "allow-rename" "off")
+  (sh "tmux" "-S" (:tmux-socket ctx) "set-option" "-t" session "history-limit" "50000"))
 
 (defn write-agent-instruction-file! [role prompt-file]
   (spit (str prompt-file)
@@ -517,7 +519,10 @@
        "-i \"$(cat " (sq (str prompt-file)) ")\""))
 
 (defn grok-launch-command [_ row prompt-file]
+  ;; --minimal: scrollback-native TUI so terminal/tmux scroll works (B15).
+  ;; --no-alt-screen: keep output in main buffer for capture-pane / host scroll.
   (str "grok --cwd " (sq (str (:worktree-path row))) " "
+       "--minimal --no-alt-screen "
        (grok-permission-prefix row)
        (extra-args-prefix row)
        "--rules \"$(cat " (sq (str prompt-file)) ")\" --verbatim \"$(cat " (sq (str prompt-file)) ")\""))
@@ -746,7 +751,7 @@
   (println)
   (println (str green "Tip: Write a handoff draft and run swarm_handoff.sh while the swarm is running." reset))
   (println (str green "Tip: Reattach manually with 'tmux -S " (:tmux-socket ctx) " attach-session -t <session-name>' if needed." reset))
-  (println (str green "Tip: Troubleshooter is invisible; open via dashboard or tmux attach to swarmforge-troubleshooter." reset))
+  (println (str green "Tip: Squad Leader and Troubleshooter are invisible by default (B41); open via dashboard Open SL / chat or tmux attach." reset))
   (println))
 
 (defn start-runtime! [ctx]

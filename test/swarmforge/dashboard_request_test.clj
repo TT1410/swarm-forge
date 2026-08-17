@@ -277,10 +277,10 @@
           (is (str/includes? page "Troubleshooter"))
           (is (not (str/includes? page "setKind(")))
           (is (not (str/includes? page "kind-command")))
-          (is (str/includes? page "selectionInside"))
-          (is (str/includes? page "updateRequestsPanel"))
-          (is (str/includes? page "req-you"))
-          (is (str/includes? page "req-sl"))
+          (is (str/includes? page "renderChat"))
+          (is (str/includes? page "sl-requests"))
+          (is (str/includes? page "bubble-you"))
+          (is (str/includes? page "bubble-ts"))
           (is (= 200 (:status create)))
           (is (str/includes? state "\"sl_requests\""))
           (is (str/includes? state "Ship it"))
@@ -331,12 +331,17 @@
     (is (str/includes? msg "line one\nline two"))))
 
 (deftest dashboard-html-preserves-multiline-request-text
-  (is (str/includes? web/dashboard-html "white-space: pre-wrap")
+  (is (or (str/includes? web/dashboard-html "white-space: pre-wrap")
+          (str/includes? web/dashboard-html "white-space:pre-wrap"))
       "B10: request body/response must keep newlines in the UI")
-  (is (str/includes? web/dashboard-html "req-you")
+  (is (str/includes? web/dashboard-html "bubble-you")
       "request body class present")
-  (is (str/includes? web/dashboard-html "req-sl")
-      "response class present"))
+  (is (str/includes? web/dashboard-html "bubble-ts")
+      "response class present")
+  (is (str/includes? web/dashboard-html "Enter send")
+      "Enter sends chat; Shift+Enter line break")
+  (is (not (str/includes? web/dashboard-html "Type TEARDOWN"))
+      "single-confirm teardown; no type-TEARDOWN step"))
 
 (deftest progress-notes-keep-request-pending
   ;; B36: interim notes while Troubleshooter works; answer still closes

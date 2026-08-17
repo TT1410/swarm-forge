@@ -879,7 +879,7 @@
             </div>
             <div class="history" id="chat-history" aria-label="Troubleshooter responses"></div>
             <div class="composer">
-              <textarea id="chat-input" rows="4" placeholder="Command or question… (⌘/Ctrl+Enter to send)"></textarea>
+              <textarea id="chat-input" rows="4" placeholder="Command or question… (Enter send · Shift+Enter line break)"></textarea>
               <button class="btn btn-primary" type="button" id="chat-send">Send</button>
             </div>
           </section>
@@ -2072,8 +2072,8 @@
     h.scrollTop = h.scrollHeight;
   };
   document.getElementById("chat-input").addEventListener("keydown", (e) => {
-    // Enter = newline in 4-line box; ⌘/Ctrl+Enter sends
-    if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+    // Enter sends; Shift+Enter inserts a line break.
+    if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();
       document.getElementById("chat-send").click();
     }

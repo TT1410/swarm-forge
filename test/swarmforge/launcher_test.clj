@@ -144,6 +144,8 @@
                         "grok")
             command (:out result)]
         (is (str/includes? command "grok --cwd "))
+        (is (str/includes? command "--minimal"))
+        (is (str/includes? command "--no-alt-screen"))
         (is (str/includes? command "--permission-mode acceptEdits"))
         (is (str/includes? command "--rules \"$(cat "))
         (is (str/includes? command "--verbatim \"$(cat "))

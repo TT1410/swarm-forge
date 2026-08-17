@@ -8,6 +8,7 @@
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
             [squad-dashboard-request :as dashreq]
+            [squad-records :as rec]
             [squad-state :as squad-state]
             [stop-squadd :as stop-squadd])
   (:import [java.net InetAddress ServerSocket URLDecoder]))
@@ -213,19 +214,21 @@
          codex
          (strip-grok-input-region text))))))
 
+(def pane-capture-lines
+  "How many history lines to mirror in the dashboard agent pane (B15)."
+  2000)
+
 (defn capture-pane-tail
   ([socket session] (capture-pane-tail socket session nil))
   ([socket session backend]
    (strip-input-region
-    (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-200"))
+    (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session
+                       "-S" (str "-" pane-capture-lines)))
     backend)))
-
-(defn parse-kv-file [file]
-  (into {}
-        (for [line (or (read-lines file) [])
-              :let [[k v] (str/split line #": " 2)]
-              :when (and k v)]
-          [k v])))
+(defn parse-kv-file
+  "Flat key:value status/metadata files via squad-records (B40)."
+  [file]
+  (rec/read-kv-file file))
 
 (declare to-json)
 

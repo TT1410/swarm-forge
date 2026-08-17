@@ -128,7 +128,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
         </div>
         <div class="history req-history" id="sl-requests"></div>
         <div class="composer">
-          <textarea id="sl-message" rows="4" placeholder="Command or question… (⌘/Ctrl+Enter send)"></textarea>
+          <textarea id="sl-message" rows="4" placeholder="Command or question… (Enter send · Shift+Enter line break)"></textarea>
           <button class="btn btn-primary" type="button" id="chat-send">Send</button>
         </div>
       </section>
@@ -161,8 +161,8 @@ async function post(url, body, ctype, ignore) {
   return r;
 }
 async function teardownSwarm() {
-  if (!confirm('Stop this swarm? Squadd, agent sessions, and tmux windows will be terminated.')) return;
-  if (prompt('Type TEARDOWN to confirm') !== 'TEARDOWN') { document.getElementById('error').textContent = 'Teardown cancelled.'; return; }
+  // Single confirm only — no type-TEARDOWN step (API still receives confirm token).
+  if (!confirm('Stop this swarm? Squadd, agent sessions, and tmux windows will be terminated. Project files stay on disk.')) return;
   try {
     document.getElementById('error').textContent = '';
     const btn = document.getElementById('teardown-btn');
@@ -369,13 +369,39 @@ function renderWork(data) {
 function renderChat(data) {
   const reqs=data.sl_requests||[];
   const el=document.getElementById('sl-requests');
-  el.innerHTML=reqs.length?reqs.slice().reverse().map(r=>{
-    const progress=(r.progress||[]).map(p=>`<div class="req-progress">${esc(p)}</div>`).join('');
-    return `<div><div class="bubble-you">${esc(r.body||'')}</div>${progress}
+  // Preserve scroll when the operator has scrolled up; stick to bottom when near end.
+  const prevTop=el.scrollTop;
+  const prevHeight=el.scrollHeight;
+  const distFromBottom=prevHeight-prevTop-el.clientHeight;
+  const nearBottom=distFromBottom<48;
+
+  // Chronological: oldest at top, newest at bottom (API already sorts by created_at).
+  // Do not reverse — that put new messages at the top.
+  const ordered=reqs.slice().sort((a,b)=>{
+    const ca=String(a.created_at||'');
+    const cb=String(b.created_at||'');
+    if (ca!==cb) return ca<cb?-1:1;
+    return String(a.id||'').localeCompare(String(b.id||''));
+  });
+
+  el.innerHTML=ordered.length?ordered.map(r=>{
+    const progress=(r.progress||[]).map(p=>{
+      const text=(p&&typeof p==='object')?(p.text||p.note||JSON.stringify(p)):String(p);
+      return `<div class="req-progress">${esc(text)}</div>`;
+    }).join('');
+    return `<div class="chat-turn" data-req="${esc(r.id||'')}">
+      <div class="bubble-you">${esc(r.body||'')}</div>${progress}
       ${r.response?`<div class="bubble-ts">${esc(r.response)}</div>`:''}
       <div class="meta">${esc(r.status||'')} · ${esc(r.id||'')}</div></div>`;
   }).join(''):'<div class="meta">Idle until you call.</div>';
-  el.scrollTop=el.scrollHeight;
+
+  if (nearBottom || prevHeight<=el.clientHeight) {
+    el.scrollTop=el.scrollHeight;
+  } else {
+    // Keep the same content under the viewport when list is rebuilt (append at bottom).
+    el.scrollTop=prevTop+(el.scrollHeight-prevHeight);
+  }
+
   const busy=document.getElementById('ts-busy');
   const serverWorking=!!(data.troubleshooter&&data.troubleshooter.working);
   const hasPending=reqs.some(r=>r.status==='pending');
@@ -510,7 +536,8 @@ document.getElementById('chat-send').onclick=async()=>{
   } catch(e){ document.getElementById('error').textContent=e.message||String(e); }
 };
 document.getElementById('sl-message').addEventListener('keydown',e=>{
-  if(e.key==='Enter'&&(e.metaKey||e.ctrlKey)){ e.preventDefault(); document.getElementById('chat-send').click(); }
+  // Enter sends; Shift+Enter inserts a line break (prior TS chat behavior).
+  if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); document.getElementById('chat-send').click(); }
 });
 document.getElementById('attention').addEventListener('click',async e=>{
   const btn=e.target.closest('[data-appr]'); if(!btn)return;

@@ -4,6 +4,7 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
             [squad-config :as cfg]
+            [squad-records :as rec]
             [clojure.string :as str]))
 
 (def usage-text
@@ -47,12 +48,10 @@
        (not (str/includes? value "\\"))
        (not (str/includes? value ".."))))
 
-(defn write-atomic! [file content]
-  (fs/create-dirs (fs/parent file))
-  (let [tmp (fs/create-temp-file {:dir (fs/parent file)
-                                  :prefix (str "." (fs/file-name file) ".")})]
-    (spit (str tmp) content)
-    (fs/move tmp file {:replace-existing true})))
+(defn write-atomic!
+  "Atomic write via squad-records (B40). Request parse-kv keeps multiline B10 form."
+  [file content]
+  (rec/write-atomic! file content))
 
 (defn requests-root [root]
   (fs/path root ".swarmforge" "dashboard" "requests"))

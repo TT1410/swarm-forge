@@ -9,7 +9,7 @@ Not a second story FSM: the UI is a **read model + dispatch surface** over packe
 
 **Product code:** `swarmforge/scripts/squadd/web.clj` (+ `swarmforge/scripts/squadd/dashboard.html` when split out). Serves the live squad project under `.squad/`.
 
-**Issues:** Implementation of this doc closes **B24** (dashboard IA) and **B35** (product backlog). **B15** (Grok terminal window geometry) is **out of scope** for this design — it is agent-pane chrome, not the web cockpit.
+**Issues:** Implementation of this doc closes **B24** (dashboard IA) and **B35** (product backlog). **B15** (Grok terminal geometry) is agent-pane chrome (fixed separately via `--minimal` / pane capture); not part of this web cockpit design.
 
 ---
 
@@ -415,8 +415,8 @@ Cap height (~240px) + scroll inside the band so TS stays reachable.
 | Piece | Spec |
 |-------|------|
 | Header | Title + busy indicator + Open TS (detached window, one line) |
-| History (TS response) | **Scrollable** region (flex-grow inside rail); newest at bottom; does not push the page |
-| Composer (TS command) | **Four lines tall**, `overflow-y: auto` if typed content exceeds four lines; Send beside; ⌘/Ctrl+Enter to send (Enter = newline) |
+| History (TS response) | **Scrollable** region (flex-grow inside rail); **oldest at top, newest at bottom**; does not push the page. On poll refresh: if the operator scrolled up, **keep that scroll position**; if they were near the bottom (or the list fits), stick to the bottom so new turns appear in view |
+| Composer (TS command) | **Four lines tall**, `overflow-y: auto` if typed content exceeds four lines; Send beside; **Enter** sends; **Shift+Enter** inserts a line break |
 | Empty history | One muted line, no large blank panel |
 
 **Scrolling rule (whole dashboard):** any band/section that can grow vertically uses **inner scroll** (`min-height: 0` + `overflow: auto`) rather than expanding the page. Applies to Attention (when many rows), Board columns with many cards, Ops rail sections (Themes, Agents, Work in flight, TS history), and detached window bodies.

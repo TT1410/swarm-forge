@@ -337,7 +337,9 @@
         (is (str/includes? (:out result) "SQUAD_AGENT: analyst-001"))
         (is (= "grok" (nth fields 5)))
         (is (str/includes? metadata "backend: grok"))
-        (is (str/includes? launcher "grok --cwd")))
+        (is (str/includes? launcher "grok --cwd"))
+        (is (str/includes? launcher "--minimal"))
+        (is (str/includes? launcher "--no-alt-screen")))
       (finally
         (fs/delete-tree root)))))
 

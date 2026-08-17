@@ -13,15 +13,13 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
-| **P3** | B15 | Grok terminal window geometry / scroll | UX | Terminal |
-| **P3** | B40 | Finish architecture migration after B16–B22 foundations | Architecture | Control plane / durable state |
+| — | — | *No open issues.* | — | — |
 
 ---
 
 ## Suggested fix order
 
-1. **P3 polish:** **B15** (Grok terminal chrome — not the web cockpit).
-2. **P3 architecture follow-through:** **B40** when changing control-plane code anyway (not blocking swarms).
+*Backlog clear.* Prefer opportunistic hardening when touching control-plane or terminal code.
 
 ---
 
@@ -34,11 +32,11 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | Product intake | — | **B35** done |
 | Lifecycle hygiene | — | B11/B12/B37/B38 done |
 | Theme / architecture gates | — | B23 finalize + B25/B13/B14 done |
-| Control plane | **B40** | B18/B16/B19 foundations done; residual migration |
-| Deep durable arch | **B40** | B20–B22 foundations done; more call sites |
-| Terminal chrome | **B15** | Grok pane geometry (orthogonal to dashboard) |
+| Control plane | — | B18/B16/B19 + **B40** records call-sites |
+| Deep durable arch | — | B20–B22 + **B40** write-atomic/kv adoption |
+| Terminal chrome | — | **B15**, **B41** done |
 
-Former free-standing notes (`architecture-improvements.md`) are superseded: foundations landed as B16–B22; **gaps = B40**.
+Former free-standing notes (`architecture-improvements.md`) are superseded: foundations landed as B16–B22; residual call-site migration **B40** done.
 
 ---
 
@@ -61,46 +59,7 @@ Former free-standing notes (`architecture-improvements.md`) are superseded: foun
 | P3 deep architecture | **B20**, **B21**, **B22** | `squad_lease`; `squad_transition` accept-merge; `squad_records` kv/headers+body/edn/events |
 | P1 post-rework packet repair | **B39** | Residual does not re-record superseded cleaner/CR after impl clear-downstream; iterations gate + missing review target |
 | P3 dashboard cockpit | **B24**, **B35** | Combined Board+Ops UI (`squadd/dashboard.html`); durable `.squad/backlog` + approve-for-analysis → SL; see `ui-design.md` + `dashboard-mockup.html` |
-
----
-
-## P3 — Terminal polish
-
-### B15 — Grok agent terminal window geometry / scroll
-
-**Symptom:** Grok panes ~25 lines pinned; scroll unusable. Codex OK.
-
-**Expected:** Full geometry or documented operator path.
-
-**Where:** Grok launch / tmux size; `swarmforge/docs/grok-agent-window-scroll.md`.
-
----
-
-## P3 — Architecture follow-through
-
-### B40 — Finish architecture migration after B16–B22 foundations
-
-**Context:** Review findings that became B16–B22 landed **foundations** (control-plane policy/authority/executor/renderer; lease; accept-merge transition; shared records helpers; Troubleshooter vs SL ownership). The following **deltas remain** — incremental migration, not a missing first cut.
-
-| Residual gap | Related foundation | What’s left |
-|--------------|-------------------|-------------|
-| **Authority surface incomplete** | B16 | Not every SL-facing entrypoint is blocked from daemon-only ops; env/prompt still share some ownership load |
-| **`squad_next` still a mixed kernel** | B18/B19 | State scanning, candidate building, and residual selection still live largely in `squad_next`; further extraction optional but desirable |
-| **Actions still often shell strings** | B17 typed actions | Structured `{:op … :authority …}` is partial; many paths still render/`bash -c` command strings mid-stack |
-| **Leases not universal** | B20 `squad_lease` | Main-git + spawn/retire use lease; other locks (handoff in-process/held, ad hoc status, some queues) not fully on the common lease model |
-| **Record formats not fully standardized** | B22 `squad_records` | Helpers exist (kv / headers+body / edn / events); many call sites still ad hoc parse/write |
-| **Transitions beyond accept-merge** | B21 `squad_transition` | Accept-merge is transition-shaped; other multi-file FSM updates may still hide multi-writer side effects |
-| **Priority policy call-site drift** | B18 | Central policy module exists; ensure all ordering decisions go through it when touching scheduler paths |
-
-**Not residual (already addressed directionally):** SL vs Troubleshooter product ownership (B09 / route-to-sl / B35 approve-to-SL).
-
-**Priority (P3):** Does not block multi-story swarms. Prefer doing slices when editing the same modules (e.g. next time `squad_next` or merge path is open).
-
-**North star (unchanged):** single-writer; typed planner/executor; durable leases and record helpers — reduce races with structure, not more prompt text or one-off retries.
-
-**Where:** `squad_next.clj`, `squad_control_plane.clj`, `squad_executor.clj`, `squad_renderer.clj`, `squad_lease.clj`, `squad_transition.clj`, `squad_records.clj`, assign/merge call sites.
-
-**Done when:** New workflow changes go through typed actions + policy; new durable writes use lease/records/transition helpers by default; remaining stringy/`bash -c` and informal parsers are exceptional and documented.
+| P3 terminal + arch close | **B15**, **B41**, **B40** | Grok `--minimal --no-alt-screen` + tmux geometry/history + larger pane capture; SL+TS `window-invisible` by default; records call-site migration (state/web/squadd/dashboard write-atomic) |
 
 ---
 
@@ -108,6 +67,6 @@ Former free-standing notes (`architecture-improvements.md`) are superseded: foun
 
 Keep the **single-writer** direction. Prefer **typed actions + planner/executor**, then **durable readers/leases**, over more prompt text or one-off retries.
 
-**Status:** Control plane and deep arch **foundations** done (B16–B22); residual migration tracked as **B40**. B39, B24/B35 done.  
-**Next:** **B15**, then **B40** opportunistically.  
-Dashboard design: `ui-design.md`; prototype: `dashboard-mockup.html`.
+**Status:** Control plane and deep arch **foundations** done (B16–B22); call-site records adoption **B40** done. B15/B41 terminal polish done. B39, B24/B35 done.  
+**Optional later (not open bugs):** further `squad_next` extraction, universal leases on every ad-hoc lock, more typed action coverage — only when touching those modules.  
+Dashboard design: `ui-design.md`; prototype: `dashboard-mockup.html`. Grok scroll: `swarmforge/docs/grok-agent-window-scroll.md`.
