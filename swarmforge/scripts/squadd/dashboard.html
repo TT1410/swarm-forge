@@ -94,12 +94,21 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 @keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(1.25)}}
 @keyframes pulse-arrow{0%,100%{opacity:1}50%{opacity:.4}}
 /* B56 SL thermometer */
-.sl-therm{display:inline-flex;align-items:center;gap:3px;margin-right:6px;vertical-align:middle}
-.sl-therm .bar{width:4px;height:10px;border-radius:1px;background:#c5cbc2}
-.sl-therm.quiet .bar:nth-child(1){background:#c9851a}
-.sl-therm.busy .bar:nth-child(1),.sl-therm.busy .bar:nth-child(2){background:var(--green)}
-.sl-therm.hot .bar{background:var(--green)}
-.sl-therm.hot .bar:nth-child(3){animation:pulse-dot 0.9s ease-in-out infinite}
+.sl-therm{display:inline-flex;align-items:center;gap:2px;margin-right:6px;vertical-align:middle}
+.sl-therm .bar{width:3px;height:10px;border-radius:1px;background:#c5cbc2}
+/* B65: six bars, heat 0–6 */
+.sl-therm.quiet .bar:nth-child(-n+1){background:#c9851a}
+.sl-therm.warm .bar:nth-child(-n+2){background:#c9851a}
+.sl-therm.busy .bar:nth-child(-n+3){background:var(--green)}
+.sl-therm.brisk .bar:nth-child(-n+4){background:var(--green)}
+.sl-therm.hot .bar:nth-child(-n+5){background:var(--green)}
+.sl-therm.max .bar{background:var(--green)}
+.sl-therm.max .bar:nth-child(6){animation:pulse-dot 0.9s ease-in-out infinite}
+.wif-therm{display:inline-flex;align-items:center;gap:1px;margin-left:4px;vertical-align:middle}
+.wif-therm .bar{width:3px;height:8px;border-radius:1px;background:#c5cbc2}
+.wif-therm.quiet .bar:nth-child(1){background:#c9851a}
+.wif-therm.busy .bar:nth-child(-n+2){background:var(--green)}
+.wif-therm.hot .bar{background:var(--green)}
 .linkish{color:var(--accent);text-decoration:underline;background:none;border:0;font:inherit;padding:0;cursor:pointer;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;text-align:left}
 .ts-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}.ts-head h2{margin:0;flex:1}
 .history{flex:1;min-height:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;display:flex;flex-direction:column;gap:8px;font-size:11px;scrollbar-gutter:stable}
@@ -137,7 +146,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
     <span class="meta"><span class="dot">●</span> <span id="meta">loading…</span></span>
     <span class="spacer"></span>
     <span class="sl-therm idle" id="sl-therm" title="SL activity">
-      <span class="bar"></span><span class="bar"></span><span class="bar"></span>
+      <span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>
     </span>
     <button class="btn" type="button" id="btn-open-sl">Open SL</button>
     <button class="btn" type="button" id="btn-open-ts">Open TS</button>
@@ -155,7 +164,6 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
         <span>Board</span>
         <span class="pill" id="theme-pill">theme: —</span>
         <span class="spacer"></span>
-        <span>ui-design.md · mockup: dashboard-mockup.html</span>
       </div>
       <div class="columns" id="columns"></div>
     </main>
@@ -171,8 +179,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
         </div>
         <div class="history req-history" id="sl-requests"></div>
         <div class="composer">
-          <textarea id="sl-message" rows="4" placeholder="Command or question… (Enter send · Shift+Enter line break)"></textarea>
-          <button class="btn btn-primary" type="button" id="chat-send">Send</button>
+          <textarea id="sl-message" rows="4" placeholder="Command or question… (Enter send · Shift+Enter newline)"></textarea>
         </div>
       </section>
     </aside>
@@ -418,17 +425,25 @@ function renderBoard(data) {
         <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add New Item</button>
       </div></div></div>`;
     }
-    const colStories=sortByProgress(stories.filter(s=>boardColumn(s)===c));
-    const cards=colStories.map(s=>storyCard(s, glowIds.has(s.story_id))).join('');
-    // batches: hardener/qa/architect → finalizing; others coding
+    // B77: no double vision — hide free-floating story cards for active batch members
     const batFilter=c==='finalizing'
       ? b=>{const t=String(b.batch_kind||b.template||''); return /hardener|qa|architect|senior/i.test(t);}
       : c==='coding'
         ? b=>{const t=String(b.batch_kind||b.template||''); return !/hardener|qa|architect|senior/i.test(t);}
         : null;
-    const bats=batFilter
-      ? batches.filter(b=>(['open','closed','result_received','in_progress','running'].includes(b.state)||!b.state)&&batFilter(b)).map(batchCard).join('')
-      : '';
+    // Show stacks for open/in-progress only (dissolve complete batches into story cards)
+    const showBats=batFilter
+      ? batches.filter(b=>{
+          const st=String(b.state||'open');
+          const active=!['complete','done','merged','closed'].includes(st);
+          return active && batFilter(b);
+        })
+      : [];
+    const batchedIds=new Set();
+    showBats.forEach(b=>(b.members||[]).forEach(id=>batchedIds.add(id)));
+    const colStories=sortByProgress(stories.filter(s=>boardColumn(s)===c && !batchedIds.has(s.story_id)));
+    const cards=colStories.map(s=>storyCard(s, glowIds.has(s.story_id))).join('');
+    const bats=showBats.map(batchCard).join('');
     return `<div class="col"><h3>${titles[c]}</h3><div class="col-body">${bats}${cards}</div></div>`;
   }).join('');
   bindBacklogDeck(openBl);
@@ -479,9 +494,15 @@ function renderWork(data) {
       const agent=w.agent_id||'';
       const roleFull=w.role||w.template||'';
       const ico=stateIcon(w.state);
+      // B66: three-bar pane activity therm for live agent
+      const act=w.activity||{};
+      const alvl=act.level||'';
+      const therm=agent
+        ? `<span class="wif-therm ${esc(alvl||'idle')}" title="${esc((alvl||'idle')+' · '+(agent||''))}"><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>`
+        : '';
       // B43 + B59: full role name on hover
       const agentCell=agent
-        ? `<button type="button" class="linkish" data-open-agent="${esc(agent)}" title="${esc(roleFull+' · open '+agent)}">${esc(roleFull)}</button>`
+        ? `<button type="button" class="linkish" data-open-agent="${esc(agent)}" title="${esc(roleFull+' · open '+agent)}">${esc(roleFull)}</button>${therm}`
         : `<span title="${esc(roleFull)}">${esc(roleFull)}</span>`;
       return `<tr data-work-idx="${i}" data-story-ids="${esc(JSON.stringify(ids))}" data-batch-id="${esc(w.batch_id||'')}" data-work-batch="${isBatch?'1':'0'}">
         <td title="${esc(story)}"><button type="button" class="linkish">${esc(story)}</button></td>
@@ -642,8 +663,11 @@ async function refresh() {
     state=data;
     const busyN=(data.agents||[]).filter(a=>a.state&&a.state!=='retired'&&a.state!=='idle').length;
     // B51: human date/time + FSM next action after stamp
+    // B71: residual primary + product pending badge
+    const residual=data.residual||data.next_action||'—';
+    const product=data.product_pending?` · product: ${data.product_pending}`:'';
     document.getElementById('meta').textContent=
-      `slots · ${busyN} busy · ${fmtStamp(data.generated_at)} · next: ${data.next_action||'—'}`;
+      `slots · ${busyN} busy · ${fmtStamp(data.generated_at)} · residual: ${residual}${product}`;
     document.getElementById('error').textContent='';
     // expose for tests / console
     window.__lastState=data;
@@ -663,7 +687,8 @@ async function refresh() {
 document.getElementById('btn-open-sl').onclick=()=>openAgentWindow('/agent/squad-leader','squad-sl');
 document.getElementById('btn-open-ts').onclick=()=>openAgentWindow('/agent/troubleshooter','squad-ts');
 document.getElementById('btn-open-ts-2').onclick=()=>openAgentWindow('/agent/troubleshooter','squad-ts');
-document.getElementById('chat-send').onclick=async()=>{
+// B81: no Send button — Enter sends; Shift+Enter newline
+async function sendTsChat(){
   const ta=document.getElementById('sl-message');
   const text=ta.value.trim(); if(!text)return;
   optimisticBusy=true;
@@ -673,10 +698,9 @@ document.getElementById('chat-send').onclick=async()=>{
     await post('/api/sl-requests', JSON.stringify({body:text}), 'application/json; charset=utf-8', false);
     ta.value=''; refresh();
   } catch(e){ document.getElementById('error').textContent=e.message||String(e); }
-};
+}
 document.getElementById('sl-message').addEventListener('keydown',e=>{
-  // Enter sends; Shift+Enter inserts a line break (prior TS chat behavior).
-  if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); document.getElementById('chat-send').click(); }
+  if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendTsChat(); }
 });
 // B52: track whether operator is reading history
 (function bindChatScroll(){

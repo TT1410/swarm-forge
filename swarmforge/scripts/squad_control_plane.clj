@@ -16,12 +16,13 @@
 ;;; ---------------------------------------------------------------------------
 
 (def residual-class-order
-  "Ordered residual classes. Index is the rank (0 = highest priority)."
+  "Ordered residual classes. Index is the rank (0 = highest priority).
+  B68: dashboard-request outranks pending-spawn so product intake is not starved."
   [:finish-in-process
    :process-handoff
    :stale-lock
-   :pending-spawn
    :dashboard-request
+   :pending-spawn
    :retire
    :recover
    :durable-blocker

@@ -446,9 +446,14 @@
     (exit! 2 (str "Assignment already exists: " (:assignment-id context)))))
 
 (defn default-instructions [{:keys [template story-id scope]}]
-  (str "Follow the " template " role contract for this " scope " assignment.\n"
-       "Use the provided theme, story packet, and role prompt as the source of truth.\n"
-       "Produce the required artifact for " story-id ", commit the work, and hand it off with the provided draft.\n"))
+  (if (= "senior-implementer" template)
+    (str "Apply only the architecture review findings for this " scope " assignment (B82).\n"
+         "Lead with reviews/*-architecture-review.md (or the critique path in this package).\n"
+         "Do not greenfield-rebuild modules the review accepted; preserve working process/domain code.\n"
+         "Implement the listed recommendations, verify with bb test and bb acceptance, hand off.\n")
+    (str "Follow the " template " role contract for this " scope " assignment.\n"
+         "Use the provided theme, story packet, and role prompt as the source of truth.\n"
+         "Produce the required artifact for " story-id ", commit the work, and hand it off with the provided draft.\n")))
 
 (defn assignment-instructions-text [context]
   (if (:auto-instructions? context)
@@ -460,19 +465,55 @@
              (fs/regular-file? (:module-map-file context)))
     (slurp (str (:module-map-file context)))))
 
-(defn assignment-text [context]
-  (render-assignment (merge context
-                            {:theme-text (slurp (str (:theme-file context)))
-                             :module-map-text (module-map-text-for context)
-                             :story-text (when-let [story-file (:story-file context)]
-                                           (slurp (str story-file)))
-                             :instructions-text (assignment-instructions-text context)
-                             :packet-text (when-let [packet (:packet context)]
-                                            (slurp (str packet)))
-                             :required-tools (tools/required-tools (:root context) (:template context))
-                             :optional-tools (tools/optional-tools (:root context) (:template context))
-                             :required-evidence (tools/required-evidence (:root context) (:template context))})))
+(defn architecture-review-text
+  "B82: surface architect critique for senior-implementer assignments."
+  [{:keys [root theme-id assignment-id]}]
+  (let [candidates [(fs/path root "reviews" (str theme-id "-architecture-review.md"))
+                    (fs/path root "reviews" "htw-architecture-review.md")
+                    (fs/path root "reviews" (str assignment-id "-review.md"))]
+        hit (first (filter fs/regular-file? candidates))]
+    (when hit
+      (str "Source: " hit "\n\n" (slurp (str hit))))))
 
+(defn assignment-text [context]
+  (let [base {:theme-text (slurp (str (:theme-file context)))
+              :module-map-text (module-map-text-for context)
+              :story-text (when-let [story-file (:story-file context)]
+                            (slurp (str story-file)))
+              :instructions-text (assignment-instructions-text context)
+              :packet-text (when-let [packet (:packet context)]
+                             (slurp (str packet)))
+              :required-tools (tools/required-tools (:root context) (:template context))
+              :optional-tools (tools/optional-tools (:root context) (:template context))
+              :required-evidence (tools/required-evidence (:root context) (:template context))}
+        review (when (= "senior-implementer" (:template context))
+                 (architecture-review-text context))]
+    (if review
+      ;; B82: findings before full theme dump
+      (str "# Squad Assignment\n\n"
+           "assignment_id: " (:assignment-id context) "\n"
+           "theme_id: " (:theme-id context) "\n"
+           "scope: " (:scope context) "\n"
+           "story_id: " (:story-id context) "\n"
+           "template: senior-implementer\n\n"
+           "## Architecture findings (work order)\n\n"
+           review "\n\n"
+           "## Leader Instructions\n\n"
+           (:instructions-text base) "\n\n"
+           "## Theme (context only — not a greenfield rebuild brief)\n\n"
+           (:theme-text base) "\n\n"
+           (when (:module-map-text base)
+             (str "## Theme Module Map (context)\n\n" (:module-map-text base) "\n\n"))
+           (tool-lines "Required Tools" (:required-tools base))
+           (tool-startup-lines "senior-implementer" (:required-tools base))
+           (tool-evidence-lines (:required-evidence base))
+           "## Required Transient Protocol\n\n"
+           "- Stay inside this assignment boundary.\n"
+           "- Apply architecture findings only; do not rewrite healthy modules.\n"
+           "- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent.\n"
+           "- Commit completed work on your transient branch.\n"
+           "- Send the result to `squad-leader` with `swarm_handoff.sh`.\n")
+      (render-assignment (merge context base)))))
 (defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now merge-for batch-id conflicting-template conflicting-agent conflicting-commit]}]
   (str "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
@@ -1179,14 +1220,20 @@
     (mark-merge-ready-state! root dir assignment-id commit now "commit already reachable from HEAD")
     (mark-merge-result! root dir assignment-id commit now (dry-run-merge root commit))))
 
+(defn dirt-defer-detail? [detail]
+  "B75: transient main dirt is not a durable merge evaluation."
+  (and detail (str/includes? (str detail) "tracked checkout dirty")))
+
 (defn existing-merge-evaluation [dir commit]
-  "Return prior merge_ready/merge_blocked outcome for the same result commit, if any."
+  "Return prior merge_ready/merge_blocked outcome for the same result commit, if any.
+  B75: do not replay tracked-checkout-dirty as a permanent merge_blocked."
   (let [merge-file (fs/path dir "merge")
         prior-state (read-value merge-file "state")
         prior-commit (read-value merge-file "commit")
         prior-detail (read-value merge-file "detail")]
     (when (and (= commit prior-commit)
-               (contains? #{"merge_ready" "merge_blocked"} prior-state))
+               (contains? #{"merge_ready" "merge_blocked"} prior-state)
+               (not (dirt-defer-detail? prior-detail)))
       {:state prior-state
        :detail (or prior-detail
                    (if (= "merge_ready" prior-state)
@@ -1434,13 +1481,24 @@
         root
         (fn []
           (try
-            (when (tracked-dirty? root)
-              (block-merge! root dir assignment-id nil "tracked checkout dirty" commit now nil))
-            (clear-colliding-untracked-reviews! root commit)
-            (let [detail (merge-detail! root dir assignment-id commit now)
-                  merge-commit (record-accepted-merge! root dir assignment-id commit detail now)]
-              (mark-original-resolved-by-merger! root dir assignment-id commit merge-commit now)
-              (print-merge-accepted! assignment-id commit merge-commit detail))
+            ;; B75: transient dirty main soft-defers; leave merge_ready for retry.
+            ;; Do not write merge_blocked / spawn merger recovery for dirt alone.
+            (if (tracked-dirty? root)
+              (do
+                (resync-status! dir assignment-id "merge_ready"
+                                "tracked checkout dirty; defer accept until main is clean" now)
+                (binding [*out* *err*]
+                  (println "SQUAD_ASSIGNMENT:" assignment-id)
+                  (println "STATE: merge_deferred")
+                  (println "COMMIT:" commit)
+                  (println "DETAIL: tracked checkout dirty; retry when main is clean"))
+                (System/exit 5))
+              (do
+                (clear-colliding-untracked-reviews! root commit)
+                (let [detail (merge-detail! root dir assignment-id commit now)
+                      merge-commit (record-accepted-merge! root dir assignment-id commit detail now)]
+                  (mark-original-resolved-by-merger! root dir assignment-id commit merge-commit now)
+                  (print-merge-accepted! assignment-id commit merge-commit detail))))
             (finally
               (abort-merge! root))))))))
 

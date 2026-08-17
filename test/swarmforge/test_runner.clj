@@ -8,6 +8,7 @@
             [swarmforge.crap-coverage-test]
             [swarmforge.handoff-test]
             [swarmforge.handoff-lib-test]
+            [swarmforge.issues-b68-b82-test]
             [swarmforge.launcher-test]
             [swarmforge.recover-test]
             [swarmforge.role-contract-test]
@@ -27,6 +28,7 @@
     swarmforge.dashboard-request-test
     swarmforge.durable-blocker-test
     swarmforge.handoff-lib-test
+    swarmforge.issues-b68-b82-test
     swarmforge.launcher-test
     swarmforge.recover-test
     swarmforge.role-contract-test

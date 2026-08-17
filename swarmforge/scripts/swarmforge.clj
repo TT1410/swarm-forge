@@ -411,15 +411,21 @@
   (let [args (:extra-args row)]
     (if (str/blank? args) "" (str args " "))))
 
+(defn persistent-yolo-role?
+  "B76: SL and TS always run fully auto-approved (in-swarm operators)."
+  [role]
+  (contains? #{"squad-leader" "troubleshooter"} role))
+
 (defn grok-wants-auto-approve? [row]
-  (when-let [args (:extra-args row)]
-    (or (str/includes? args "--always-approve")
-        (str/includes? args "--yolo")
-        (re-find #"--permission-mode\s+bypassPermissions" args))))
+  (or (persistent-yolo-role? (:role row))
+      (when-let [args (:extra-args row)]
+        (or (str/includes? args "--always-approve")
+            (str/includes? args "--yolo")
+            (re-find #"--permission-mode\s+bypassPermissions" args)))))
 
 (defn grok-permission-prefix [row]
   ;; acceptEdits only auto-approves file edits; bypassPermissions is the
-  ;; CLI-enforced mode that matches --always-approve / --yolo.
+  ;; CLI-enforced mode that matches --always-approve / --yolo / B76 SL+TS.
   (if (grok-wants-auto-approve? row)
     "--permission-mode bypassPermissions "
     "--permission-mode acceptEdits "))
@@ -502,13 +508,19 @@
       (inhibitor))))
 
 (defn claude-launch-command [_ row prompt-file]
-  (str "claude --append-system-prompt-file " (sq (str prompt-file))
-       " --permission-mode acceptEdits -n " (sq (str "SwarmForge " (:display-name row))) " "
-       (extra-args-prefix row)
-       "\"$(cat " (sq (str prompt-file)) ")\""))
+  (let [perm (if (persistent-yolo-role? (:role row))
+               "bypassPermissions"
+               "acceptEdits")]
+    (str "claude --append-system-prompt-file " (sq (str prompt-file))
+         " --permission-mode " perm " -n " (sq (str "SwarmForge " (:display-name row))) " "
+         (extra-args-prefix row)
+         "\"$(cat " (sq (str prompt-file)) ")\"")))
 
 (defn codex-launch-command [_ row prompt-file]
+  ;; B76: SL/TS always YOLO; same bypass as squad_spawn for transients.
   (str "codex -C " (sq (str (:worktree-path row))) " "
+       (when (persistent-yolo-role? (:role row))
+         "--dangerously-bypass-approvals-and-sandbox ")
        (extra-args-prefix row)
        "\"$(cat " (sq (str prompt-file)) ")\""))
 

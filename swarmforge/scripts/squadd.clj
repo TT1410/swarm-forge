@@ -225,11 +225,34 @@
   (or (read-value (fs/path root ".squad" "agents" role "metadata") "template")
       (template-from-role role)))
 
+(defn role-task-id [root role]
+  (or (read-value (fs/path root ".squad" "agents" role "metadata") "task_id")
+      (read-value (fs/path root ".squad" "agents" role "metadata") "task-id")))
+
+(defn merger-holds-capacity-slot?
+  "B73/B27: merger that is only handoff_sent while its assignment is merge_blocked
+  does not fill the singleton template cap (matches squad_next)."
+  [root role]
+  (let [state (read-value (fs/path root ".squad" "agents" role "status") "state")
+        task-id (role-task-id root role)
+        assignment-state (when-not (str/blank? task-id)
+                           (read-value (fs/path root ".squad" "assignments" task-id "status")
+                                       "state"))]
+    (not (and (= "handoff_sent" state)
+              (= "merge_blocked" assignment-state)))))
+
+(defn counts-toward-template-cap?
+  "Whether an active role consumes max_active_template for this template."
+  [root role template]
+  (and (active-role? root role)
+       (= template (role-template root role))
+       (or (not= "merger" template)
+           (merger-holds-capacity-slot? root role))))
+
 (defn active-template-count [root template]
   (count
    (for [[role _] (load-roles root)
-         :when (and (active-role? root role)
-                    (= template (role-template root role)))]
+         :when (counts-toward-template-cap? root role template)]
      role)))
 
 (defn active-group-count [root templates]
@@ -1229,6 +1252,11 @@
       (log! root "workflow-mechanical-applied" (str (count (re-seq #"APPLIED_TRANSITION:" out)))))
     (when-not (zero? (:exit result))
       (log! root "workflow-mechanical-failed" (str (:exit result)) (str/trim (or (:err result) ""))))
+    ;; B71: durable residual snapshot for dashboard header
+    (when-not (str/blank? action)
+      (let [dir (fs/path root ".swarmforge" "daemon")]
+        (fs/create-dirs dir)
+        (spit (str (fs/path dir "residual-next")) (str action "\n"))))
     {:exit (:exit result)
      :out out
      :next-action action

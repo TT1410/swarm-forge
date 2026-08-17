@@ -331,13 +331,38 @@
       (move-with-state! source (rejected-file root approval-id) "rejected" reason)
       (write-approval-blocker! root approval-id approval reason now)
       (when (= "story" target-kind)
-        (update-story-packet-on-approval-reject! root target-id gate reason))
+        (update-story-packet-on-approval-reject! root target-id gate reason)
+        ;; B72: rejected story returns to backlog for edit + re-approve
+        (when (= "story" gate)
+          (let [story-path (or (read-value (fs/path root ".squad" "stories" target-id "packet")
+                                           "story_path")
+                               (str "stories/" target-id ".md"))
+                body (if (fs/regular-file? (fs/path root story-path))
+                       (slurp (str (fs/path root story-path)))
+                       (str "Rejected story " target-id " — restore text and re-approve.\nReason: " reason "\n"))
+                bl-dir (fs/path root ".squad" "backlog")
+                bl-id (str "bl-reject-" target-id)
+                now-ts now]
+            (fs/create-dirs bl-dir)
+            (spit (str (fs/path bl-dir (str bl-id ".item")))
+                  (str "id: " bl-id "\n"
+                       "title: " target-id " (rejected story)\n"
+                       "status: open\n"
+                       "created_at: " now-ts "\n"
+                       "updated_at: " now-ts "\n"
+                       "source_story: " target-id "\n"
+                       "rejection_reason: " reason "\n"
+                       "body: |\n"
+                       (->> (str/split-lines body)
+                            (map #(str "  " %))
+                            (str/join "\n"))
+                       "\n"))
+            (println "BACKLOG:" bl-id))))
       (println "SQUAD_APPROVAL:" approval-id)
       (println "STATE: rejected")
       (println "TARGET:" (or target-id "unknown"))
       (println "GATE:" (or gate "unknown"))
       (println "BLOCKER:" (str (fs/path root ".squad" "blockers" approval-id))))))
-
 (defn resolve-rejection!
   "Clear an approval-rejection durable blocker and reopen the gate for re-request.
   Does not auto-approve; workflow may request a new pending approval afterward."

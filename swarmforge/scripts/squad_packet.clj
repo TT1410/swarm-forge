@@ -369,6 +369,16 @@
     (println "STATE:" (get packet "state"))
     (println "APPROVAL:" gate)))
 
+(defn git-commit-subject [root sha]
+  (str/trim (:out (process/sh {:continue true :dir (str root)}
+                              "git" "log" "-1" "--pretty=%s" sha))))
+
+(defn qa-commit-failed?
+  "B79: detect explicit batch QA failure in commit subject (handoff artifact)."
+  [root sha]
+  (boolean (re-find #"(?i)qa failure|failed final batch qa|final_qa_fail|htw_final_qa_fail"
+                    (or (git-commit-subject root sha) ""))))
+
 (defn record-result! [story-id kind assignment-id branch sha]
   (when-not (contains? result-kinds kind)
     (exit! 2 "Result kind must be implementation, cleaner, hardener, qa, architecture, or senior-implementer."))
@@ -381,22 +391,42 @@
         _ (ensure-packet! root story-id)
         packet (packet-map root story-id)
         prefix (str/replace kind "-" "_")
+        qa-failed? (and (= "qa" kind) (qa-commit-failed? root sha))
         packet (squad-state/clear-downstream packet kind)
         packet (write-packet! root story-id
                               (append-iteration
-                               (assoc packet
-                                      (str prefix "_assignment") assignment-id
-                                      (str prefix "_branch") branch
-                                      (str prefix "_sha") sha)
-                               prefix assignment-id "recorded"))]
-    (event! root story-id (str prefix "_recorded") assignment-id branch sha)
+                               (cond-> (assoc packet
+                                              (str prefix "_assignment") assignment-id
+                                              (str prefix "_branch") branch
+                                              (str prefix "_sha") sha)
+                                 qa-failed?
+                                 (assoc "qa_verdict" "failed"
+                                        "qa_result_state" "failed"))
+                               prefix assignment-id (if qa-failed? "failed" "recorded")))]
+    (event! root story-id (str prefix (if qa-failed? "_failed" "_recorded"))
+            assignment-id branch sha)
+    (when qa-failed?
+      ;; B79: durable Attention signal — not auto-approved
+      (let [blocker-dir (fs/path root ".squad" "blockers")
+            bid (str "qa-failed__" story-id)]
+        (fs/create-dirs blocker-dir)
+        (spit (str (fs/path blocker-dir bid))
+              (str "blocker_id: " bid "\n"
+                   "kind: qa-failed\n"
+                   "target_kind: story\n"
+                   "target_id: " story-id "\n"
+                   "assignment_id: " assignment-id "\n"
+                   "sha: " sha "\n"
+                   "detail: batch QA reported failure; do not auto-approve\n"
+                   "updated_at: " (java.time.Instant/now) "\n"))))
     (println "SQUAD_PACKET:" story-id)
     (println "STATE:" (get packet "state"))
     (println "RESULT:" kind)
+    (when qa-failed?
+      (println "QA_VERDICT: failed"))
     (println "ASSIGNMENT:" assignment-id)
     (println "BRANCH:" branch)
     (println "SHA:" sha)))
-
 (defn batch-story! [story-id kind batch-id stage assignment-id branch sha]
   (when-not (contains? batch-kinds kind)
     (exit! 2 "Batch kind must be hardener, qa, or architecture."))

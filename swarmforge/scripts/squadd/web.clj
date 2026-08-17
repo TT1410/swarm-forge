@@ -291,9 +291,10 @@
   (assoc (parse-kv-file file) id-key id))
 
 (def stage-labels
-  {"story_recorded" "specified"
-   "story_approved" "specified"
-   "specification_in_progress" "specified"
+  ;; B67: early Specifying pills are distinct (written / approved / in-process)
+  {"story_recorded" "written"
+   "story_approved" "approved"
+   "specification_in_progress" "in-process"
    "implementation_approval_ready" "qa approved"
    "implementation_approved" "qa approved"
    "implemented" "implemented"
@@ -892,7 +893,33 @@
   "B56: last SL pane sample for heat decay across polls."
   (atom {:hash nil :heat 0}))
 
-(declare sl-activity)
+(def agent-activity-atom
+  "B66: last pane hash/heat per agent_id for WIF thermometers."
+  (atom {}))
+
+(declare sl-activity socket-value agent-session-name)
+
+(defn agent-pane-heat
+  "B66: heat 0–3 for one agent pane (observe only)."
+  [root agent-id]
+  (when-not (str/blank? agent-id)
+    (let [socket (socket-value root)
+          session (agent-session-name root agent-id)
+          live? (and socket session
+                     (zero? (:exit (sh-continue "tmux" "-S" socket "has-session" "-t" session))))
+          text (when live?
+                 (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-20")))
+          h (when text (str (hash text)))
+          prev (get @agent-activity-atom agent-id)
+          heat (cond
+                 (not live?) 0
+                 (nil? h) 0
+                 (nil? (:hash prev)) 1
+                 (not= h (:hash prev)) (min 3 (inc (long (or (:heat prev) 0))))
+                 :else (max 0 (dec (long (or (:heat prev) 0)))))
+          level (case (long heat) 0 "idle" 1 "quiet" 2 "busy" "hot")]
+      (swap! agent-activity-atom assoc agent-id {:hash h :heat heat})
+      {"level" level "heat" heat "session_live" (boolean live?)})))
 
 (defn batch-manifest-members [root batch-id]
   (let [manifest (fs/path root ".squad" "batches" batch-id "manifest.tsv")]
@@ -915,6 +942,25 @@
                         "member_count" (count members)
                         "batch_kind" kind))))))
 
+(defn parent-batch-id
+  "B80: map rework batch ids (e.g. htw-architecture-fix) to parent batch."
+  [batch-id]
+  (when-not (str/blank? batch-id)
+    (or (second (re-matches #"(.+)-fix$" batch-id))
+        (second (re-matches #"(.+)-r\d+$" batch-id)))))
+
+(defn resolve-wif-batch
+  "B80: find batch record for assignment, including parent of -fix / -rN ids."
+  [batch-by-id a]
+  (let [id (get a "assignment_id" "")
+        bid (or (get a "batch_id") "")]
+    (or (get batch-by-id id)
+        (get batch-by-id bid)
+        (when-let [parent (parent-batch-id bid)]
+          (get batch-by-id parent))
+        (when-let [parent (parent-batch-id id)]
+          (get batch-by-id parent)))))
+
 (defn work-in-flight-rows [assignments batches]
   "Active assignments as WIF table rows; batch assignments include members.
   B46: later progress on top —
@@ -928,17 +974,22 @@
                       story (get a "story_id" "")
                       template (get a "template" "")
                       state (get a "state" "")
-                      b (or (get batch-by-id id)
-                            (get batch-by-id (get a "batch_id")))
+                      b (resolve-wif-batch batch-by-id a)
                       members (or (get b "members") [])
                       label (if (and b (seq members))
                               (str (or (get b "batch_kind") template) " ×" (count members))
-                              (if (str/blank? story) id story))
+                              (if (or (str/blank? story) (= "batch" story)) id story))
+                      ;; Never highlight the literal story_id "batch"
+                      story-ids (if (seq members)
+                                  members
+                                  (if (or (str/blank? story) (= "batch" story))
+                                    []
+                                    [story]))
                       agent (or (get a "agent_id") "")]
                   {"assignment_id" id
                    "story" label
                    "story_id" story
-                   "story_ids" (if (seq members) members (if (str/blank? story) [] [story]))
+                   "story_ids" story-ids
                    "is_batch" (boolean (seq members))
                    "batch_id" (or (get b "batch_id") (when (seq members) id) "")
                    "members" members
@@ -960,10 +1011,34 @@
                           (if-not (zero? c2) c2 (compare ub ua)))))))
          vec)))
 
+(defn product-pending-label
+  "B71: short label for pending product/SL dashboard request."
+  [sl-requests]
+  (when-let [req (some (fn [r]
+                         (when (and (= "pending" (get r "status"))
+                                    (let [o (get r "owner" "")]
+                                      (or (str/blank? o)
+                                          (= "squad-leader" o)
+                                          (= "product" o))))
+                           r))
+                       sl-requests)]
+    (or (not-empty (get req "title"))
+        (not-empty (get req "id"))
+        "pending")))
+
+(defn residual-snapshot
+  "B71: prefer daemon-written residual file; else nil."
+  [root]
+  (let [f (fs/path root ".swarmforge" "daemon" "residual-next")]
+    (when (fs/regular-file? f)
+      (not-empty (str/trim (slurp (str f)))))))
+
 (defn dashboard-next-action
-  "Cheap FSM-ish label for header (B51) — no full residual scan."
-  [{:strs [approvals stalls sl_requests agents]}]
-  (let [pending-appr (seq (get approvals "pending"))
+  "Cheap FSM-ish label for header (B51) — no full residual scan.
+  B71: when residual snapshot exists, prefer it over product-request heuristic alone."
+  [{:strs [approvals stalls sl_requests agents] :as state}]
+  (let [snap (residual-snapshot (get state "project_root" "."))
+        pending-appr (seq (get approvals "pending"))
         stalled (get stalls "stalled")
         pending-req (some #(= "pending" (get % "status")) sl_requests)
         active (some (fn [a]
@@ -972,13 +1047,13 @@
                               (not= s "idle")
                               (not (str/blank? s)))))
                      agents)]
-    (cond
-      pending-req "answer_dashboard_request"
-      pending-appr "user_approval"
-      stalled "investigate_stall"
-      active "wait_active_agents"
-      :else "idle")))
-
+    (or snap
+        (cond
+          pending-req "answer_dashboard_request"
+          pending-appr "user_approval"
+          stalled "investigate_stall"
+          active "wait_active_agents"
+          :else "idle"))))
 (defn backlog-dir [root]
   (fs/path root ".squad" "backlog"))
 
@@ -1157,7 +1232,11 @@
         batches (batches-enriched root)
         backlog (list-backlog root)
         approvals {"pending" (approval-state-for root "pending")}
-        wif (work-in-flight-rows assignments batches)
+        wif (->> (work-in-flight-rows assignments batches)
+                 (mapv (fn [row]
+                         (if-let [heat (agent-pane-heat root (get row "agent_id"))]
+                           (assoc row "activity" heat)
+                           row))))
         base {"generated_at" (now)
               "project_root" (str root)
               "stories" stories
@@ -1174,9 +1253,13 @@
               "sl_activity" (sl-activity root)
               "troubleshooter" {"working" (troubleshooter-working? root)
                                 "session" (troubleshooter-session-name)}}
-        with-theme (cond-> base theme-id (assoc "current_theme_id" theme-id))]
-    (assoc with-theme "next_action" (dashboard-next-action with-theme))))
-
+        with-theme (cond-> base theme-id (assoc "current_theme_id" theme-id))
+        next-a (dashboard-next-action with-theme)
+        product (product-pending-label sl-requests)]
+    (cond-> (assoc with-theme
+                   "next_action" next-a
+                   "residual" next-a)
+      product (assoc "product_pending" product))))
 (defn response [status content-type body]
   {:status status :content-type content-type :body body})
 
@@ -1489,7 +1572,7 @@
       (str/trim (slurp (str socket-file))))))
 
 (defn sl-activity
-  "B56: idle|quiet|busy|hot from SL pane change rate (observe only)."
+  "B56/B65: idle…max from SL pane change rate (observe only). Heat 0–6 for six bars."
   [root]
   (let [socket (socket-value root)
         session "swarmforge-squad-leader"
@@ -1503,13 +1586,16 @@
                (not live?) 0
                (nil? h) 0
                (nil? (:hash prev)) 1
-               (not= h (:hash prev)) (min 3 (inc (long (or (:heat prev) 0))))
+               (not= h (:hash prev)) (min 6 (inc (long (or (:heat prev) 0))))
                :else (max 0 (dec (long (or (:heat prev) 0)))))
         level (case (long heat)
                 0 "idle"
                 1 "quiet"
-                2 "busy"
-                "hot")]
+                2 "warm"
+                3 "busy"
+                4 "brisk"
+                5 "hot"
+                "max")]
     (reset! sl-activity-atom {:hash h :heat heat})
     {"level" level
      "heat" heat
@@ -1583,9 +1669,10 @@
        "#new-output{position:fixed;right:12px;bottom:12px;background:#2f6f4e;color:white;border:0;border-radius:6px;padding:6px 10px;display:none}</style>"
        "</head><body><header><h1>" (html-escape agent-id) "</h1></header><pre id=\"pane\"></pre>"
        "<button id=\"new-output\" onclick=\"pane.scrollTop=pane.scrollHeight;this.style.display='none'\">New output</button>"
-       "<script>const pane=document.getElementById('pane');let stickBottom=true;"
+       "<script>const pane=document.getElementById('pane');let stickBottom=true;let firstPaint=true;"
+       "/* B69/B74: open at end; stay stuck when near bottom */"
        "pane.addEventListener('scroll',()=>{const dist=pane.scrollHeight-pane.scrollTop-pane.clientHeight;"
-       "stickBottom=dist<=24;});"
+       "stickBottom=dist<=48;});"
        "async function refresh(){"
        "const marker=document.getElementById('new-output');"
        "const prevHeight=pane.scrollHeight||0;"
@@ -1595,9 +1682,11 @@
        "const text=await r.text();if(text.length>0&&text!==pane.textContent){"
        "pane.textContent=text;"
        "requestAnimationFrame(()=>{"
-       "if(stickBottom){pane.scrollTop=pane.scrollHeight;marker.style.display='none'}"
+       "if(firstPaint||stickBottom||distFromBottom<=48){"
+       "pane.scrollTop=pane.scrollHeight;stickBottom=true;marker.style.display='none';firstPaint=false}"
        "else{pane.scrollTop=Math.max(0,pane.scrollHeight-pane.clientHeight-distFromBottom);"
-       "marker.style.display='block'}});}}"
+       "marker.style.display='block'}});}"
+       "else if(firstPaint){requestAnimationFrame(()=>{pane.scrollTop=pane.scrollHeight;firstPaint=false});}}"
        "refresh();setInterval(refresh,1000);</script></body></html>"))
 (defn agent-pane-response [root path]
   (let [[_ encoded-id] (re-matches #"/api/agents/([^/]+)/pane" path)

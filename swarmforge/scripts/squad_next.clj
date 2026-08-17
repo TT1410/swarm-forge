@@ -666,9 +666,13 @@
 (defn approval-candidate [root packet gate title reason priority stage-order]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         field (str (gate-key gate) "_approval")
-        id (approval-id gate story-id)]
+        id (approval-id gate story-id)
+        ;; B79: failed batch QA must not auto-approve or request approval as pass
+        qa-failed? (and (= "qa" gate)
+                        (= "failed" (get packet "qa_verdict")))]
     (when (and (not (field-approved? packet field))
-               (not (approval-record-exists-for? root "story" story-id gate)))
+               (not (approval-record-exists-for? root "story" story-id gate))
+               (not qa-failed?))
       (if (cfg/squad-approval-required? root gate)
         {:priority priority
          :stage-order stage-order
@@ -687,7 +691,6 @@
          :gate gate
          :reason (str gate " approval is not required by configuration")
          :command (str "squad_packet.sh approve " story-id " " gate " auto-approved-by-config")}))))
-
 (declare assignment-create-candidate assignment-spawn-candidate spawnable-assignment?
          stale-changes-requested?
          architecture-gate-satisfied-for-final?)
