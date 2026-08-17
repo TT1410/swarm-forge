@@ -50,6 +50,30 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest multiline-body-survives-embedded-key-value-lines
+  ;; B53: free-text lines that look like `key: value` must not truncate body
+  (let [root (tmp-dir)
+        body (str "PRODUCT BACKLOG APPROVED FOR ANALYSIS\n"
+                  "backlog_id: bl-20260817-001\n"
+                  "title: command syntax.\n\n"
+                  "The move command should be M n.\n")]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (let [created (dashreq/create-request root {:body body :owner "squad-leader"})
+            id (get-in created [:request "id"])
+            pending (first (dashreq/pending-requests root))
+            re-read (dashreq/file-map
+                     (fs/path root ".swarmforge/dashboard/requests/pending" (str id ".request")))]
+        (is (:ok created))
+        (is (str/includes? (get pending "body") "backlog_id: bl-20260817-001"))
+        (is (str/includes? (get pending "body") "The move command should be M n."))
+        (is (str/includes? (get re-read "body") "The move command should be M n."))
+        (is (not= "PRODUCT BACKLOG APPROVED FOR ANALYSIS" (get re-read "body"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest multiline-body-and-response-round-trip
   ;; Given a dashboard request with multiline body and answer (B10)
   ;; When answered and re-read via list/status helpers

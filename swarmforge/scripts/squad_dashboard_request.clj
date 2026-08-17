@@ -71,12 +71,26 @@
   "Fields that may contain newlines. Written as key: | block form (B10)."
   #{"body" "response" "detail"})
 
+(def request-field-keys
+  "Top-level durable request fields. Multiline body/response/detail may contain
+  free text that looks like `key: value` (e.g. backlog_id: …). B53: only these
+  keys end a multiline block — arbitrary `foo: bar` lines stay inside the body."
+  #{"id" "kind" "status" "owner" "created_at" "updated_at" "answered_at"
+    "routed_at" "body" "response" "detail"})
+
 (def header-key-line
   #"^([A-Za-z0-9_]+): (.*)$")
 
+(defn- multiline-block-terminator?
+  "True when line starts the next top-level request field (not free text)."
+  [line]
+  (when-let [[_ k] (re-matches header-key-line line)]
+    (contains? request-field-keys k)))
+
 (defn parse-kv
   "Parse request records. Single-line `key: value` plus multiline `key: |`
-  blocks for body/response/detail (B10). Legacy single-line files still parse."
+  blocks for body/response/detail (B10). Legacy single-line files still parse.
+  Multiline blocks end only at a known request-field header (B53)."
   [text]
   (loop [lines (str/split-lines (or text ""))
          acc {}]
@@ -87,8 +101,7 @@
         (if-let [[_ k v] (re-matches header-key-line line)]
           (if (and (= "|" v) (contains? multiline-field-keys k))
             (let [[content more]
-                  (split-with (fn [l]
-                                (not (re-matches header-key-line l)))
+                  (split-with (fn [l] (not (multiline-block-terminator? l)))
                               rest-lines)]
               (recur (vec more)
                      (assoc acc k (str/join "\n" content))))

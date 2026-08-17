@@ -1143,7 +1143,8 @@
         const pill = a.type === "stall" ? "pill-bad" : "pill-warn";
         const label = a.type === "stall" ? "Stall" : "Approval";
         const actions = a.type === "approval"
-          ? `<button class="btn btn-sm btn-primary" data-act="approve-att" data-id="${esc(a.id)}">Approve</button>
+          ? `<button class="btn btn-sm" data-act="view-doc" data-id="${esc(a.id)}">View document</button>
+             <button class="btn btn-sm btn-primary" data-act="approve-att" data-id="${esc(a.id)}">Approve</button>
              <button class="btn btn-sm" data-act="reject-att" data-id="${esc(a.id)}">Reject</button>`
           : `<button class="btn btn-sm" data-act="open-agent" data-id="${esc(a.id)}">Open agent</button>`;
         return `<div class="att-row">

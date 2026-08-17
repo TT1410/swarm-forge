@@ -404,9 +404,81 @@
            vec)
       [])))
 
+(defn- normalize-gate [gate]
+  (-> (or gate "")
+      str/trim
+      str/lower-case
+      (str/replace "_" "-")))
+
+(defn approval-document-ref
+  "Map an approval record to the dashboard artifact the operator should read
+  before Approve/Reject. Always returns url+label when target_id is present."
+  [{:strs [target_kind target_id gate story_id theme_id] :as _approval}]
+  (let [kind (str/lower-case (str/trim (or target_kind "")))
+        tid (or (not-empty target_id)
+                (not-empty story_id)
+                (not-empty theme_id)
+                "")
+        gate-n (normalize-gate gate)
+        enc (fn [s] (java.net.URLEncoder/encode (str s) "UTF-8"))
+        story-url (fn [path-kind id]
+                    (str "/artifact/" path-kind "/" (enc id)))
+        theme-url (fn [id & [hash]]
+                    (str "/artifact/theme/" (enc id)
+                         (when hash (str "#" hash))))]
+    (cond
+      (str/blank? tid)
+      {"document_url" ""
+       "document_label" "View document"}
+
+      (= kind "theme")
+      (case gate-n
+        "implementation-order"
+        {"document_url" (theme-url tid "implementation-order")
+         "document_label" "View implementation order"}
+        "dependency-checker"
+        {"document_url" (theme-url tid "dependency-checker")
+         "document_label" "View dependency checker"}
+        "module-map"
+        {"document_url" (theme-url tid "module-map")
+         "document_label" "View module map"}
+        ("finalize" "theme-finalize")
+        {"document_url" (theme-url tid)
+         "document_label" "View theme package"}
+        ;; theme gate and any other theme-scoped gate
+        {"document_url" (theme-url tid)
+         "document_label" "View theme package"})
+
+      ;; story target (default) and unknown kinds fall through to story package
+      :else
+      (case gate-n
+        "gherkin"
+        {"document_url" (story-url "gherkin" tid)
+         "document_label" "View gherkin"}
+        ("qa-procedure")
+        {"document_url" (story-url "qa-procedure" tid)
+         "document_label" "View QA procedure"}
+        ("code-review")
+        {"document_url" (story-url "review" tid)
+         "document_label" "View code review"}
+        "architecture"
+        {"document_url" (story-url "review" tid)
+         "document_label" "View architecture review"}
+        "story"
+        {"document_url" (story-url "story" tid)
+         "document_label" "View story"}
+        ;; implementation, hardening, qa, final, …
+        {"document_url" (story-url "story" tid)
+         "document_label" "View story package"}))))
+
+(defn enrich-approval-document
+  "Attach document_url / document_label for Attention strip links."
+  [approval]
+  (merge approval (approval-document-ref approval)))
+
 (defn approval-state-for [root state]
   (->> (state-files (fs/path root ".squad" "approvals" state) ".approval")
-       (mapv #(parse-kv-file %))))
+       (mapv (comp enrich-approval-document parse-kv-file))))
 
 (defn batch-state [root]
   (let [dir (fs/path root ".squad" "batches")]
@@ -651,16 +723,20 @@
 ;;; --- Board columns + backlog (B24 / B35) ---
 
 (def board-column-by-state
-  "Map packet state → board column (ui-design.md)."
+  "Map packet state → board column (ui-design.md + B47 Finalizing)."
   {"final_approved" "done"
-   "architecture_approved" "coding"
-   "architecture_reviewed" "coding"
-   "architecture_revision_returned" "coding"
-   "architecture_returned" "coding"
-   "qa_approved" "coding"
-   "qa_returned" "coding"
-   "hardening_approved" "coding"
-   "hardener_returned" "coding"
+   ;; B47: post-code-review quality / architecture / senior-impl → Finalizing
+   "architecture_approved" "finalizing"
+   "architecture_reviewed" "finalizing"
+   "architecture_revision_returned" "finalizing"
+   "architecture_returned" "finalizing"
+   "qa_approved" "finalizing"
+   "qa_returned" "finalizing"
+   "hardening_approved" "finalizing"
+   "hardener_returned" "finalizing"
+   "final_approval_ready" "finalizing"
+   "senior_implementer_returned" "finalizing"
+   ;; Coding: implementer through code review
    "code_review_approved" "coding"
    "code_reviewed" "coding"
    "cleaned" "coding"
@@ -671,13 +747,62 @@
    "story_approved" "specified"
    "story_recorded" "specified"})
 
+(def pipeline-stage-rank
+  "Higher = later progress (B46/B48). Used for WIP and in-column card sort."
+  {"story_recorded" 10
+   "story_approved" 20
+   "specification_in_progress" 30
+   "implementation_approval_ready" 40
+   "implementation_approved" 50
+   "implemented" 60
+   "cleaned" 70
+   "code_reviewed" 80
+   "code_review_approved" 90
+   "hardener_returned" 95
+   "hardening_approved" 100
+   "qa_returned" 105
+   "qa_approved" 110
+   "architecture_returned" 115
+   "architecture_revision_returned" 118
+   "architecture_reviewed" 120
+   "architecture_approved" 130
+   "senior_implementer_returned" 135
+   "final_approval_ready" 140
+   "final_approved" 200})
+
+(def wif-role-rank
+  "Later pipeline roles rank higher within WIF (B46)."
+  {"analyst" 10
+   "gherkin-writer" 20
+   "gherkin-reviewer" 25
+   "qa-procedure-writer" 30
+   "qa-procedure-reviewer" 35
+   "implementer" 50
+   "cleaner" 55
+   "code-reviewer" 60
+   "hardener" 70
+   "qa" 80
+   "architect" 90
+   "senior-implementer" 100
+   "merger" 110})
+
 (defn board-column [state]
   (get board-column-by-state state "specified"))
+
+(defn pipeline-rank
+  "Numeric progress rank for sort (higher = later). Unknowns sort low."
+  [state-or-role]
+  (let [s (str (or state-or-role ""))]
+    (or (get pipeline-stage-rank s)
+        (get wif-role-rank s)
+        (get wif-role-rank (str/replace s "_" "-"))
+        0)))
 
 (defn story-board-row [story]
   (let [state (get story "state" "story_recorded")]
     (assoc story
            "board_column" (board-column state)
+           "pipeline_rank" (pipeline-rank state)
            "created_at" (or (get story "created_at") (get story "story_recorded_at") "")
            "updated_at" (or (get story "updated_at") ""))))
 
@@ -703,36 +828,60 @@
                         "batch_kind" kind))))))
 
 (defn work-in-flight-rows [assignments batches]
-  "Active assignments as WIF table rows; batch assignments include members."
+  "Active assignments as WIF table rows; batch assignments include members.
+  B46: sorted later pipeline roles higher; secondary by updated_at desc."
   (let [batch-by-id (into {} (map (fn [b] [(get b "batch_id") b]) batches))]
     (->> assignments
-         (mapv (fn [a]
-                 (let [id (get a "assignment_id" "")
-                       story (get a "story_id" "")
-                       template (get a "template" "")
-                       batch? (or (= "batch" story)
-                                  (contains? batch-by-id id)
-                                  (str/includes? (str template) "hardener")
-                                  (and (contains? #{"hardener" "qa" "architect"} template)
-                                       (= "batch" story)))
-                       b (or (get batch-by-id id)
-                             (get batch-by-id (get a "batch_id")))
-                       members (or (get b "members") [])
-                       label (if (and b (seq members))
-                               (str (or (get b "batch_kind") template) " ×" (count members))
-                               (if (str/blank? story) id story))]
-                   {"assignment_id" id
-                    "story" label
-                    "story_id" story
-                    "story_ids" (if (seq members) members (if (str/blank? story) [] [story]))
-                    "is_batch" (boolean (seq members))
-                    "batch_id" (or (get b "batch_id") (when (seq members) id) "")
-                    "members" members
-                    "role" template
-                    "state" (get a "state" "")
-                    "updated_at" (get a "updated_at" "")
-                    "agent_id" (get a "agent_id" "")})))
+         (map (fn [a]
+                (let [id (get a "assignment_id" "")
+                      story (get a "story_id" "")
+                      template (get a "template" "")
+                      b (or (get batch-by-id id)
+                            (get batch-by-id (get a "batch_id")))
+                      members (or (get b "members") [])
+                      label (if (and b (seq members))
+                              (str (or (get b "batch_kind") template) " ×" (count members))
+                              (if (str/blank? story) id story))
+                      agent (or (get a "agent_id") "")]
+                  {"assignment_id" id
+                   "story" label
+                   "story_id" story
+                   "story_ids" (if (seq members) members (if (str/blank? story) [] [story]))
+                   "is_batch" (boolean (seq members))
+                   "batch_id" (or (get b "batch_id") (when (seq members) id) "")
+                   "members" members
+                   "role" template
+                   "state" (get a "state" "")
+                   "updated_at" (get a "updated_at" "")
+                   "agent_id" agent
+                   "pipeline_rank" (pipeline-rank template)})))
+         (sort-by (fn [row]
+                    [(- (long (or (get row "pipeline_rank") 0)))
+                     (str (get row "updated_at" ""))])
+                  ;; updated_at desc: reverse string compare on ISO stamps
+                  (fn [[ra ua] [rb ub]]
+                    (let [c (compare ra rb)]
+                      (if (zero? c) (compare ub ua) c))))
          vec)))
+
+(defn dashboard-next-action
+  "Cheap FSM-ish label for header (B51) — no full residual scan."
+  [{:strs [approvals stalls sl_requests agents]}]
+  (let [pending-appr (seq (get approvals "pending"))
+        stalled (get stalls "stalled")
+        pending-req (some #(= "pending" (get % "status")) sl_requests)
+        active (some (fn [a]
+                       (let [s (get a "state" "")]
+                         (and (not= s "retired")
+                              (not= s "idle")
+                              (not (str/blank? s)))))
+                     agents)]
+    (cond
+      pending-req "answer_dashboard_request"
+      pending-appr "user_approval"
+      stalled "investigate_stall"
+      active "wait_active_agents"
+      :else "idle")))
 
 (defn backlog-dir [root]
   (fs/path root ".squad" "backlog"))
@@ -852,15 +1001,18 @@
         {:ok true})
     {:ok false :error "not found" :status 404}))
 
-(defn approve-backlog! [root id]
+(defn approve-backlog!
   "Mark item dispatched and open a product request owned by squad-leader.
-  SL decides theme vs story (ui-design.md)."
+  SL decides theme vs story (ui-design.md).
+  B53: do not embed bare `key: value` header-shaped lines in the body text;
+  free-text labels keep the full product description through B10 re-parse."
+  [root id]
   (if-let [item (get-backlog root id)]
     (let [title (get item "title" id)
           body (get item "body" "")
           msg (str "PRODUCT BACKLOG APPROVED FOR ANALYSIS\n"
-                   "backlog_id: " id "\n"
-                   "title: " title "\n\n"
+                   "Backlog id = " id "\n"
+                   "Title = " title "\n\n"
                    body "\n\n"
                    "Operator approved this backlog item for analysis.\n"
                    "Squad Leader: classify as a NEW THEME or a STORY on an existing theme, "
@@ -895,26 +1047,37 @@
         sl-requests (dashreq/list-all-requests root)
         theme-id (current-theme-id root)
         stalls (stall-report root assignments agents)
-        stories (mapv story-board-row (story-state root))
+        stories (->> (story-state root)
+                     (mapv story-board-row)
+                     ;; B48: later progress first within column (client also sorts)
+                     (sort-by (fn [s]
+                                [(- (long (or (get s "pipeline_rank") 0)))
+                                 (str (get s "updated_at" ""))])
+                              (fn [[ra ua] [rb ub]]
+                                (let [c (compare ra rb)]
+                                  (if (zero? c) (compare ub ua) c))))
+                     vec)
         batches (batches-enriched root)
         backlog (list-backlog root)
-        wif (work-in-flight-rows assignments batches)]
-    (cond-> {"generated_at" (now)
-             "project_root" (str root)
-             "stories" stories
-             "assignments" assignments
-             "agents" agents
-             "batches" batches
-             "work_in_flight" wif
-             "backlog" backlog
-             "blockers" (blocker-state root assignments agents)
-             "stalls" stalls
-             "approvals" {"pending" (approval-state-for root "pending")}
-             "sl_requests" sl-requests
-             "sl_queue_depth" (sl-queue-depth root)
-             "troubleshooter" {"working" (troubleshooter-working? root)
-                               "session" (troubleshooter-session-name)}}
-      theme-id (assoc "current_theme_id" theme-id))))
+        approvals {"pending" (approval-state-for root "pending")}
+        wif (work-in-flight-rows assignments batches)
+        base {"generated_at" (now)
+              "project_root" (str root)
+              "stories" stories
+              "assignments" assignments
+              "agents" agents
+              "batches" batches
+              "work_in_flight" wif
+              "backlog" backlog
+              "blockers" (blocker-state root assignments agents)
+              "stalls" stalls
+              "approvals" approvals
+              "sl_requests" sl-requests
+              "sl_queue_depth" (sl-queue-depth root)
+              "troubleshooter" {"working" (troubleshooter-working? root)
+                                "session" (troubleshooter-session-name)}}
+        with-theme (cond-> base theme-id (assoc "current_theme_id" theme-id))]
+    (assoc with-theme "next_action" (dashboard-next-action with-theme))))
 
 (defn response [status content-type body]
   {:status status :content-type content-type :body body})

@@ -466,7 +466,7 @@ Troubleshooter                              [Open ↗]
 
 ### Success criteria (Ops / combined)
 
-- With pending approvals, **Approve** is visible without scrolling past the Board or burying chat.
+- With pending approvals, **Approve** is visible without scrolling past the Board or burying chat; every approval always has a **View document** control that pops up the artifact to review (story / gherkin / QA / theme package section).
 - Board + Attention + rail fit a typical laptop without hunting a second dashboard tab.
 - Operator can answer in seconds: *Do I need to act? Who is live? What is in flight? Where is each story?*
 - **Open TS** / **Open SL** always available as **detached movable windows**; dashboard chat does not replace session windows; **no browser-tab sprawl**.

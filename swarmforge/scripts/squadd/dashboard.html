@@ -12,20 +12,32 @@ body{background:#cfd4cc;color:var(--ink);height:100vh;display:flex;flex-directio
 header.top{display:flex;gap:12px;align-items:center;padding:10px 14px;background:#f4f5f1;border-bottom:1px solid var(--line);flex-wrap:wrap}
 header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.meta .dot{color:var(--green)}.spacer{flex:1}
 .btn{border:1px solid #9aa59e;background:#fff;color:var(--ink);padding:5px 10px;border-radius:7px;font-size:12px;cursor:pointer}
-.btn:hover{background:#f0f2ee}.btn-danger{border-color:#c45c5c;color:var(--red)}.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}.btn-sm{padding:4px 8px;font-size:11px}.btn-approve{background:#2f6b3a;border-color:#2f6b3a;color:#fff}
+.btn:hover,.btn:focus-visible,.btn:active{background:#e8ebe4;color:#000}
+.btn-danger{border-color:#c45c5c;color:var(--red)}.btn-danger:hover,.btn-danger:focus-visible,.btn-danger:active{background:#f8d7da;color:#000}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-primary:hover,.btn-primary:focus-visible,.btn-primary:active{background:#2f4a38;color:#000}
+.btn-sm{padding:4px 8px;font-size:11px}
+.btn-approve{background:#2f6b3a;border-color:#2f6b3a;color:#fff}
+.btn-approve:hover,.btn-approve:focus-visible,.btn-approve:active{background:#3d8a4a;color:#000}
 .attention{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:120px;overflow:auto}
 .attention.clear{background:#eef5ef;border-color:#cfe0d2}.attention .tag{font-weight:700;text-transform:uppercase;font-size:10px;color:#8a5a0a;padding-top:4px}
 .att-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(255,255,255,.65);border:1px solid #efd7a8;border-radius:6px;padding:4px 8px;margin-bottom:4px}
 .pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;background:var(--chip)}
 .pill-warn{background:#ffe2a8;color:#7a4e00}.pill-ok{background:var(--green-bg);color:var(--green)}.pill-bad{background:#f8d7da;color:var(--red)}.pill-info{background:#e2eaf8;color:#274a7a}.pill-batch{background:#ebe4f7;color:#553c8b}
-.body{flex:1;min-height:0;display:grid;grid-template-columns:1fr var(--rail);overflow:hidden}
-.board{padding:12px;border-right:1px solid var(--line);overflow:auto;min-width:0;background:linear-gradient(180deg,#e8ebe4 0%,var(--bg) 48px)}
-.board-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;font-size:11px;color:var(--muted);flex-wrap:wrap}
-.columns{display:flex;gap:12px;align-items:flex-start;min-width:min-content}
-.col{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start}
-.col h3{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
-.col-body{display:flex;flex-direction:column;align-items:flex-start;gap:8px;min-height:100px;max-height:min(520px,calc(100vh - 220px));overflow:auto;padding:8px;background:rgba(255,255,255,.35);border:1px dashed #c5cbc2;border-radius:10px;width:max-content;min-width:var(--card-min-w)}
-.backlog-col .col-body{align-items:center;overflow:visible;max-height:none}
+/* B54: Board | splitter | Ops rail */
+.body{flex:1;min-height:0;display:grid;grid-template-columns:1fr 6px var(--rail);overflow:hidden}
+.splitter{cursor:col-resize;background:var(--line);position:relative;z-index:2}
+.splitter:hover,.splitter.dragging{background:#8a9188}
+.board{padding:12px;overflow:auto;min-width:0;background:linear-gradient(180deg,#e8ebe4 0%,var(--bg) 48px);display:flex;flex-direction:column;min-height:0}
+.board-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;font-size:11px;color:var(--muted);flex-wrap:wrap;flex:0 0 auto}
+.columns{display:flex;gap:12px;align-items:stretch;min-width:min-content;flex:1;min-height:0}
+.col{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;min-height:0;max-height:100%}
+.col h3{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);flex:0 0 auto}
+/* B44: grow to bottom of board; scroll only after filling available height */
+.col-body{display:flex;flex-direction:column;align-items:flex-start;gap:8px;flex:1;min-height:100px;max-height:100%;overflow:auto;padding:8px;background:rgba(255,255,255,.35);border:1px dashed #c5cbc2;border-radius:10px;width:max-content;min-width:var(--card-min-w)}
+.backlog-col .col-body{align-items:center;overflow:visible;max-height:none;flex:0 0 auto}
+@keyframes card-glow{0%{box-shadow:0 0 0 3px rgba(47,107,58,.55),0 0 16px rgba(47,107,58,.35)}100%{box-shadow:none}}
+.card.glow{animation:card-glow 1s ease-out}
 .deck-wrap{display:flex;flex-direction:column;align-items:center;gap:8px}
 .deck{width:var(--card-min-w);height:88px;position:relative;cursor:pointer}
 .deck .sheet{position:absolute;inset:0;background:var(--card);border:1px solid #c9c2a8;border-radius:4px}
@@ -51,7 +63,9 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .rail h2{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);flex:0 0 auto}
 .scroll-body{flex:1;min-height:0;overflow:auto}
 .theme-card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:6px}.theme-card .name{font-weight:700;font-size:12px}
-.agents{display:flex;flex-wrap:wrap;gap:6px}.agent{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:11px}
+.agents{display:flex;flex-wrap:wrap;gap:6px}
+.agent{display:inline-flex;align-items:center;gap:5px;background:#fff;border:1px solid var(--line);border-radius:999px;padding:3px 8px;font-size:11px;cursor:pointer;font:inherit;color:inherit}
+.agent:hover,.agent:focus-visible{border-color:var(--accent);background:#f0f4f0;color:#000}
 .agent .led{width:7px;height:7px;border-radius:50%;background:var(--green)}.agent .led.busy{background:var(--amber)}.agent .led.dead{background:var(--red)}
 .work-wrap{flex:1;min-height:0;overflow:auto;border:1px solid var(--line-soft);border-radius:6px;background:#fff}
 .work{width:100%;table-layout:fixed;border-collapse:collapse;font-size:11px}
@@ -106,7 +120,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
     <div id="stalls"></div>
   </div>
   <div class="attention" id="attention"></div>
-  <div class="body">
+  <div class="body" id="body-split">
     <main class="board">
       <div class="board-toolbar">
         <span>Board</span>
@@ -116,6 +130,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
       </div>
       <div class="columns" id="columns"></div>
     </main>
+    <div class="splitter" id="splitter" title="Drag to resize" role="separator" aria-orientation="vertical"></div>
     <aside class="rail">
       <section class="shrink"><h2>Themes</h2><div class="scroll-body" id="themes"></div></section>
       <section class="shrink"><h2>Live agents</h2><div class="scroll-body agents" id="agents"></div></section>
@@ -147,11 +162,26 @@ const age = iso => {
   if (m < 60) return m+'m'; if (m < 2880) return Math.floor(m/60)+'h'; return Math.floor(m/1440)+'d';
 };
 const fmt = iso => iso ? new Date(iso).toLocaleString() : '—';
+/** B51: no T, no sub-second precision */
+const fmtStamp = iso => {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) {
+    return String(iso).replace('T',' ').replace(/\.\d+Z?$/,'').replace(/Z$/,'');
+  }
+  const p = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+};
 let state = {};
 let optimisticBusy = false;
 const windows = new Map();
 let zTop = 100;
 let batchMenuHideTimer = null;
+/** B52: pin chat to bottom only when operator is near bottom / just sent */
+let chatStickBottom = true;
+/** B49: previous status fingerprint per story_id */
+const cardStatusPrev = new Map();
+let cardStatusPrimed = false;
 
 async function post(url, body, ctype, ignore) {
   const options = { method: 'POST' };
@@ -252,8 +282,15 @@ function renderAttention(data) {
 
   const rows=[];
   (data.approvals&&data.approvals.pending||[]).forEach(a=>{
-    rows.push(`<div class="att-row"><span class="pill pill-warn">Approval</span><span>${esc(a.approval_id||a.gate||'')} · ${esc(a.target_id||a.story_id||'')}</span>
+    // Every approval always has a document popup link (server sets document_url).
+    const docUrl=a.document_url||'';
+    const docLabel=a.document_label||'View document';
+    const docBtn=docUrl
+      ? `<button type="button" class="btn btn-sm" data-doc="${esc(docUrl)}" title="${esc(docLabel)}">${esc(docLabel)}</button>`
+      : `<button type="button" class="btn btn-sm" disabled title="No document path">View document</button>`;
+    rows.push(`<div class="att-row"><span class="pill pill-warn">Approval</span><span>${esc(a.approval_id||a.gate||'')} · ${esc(a.target_id||a.story_id||a.theme_id||'')}</span>
       <span class="spacer"></span>
+      ${docBtn}
       <button class="btn btn-sm btn-primary" data-appr="${esc(a.approval_id)}" data-act="approve">Approve</button>
       <button class="btn btn-sm" data-appr="${esc(a.approval_id)}" data-act="reject">Reject</button></div>`);
   });
@@ -270,11 +307,14 @@ function renderAttention(data) {
   }
 }
 
-function storyCard(s) {
+function cardFingerprint(s) {
+  return [s.state||'', s.board_column||'', s.stage_label||'', s.stage_detail||''].join('|');
+}
+function storyCard(s, glow) {
   const col=boardColumn(s);
   const label=(s.story_number?('#'+s.story_number+' '):'')+(s.story_id||'');
   const detail=s.stage_detail||s.state||'';
-  return `<div class="card" data-story="${esc(s.story_id)}" title="${esc(label)}">
+  return `<div class="card${glow?' glow':''}" data-story="${esc(s.story_id)}" data-status-fp="${esc(cardFingerprint(s))}" title="${esc(label)}">
     <div class="title"><span class="name">${esc(label)}</span><span class="timer">${esc(age(s.updated_at))}</span></div>
     <div class="theme">${esc(s.theme_id||'—')}</div>
     <div class="badges"><span class="pill">${esc(s.stage_label||s.state||col)}</span></div>
@@ -291,13 +331,36 @@ function batchCard(b) {
     <div class="foot"><span>hover → stories</span><span></span></div></div></div>`;
 }
 
+function sortByProgress(stories) {
+  // B48: later pipeline_rank first, then newer updated_at
+  return stories.slice().sort((a,b)=>{
+    const ra=Number(a.pipeline_rank||0), rb=Number(b.pipeline_rank||0);
+    if (ra!==rb) return rb-ra;
+    return String(b.updated_at||'').localeCompare(String(a.updated_at||''));
+  });
+}
+
 function renderBoard(data) {
   const stories=data.stories||[];
   const batches=data.batches||[];
   const openBl=(data.backlog||[]).filter(b=>b.status==='open'||!b.status);
   const newest=openBl[0];
-  const cols=['backlog','specified','ready','coding','done'];
-  const titles={backlog:'Backlog',specified:'Specified',ready:'Ready to Code',coding:'Coding',done:'Done'};
+  // B47 Finalizing after Coding
+  const cols=['backlog','specified','ready','coding','finalizing','done'];
+  const titles={backlog:'Backlog',specified:'Specified',ready:'Ready to Code',coding:'Coding',finalizing:'Finalizing',done:'Done'};
+  const glowIds=new Set();
+  if (cardStatusPrimed) {
+    stories.forEach(s=>{
+      const id=s.story_id; if(!id) return;
+      const fp=cardFingerprint(s);
+      const prev=cardStatusPrev.get(id);
+      if (prev!=null && prev!==fp) glowIds.add(id);
+      cardStatusPrev.set(id, fp);
+    });
+  } else {
+    stories.forEach(s=>{ if(s.story_id) cardStatusPrev.set(s.story_id, cardFingerprint(s)); });
+    cardStatusPrimed=true;
+  }
   document.getElementById('columns').innerHTML=cols.map(c=>{
     if(c==='backlog'){
       return `<div class="col backlog-col"><h3>Backlog</h3><div class="col-body"><div class="deck-wrap">
@@ -306,9 +369,17 @@ function renderBoard(data) {
         <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add New Item</button>
       </div></div></div>`;
     }
-    const cards=stories.filter(s=>boardColumn(s)===c).map(storyCard).join('');
-    // active batches in coding typically
-    const bats=c==='coding'?batches.filter(b=>['open','closed','result_received','in_progress','running'].includes(b.state)||!b.state).map(batchCard).join(''):'';
+    const colStories=sortByProgress(stories.filter(s=>boardColumn(s)===c));
+    const cards=colStories.map(s=>storyCard(s, glowIds.has(s.story_id))).join('');
+    // batches: hardener/qa/architect → finalizing; others coding
+    const batFilter=c==='finalizing'
+      ? b=>{const t=String(b.batch_kind||b.template||''); return /hardener|qa|architect|senior/i.test(t);}
+      : c==='coding'
+        ? b=>{const t=String(b.batch_kind||b.template||''); return !/hardener|qa|architect|senior/i.test(t);}
+        : null;
+    const bats=batFilter
+      ? batches.filter(b=>(['open','closed','result_received','in_progress','running'].includes(b.state)||!b.state)&&batFilter(b)).map(batchCard).join('')
+      : '';
     return `<div class="col"><h3>${titles[c]}</h3><div class="col-body">${bats}${cards}</div></div>`;
   }).join('');
   bindBacklogDeck(openBl);
@@ -337,19 +408,31 @@ function bindBacklogDeck(openBl) {
 function renderThemes(data) {
   const tid=data.current_theme_id;
   document.getElementById('theme-pill').textContent='theme: '+(tid||'—');
+  // B42: always link to theme package when a current theme exists
   document.getElementById('themes').innerHTML=tid?
     `<div class="theme-card"><div class="name">${esc(tid)} <span class="pill pill-ok">active</span></div>
-     <div class="meta" style="font-size:10px;margin-top:4px">Package on disk · Open theme artifacts via SL</div></div>`:
+     <div class="meta" style="font-size:10px;margin-top:4px">Package on disk</div>
+     <button type="button" class="btn btn-sm" style="margin-top:6px" data-view-theme="${esc(tid)}">View theme</button></div>`:
     '<div class="meta">No theme</div>';
+  const btn=document.querySelector('[data-view-theme]');
+  if(btn) btn.onclick=()=>openAgentWindow('/artifact/theme/'+encodeURIComponent(btn.getAttribute('data-view-theme')),'squad-theme');
 }
 function renderAgents(data) {
   const agents=(data.agents||[]).filter(a=>a.state!=='retired');
   document.getElementById('agents').innerHTML=agents.map(a=>{
-    const st=a.state||''; const led=st==='blocked'||st==='failed'?'dead':(st==='running'||st==='in_progress'||st==='handoff_sent'?'busy':'');
-    return `<span class="agent"><i class="led ${led}"></i> ${esc(a.agent_id||'')} · ${esc(st)}</span>`;
+    const st=a.state||''; const id=a.agent_id||'';
+    const led=st==='blocked'||st==='failed'?'dead':(st==='running'||st==='in_progress'||st==='handoff_sent'||st==='handoff_ready'||st==='starting'?'busy':'');
+    // B45: chip opens agent session pane
+    return `<button type="button" class="agent" data-open-agent="${esc(id)}" title="Open session"><i class="led ${led}"></i> ${esc(id)} · ${esc(st)}</button>`;
   }).join('')||'<span class="meta">No agents</span>';
+  document.getElementById('agents').onclick=e=>{
+    const b=e.target.closest('[data-open-agent]'); if(!b)return;
+    const id=b.getAttribute('data-open-agent');
+    if(id) openAgentWindow('/agent/'+encodeURIComponent(id),'agent-'+id);
+  };
 }
 function renderWork(data) {
+  // B46: server already sorts later pipeline higher
   const rows=data.work_in_flight||data.assignments||[];
   document.getElementById('work').innerHTML=`<table class="work"><colgroup>
     <col class="c-story"><col class="c-role"><col class="c-state"><col class="c-age"></colgroup>
@@ -358,25 +441,32 @@ function renderWork(data) {
       const story=w.story||w.story_id||w.assignment_id||'';
       const ids=w.story_ids||(w.story_id?[w.story_id]:[]);
       const isBatch=!!w.is_batch;
+      const agent=w.agent_id||'';
+      // B43: link to live agent session when known
+      const agentCell=agent
+        ? `<button type="button" class="linkish" data-open-agent="${esc(agent)}" title="Open agent">${esc(w.role||w.template||agent)}</button>`
+        : `<span title="${esc(w.role||w.template||'')}">${esc(w.role||w.template||'')}</span>`;
       return `<tr data-work-idx="${i}" data-story-ids="${esc(JSON.stringify(ids))}" data-batch-id="${esc(w.batch_id||'')}" data-work-batch="${isBatch?'1':'0'}">
         <td title="${esc(story)}"><button type="button" class="linkish">${esc(story)}</button></td>
-        <td title="${esc(w.role||w.template||'')}">${esc(w.role||w.template||'')}</td>
+        <td>${agentCell}</td>
         <td title="${esc(w.state||'')}"><span class="pill">${esc(w.state||'')}</span></td>
         <td>${esc(age(w.updated_at))}</td></tr>`;
     }).join('')}</tbody></table>`;
+  document.getElementById('work').onclick=e=>{
+    const b=e.target.closest('[data-open-agent]'); if(!b)return;
+    e.stopPropagation();
+    const id=b.getAttribute('data-open-agent');
+    if(id) openAgentWindow('/agent/'+encodeURIComponent(id),'agent-'+id);
+  };
 }
 
 function renderChat(data) {
   const reqs=data.sl_requests||[];
   const el=document.getElementById('sl-requests');
-  // Preserve scroll when the operator has scrolled up; stick to bottom when near end.
+  // B52: use sticky flag from scroll listener — do not re-stick on every poll.
   const prevTop=el.scrollTop;
   const prevHeight=el.scrollHeight;
-  const distFromBottom=prevHeight-prevTop-el.clientHeight;
-  const nearBottom=distFromBottom<48;
 
-  // Chronological: oldest at top, newest at bottom (API already sorts by created_at).
-  // Do not reverse — that put new messages at the top.
   const ordered=reqs.slice().sort((a,b)=>{
     const ca=String(a.created_at||'');
     const cb=String(b.created_at||'');
@@ -395,10 +485,9 @@ function renderChat(data) {
       <div class="meta">${esc(r.status||'')} · ${esc(r.id||'')}</div></div>`;
   }).join(''):'<div class="meta">Idle until you call.</div>';
 
-  if (nearBottom || prevHeight<=el.clientHeight) {
+  if (chatStickBottom) {
     el.scrollTop=el.scrollHeight;
   } else {
-    // Keep the same content under the viewport when list is rebuilt (append at bottom).
     el.scrollTop=prevTop+(el.scrollHeight-prevHeight);
   }
 
@@ -504,8 +593,10 @@ async function refresh() {
   try {
     const data=await (await fetch('/api/state',{cache:'no-store'})).json();
     state=data;
+    const busyN=(data.agents||[]).filter(a=>a.state&&a.state!=='retired'&&a.state!=='idle').length;
+    // B51: human date/time + FSM next action after stamp
     document.getElementById('meta').textContent=
-      `slots · ${ (data.agents||[]).filter(a=>a.state&&a.state!=='retired'&&a.state!=='idle').length } busy · ${data.generated_at||''}`;
+      `slots · ${busyN} busy · ${fmtStamp(data.generated_at)} · next: ${data.next_action||'—'}`;
     document.getElementById('error').textContent='';
     // expose for tests / console
     window.__lastState=data;
@@ -529,6 +620,7 @@ document.getElementById('chat-send').onclick=async()=>{
   const ta=document.getElementById('sl-message');
   const text=ta.value.trim(); if(!text)return;
   optimisticBusy=true;
+  chatStickBottom=true; // B52: after send, follow new messages
   document.getElementById('ts-busy').style.display='inline-block';
   try {
     await post('/api/sl-requests', JSON.stringify({body:text}), 'application/json; charset=utf-8', false);
@@ -539,7 +631,53 @@ document.getElementById('sl-message').addEventListener('keydown',e=>{
   // Enter sends; Shift+Enter inserts a line break (prior TS chat behavior).
   if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); document.getElementById('chat-send').click(); }
 });
+// B52: track whether operator is reading history
+(function bindChatScroll(){
+  const el=document.getElementById('sl-requests');
+  if(!el||el._chatScrollBound) return;
+  el._chatScrollBound=true;
+  el.addEventListener('scroll',()=>{
+    const dist=el.scrollHeight-el.scrollTop-el.clientHeight;
+    chatStickBottom=dist<48;
+  },{passive:true});
+})();
+// B54: resizable Board | Ops split
+(function bindSplitter(){
+  const split=document.getElementById('splitter');
+  const root=document.documentElement;
+  if(!split) return;
+  const stored=localStorage.getItem('squad-rail-width');
+  if(stored) root.style.setProperty('--rail', stored+'px');
+  let dragging=false;
+  split.addEventListener('pointerdown',e=>{
+    dragging=true; split.classList.add('dragging');
+    split.setPointerCapture(e.pointerId);
+  });
+  split.addEventListener('pointermove',e=>{
+    if(!dragging)return;
+    const body=document.getElementById('body-split');
+    if(!body)return;
+    const r=body.getBoundingClientRect();
+    const fromRight=r.right-e.clientX;
+    const w=Math.max(220, Math.min(560, fromRight));
+    root.style.setProperty('--rail', w+'px');
+  });
+  const end=()=>{
+    if(!dragging)return;
+    dragging=false; split.classList.remove('dragging');
+    const w=getComputedStyle(root).getPropertyValue('--rail').trim().replace('px','');
+    if(w) localStorage.setItem('squad-rail-width', w);
+  };
+  split.addEventListener('pointerup',end);
+  split.addEventListener('pointercancel',end);
+})();
 document.getElementById('attention').addEventListener('click',async e=>{
+  const doc=e.target.closest('[data-doc]');
+  if(doc){
+    const href=doc.getAttribute('data-doc');
+    if(href) openAgentWindow(href, 'squad-approval-doc');
+    return;
+  }
   const btn=e.target.closest('[data-appr]'); if(!btn)return;
   const id=btn.getAttribute('data-appr'); const act=btn.getAttribute('data-act');
   try{ await post('/api/approvals/'+encodeURIComponent(id)+'/'+act,null,null,false); refresh(); }

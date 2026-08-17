@@ -3,6 +3,7 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [squad-dashboard-request :as dashreq]
             [squadd.web :as web]
             [swarmforge.test-support :refer :all]))
 
@@ -95,15 +96,31 @@
           (is (= "dispatched" (get-in approved [:item "status"])))
           (is (= "squad-leader" (get-in approved [:request "owner"])))
           (is (str/includes? (get-in approved [:request "body"] "") "Fog cues"))
-          (is (str/includes? (get-in approved [:request "body"] "") "NEW THEME"))))
+          (is (str/includes? (get-in approved [:request "body"] "") "NEW THEME"))
+          ;; B53: full product body survives durable re-read
+          (let [req-id (get-in approved [:request "id"])
+                on-disk (dashreq/file-map
+                         (fs/path root ".swarmforge/dashboard/requests/pending"
+                                  (str req-id ".request")))]
+            (is (str/includes? (get on-disk "body" "") "Stronger adjacency hints."))
+            (is (str/includes? (get on-disk "body" "") "Title = Fog cues")))))
       (finally
         (fs/delete-tree root)))))
 
 (deftest board-column-mapping-for-stories
   (is (= "done" (web/board-column "final_approved")))
   (is (= "coding" (web/board-column "cleaned")))
+  (is (= "coding" (web/board-column "code_review_approved")))
+  ;; B47 Finalizing
+  (is (= "finalizing" (web/board-column "hardening_approved")))
+  (is (= "finalizing" (web/board-column "qa_approved")))
+  (is (= "finalizing" (web/board-column "architecture_reviewed")))
   (is (= "ready" (web/board-column "implementation_approved")))
-  (is (= "specified" (web/board-column "specification_in_progress"))))
+  (is (= "specified" (web/board-column "specification_in_progress")))
+  (is (> (web/pipeline-rank "hardening_approved")
+         (web/pipeline-rank "implemented")))
+  (is (> (web/pipeline-rank "senior-implementer")
+         (web/pipeline-rank "implementer"))))
 
 (deftest teardown-requires-confirm-and-is-wired-in-ui
   ;; B37: Teardown button + POST /api/teardown with TEARDOWN confirm
@@ -236,6 +253,75 @@
       (is (str/includes? web/dashboard-html "/artifact/"))
       (finally
         (fs/delete-tree root)))))
+
+(deftest pending-approvals-always-include-document-link
+  ;; Given pending approvals for story and theme gates
+  ;; When the dashboard builds approval state
+  ;; Then every approval has a document_url that opens the artifact to approve
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad" "approvals" "pending" "story__cave.approval")
+                  (str "approval_id: story__cave\n"
+                       "target_kind: story\n"
+                       "target_id: cave\n"
+                       "gate: story\n"
+                       "state: pending\n"
+                       "title: Approve story\n"
+                       "reason: ready\n"))
+      (write-file (fs/path root ".squad" "approvals" "pending" "gherkin__cave.approval")
+                  (str "approval_id: gherkin__cave\n"
+                       "target_kind: story\n"
+                       "target_id: cave\n"
+                       "gate: gherkin\n"
+                       "state: pending\n"
+                       "title: Approve gherkin\n"
+                       "reason: ready\n"))
+      (write-file (fs/path root ".squad" "approvals" "pending" "order__wumpus.approval")
+                  (str "approval_id: order__wumpus\n"
+                       "target_kind: theme\n"
+                       "target_id: wumpus\n"
+                       "gate: implementation-order\n"
+                       "state: pending\n"
+                       "title: Approve order\n"
+                       "reason: ready\n"))
+      (let [pending (web/approval-state-for root "pending")
+            by-id (into {} (map (juxt #(get % "approval_id") identity) pending))]
+        (is (= 3 (count pending)))
+        (is (= "/artifact/story/cave" (get-in by-id ["story__cave" "document_url"])))
+        (is (str/includes? (get-in by-id ["story__cave" "document_label"] "") "story"))
+        (is (= "/artifact/gherkin/cave" (get-in by-id ["gherkin__cave" "document_url"])))
+        (is (= "/artifact/theme/wumpus#implementation-order"
+               (get-in by-id ["order__wumpus" "document_url"])))
+        (doseq [a pending]
+          (is (not (str/blank? (get a "document_url")))
+              (str "approval missing document_url: " (get a "approval_id")))
+          (is (not (str/blank? (get a "document_label"))))))
+      (is (str/includes? web/dashboard-html "document_url")
+          "Attention strip must render View document from approval document_url")
+      (is (str/includes? web/dashboard-html "data-doc")
+          "Approval rows expose document open control")
+      (is (str/includes? web/dashboard-html "openAgentWindow")
+          "Document opens in popup window")
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest dashboard-html-has-navigation-and-layout-affordances
+  ;; B42 theme, B43/B45 agent links, B47 finalizing, B49 glow, B50 black text,
+  ;; B51 next action stamp, B52 chat stick, B54 splitter, B44 col height
+  (let [html web/dashboard-html]
+    (is (str/includes? html "View theme"))
+    (is (str/includes? html "data-view-theme"))
+    (is (str/includes? html "data-open-agent"))
+    (is (str/includes? html "finalizing"))
+    (is (str/includes? html "Finalizing"))
+    (is (str/includes? html "card-glow"))
+    (is (str/includes? html "chatStickBottom"))
+    (is (str/includes? html "fmtStamp"))
+    (is (str/includes? html "next:"))
+    (is (str/includes? html "id=\"splitter\""))
+    (is (str/includes? html "color:#000"))
+    (is (str/includes? html "sortByProgress"))
+    (is (str/includes? html "max-height:100%"))))
 
 (deftest dashboard-shows-merge-blocked-hides-terminal-assignments
   ;; Given merge_blocked (non-terminal) and merged (terminal) assignments
