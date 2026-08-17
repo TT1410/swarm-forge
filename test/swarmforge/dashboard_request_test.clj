@@ -50,6 +50,30 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest answer-refuses-false-empty-body-claim
+  ;; B55: cannot answer "body was empty" when durable body is present
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (let [created (dashreq/create-request
+                     root
+                     {:body "Theme: Hunt the Wumpus. Be faithful."
+                      :owner "squad-leader"})
+            id (get-in created [:request "id"])
+            bad (dashreq/answer-request
+                 root id
+                 "I could not route product work because the routed request body was empty.")]
+        (is (:ok created))
+        (is (false? (:ok bad)))
+        (is (str/includes? (str (:error bad)) "non-empty"))
+        (let [good (dashreq/answer-request root id "Creating theme htw.")]
+          (is (:ok good))
+          (is (= "answered" (get-in good [:request "status"])))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest multiline-body-survives-embedded-key-value-lines
   ;; B53: free-text lines that look like `key: value` must not truncate body
   (let [root (tmp-dir)

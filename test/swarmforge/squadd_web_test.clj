@@ -39,8 +39,9 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest stall-report-surfaces-merge-blocked-and-failed-agents
-  ;; B29: operators see why the swarm is stuck without shell archaeology
+(deftest stall-report-surfaces-ts-needed-not-recoverable-merge
+  ;; B29 + B63: failed agents and non-merge held handoffs stall;
+  ;; recoverable merge_blocked does not.
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
@@ -61,10 +62,8 @@
         (is (true? (get report "stalled")))
         (is (>= (get report "count") 2))
         (is (str/includes? (get report "summary") "stalled"))
-        (is (some #(and (= "assignment" (get % "kind"))
-                        (= "cave-impl" (get % "id"))
-                        (str/includes? (get % "reason") "CONFLICT"))
-                  (get report "items")))
+        (is (not (some #(= "cave-impl" (get % "id")) (get report "items")))
+            "recoverable merge_blocked is not a stall")
         (is (some #(and (= "agent" (get % "kind"))
                         (= "implementer-001" (get % "id")))
                   (get report "items")))
@@ -108,19 +107,79 @@
         (fs/delete-tree root)))))
 
 (deftest board-column-mapping-for-stories
+  ;; B62 Specifying / Coding / Finalizing (no Ready)
   (is (= "done" (web/board-column "final_approved")))
   (is (= "coding" (web/board-column "cleaned")))
-  (is (= "coding" (web/board-column "code_review_approved")))
-  ;; B47 Finalizing
+  (is (= "coding" (web/board-column "implemented")))
+  (is (= "coding" (web/board-column "implementation_approved")))
+  (is (= "coding" (web/board-column "code_reviewed")))
+  (is (= "finalizing" (web/board-column "code_review_approved")))
   (is (= "finalizing" (web/board-column "hardening_approved")))
   (is (= "finalizing" (web/board-column "qa_approved")))
   (is (= "finalizing" (web/board-column "architecture_reviewed")))
-  (is (= "ready" (web/board-column "implementation_approved")))
-  (is (= "specified" (web/board-column "specification_in_progress")))
+  (is (= "specifying" (web/board-column "specification_in_progress")))
+  (is (= "specifying" (web/board-column "implementation_approval_ready")))
+  (is (= "specifying" (web/board-column "story_recorded")))
   (is (> (web/pipeline-rank "hardening_approved")
          (web/pipeline-rank "implemented")))
   (is (> (web/pipeline-rank "senior-implementer")
          (web/pipeline-rank "implementer"))))
+
+(deftest merge-blocked-is-not-attention-stall
+  ;; B63: recoverable merge_blocked + related held handoff are not stalls
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad" "assignments" "story-impl" "metadata")
+                  "assignment_id: story-impl\ntemplate: implementer\nstory_id: s1\n")
+      (write-file (fs/path root ".squad" "assignments" "story-impl" "status")
+                  "state: merge_blocked\ndetail: dry-run merge failed\nupdated_at: 2026-08-17T16:00:00Z\n")
+      (write-file (fs/path root ".squad" "assignments" "story-other" "metadata")
+                  "assignment_id: story-other\ntemplate: implementer\nstory_id: s2\n")
+      (write-file (fs/path root ".squad" "assignments" "story-other" "status")
+                  "state: blocked\ndetail: needs human\nupdated_at: 2026-08-17T16:00:00Z\n")
+      (fs/create-dirs (fs/path root ".swarmforge" "handoffs" "inbox" "held"))
+      (write-file (fs/path root ".swarmforge" "handoffs" "inbox" "held" "h1.handoff")
+                  "from: implementer-1\ntask: story-impl\nassignment: story-impl\n")
+      (write-file (fs/path root ".swarmforge" "handoffs" "inbox" "held" "h2.handoff")
+                  "from: implementer-2\ntask: unknown-task\n")
+      (let [as (web/assignment-state root)
+            report (web/stall-report root as [])
+            kinds (set (map #(get % "kind") (get report "items")))]
+        (is (not (some #(= "merge_blocked" (get % "state")) (get report "items"))))
+        (is (true? (get report "stalled")))
+        (is (contains? kinds "assignment"))
+        (is (some #(= "story-other" (get % "id")) (get report "items")))
+        (is (some #(= "held_handoff" (get % "kind")) (get report "items"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest wif-sorts-in-progress-above-created
+  ;; B46: assignment lifecycle outranks same-role newer-created rows
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad" "assignments" "a-created" "metadata")
+                  "assignment_id: a-created\ntemplate: gherkin-reviewer\nstory_id: story-a\n")
+      (write-file (fs/path root ".squad" "assignments" "a-created" "status")
+                  "state: created\ndetail: new\nupdated_at: 2026-08-17T16:00:00Z\n")
+      (write-file (fs/path root ".squad" "assignments" "b-progress" "metadata")
+                  "assignment_id: b-progress\ntemplate: gherkin-reviewer\nstory_id: story-b\nagent_id: gr-1\n")
+      (write-file (fs/path root ".squad" "assignments" "b-progress" "status")
+                  "state: in_progress\ndetail: working\nupdated_at: 2026-08-17T15:00:00Z\n")
+      (write-file (fs/path root ".squad" "assignments" "c-writer" "metadata")
+                  "assignment_id: c-writer\ntemplate: gherkin-writer\nstory_id: story-c\n")
+      (write-file (fs/path root ".squad" "assignments" "c-writer" "status")
+                  "state: in_progress\ndetail: writing\nupdated_at: 2026-08-17T15:30:00Z\n")
+      (let [rows (web/work-in-flight-rows (web/assignment-state root) [])
+            ids (mapv #(get % "assignment_id") rows)]
+        (is (= "b-progress" (first ids))
+            "in_progress same role beats newer created")
+        (is (> (.indexOf ids "a-created") (.indexOf ids "b-progress")))
+        (is (> (web/assignment-progress-rank "in_progress")
+               (web/assignment-progress-rank "created")))
+        (is (> (web/assignment-progress-rank "handoff_ready")
+               (web/assignment-progress-rank "in_progress"))))
+      (finally
+        (fs/delete-tree root)))))
 
 (deftest teardown-requires-confirm-and-is-wired-in-ui
   ;; B37: Teardown button + POST /api/teardown with TEARDOWN confirm
@@ -306,22 +365,29 @@
         (fs/delete-tree root)))))
 
 (deftest dashboard-html-has-navigation-and-layout-affordances
-  ;; B42 theme, B43/B45 agent links, B47 finalizing, B49 glow, B50 black text,
-  ;; B51 next action stamp, B52 chat stick, B54 splitter, B44 col height
+  ;; B42 theme, B43 WIF agent, B56 therm, B57 buttons, B58 no Live agents,
+  ;; B61 icons, B62 Specifying, B64 splitter, B52 chat stick
   (let [html web/dashboard-html]
     (is (str/includes? html "View theme"))
     (is (str/includes? html "data-view-theme"))
     (is (str/includes? html "data-open-agent"))
     (is (str/includes? html "finalizing"))
     (is (str/includes? html "Finalizing"))
+    (is (str/includes? html "Specifying"))
+    (is (str/includes? html "specifying"))
+    (is (not (str/includes? html "Live agents")))
+    (is (not (str/includes? html "id=\"agents\"")))
+    (is (str/includes? html "sl-therm"))
+    (is (str/includes? html "stateIcon"))
     (is (str/includes? html "card-glow"))
     (is (str/includes? html "chatStickBottom"))
     (is (str/includes? html "fmtStamp"))
     (is (str/includes? html "next:"))
     (is (str/includes? html "id=\"splitter\""))
-    (is (str/includes? html "color:#000"))
+    (is (str/includes? html "scrollbar-gutter:stable"))
     (is (str/includes? html "sortByProgress"))
-    (is (str/includes? html "max-height:100%"))))
+    (is (str/includes? html "max-height:100%"))
+    (is (str/includes? html ".btn:active"))))
 
 (deftest dashboard-shows-merge-blocked-hides-terminal-assignments
   ;; Given merge_blocked (non-terminal) and merged (terminal) assignments

@@ -647,24 +647,38 @@
            (str/join " | ")
            not-empty))))
 
+(defn assignment-by-id [assignments]
+  (into {} (map (fn [a] [(get a "assignment_id") a]) assignments)))
+
+(defn recoverable-merge-block?
+  "B63: merge_blocked is auto-recovered by merger path — not a TS stall."
+  [assignment]
+  (= "merge_blocked" (get assignment "state")))
+
 (defn assignment-stall-item [root assignment]
+  "B63: only stalls that need TS/operator intervention.
+  Recoverable merge_blocked is excluded (merger pipeline handles it)."
   (let [state (get assignment "state")
         id (get assignment "assignment_id")
         detail (str/trim (or (get assignment "detail") ""))]
     (cond
-      (= "merge_blocked" state)
-      {"kind" "assignment"
-       "id" id
-       "state" state
-       "reason" (or (merge-error-snippet root id)
-                    (not-empty detail)
-                    "merge blocked — dry-run or accept-merge failed")}
+      ;; B63: do not Attention-stall auto-recoverable merges
+      (recoverable-merge-block? assignment)
+      nil
 
       (= "blocked" state)
       {"kind" "assignment"
        "id" id
        "state" state
        "reason" (or (not-empty detail) "assignment blocked")}
+
+      ;; Max-depth / hard merge stops often use detail language; surface as stall
+      (and (str/includes? (str/lower-case detail) "max_merger_depth")
+           (not (str/blank? detail)))
+      {"kind" "assignment"
+       "id" id
+       "state" (or state "blocked")
+       "reason" detail}
 
       :else nil)))
 
@@ -678,32 +692,37 @@
        "state" state
        "reason" (or (not-empty detail) (str "agent " state))})))
 
-(defn held-handoff-stall-items [root]
-  (let [dir (fs/path root ".swarmforge" "handoffs" "inbox" "held")]
+(defn held-handoff-stall-items
+  "B63: held handoffs for recoverable merge_blocked tasks are not stalls."
+  [root assignments]
+  (let [by-id (assignment-by-id assignments)
+        dir (fs/path root ".swarmforge" "handoffs" "inbox" "held")]
     (if (fs/directory? dir)
       (->> (fs/list-dir dir)
            (filter #(and (fs/regular-file? %)
                          (str/ends-with? (fs/file-name %) ".handoff")))
-           (map (fn [file]
-                  (let [m (parse-kv-file file)
-                        from (get m "from" "unknown")
-                        task (get m "task" (fs/file-name file))]
-                    {"kind" "held_handoff"
-                     "id" (fs/file-name file)
-                     "state" "held"
-                     "reason" (str "held handoff from " from
-                                   (when-not (str/blank? task)
-                                     (str " task=" task)))})))
+           (keep (fn [file]
+                   (let [m (parse-kv-file file)
+                         from (get m "from" "unknown")
+                         task (get m "task" (get m "assignment" ""))
+                         a (get by-id task)]
+                     (when-not (and a (recoverable-merge-block? a))
+                       {"kind" "held_handoff"
+                        "id" (fs/file-name file)
+                        "state" "held"
+                        "reason" (str "held handoff from " from
+                                      (when-not (str/blank? task)
+                                        (str " task=" task)))}))))
            vec)
       [])))
 
 (defn stall-report
-  "B29: operator-facing stalled items derived from existing state files."
+  "B29/B63: operator-facing stalls = needs TS/operator, not auto-merger recovery."
   [root assignments agents]
   (let [items (vec
                (concat (keep #(assignment-stall-item root %) assignments)
                        (keep agent-stall-item agents)
-                       (held-handoff-stall-items root)))
+                       (held-handoff-stall-items root assignments)))
         summary (if (seq items)
                   (str (count items) " stalled — "
                        (->> items
@@ -723,9 +742,11 @@
 ;;; --- Board columns + backlog (B24 / B35) ---
 
 (def board-column-by-state
-  "Map packet state → board column (ui-design.md + B47 Finalizing)."
+  "Map packet state → board column (B47 Finalizing, B62 Specifying/Coding).
+  No Ready column: implementation_approved is Coding; implementation_approval_ready is Specifying.
+  code_review_approved is Finalizing."
   {"final_approved" "done"
-   ;; B47: post-code-review quality / architecture / senior-impl → Finalizing
+   ;; Finalizing: CR done through quality / architecture / senior-impl
    "architecture_approved" "finalizing"
    "architecture_reviewed" "finalizing"
    "architecture_revision_returned" "finalizing"
@@ -736,16 +757,23 @@
    "hardener_returned" "finalizing"
    "final_approval_ready" "finalizing"
    "senior_implementer_returned" "finalizing"
-   ;; Coding: implementer through code review
-   "code_review_approved" "coding"
+   "code_review_approved" "finalizing"
+   ;; Coding: approved to implement through code review result
    "code_reviewed" "coding"
    "cleaned" "coding"
    "implemented" "coding"
-   "implementation_approved" "ready"
-   "implementation_approval_ready" "ready"
-   "specification_in_progress" "specified"
-   "story_approved" "specified"
-   "story_recorded" "specified"})
+   "implementation_approved" "coding"
+   ;; Specifying (was Specified + ready gate)
+   "implementation_approval_ready" "specifying"
+   "specification_in_progress" "specifying"
+   "story_approved" "specifying"
+   "story_recorded" "specifying"
+   ;; legacy aliases if old clients send them
+   "specified" "specifying"
+   "ready" "coding"})
+
+(defn board-column [state]
+  (get board-column-by-state state "specifying"))
 
 (def pipeline-stage-rank
   "Higher = later progress (B46/B48). Used for WIP and in-column card sort."
@@ -786,8 +814,23 @@
    "senior-implementer" 100
    "merger" 110})
 
-(defn board-column [state]
-  (get board-column-by-state state "specified"))
+(def wif-assignment-state-rank
+  "Later assignment lifecycle ranks higher (B46). Prevents created above in_progress
+  when role ranks match and created has a newer updated_at."
+  {"created" 10
+   "starting" 15
+   "assigned" 20
+   "queued" 22
+   "blocked" 25
+   "failed" 28
+   "in_progress" 40
+   "running" 42
+   "merge_blocked" 45
+   "handoff_ready" 50
+   "handoff_sent" 55
+   "merge_ready" 60
+   "merging" 65
+   "result_received" 70})
 
 (defn pipeline-rank
   "Numeric progress rank for sort (higher = later). Unknowns sort low."
@@ -796,7 +839,13 @@
     (or (get pipeline-stage-rank s)
         (get wif-role-rank s)
         (get wif-role-rank (str/replace s "_" "-"))
+        (get wif-assignment-state-rank s)
         0)))
+
+(defn assignment-progress-rank
+  "WIF sort key component: assignment lifecycle (higher = later progress)."
+  [state]
+  (get wif-assignment-state-rank (str state) 0))
 
 (defn story-board-row [story]
   (let [state (get story "state" "story_recorded")]
@@ -805,6 +854,45 @@
            "pipeline_rank" (pipeline-rank state)
            "created_at" (or (get story "created_at") (get story "story_recorded_at") "")
            "updated_at" (or (get story "updated_at") ""))))
+
+(defn enrich-story-holds
+  "B60: temporary hold reason for soft-red card outline + hover."
+  [stories assignments]
+  (let [coding-impl-states #{"created" "starting" "in_progress" "running"
+                             "handoff_ready" "handoff_sent" "merge_ready"
+                             "merge_blocked" "merging"}
+        active-impl (set (for [a assignments
+                               :when (and (= "implementer" (get a "template" ""))
+                                          (contains? coding-impl-states (get a "state" "")))]
+                           (get a "story_id")))
+        merge-blocked (into {}
+                            (for [a assignments
+                                  :when (= "merge_blocked" (get a "state"))]
+                              [(get a "story_id")
+                               (or (not-empty (get a "detail"))
+                                   "dry-run or accept-merge failed")]))]
+    (mapv (fn [s]
+            (let [id (get s "story_id")
+                  st (get s "state")]
+              (cond
+                (get merge-blocked id)
+                (assoc s "hold" true
+                       "hold_reason" (str "Merge blocked: " (get merge-blocked id)))
+
+                (and (= "implementation_approved" st)
+                     (not (contains? active-impl id)))
+                (assoc s "hold" true
+                       "hold_reason"
+                       "Approved to implement but not started — may be waiting on implementation-order or capacity")
+
+                :else s)))
+          stories)))
+
+(def sl-activity-atom
+  "B56: last SL pane sample for heat decay across polls."
+  (atom {:hash nil :heat 0}))
+
+(declare sl-activity)
 
 (defn batch-manifest-members [root batch-id]
   (let [manifest (fs/path root ".squad" "batches" batch-id "manifest.tsv")]
@@ -829,13 +917,17 @@
 
 (defn work-in-flight-rows [assignments batches]
   "Active assignments as WIF table rows; batch assignments include members.
-  B46: sorted later pipeline roles higher; secondary by updated_at desc."
+  B46: later progress on top —
+  1) assignment lifecycle (in_progress > created, …)
+  2) pipeline role (implementer > gherkin-writer, …)
+  3) updated_at newest first."
   (let [batch-by-id (into {} (map (fn [b] [(get b "batch_id") b]) batches))]
     (->> assignments
          (map (fn [a]
                 (let [id (get a "assignment_id" "")
                       story (get a "story_id" "")
                       template (get a "template" "")
+                      state (get a "state" "")
                       b (or (get batch-by-id id)
                             (get batch-by-id (get a "batch_id")))
                       members (or (get b "members") [])
@@ -851,17 +943,21 @@
                    "batch_id" (or (get b "batch_id") (when (seq members) id) "")
                    "members" members
                    "role" template
-                   "state" (get a "state" "")
+                   "state" state
                    "updated_at" (get a "updated_at" "")
                    "agent_id" agent
+                   "state_rank" (assignment-progress-rank state)
                    "pipeline_rank" (pipeline-rank template)})))
          (sort-by (fn [row]
-                    [(- (long (or (get row "pipeline_rank") 0)))
+                    [(- (long (or (get row "state_rank") 0)))
+                     (- (long (or (get row "pipeline_rank") 0)))
                      (str (get row "updated_at" ""))])
-                  ;; updated_at desc: reverse string compare on ISO stamps
-                  (fn [[ra ua] [rb ub]]
-                    (let [c (compare ra rb)]
-                      (if (zero? c) (compare ub ua) c))))
+                  (fn [[sa ra ua] [sb rb ub]]
+                    (let [c (compare sa sb)]
+                      (if-not (zero? c)
+                        c
+                        (let [c2 (compare ra rb)]
+                          (if-not (zero? c2) c2 (compare ub ua)))))))
          vec)))
 
 (defn dashboard-next-action
@@ -1049,6 +1145,7 @@
         stalls (stall-report root assignments agents)
         stories (->> (story-state root)
                      (mapv story-board-row)
+                     (#(enrich-story-holds % assignments))
                      ;; B48: later progress first within column (client also sorts)
                      (sort-by (fn [s]
                                 [(- (long (or (get s "pipeline_rank") 0)))
@@ -1074,6 +1171,7 @@
               "approvals" approvals
               "sl_requests" sl-requests
               "sl_queue_depth" (sl-queue-depth root)
+              "sl_activity" (sl-activity root)
               "troubleshooter" {"working" (troubleshooter-working? root)
                                 "session" (troubleshooter-session-name)}}
         with-theme (cond-> base theme-id (assoc "current_theme_id" theme-id))]
@@ -1389,6 +1487,33 @@
   (let [socket-file (fs/path root ".swarmforge" "tmux-socket")]
     (when (fs/regular-file? socket-file)
       (str/trim (slurp (str socket-file))))))
+
+(defn sl-activity
+  "B56: idle|quiet|busy|hot from SL pane change rate (observe only)."
+  [root]
+  (let [socket (socket-value root)
+        session "swarmforge-squad-leader"
+        live? (and socket
+                   (zero? (:exit (sh-continue "tmux" "-S" socket "has-session" "-t" session))))
+        text (when live?
+               (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-40")))
+        h (when text (str (hash text)))
+        prev @sl-activity-atom
+        heat (cond
+               (not live?) 0
+               (nil? h) 0
+               (nil? (:hash prev)) 1
+               (not= h (:hash prev)) (min 3 (inc (long (or (:heat prev) 0))))
+               :else (max 0 (dec (long (or (:heat prev) 0)))))
+        level (case (long heat)
+                0 "idle"
+                1 "quiet"
+                2 "busy"
+                "hot")]
+    (reset! sl-activity-atom {:hash h :heat heat})
+    {"level" level
+     "heat" heat
+     "session_live" (boolean live?)}))
 
 (defn session-from-roles-tsv [root agent-id]
   "roles.tsv: role worktree path session display backend receive-mode"

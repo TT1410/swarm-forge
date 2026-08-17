@@ -423,6 +423,16 @@
   (let [text (str/trim (or text ""))]
     (if (str/blank? text) "Done" text)))
 
+(defn claims-empty-product-body?
+  "True when answer asserts the request body was empty (B55 false-empty pattern)."
+  [answer]
+  (let [a (str/lower-case (str answer))]
+    (boolean
+     (and (re-find #"\bempty\b" a)
+          (or (re-find #"\bbody\b" a)
+              (re-find #"\brequest\b" a)
+              (re-find #"\bproduct\b" a))))))
+
 (defn answer-request
   "Answer a pending request. answer-text is the response body string.
   Returns {:ok true :request m} or {:ok false :error msg}."
@@ -442,10 +452,19 @@
         :else
         (let [m (file-map pending)
               kind (get m "kind" "request")
+              body (str/trim (or (get m "body") ""))
               answer (normalize-answer kind answer-text)]
           (cond
             (> (count answer) max-body-chars)
             {:ok false :error (str "Answer exceeds " max-body-chars " characters.")}
+
+            ;; B55: refuse false "empty body" answers when durable body is present
+            (and (not (str/blank? body))
+                 (claims-empty-product-body? answer))
+            {:ok false
+             :error (str "Request body is non-empty (" (count body)
+                         " chars). Do not answer that the body is empty; "
+                         "read the pending .request file or residual BODY / BODY_PREVIEW.")}
 
             :else
             {:ok true

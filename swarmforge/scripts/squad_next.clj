@@ -225,19 +225,35 @@
                         "file" (str file)}))))
         (pending-dashboard-request-files root)))
 
+(defn body-preview
+  "First line of body, truncated for unmissable residual display (B55)."
+  [body]
+  (let [line (or (first (remove str/blank? (str/split-lines (or body "")))) "")
+        line (str/trim line)]
+    (if (> (count line) 140)
+      (str (subs line 0 137) "...")
+      line)))
+
 (defn print-dashboard-request-action! [request]
   (let [id (get request "id")
         kind (get request "kind" "command")
-        owner (dashboard-request-owner request)]
+        owner (dashboard-request-owner request)
+        body (or (get request "body") "")
+        nonempty? (not (str/blank? (str/trim body)))
+        preview (body-preview body)]
     (println "NEXT_ACTION: answer_dashboard_request")
     (println "REQUEST_ID:" id)
+    ;; B55: put intent where collapsed tool UIs still show it
+    (println "BODY_NONEMPTY:" nonempty?)
+    (println "BODY_PREVIEW:" (if nonempty? preview "(empty)"))
     (println "KIND:" kind)
     (println "OWNER:" owner)
-    (println "BODY:" (get request "body" ""))
+    (println "BODY:" body)
     (println "REASON: operator product request routed to Squad Leader; answer via the helper after orchestration")
     (println "COMMAND:" (str "squad_dashboard_request.sh answer " id " <answer-file>"))
     (println "COMMAND_ON_REJECTION:" (str "squad_dashboard_request.sh reject " id " <reason-file>"))
-    (println "NOTE: request is not complete until the helper succeeds; pane text alone does not resolve it")))
+    (println "NOTE: request is not complete until the helper succeeds; pane text alone does not resolve it")
+    (println "NOTE: Read full BODY (or BODY_PREVIEW) before answering. Do not claim empty body when BODY_NONEMPTY is true.")))
 
 (defn gate-key [gate]
   (str/replace gate "-" "_"))
