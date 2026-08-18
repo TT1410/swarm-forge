@@ -51,7 +51,7 @@
                   "Reject because the branch exceeded the story boundary.\n")
       (write-file (fs/path root "replacement-instructions.md")
                   "Reimplement only cave topology.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
@@ -265,7 +265,7 @@
       (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/cave-topology.md") "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md") "Write Gherkin.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
@@ -301,7 +301,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Review the Gherkin.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
@@ -356,7 +356,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Implement cave topology.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (prepare-implementation-packet! root "wumpus" "cave-topology")
       (run {:dir root}
@@ -406,7 +406,7 @@
                   "Implement a faithful Hunt the Wumpus CLI.\n")
       (write-file (fs/path root "instructions.md")
                   "Break the approved theme into self-contained stories.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus-cli" "theme.md")
+      (create-theme-legacy! root "wumpus-cli" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "approve" "wumpus-cli" "theme" "approved by user")
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
@@ -451,7 +451,7 @@
                   "Implement a faithful Hunt the Wumpus CLI.\n")
       (write-file (fs/path root "instructions.md")
                   "Harden all batch members.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus-cli" "theme.md")
+      (create-theme-legacy! root "wumpus-cli" "theme.md")
       (run {:dir root} (script "squad_batch.sh") "create" "hardener" "wumpus-cli-hardener")
       (run {:dir root} (script "squad_batch.sh") "add" "wumpus-cli-hardener" "cave" "code_reviewed" "review-1" "master" "abcdef1234")
       (let [create (run {:dir root}
@@ -483,7 +483,7 @@
       (write-file (fs/path root "stories/one.md") "Story: one.\n")
       (write-file (fs/path root "stories/two.md") "Story: two.\n")
       (write-file (fs/path root "stories/direct.md") "Story: direct.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus-cli" "theme.md")
+      (create-theme-legacy! root "wumpus-cli" "theme.md")
       (run {:dir root}
            (script "squad_theme.sh")
            "stories"
@@ -521,7 +521,7 @@
       (write-file (fs/path root "theme.md") "Build the CLI.\n")
       (write-file (fs/path root "stories/one.md") "Story: one.\n")
       (write-file (fs/path root "stories/two.md") "Story: two.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "one" "stories/one.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "two" "stories/two.md")
       (run {:dir root} "git" "add" "stories")
@@ -590,7 +590,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write unit tests first, then production code.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [created (run {:dir root}
                          (script "squad_assign.sh")
@@ -629,7 +629,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Clean the implementation.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
@@ -664,7 +664,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write Gherkin.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
@@ -713,7 +713,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write Gherkin.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
@@ -775,7 +775,7 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "instructions.md")
                   "Write stories.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -822,7 +822,7 @@
                   "Write unit tests first, then production code.\n")
       (write-file (fs/path root ".squad/reviews/wumpus-cave-accepted-review.md")
                   "Review: accepted.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
       (prepare-implementation-packet! root "wumpus" "cave-topology")
@@ -873,7 +873,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Resolve the blocked merge.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [original "wumpus-cave-impl"
             merger "wumpus-cave-impl-merge"
@@ -955,7 +955,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Resolve the blocked merge.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [original "wumpus-cave-impl"
             first-merger "wumpus-cave-impl-merge"
@@ -1044,7 +1044,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Split the theme into self-contained stories.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
@@ -1083,7 +1083,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write unit tests first, then production code.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
       (prepare-implementation-packet! root "wumpus" "cave-topology")
@@ -1142,7 +1142,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "review-instructions.md")
                   "Review the cave topology implementation.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
@@ -1188,7 +1188,7 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "review-instructions.md")
                   "Review the cave topology implementation.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
@@ -1388,7 +1388,7 @@
       (write-file (fs/path root "theme.md") "Theme.\n")
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave" "stories/cave.md")
       (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
            "cave-impl" "instructions.md")
@@ -1422,7 +1422,7 @@
       (write-file (fs/path root "theme.md") "Theme.\n")
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave" "stories/cave.md")
       (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
            "cave-impl" "instructions.md")

@@ -29,15 +29,16 @@
   (run {:dir root} (script "squad_theme.sh") "module-map" "htw" "module-map.md")
   (run {:dir root} (script "squad_theme.sh") "implementation-order" "htw" "order.md"))
 
-(deftest unschedulded-sprint-0-keeps-legacy-theme-map-residual
+(deftest draft-sprint-0-assembles-not-theme-map
   ;; Given a new project (draft Sprint 0 only)
   ;; When residual runs
-  ;; Then the old theme module-map residual still applies
+  ;; Then assemble the next sprint; do not start the old theme-map path
   (let [root (tmp-dir)]
     (try
       (setup! root)
       (let [out (next-out root)]
-        (is (str/includes? out "NEXT_ACTION: write_theme_module_map")))
+        (is (str/includes? out "NEXT_ACTION: assemble_sprint"))
+        (is (not (str/includes? out "write_theme_module_map"))))
       (finally (fs/delete-tree root)))))
 
 (deftest scheduled-sprint-0-asks-for-maps

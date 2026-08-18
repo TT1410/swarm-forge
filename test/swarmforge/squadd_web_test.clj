@@ -522,7 +522,7 @@
                   "Feature: Cave topology\n")
       (write-file (fs/path root "qa/cave-topology.md")
                   "# QA Procedure\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root} "git" "add" "stories" "features" "qa")
@@ -696,7 +696,7 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root}
            (script "squad_approval.sh")
            "request"

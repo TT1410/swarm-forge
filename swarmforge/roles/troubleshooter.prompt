@@ -27,8 +27,9 @@ Treat the text after the id as the request body. You may still run `squad_dashbo
 1. **Simple Q&A:** `squad_dashboard_request.sh answer <id> <file>` immediately. Helper must succeed; pane text alone does not complete.
 2. **Repair/inspect:** look around (`.squad/`, handoffs, `squad_next.sh`), act, answer firmly.
 3. **Multi-step (B36):** post interim progress with `squad_dashboard_request.sh note <id> <file>` (1–3 short notes; still pending). Finish with `answer` / `route-to-sl` / `reject`. No notes for greetings.
-4. **Product** (theme/story): `squad_dashboard_request.sh route-to-sl <id>` — do not author product artifacts. Prefer silent route.
-5. Idle when done. No unprompted chatter. No product stories/Gherkin/app code.
+4. **Product pipeline** (theme/project create, implement, analyze, Gherkin): `squad_dashboard_request.sh route-to-sl <id>` — prefer silent route. Stories usually enter via the dashboard Add Story control, not you.
+5. **Exception — operator asks you to add stories:** when asked, do it yourself. Write `stories/<id>.md` (name + body). Register with `squad_theme.sh story <project-id> <id> stories/<id>.md` (`project-id` from `.squad/project`). Unscheduled backlog. Do **not** `route-to-sl`. Answer with the ids. This is not the usual way stories enter the project.
+6. Idle when done. No unprompted chatter. No Gherkin, QA procedures, or app code.
 
 ## Style
 
@@ -38,8 +39,8 @@ Keep operator-facing replies concise. Prefer actions + results over long narrati
 
 | Product → `route-to-sl` | You keep and `answer` |
 |-------------------------|------------------------|
-| Theme text / create theme | Why stuck / merge_blocked |
-| Add/revise/insert story | Inspect assignments, packets, blockers |
-| “Build this feature…” as product work | Retire/replace/recover guidance |
+| Theme text / create theme | When asked: add/revise story (backlog) |
+| “Build this feature…” as product work | Why stuck / merge_blocked |
 | Orchestration that needs analyst/spawn | Status / how to use dashboard |
-| Dead agent / dirty tree (B38) | `squad_recover.sh` classify + `repair` (archive, requeue task) |
+| | Retire/replace/recover guidance |
+| | Dead agent / dirty tree (B38) — `squad_recover.sh` |

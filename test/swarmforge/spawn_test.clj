@@ -231,7 +231,7 @@
       (write-file (fs/path root "instructions.md")
                   "Implement cave topology.\n")
       (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")

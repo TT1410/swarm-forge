@@ -1,5 +1,5 @@
 (ns squad-sprint-next
-  "Sprint-form residuals for squad_next. Active only when a sprint has left draft."
+  "Sprint-form residuals for squad_next. Active when any sprint record exists."
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
             [clojure.string :as str]
@@ -26,11 +26,7 @@
       "theme"))
 
 (defn sprint-workflow-active? [root]
-  (boolean
-   (some (fn [id]
-           (contains? #{"scheduled" "abandoned" "done"}
-                      (:state (sprint/load-sprint root id))))
-         (sprint/sprint-ids root))))
+  (boolean (seq (sprint/sprint-ids root))))
 
 (defn scheduled-sprint [root]
   (when-let [id (sprint/scheduled-id root)]

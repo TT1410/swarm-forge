@@ -177,7 +177,7 @@
                        "Fix IO randomness so acceptance is deterministic.\n\n"
                        "## Module Map Recommendations\n\n"
                        "Add HHG use case to the module map.\n"))
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (create-theme-legacy! root "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology"
            "stories/cave-topology.md")

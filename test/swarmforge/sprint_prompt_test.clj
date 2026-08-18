@@ -2,11 +2,25 @@
   "Slice 3: prompts match the sprint form."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
+            [clojure.edn :as edn]
             [clojure.test :refer [deftest is]]
             [swarmforge.test-support :refer [repo-root]]))
 
 (defn- slurp-role [rel]
   (slurp (str (fs/path repo-root rel))))
+
+(deftest ts-may-add-backlog-stories-when-asked
+  ;; Given the operator explicitly asks Troubleshooter to create stories
+  ;; Then Troubleshooter may write and register them
+  ;; And that is not the usual way stories enter the project
+  (let [p (slurp-role "swarmforge/roles/troubleshooter.prompt")
+        c (edn/read-string
+           (slurp-role "swarmforge/roles/troubleshooter.contract.edn"))]
+    (is (str/includes? p "squad_theme.sh story"))
+    (is (str/includes? p "when asked"))
+    (is (str/includes? p "not the usual"))
+    (is (not (str/includes? p "No product stories")))
+    (is (not (some #{"stories"} (:forbidden-writes c))))))
 
 (deftest sl-prompt-owns-sprint-form-not-backlog-classification
   (let [p (slurp-role "swarmforge/roles/squad-leader.prompt")]
@@ -14,6 +28,9 @@
     (is (str/includes? p "sprint spec"))
     (is (str/includes? p "plan approval"))
     (is (str/includes? p "squad_sprint.sh"))
+    (is (str/includes? p "write_sprint0_maps"))
+    (is (not (str/includes? p "write_theme_module_map")))
+    (is (not (str/includes? p "Before requesting theme approval")))
     (is (not (str/includes? (str/lower-case p) "approve this backlog item for analysis")))
     (is (not (str/includes? p "theme-scoped or story-scoped as appropriate")))))
 

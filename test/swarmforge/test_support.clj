@@ -48,6 +48,17 @@
 (defn script [name]
   (str (fs/path scripts-dir name)))
 
+(defn legacy-story-swarm!
+  "Drop sprint records so fixtures exercise the old story table."
+  [root]
+  (fs/delete-tree (fs/path root ".squad" "sprints")))
+
+(defn create-theme-legacy!
+  "Create a theme without activating the sprint-form residual."
+  [root theme-id theme-file]
+  (run {:dir root} (script "squad_theme.sh") "create" theme-id theme-file)
+  (legacy-story-swarm! root))
+
 (def minimal-module-map
   (str "# Theme Module Map\n\n"
        "## Purpose\n\nSample purpose.\n\n"

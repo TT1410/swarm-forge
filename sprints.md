@@ -16,7 +16,7 @@ Stories can be added to a project at any time, even while sprints are executing.
 
 The backlog is the unscheduled remainder: stories not in any named sprint.
 
-Operators can add, edit, or delete stories in the backlog.
+Operators add, edit, or delete stories in the backlog (dashboard Add Story). That is the usual path. If the human asks the Troubleshooter to create or add stories, Troubleshooter may write and register them itself and must not hand that to the Squad Leader.
 
 ## Scheduling
 

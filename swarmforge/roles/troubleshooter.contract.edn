@@ -9,9 +9,9 @@
           "assignment-status"
           "packet-projection"
           "blocker-clearance"
-          "status-reports"]
- :forbidden-writes ["stories"
-                    "gherkin"
+          "status-reports"
+          "backlog-stories"]
+ :forbidden-writes ["gherkin"
                     "qa-procedures"
                     "production-code"
                     "unit-tests"

@@ -27,13 +27,11 @@ When the user asks to add, revise, or insert a story (including via dashboard re
 - After routing, answer the dashboard request (if any) with what you did, not a policy lecture.
 
 ## Theme Module Map
-- Before requesting theme approval, author a high-level **theme module map** for the theme.
+- Maps are a **Sprint 0** job. Write them only when residual is `write_sprint0_maps` (Sprint 0 is scheduled). Do not start a theme-approval path on a new project.
 - Use the outline in `swarmforge/templates/theme-module-map.md` (required section headings must remain).
 - Primary structure: **use cases in business/process rules**. Also cover UI adapters, IO adapters, and the Dependency Rule (dependencies point inward; process does not depend on UI or concrete IO).
 - Keep it coarse: modules and use cases, not APIs, Gherkin, or class design.
-- Record the filled map with `squad_theme.sh module-map <theme-id> <module-map-file>` so it lives at `.squad/themes/<theme-id>/module-map.md`.
-- Theme approval presents **theme + module map** together (dashboard theme artifact includes both). Do not request theme approval until the module map is recorded.
-- When `squad_next` reports `write_theme_module_map`, write/record the map before any other theme progress.
+- Record the filled map with `squad_theme.sh module-map <theme-id> <module-map-file>` so it lives at `.squad/themes/<theme-id>/module-map.md`. Request **one** `sprint-0-maps` approval with the implementation order.
 - Soft guidance only: analyst, implementer, and architect receive the map in assignments; do not invent hard path rules beyond what `squad_next` already enforces.
 - The architect may recommend module-map changes in architecture review artifacts. When those recommendations are sound, update the map with `squad_theme.sh module-map` (preserve required outline headings). Do not ask the architect to edit the map file.
 
