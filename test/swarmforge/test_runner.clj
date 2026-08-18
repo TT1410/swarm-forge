@@ -14,6 +14,7 @@
             [swarmforge.issues-b87-b88-b91-test]
             [swarmforge.issues-b96-test]
             [swarmforge.issues-p3-test]
+            [swarmforge.sprint-sim-test]
             [swarmforge.launcher-test]
             [swarmforge.recover-test]
             [swarmforge.role-contract-test]
@@ -39,6 +40,7 @@
     swarmforge.issues-b87-b88-b91-test
     swarmforge.issues-b96-test
     swarmforge.issues-p3-test
+    swarmforge.sprint-sim-test
     swarmforge.launcher-test
     swarmforge.recover-test
     swarmforge.role-contract-test

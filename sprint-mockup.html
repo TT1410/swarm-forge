@@ -1,0 +1,485 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sprint mockup — SwarmForge Squad</title>
+<style>
+:root{--bg:#eef0eb;--panel:#fbfbf8;--ink:#1e221f;--muted:#68726c;--line:#d5d9d2;--line-soft:#e8ebe5;--accent:#3d5a45;--amber:#c9851a;--amber-bg:#fff6e5;--red:#9b1c1c;--green:#2f6b3a;--green-bg:#e7f3ea;--chip:#e8eee9;--card:#fffef9;--rail:340px;--card-min-w:148px;--card-min-h:72px;--card-max-w:200px;font-family:ui-sans-serif,system-ui,sans-serif}
+*{box-sizing:border-box}html,body{height:100%;margin:0}
+body{background:#cfd4cc;color:var(--ink);height:100vh;display:flex;flex-direction:column;overflow:hidden}
+.cockpit{flex:1;min-height:0;margin:10px;background:var(--bg);border:1px solid #b8bfb6;border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
+header.top{display:flex;gap:12px;align-items:center;padding:10px 14px;background:#f4f5f1;border-bottom:1px solid var(--line);flex-wrap:wrap}
+header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.meta .dot{color:var(--green)}.spacer{flex:1}
+.btn{border:1px solid #9aa59e;background:#fff;color:var(--ink);padding:5px 10px;border-radius:7px;font-size:12px;cursor:pointer}
+.btn:hover,.btn:focus-visible{background:#f0f2ee;border-color:#8a9188}
+.btn:active{background:#d5d9d2;transform:translateY(1px)}
+.btn-danger{border-color:#c45c5c;color:var(--red);background:#fff}
+.btn-primary{background:var(--accent);border-color:var(--accent);color:#fff}
+.btn-primary:hover{background:#4a6b54;border-color:#4a6b54;color:#fff}
+.btn-sm{padding:4px 8px;font-size:11px}
+.btn-approve{background:#2f6b3a;border-color:#2f6b3a;color:#fff}
+.btn[disabled]{opacity:.45;cursor:not-allowed}
+.attention{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:120px;overflow:auto}
+.attention.clear{background:#eef5ef;border-color:#cfe0d2}
+.attention .tag{font-weight:700;text-transform:uppercase;font-size:10px;color:#8a5a0a;padding-top:4px}
+.att-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(255,255,255,.65);border:1px solid #efd7a8;border-radius:6px;padding:4px 8px;margin-bottom:4px}
+.pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;background:var(--chip)}
+.pill-warn{background:#ffe2a8;color:#7a4e00}.pill-ok{background:var(--green-bg);color:var(--green)}.pill-bad{background:#f8d7da;color:var(--red)}.pill-info{background:#e2eaf8;color:#274a7a}
+.body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 8px minmax(220px,var(--rail));overflow:hidden}
+.splitter{background:var(--line);width:8px}
+.board{padding:12px;overflow:auto;min-width:0;background:linear-gradient(180deg,#e8ebe4 0%,var(--bg) 48px);display:flex;flex-direction:column;min-height:0}
+.board-toolbar{display:flex;gap:8px;align-items:center;margin-bottom:10px;font-size:11px;color:var(--muted);flex-wrap:wrap;flex:0 0 auto}
+.columns{display:flex;gap:12px;align-items:stretch;min-width:min-content;flex:1;min-height:0}
+.col{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;min-height:0;max-height:100%}
+.col h3{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.col-body{display:flex;flex-direction:column;align-items:flex-start;gap:8px;flex:1;min-height:100px;max-height:100%;overflow:auto;padding:8px;background:rgba(255,255,255,.35);border:1px dashed #c5cbc2;border-radius:10px;width:max-content;min-width:var(--card-min-w)}
+.deck-btn{position:relative;width:38px;height:30px;border:0;background:transparent;cursor:pointer;flex:0 0 auto}
+.deck-btn .sheet{position:absolute;inset:4px 6px 2px 2px;background:var(--card);border:1px solid #c9c2a8;border-radius:3px}
+.deck-btn .sheet:nth-child(1){transform:translate(4px,3px) rotate(8deg);opacity:.55}
+.deck-btn .sheet:nth-child(2){transform:translate(2px,1px) rotate(3deg);opacity:.8}
+.deck-btn .sheet:nth-child(3){display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);transform:none}
+.sprint-btn{display:flex;align-items:center;gap:6px;border:1px solid #c9c2a8;background:var(--card);border-radius:8px;padding:3px 8px 3px 6px;cursor:pointer;font:inherit;color:inherit;height:30px}
+.sprint-btn:hover{border-color:#a89f7e}
+.sprint-btn .name{font-weight:700;font-size:11px;color:var(--ink)}
+.sprint-btn .sub{font-size:10px;color:var(--muted)}
+.card{font-size:11px;width:max-content;max-width:var(--card-max-w);min-width:var(--card-min-w);min-height:var(--card-min-h);cursor:pointer;display:flex;flex-direction:column;gap:3px}
+.card .title{font-weight:700;font-size:12px;display:flex;justify-content:space-between;gap:8px;white-space:nowrap;align-items:center}
+.card .title .name{overflow:hidden;text-overflow:ellipsis;max-width:10rem}
+.card .theme{color:var(--muted);font-size:10px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.card .badges{display:flex;flex-wrap:wrap;gap:3px}
+.card .foot{display:flex;justify-content:space-between;gap:8px;color:var(--muted);font-size:10px;margin-top:auto}
+/* Stories = index cards */
+.story{background:
+    linear-gradient(#c45c5c,#c45c5c) 12px 0/1.5px 100% no-repeat,
+    repeating-linear-gradient(#fffdf6 0 16px,#e8dfc8 16px 17px);
+  border:1px solid #c9c2a8;border-radius:2px;padding:8px 8px 8px 18px;
+  box-shadow:1px 1px 0 #efe6d0,2px 2px 0 #c9c2a8}
+.story:hover{border-color:#a89f7e}
+.story .ico{flex:0 0 auto}
+/* Tasks = clipboards */
+.clipboard{position:relative;background:#8a8174;border:1px solid #6a6358;border-radius:6px;padding:16px 5px 5px;min-width:calc(var(--card-min-w) + 8px);box-shadow:0 1px 0 #5a544c}
+.clipboard:hover{border-color:#4a453e}
+.clipboard .clip{position:absolute;top:2px;left:50%;transform:translateX(-50%);width:30px;height:13px;background:linear-gradient(#eef1f3,#9aa3ab);border:1px solid #6d757c;border-radius:3px 3px 2px 2px;box-shadow:inset 0 1px 0 #fff}
+.clipboard .clip::after{content:"";position:absolute;left:50%;bottom:-3px;transform:translateX(-50%);width:10px;height:6px;background:#7b838a;border-radius:0 0 2px 2px}
+.clipboard .paper{background:#fffef9;border:1px solid #d0cbb8;border-radius:2px;padding:6px 7px;min-height:var(--card-min-h);display:flex;flex-direction:column;gap:3px}
+.card.sprint-card{background:var(--card);border:1px solid #d0cbb8;border-radius:8px;padding:7px 8px;min-width:168px}
+.card.sprint-card:hover{border-color:#a89f7e}
+.ico{display:inline-block;width:12px;height:12px;vertical-align:-2px;margin-right:4px;flex:0 0 12px}
+.ico-card{background:#fffdf6;border:1px solid #c9c2a8;border-radius:1px;box-shadow:1px 1px 0 #c9c2a8;position:relative}
+.ico-card::before{content:"";position:absolute;left:3px;top:0;bottom:0;width:1px;background:#c45c5c}
+.ico-clip{background:#8a8174;border-radius:2px;position:relative;border:1px solid #6a6358}
+.ico-clip::before{content:"";position:absolute;left:3px;right:3px;top:1px;height:3px;background:#c5ccd1;border-radius:1px}
+.ico-clip::after{content:"";position:absolute;left:2px;right:2px;top:5px;bottom:1px;background:#fffef9;border-radius:1px}
+.rail{background:var(--panel);display:flex;flex-direction:column;min-height:0;overflow:hidden;font-size:12px}
+.rail section{padding:10px 12px;border-bottom:1px solid var(--line-soft);display:flex;flex-direction:column;min-height:0}
+.rail section.shrink{flex:0 1 auto;max-height:28%}
+.rail section.work-sec{flex:1 1 36%;min-height:100px}
+.rail section.ts{flex:1 1 40%;min-height:160px;background:#f7f8f5;border-bottom:0}
+.rail h2{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.scroll-body{flex:1;min-height:0;overflow:auto}
+.theme-card{background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;margin-bottom:6px}
+.theme-card .name{font-weight:700;font-size:12px}
+.sprint-row{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:6px;margin-bottom:3px;background:#fff;border:1px solid var(--line-soft);font-size:11px}
+.sprint-row.active{border-color:#2f6b3a;background:#f3faf4}
+.sprint-row .n{font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.work-wrap{flex:1;min-height:0;overflow:auto;border:1px solid var(--line-soft);border-radius:6px;background:#fff}
+.work{width:100%;table-layout:fixed;border-collapse:collapse;font-size:11px}
+.work th,.work td{padding:5px 4px;border-bottom:1px solid var(--line-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;vertical-align:middle}
+.work td:first-child{display:flex;align-items:center}
+.work th{text-align:left;color:var(--muted);font-weight:600;font-size:10px;background:#f3f4f0}
+.work col.c1{width:38%}.work col.c2{width:42%}.work col.c3{width:20%}
+.linkish{color:var(--accent);text-decoration:underline;background:none;border:0;font:inherit;padding:0;cursor:pointer}
+.ts-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}.ts-head h2{margin:0;flex:1}
+.history{flex:1;min-height:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;font-size:11px;color:var(--muted)}
+.composer textarea{width:100%;margin-top:8px;height:calc(1.35em * 3 + 12px);border:1px solid #c6cbc5;border-radius:6px;padding:6px 8px;font:inherit;font-size:12px;resize:none}
+.sl-therm{display:inline-flex;align-items:center;gap:2px;margin-right:6px}
+.sl-therm .bar{width:3px;height:10px;border-radius:1px;background:#c5cbc2}
+.sl-therm.busy .bar:nth-child(-n+3){background:var(--green)}
+.wif{display:inline-flex;gap:1px;margin-left:4px}
+.wif i{width:2px;height:8px;background:#c5cbc2;border-radius:1px;display:block}
+.wif.hot i:nth-child(-n+5){background:var(--green)}
+.wif.warm i:nth-child(-n+2){background:#c9851a}
+.mock-bar{display:flex;gap:8px;align-items:center;padding:6px 14px;background:#2a3f32;color:#e8eee9;font-size:11px}
+.mock-bar strong{font-size:11px}
+.scrim{position:fixed;inset:0;background:rgba(30,34,31,.28);z-index:80;display:none}
+.scrim.open{display:block}
+.planner{position:fixed;z-index:90;top:72px;left:50%;transform:translateX(-50%);width:min(820px,calc(100vw - 40px));background:#f8f8f5;border:1px solid #8a9188;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.2);display:none;max-height:calc(100vh - 100px);overflow:hidden}
+.planner.open{display:flex;flex-direction:column}
+.planner .titlebar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:linear-gradient(180deg,#eceee8,#e0e3dc);font-weight:600;font-size:12px}
+.planner .pad{display:grid;grid-template-columns:220px 1fr 200px;gap:0;min-height:320px;background:#fffef9}
+.planner .list{border-right:1px solid var(--line);padding:10px;overflow:auto}
+.planner .list h3,.planner .detail h3{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.planner .item{display:block;width:100%;text-align:left;border:1px solid transparent;background:#fff;border-radius:6px;padding:7px 8px;margin-bottom:4px;cursor:pointer;font:inherit}
+.planner .item:hover{background:#f0f4f0}
+.planner .item.on{border-color:#2f6b3a;background:#f3faf4}
+.planner .item .t{font-weight:700;font-size:12px;display:block}
+.planner .item .d{font-size:10px;color:var(--muted);margin-top:2px}
+.planner .detail{padding:10px 12px;overflow:auto}
+.story-chip{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line-soft);border-radius:6px;margin-bottom:4px;font-size:11px;background:#fff}
+.planner .backlog{padding:10px;overflow:auto;background:#f4f6f2}
+.planner .actions{display:flex;gap:8px;justify-content:flex-end;padding:10px 12px;border-top:1px solid var(--line);background:#f4f5f1}
+.menu{position:fixed;z-index:90;top:118px;right:380px;width:280px;background:#fff;border:1px solid #8a9188;border-radius:8px;box-shadow:0 12px 32px rgba(0,0,0,.24);display:none;padding:4px 0}
+.menu.open{display:block}
+.menu .mi{display:block;width:100%;border:0;background:transparent;text-align:left;padding:8px 12px;cursor:pointer;font:inherit;font-size:11px;border-bottom:1px solid var(--line-soft)}
+.menu .mi:hover{background:#f0f4f0}
+.menu .mi .t{font-weight:700;display:block}
+.menu .mi .d{color:var(--muted);font-size:10px;margin-top:2px}
+.empty{color:var(--muted);font-size:11px;padding:8px}
+.float{position:fixed;z-index:95;top:120px;left:50%;transform:translateX(-50%);background:#fffef9;border:1px solid #8a9188;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.2);min-width:320px;padding:12px;display:none}
+.float.open{display:block}
+.float label{display:block;font-size:10px;text-transform:uppercase;color:var(--muted);font-weight:700;margin:0 0 4px}
+.float input,.float textarea{width:100%;border:1px solid #c6cbc5;border-radius:6px;padding:8px;font:inherit;margin-bottom:10px}
+.float textarea{min-height:110px;resize:vertical}
+.ctl-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.float .actions{display:flex;gap:8px;justify-content:flex-end}
+.offline{padding:20px;color:var(--red);font-size:13px}
+</style>
+</head>
+<body>
+<div class="mock-bar">
+  <strong>Sprint simulator</strong>
+  <span>old-sim ticks · new sprint model</span>
+  <span class="spacer"></span>
+  <button class="btn btn-sm" type="button" id="btn-seed">Seed HTW</button>
+  <button class="btn btn-sm" type="button" id="btn-tick">Tick</button>
+  <label style="display:flex;align-items:center;gap:4px"><input type="checkbox" id="auto-tick"> auto</label>
+  <button class="btn btn-sm" type="button" id="btn-reset">Reset</button>
+</div>
+<div class="cockpit">
+  <header class="top">
+    <h1>SwarmForge Squad</h1>
+    <span class="meta"><span class="dot">●</span> <span id="meta">loading…</span></span>
+    <span class="spacer"></span>
+    <span class="sl-therm idle" id="sl-therm" title="SL activity">
+      <span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span>
+    </span>
+  </header>
+  <div class="attention" id="attention"></div>
+  <div class="body">
+    <main class="board">
+      <div class="board-toolbar">
+        <span>Board</span>
+        <div class="ctl-group">
+          <button class="btn btn-sm" type="button" id="btn-new-project">Project</button>
+          <span class="pill" id="theme-pill">project: —</span>
+          <button type="button" class="btn btn-sm btn-primary" id="btn-add-story">Add Story</button>
+          <button type="button" class="sprint-btn" id="sprint-chip" title="Open sprint list">
+            <span class="pill" id="sprint-state">none</span>
+            <span>
+              <span class="name" id="sprint-name">No sprint</span>
+              <span class="sub" id="sprint-sub">assemble in the list</span>
+            </span>
+          </button>
+        </div>
+        <span class="spacer"></span>
+        <button type="button" class="deck-btn" id="backlog-deck" title="Backlog">
+          <span class="sheet"></span><span class="sheet"></span>
+          <span class="sheet"><span class="count" id="backlog-count">0</span></span>
+        </button>
+      </div>
+      <div class="columns" id="columns"></div>
+    </main>
+    <div class="splitter"></div>
+    <aside class="rail">
+      <section class="shrink">
+        <h2>Project</h2>
+        <div class="scroll-body" id="project-rail"></div>
+      </section>
+      <section class="work-sec">
+        <h2>Work Queue</h2>
+        <div class="work-wrap" id="work"></div>
+      </section>
+      <section class="ts">
+        <div class="ts-head"><h2>Troubleshooter</h2></div>
+        <div class="history" id="sim-log">Simulator log. Tick to advance SL and agents.</div>
+      </section>
+    </aside>
+  </div>
+</div>
+
+<div class="menu" id="backlog-menu"></div>
+<div class="scrim" id="scrim"></div>
+<div class="planner" id="planner">
+  <div class="titlebar">
+    <span>Sprints</span>
+    <span class="pill" id="planner-project">—</span>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-sm" id="planner-close">Close</button>
+  </div>
+  <div class="pad">
+    <div class="list">
+      <h3>Named sprints</h3>
+      <div id="planner-list"></div>
+      <button type="button" class="btn btn-sm" style="width:100%;margin-top:8px" id="btn-new-sprint">New sprint</button>
+    </div>
+    <div class="detail" id="planner-detail"></div>
+    <div class="backlog" id="planner-backlog"></div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-danger btn-sm" type="button" id="btn-cancel" disabled>Cancel sprint</button>
+    <button class="btn btn-primary btn-sm" type="button" id="btn-schedule" disabled>Schedule</button>
+    <button class="btn btn-sm" type="button" id="planner-ok">OK</button>
+  </div>
+</div>
+<div class="float" id="story-float">
+  <label>Name</label><input id="story-name" placeholder="Move">
+  <label>Story</label><textarea id="story-body" placeholder="Describe the story."></textarea>
+  <div class="actions">
+    <button class="btn btn-sm" type="button" id="story-cancel">Cancel</button>
+    <button class="btn btn-sm btn-primary" type="button" id="story-save">Add</button>
+  </div>
+</div>
+<div class="float" id="sprint-float">
+  <label>Sprint name</label><input id="sprint-id-input" placeholder="Cave">
+  <div class="actions">
+    <button class="btn btn-sm" type="button" id="sprint-cancel">Cancel</button>
+    <button class="btn btn-sm btn-primary" type="button" id="sprint-save">Create</button>
+  </div>
+</div>
+<div class="float" id="project-float">
+  <label>Project id</label><input id="project-id" placeholder="htw">
+  <label>Name</label><input id="project-name" placeholder="Hunt the Wumpus">
+  <div class="actions">
+    <button class="btn btn-sm" type="button" id="project-cancel">Cancel</button>
+    <button class="btn btn-sm btn-primary" type="button" id="project-save">Create</button>
+  </div>
+</div>
+
+<script>
+let state = {project:null,backlog:[],sprints:[],work:[],approvals:[],specifying:[],coding:[],finalizing:[],done:[],meta:'offline'};
+let selectedSprint = null;
+let autoTimer = null;
+
+const esc = s => String(s??'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+function ico(kind) {
+  if (kind==='story') return '<span class="ico ico-card" title="story"></span>';
+  if (kind==='task') return '<span class="ico ico-clip" title="task"></span>';
+  return '';
+}
+function card(item) {
+  const kind = item.kind||'sprint';
+  const name = item.title||item.id;
+  const sub = kind==='task' ? 'module · '+(item.stories||[]).join(', ')
+            : kind==='story' ? (item.body||'story') : (item.tag?('tag '+item.tag):'sprint');
+  const badge = item.stage||kind;
+  const inner = `<div class="title"><span class="name">${ico(kind)}${esc(name)}</span><span></span></div>
+    <div class="theme">${esc(sub)}</div>
+    <div class="badges"><span class="pill">${esc(badge)}</span></div>
+    <div class="foot"><span>${esc(kind)}</span><span></span></div>`;
+  if (kind==='task')
+    return `<div class="clipboard" title="task"><span class="clip"></span><div class="paper">${inner}</div></div>`;
+  return `<div class="card ${kind==='story'?'story':'sprint-card'}">${inner}</div>`;
+}
+function col(title, items, empty) {
+  const body = items&&items.length ? items.map(card).join('') : `<div class="empty">${empty}</div>`;
+  return `<div class="col"><h3>${title}</h3><div class="col-body">${body}</div></div>`;
+}
+function slug(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||('s'+Date.now());}
+
+async function act(cmd) {
+  const r = await fetch('/api/action',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(cmd)});
+  const data = await r.json();
+  if (!r.ok) { document.getElementById('meta').textContent = data.error||'action failed'; return false; }
+  paint(data);
+  return true;
+}
+async function refresh() {
+  try {
+    const data = await (await fetch('/api/state',{cache:'no-store'})).json();
+    paint(data);
+  } catch (e) {
+    document.getElementById('meta').textContent = 'offline — run bb swarmforge/scripts/sprint_mockup.clj';
+    document.getElementById('columns').innerHTML = '<div class="offline">Start the simulator server to give this mockup life.</div>';
+  }
+}
+
+function paint(data) {
+  state = data;
+  document.getElementById('meta').textContent = data.meta||'—';
+  document.getElementById('theme-pill').textContent = 'project: '+(data.project&&data.project.id||'—');
+  document.getElementById('backlog-count').textContent = String((data.backlog||[]).length);
+  const live = data.scheduled;
+  document.getElementById('sprint-state').textContent = live ? (live.phase||live.state) : 'none';
+  document.getElementById('sprint-state').className = 'pill '+(live?'pill-ok':'');
+  document.getElementById('sprint-name').textContent = live ? live.name : 'No sprint';
+  document.getElementById('sprint-sub').textContent = live ? (live.kind==='sprint-0'?'architecture only':'locked') : 'assemble in the list';
+  const sl = document.getElementById('sl-therm');
+  sl.className = 'sl-therm '+(data.busy? 'busy':'idle');
+  const s0docs = live && live.kind==='sprint-0' && live.state==='scheduled'
+    ? [{id:'map',title:'Module map',kind:'sprint',stage:live.phase},{id:'order',title:'Impl. order',kind:'sprint',stage:live.phase}]
+    : [];
+  document.getElementById('columns').innerHTML =
+    col('Specifying', data.specifying, live&&live.kind==='sprint-0'?'No stories implemented':'No stories in test spec')+
+    col('Coding', data.coding, live&&live.kind==='sprint-0'?'No modules yet':'No module tasks')+
+    col('Finalizing', (data.finalizing&&data.finalizing.length)?data.finalizing:s0docs, 'Waits for modules + features')+
+    col('Done', data.done, 'No completed sprints');
+  renderAttention(data);
+  renderProject(data);
+  renderWork(data.work||[]);
+  renderBacklogMenu(data.backlog||[]);
+  if (document.getElementById('planner').classList.contains('open')) renderPlanner();
+}
+
+function renderAttention(data) {
+  const rows = (data.approvals||[]).map(a=>`<div class="att-row">
+    <span class="pill pill-warn">Approval</span><span>${esc(a.kind)} · ${esc(a.target||a.sprint_id||'')}</span>
+    <span class="spacer"></span>
+    <button class="btn btn-sm btn-approve" data-approve="${esc(a.id)}">Approve</button></div>`);
+  const att = document.getElementById('attention');
+  if (!rows.length) {
+    att.className = 'attention clear';
+    att.innerHTML = '<div class="tag">Attention</div><div class="meta">No pending approvals — Tick to advance the simulator</div>';
+  } else {
+    att.className = 'attention';
+    att.innerHTML = `<div class="tag">Attention</div><div>${rows.join('')}</div>`;
+  }
+  att.querySelectorAll('[data-approve]').forEach(b=>b.onclick=()=>act({op:'approve',approval_id:b.dataset.approve}));
+}
+
+function renderProject(data) {
+  const p = data.project;
+  const sprints = data.sprints||[];
+  const liveId = data.scheduled && data.scheduled.id;
+  document.getElementById('project-rail').innerHTML = p
+    ? `<div class="theme-card"><div class="name">${esc(p.id)} <span class="pill pill-ok">active</span></div>
+       <div class="theme" style="margin-top:4px;font-size:10px;color:var(--muted)">${esc(p.name)}</div></div>`+
+      sprints.map(s=>`<div class="sprint-row ${s.id===liveId?'active':''}"><span class="n">${esc(s.name)}</span>
+        <span class="pill ${s.state==='done'||s.state==='scheduled'?'pill-ok':''}">${esc(s.state)}${s.stories&&s.stories.length?' · '+s.stories.length:''}</span></div>`).join('')
+    : '<div class="empty">No project — Seed HTW or New project</div>';
+}
+
+function renderWork(rows) {
+  document.getElementById('work').innerHTML = `<table class="work"><colgroup>
+    <col class="c1"><col class="c2"><col class="c3"></colgroup>
+    <thead><tr><th>Work</th><th>Role</th><th></th></tr></thead>
+    <tbody>${rows.map(w=>`<tr>
+      <td>${ico(w.kind)}<button type="button" class="linkish">${esc(w.label||w.id)}</button></td>
+      <td>${esc(w.role||'')}<span class="wif hot"><i></i><i></i><i></i><i></i><i></i><i></i></span></td>
+      <td></td></tr>`).join('')}</tbody></table>`;
+}
+
+function renderBacklogMenu(items) {
+  document.getElementById('backlog-menu').innerHTML = items.length
+    ? items.map(s=>`<button type="button" class="mi"><span class="t">${ico('story')}${esc(s.title||s.id)}</span><span class="d">backlog · unscheduled</span></button>`).join('')
+    : '<div class="empty">Empty — Add Story</div>';
+}
+
+function openSprints() {
+  return (state['open-sprints']||state.sprints||[]).filter(s=>s.state!=='done');
+}
+
+function renderPlanner() {
+  const sprints = openSprints();
+  if (selectedSprint && !sprints.some(s=>s.id===selectedSprint)) selectedSprint = null;
+  if (!selectedSprint && sprints.length) selectedSprint = (state.scheduled&&state.scheduled.id)||sprints[0].id;
+  document.getElementById('planner-project').textContent = state.project&&state.project.id||'—';
+  document.getElementById('planner-list').innerHTML = sprints.map(s=>`
+    <button type="button" class="item ${s.id===selectedSprint?'on':''}" data-sp="${esc(s.id)}">
+      <span class="t">${esc(s.name)}</span>
+      <span class="d">${esc(s.state)} · ${(s.stories||[]).length} stories${s.tag?' · '+s.tag:''}</span>
+    </button>`).join('') || '<div class="empty">No sprints yet</div>';
+  document.querySelectorAll('#planner-list [data-sp]').forEach(b=>b.onclick=()=>{selectedSprint=b.dataset.sp; renderPlanner();});
+  const sp = sprints.find(s=>s.id===selectedSprint);
+  const locked = !sp || (sp.state!=='draft' && sp.state!=='abandoned');
+  const inflight = !!(state.scheduled);
+  document.getElementById('planner-detail').innerHTML = sp
+    ? `<h3>${esc(sp.name)}</h3>`+
+      ((sp.stories||[]).map(s=>`<div class="story-chip"><span>${ico('story')}${esc(s.title||s.id)}</span>
+        ${locked?'<span class="pill">locked</span>':`<button class="btn btn-sm" data-rm="${esc(s.id)}">Remove</button>`}</div>`).join('')
+        || '<div class="empty">No stories in this sprint</div>')+
+      (sp.kind==='sprint-0'?'<p class="empty">Implements no stories. Maps cover every story known at schedule time.</p>':'')
+    : '<div class="empty">Select a sprint</div>';
+  document.getElementById('planner-detail').querySelectorAll('[data-rm]').forEach(b=>
+    b.onclick=()=>act({op:'move-story',story_id:b.dataset.rm,sprint_id:null}));
+  document.getElementById('planner-backlog').innerHTML = '<h3>Backlog</h3>'+
+    ((state.backlog||[]).map(s=>`<div class="story-chip"><span>${ico('story')}${esc(s.title||s.id)}</span>
+      <button class="btn btn-sm" data-mv="${esc(s.id)}" ${!sp||locked?'disabled':''}>Move</button></div>`).join('')
+      || '<div class="empty">Backlog empty</div>');
+  document.getElementById('planner-backlog').querySelectorAll('[data-mv]').forEach(b=>
+    b.onclick=()=>act({op:'move-story',story_id:b.dataset.mv,sprint_id:selectedSprint}));
+  document.getElementById('btn-schedule').disabled = !sp || (sp.state!=='draft' && sp.state!=='abandoned') || inflight;
+  document.getElementById('btn-cancel').disabled = !sp || sp.state!=='scheduled';
+}
+
+function openPlanner(open) {
+  document.getElementById('planner').classList.toggle('open', open);
+  document.getElementById('scrim').classList.toggle('open', open);
+  if (open) renderPlanner();
+}
+function openFloat(id, open) {
+  document.getElementById(id).classList.toggle('open', open);
+}
+
+document.getElementById('btn-tick').onclick = () => act({op:'tick'});
+document.getElementById('btn-seed').onclick = () => act({op:'seed-demo'});
+document.getElementById('btn-reset').onclick = async () => {
+  const data = await (await fetch('/api/reset',{method:'POST'})).json();
+  paint(data);
+};
+document.getElementById('auto-tick').onchange = e => {
+  clearInterval(autoTimer);
+  if (e.target.checked) autoTimer = setInterval(()=>act({op:'tick'}), 900);
+};
+document.getElementById('sprint-chip').onclick = () => openPlanner(true);
+document.getElementById('planner-close').onclick = () => openPlanner(false);
+document.getElementById('planner-ok').onclick = () => openPlanner(false);
+document.getElementById('scrim').onclick = () => { openPlanner(false); openFloat('story-float',false); openFloat('sprint-float',false); openFloat('project-float',false); };
+document.getElementById('btn-schedule').onclick = async () => {
+  if (await act({op:'schedule-sprint',sprint_id:selectedSprint})) openPlanner(false);
+};
+document.getElementById('btn-cancel').onclick = () => act({op:'cancel-sprint',sprint_id:selectedSprint});
+document.getElementById('btn-new-sprint').onclick = () => openFloat('sprint-float', true);
+document.getElementById('sprint-cancel').onclick = () => openFloat('sprint-float', false);
+document.getElementById('sprint-save').onclick = async () => {
+  const name = document.getElementById('sprint-id-input').value.trim();
+  if (!name) return;
+  const id = slug(name);
+  selectedSprint = id;
+  openFloat('sprint-float', false);
+  await act({op:'create-sprint', id, name});
+};
+document.getElementById('btn-add-story').onclick = () => {
+  document.getElementById('story-name').value='';
+  document.getElementById('story-body').value='';
+  openFloat('story-float', true);
+  document.getElementById('story-name').focus();
+};
+document.getElementById('story-cancel').onclick = () => openFloat('story-float', false);
+function saveStory() {
+  const name = document.getElementById('story-name').value.trim();
+  const body = document.getElementById('story-body').value;
+  const id = slug(name);
+  if (!id) return;
+  openFloat('story-float', false);
+  act({op:'add-story', id, name, body});
+}
+document.getElementById('story-save').onclick = saveStory;
+document.getElementById('story-float').addEventListener('keydown', e => {
+  if (e.key!=='Enter' || e.shiftKey) return;
+  e.preventDefault();
+  saveStory();
+});
+document.getElementById('btn-new-project').onclick = () => openFloat('project-float', true);
+document.getElementById('project-cancel').onclick = () => openFloat('project-float', false);
+document.getElementById('project-save').onclick = () => {
+  const id = slug(document.getElementById('project-id').value.trim());
+  const name = document.getElementById('project-name').value.trim()||id;
+  if (!id) return;
+  openFloat('project-float', false);
+  act({op:'create-project', id, name});
+};
+document.getElementById('backlog-deck').onclick = e => {
+  e.stopPropagation();
+  document.getElementById('backlog-menu').classList.toggle('open');
+};
+document.addEventListener('click', e => {
+  if (!e.target.closest('#backlog-deck') && !e.target.closest('#backlog-menu'))
+    document.getElementById('backlog-menu').classList.remove('open');
+});
+
+refresh();
+setInterval(refresh, 2000);
+</script>
+</body>
+</html>
