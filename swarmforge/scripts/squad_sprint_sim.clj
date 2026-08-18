@@ -87,11 +87,16 @@
         (assoc :next-action (str "approve_" kind)))))
 
 (defn schedule-sprint [w sprint-id]
-  (let [sp (or (sprint w sprint-id) (fail! "Unknown sprint"))]
+  (let [sp (or (sprint w sprint-id) (fail! "Unknown sprint"))
+        s0 (sprint w "s0")]
     (when (:scheduled-id w)
       (fail! "A sprint is already scheduled"))
     (when-not (contains? #{"draft" "abandoned"} (:state sp))
       (fail! "Only a draft or abandoned sprint can be scheduled"))
+    (when (and (= "impl" (:kind sp))
+               s0
+               (not= "done" (:state s0)))
+      (fail! "Sprint 0 must be complete before an implementation sprint can be scheduled"))
     (let [phase (if (= "sprint-0" (:kind sp)) "sl-maps" "sl-spec")]
       (-> w
           (assoc :scheduled-id sprint-id :next-action phase)

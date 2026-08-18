@@ -91,6 +91,21 @@
                        (get state "open-sprints")))))
       (finally (fs/delete-tree root)))))
 
+(deftest schedule-impl-via-api-before-sprint-0-fails
+  ;; Given Sprint 0 is not done
+  ;; When the dashboard schedules an impl sprint
+  ;; Then the API rejects it
+  (let [root (tmp-dir)]
+    (try
+      (setup-project! root)
+      (is (= 200 (:status (web/route-web-request
+                           root "POST" "/api/sprints"
+                           "{\"name\":\"Cave\"}"))))
+      (let [sched (web/route-web-request root "POST" "/api/sprints/cave/schedule" "")]
+        (is (= 409 (:status sched)))
+        (is (str/includes? (:body sched) "Sprint 0")))
+      (finally (fs/delete-tree root)))))
+
 (deftest schedule-sprint-via-api
   ;; Given a draft implementation sprint
   ;; When the operator schedules it through the dashboard API
@@ -101,6 +116,7 @@
       (is (= 200 (:status (web/route-web-request
                            root "POST" "/api/sprints"
                            "{\"name\":\"Cave\"}"))))
+      (run {:dir root} (script "squad_sprint.sh") "complete" "s0" "sprint-0" "aaa")
       (let [sched (web/route-web-request root "POST" "/api/sprints/cave/schedule" "")
             state (web/web-state root)
             cave (first (filter #(= "cave" (get % "id"))

@@ -28,8 +28,9 @@ Scheduling a named sprint starts implementation.
 
 Rules:
 1. Only one sprint can be scheduled at a time.
-2. Once scheduled, the sprint is locked. The squad implements it and takes it to completion. It cannot be changed.
-3. A scheduled sprint can be cancelled. The sprint stays in good standing with its stories still in it. In-flight work is tagged as abandoned and kept on a branch. Schedule that same sprint again with no reopen or reassembly.
+2. Sprint 0 must be complete before any implementation sprint can be scheduled.
+3. Once scheduled, the sprint is locked. The squad implements it and takes it to completion. It cannot be changed.
+4. A scheduled sprint can be cancelled. The sprint stays in good standing with its stories still in it. In-flight work is tagged as abandoned and kept on a branch. Schedule that same sprint again with no reopen or reassembly.
 
 ## Sprint 0
 

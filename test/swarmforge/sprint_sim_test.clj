@@ -83,6 +83,16 @@
       (is (= ["shoot"] (map :id (:stories (sim/sprint re "cave")))))
       (is (= ["move"] (map :id (:stories (sim/sprint re "hunt"))))))))
 
+(deftest impl-sprint-waits-for-sprint-0
+  ;; Given Sprint 0 is still draft
+  ;; When the operator schedules Cave
+  ;; Then scheduling fails
+  (let [w (-> (sim/world)
+              (sim/create-project {:id "htw" :name "HTW"})
+              (sim/create-sprint {:id "cave" :name "Cave"}))]
+    (is (thrown? Exception (sim/schedule-sprint w "cave")))
+    (is (= "draft" (:state (sim/sprint w "s0"))))))
+
 (deftest only-one-sprint-can-be-scheduled
   ;; Given two named drafts
   ;; When one is scheduled

@@ -87,6 +87,21 @@
         (is (not (str/includes? back "move"))))
       (finally (fs/delete-tree root)))))
 
+(deftest impl-sprint-cannot-schedule-before-sprint-0-done
+  ;; Given Sprint 0 is still draft
+  ;; When the operator schedules an implementation sprint
+  ;; Then the command fails and the impl sprint stays draft
+  (let [root (tmp-dir)]
+    (try
+      (setup-project! root)
+      (run {:dir root} (script "squad_sprint.sh") "create" "cave" "Cave")
+      (let [fail (run {:dir root :ok? false} (script "squad_sprint.sh") "schedule" "cave")]
+        (is (not (zero? (:exit fail))))
+        (is (str/includes? (str (:err fail) (:out fail)) "Sprint 0"))
+        (is (= "draft" (field (sprint-file root "cave") "state")))
+        (is (= "draft" (field (sprint-file root "s0") "state"))))
+      (finally (fs/delete-tree root)))))
+
 (deftest only-one-sprint-may-be-scheduled
   (let [root (tmp-dir)]
     (try
@@ -108,6 +123,7 @@
       (add-story-file! root "shoot" "Shoot" "Fire.")
       (run {:dir root} (script "squad_sprint.sh") "create" "cave" "Cave")
       (run {:dir root} (script "squad_sprint.sh") "move" "move" "cave")
+      (run {:dir root} (script "squad_sprint.sh") "complete" "s0" "sprint-0" "aaa")
       (run {:dir root} (script "squad_sprint.sh") "schedule" "cave")
       (is (= "scheduled" (field (sprint-file root "cave") "state")))
       (let [fail (run {:dir root :ok? false} (script "squad_sprint.sh") "move" "shoot" "cave")]
@@ -124,6 +140,7 @@
       (add-story-file! root "move" "Move" "Walk.")
       (run {:dir root} (script "squad_sprint.sh") "create" "cave" "Cave")
       (run {:dir root} (script "squad_sprint.sh") "move" "move" "cave")
+      (run {:dir root} (script "squad_sprint.sh") "complete" "s0" "sprint-0" "aaa")
       (run {:dir root} (script "squad_sprint.sh") "schedule" "cave")
       (run {:dir root} (script "squad_sprint.sh") "cancel" "cave")
       (let [sf (sprint-file root "cave")

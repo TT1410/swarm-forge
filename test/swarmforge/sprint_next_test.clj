@@ -140,6 +140,7 @@
       (add-story! root "move")
       (run {:dir root} (script "squad_sprint.sh") "create" "cave" "Cave")
       (run {:dir root} (script "squad_sprint.sh") "move" "move" "cave")
+      (run {:dir root} (script "squad_sprint.sh") "complete" "s0" "sprint-0" "aaa")
       (run {:dir root} (script "squad_sprint.sh") "schedule" "cave")
       (write-file (fs/path root ".squad/sprints/cave/spec.md") "spec\n")
       (write-file (fs/path root ".squad/assignments/cave-analysis/metadata")

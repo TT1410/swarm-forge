@@ -186,6 +186,9 @@
             (println "STORY:" story-id)
             (println "SPRINT:" dest))))))
 
+(defn sprint-0-done? [root]
+  (= "done" (:state (load-sprint root "s0"))))
+
 (defn schedule! [id]
   (validate-id! "Sprint id" id)
   (let [root (project-root)
@@ -194,6 +197,10 @@
       (exit! 2 "A sprint is already scheduled"))
     (when-not (contains? #{"draft" "abandoned"} (:state sp))
       (exit! 2 "Only a draft or abandoned sprint can be scheduled"))
+    (when (and (= "impl" (:kind sp))
+               (load-sprint root "s0")
+               (not (sprint-0-done? root)))
+      (exit! 2 "Sprint 0 must be complete before an implementation sprint can be scheduled"))
     (write-sprint! root (assoc sp :state "scheduled" :phase "scheduled"))
     (println "SPRINT:" id)
     (println "STATE: scheduled")))

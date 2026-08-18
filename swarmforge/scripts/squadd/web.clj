@@ -1486,13 +1486,18 @@
         {:ok true :sprint (sprint-json root id)}))))
 
 (defn schedule-sprint-web! [root id]
-  (let [sp (sprint/load-sprint root id)]
+  (let [sp (sprint/load-sprint root id)
+        s0 (sprint/load-sprint root "s0")]
     (cond
       (nil? sp) {:ok false :error (str "Unknown sprint: " id) :status 404}
       (sprint/scheduled-id root)
       {:ok false :error "A sprint is already scheduled" :status 409}
       (not (contains? #{"draft" "abandoned"} (:state sp)))
       {:ok false :error "Only a draft or abandoned sprint can be scheduled" :status 409}
+      (and (= "impl" (:kind sp))
+           s0
+           (not= "done" (:state s0)))
+      {:ok false :error "Sprint 0 must be complete before an implementation sprint can be scheduled" :status 409}
       :else
       (do
         (sprint/write-sprint! root (assoc sp :state "scheduled" :phase "scheduled"))

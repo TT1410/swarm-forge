@@ -1025,7 +1025,9 @@ function renderPlanner() {
     b.onclick=()=>post('/api/stories/'+encodeURIComponent(b.dataset.mv)+'/move',
                        JSON.stringify({sprint_id:selectedSprint}),
                        'application/json; charset=utf-8').then(refresh));
-  document.getElementById('btn-schedule').disabled = !sp || (sp.state!=='draft' && sp.state!=='abandoned') || inflight;
+  const s0done=(state.done||[]).some(s=>s.id==='s0');
+  document.getElementById('btn-schedule').disabled = !sp || (sp.state!=='draft' && sp.state!=='abandoned') || inflight
+    || (sp.kind==='impl' && !s0done);
   document.getElementById('btn-cancel').disabled = !sp || sp.state!=='scheduled';
 }
 async function saveStory() {
