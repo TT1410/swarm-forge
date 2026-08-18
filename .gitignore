@@ -1,6 +1,7 @@
 .DS_Store
 .env
 .claude/
+.superpowers/
 .cpcache/
 .swarmforge/
 .worktrees/
