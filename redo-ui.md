@@ -59,7 +59,7 @@ No theme map. No Gherkin/QA reviewer.
 
 ## Add Story
 
-Name + description textarea. Enter adds; Shift+Enter newline. No Approve-for-analysis. The story lands in the backlog deck.
+Name + description textarea. Enter adds; Shift+Enter newline. **Add** lands in the backlog only. **Start** (today labeled Approve) puts that story on the board and sends it to the analyst. No SL classifying theme vs story.
 
 Click a board card: story detail (text + links to plan / feature / QA / reviews).
 

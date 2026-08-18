@@ -16,6 +16,9 @@ Rethinking this.
 14. Architect makes recommendations.
 15. Senior implementer implements them.
 16. Story complete.
+17. Stories start in a **backlog**. Operator adds many (title + body); they sit there. Nothing runs until the operator **starts** one. Starting a story puts it on the board and sends it to the analyst. Rejected stories can return to the backlog for edit and another start. No sprints. No project. No SL classifying theme vs story.
+
+This is already on this SHA: `.squad/backlog`, deck button with count, Add vs start (today labeled Approve). Keep the holding area; drop the theme/project dispatch.
 
 UI: `redo-ui.md`.
 

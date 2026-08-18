@@ -104,16 +104,18 @@ Gherkin and QA have **no reviewer role**. User approval of the artifact is the g
 
 ## Slice 3 — Analyst = implementation plan; user approves
 
-**Given** a story file exists  
+**Given** the operator **starts** a backlog story  
 **When** residual runs  
 **Then** `create_assignment` analyst scoped to **that story**, instructions: write an implementation plan aware of architecture and dependencies.
+
+Backlog items (`.squad/backlog`) do not start an analyst. Residual stays `wait` until Start.
 
 **Given** analyst merged a plan  
 **Then** one user approval gate `implementation-plan` (name it that; do not reuse theme approval).
 
 Durable: `.squad/stories/<id>/plan.md` (or packet field `implementation_plan`). Not a sprint spec. Not a theme package.
 
-- Test: after story register, residual is analyst; after fake merge + plan file, residual is `create_approval_request` gate `implementation-plan`.
+- Test: after story register, residual is analyst; after fake merge + plan file, residual is `create_approval_request` gate `implementation-plan`. Adding a backlog item without Start is still `wait`.
 - `analyst.prompt` / `analyst.contract.edn`: emit plan, not a pile of new stories (user may still add stories separately via dashboard / Troubleshooter).
 - Approval config: add `implementation-plan` as required by default (`squad_config.clj`).
 - Dashboard Attention: plan approval, not “theme + module map.”
