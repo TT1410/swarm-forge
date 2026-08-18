@@ -1,5 +1,9 @@
 Note: refer to the behavior of the current squad when this document says “as usual”.
 
+The living mockup is `sprint-mockup.html`. Run it with `bb swarmforge/scripts/sprint_mockup.clj` (http://127.0.0.1:4987/).
+
+Implementation plan: `sprint-implementation-plan.md`.
+
 # Sprints
 
 The Squad Leader owns one project. A project has many stories. Every story belongs to that project.

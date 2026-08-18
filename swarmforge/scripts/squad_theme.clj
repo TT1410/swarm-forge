@@ -4,6 +4,7 @@
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
             [squad-config :as cfg]
+            [squad-sprint :as sprint]
             [clojure.string :as str]))
 
 (def script-dir (fs/parent *file*))
@@ -121,6 +122,8 @@
                         "updated_at: " now "\n"))
     (append-line! (fs/path dir "events.log")
                   (str now "\ttheme_created\t" theme-id))
+    (sprint/write-project! root theme-id)
+    (sprint/ensure-sprint-0! root)
     (println "SQUAD_THEME:" theme-id)
     (println "STATE: theme_created")
     (println "PATH:" (str dir))))

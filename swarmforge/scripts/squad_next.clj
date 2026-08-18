@@ -8,6 +8,7 @@
             [squad-control-plane :as plane]
             [squad-executor :as executor]
             [squad-state :as squad-state]
+            [squad-sprint-next :as sprint-next]
             [clojure.edn :as edn]
             [clojure.set]
             [clojure.string :as str]))
@@ -2215,6 +2216,9 @@
     (->> (for [packet (packets root)
                :when (not (contains? finalized (get packet "theme_id")))
                transition story-transition-table
+               :when (or (not (sprint-next/sprint-workflow-active? root))
+                         (and (sprint-next/approval-approved? root "sprint-plan")
+                              (contains? sprint-next/test-spec-transition-ids (:id transition))))
                :let [candidate ((:candidate transition) ctx packet)]
                :when candidate]
            candidate)
@@ -3262,15 +3266,20 @@
          vec)))
 
 (defn ready-actions [root rows]
-  (sort-by (juxt :priority :theme-id :stage-order :story-id :assignment-id)
-           (concat (packet-repair-candidates root)
-                   (theme-candidates root rows)
-                   (story-candidates root rows)
-                   (implementer-batch-candidates root rows)
-                   (batch-candidates root rows)
-                   (merger-candidates root rows)
-                   (generic-ready-assignment-candidates root rows)
-                   (theme-finalize-candidates root))))
+  (let [sprint-form? (sprint-next/sprint-workflow-active? root)
+        plan-on? (sprint-next/approval-approved? root "sprint-plan")
+        sprint (or (sprint-next/sprint-candidates root) [])]
+    (sort-by (juxt :priority :theme-id :stage-order :story-id :assignment-id)
+             (concat (when-not (and sprint-form? (not plan-on?))
+                       (packet-repair-candidates root))
+                     (when-not sprint-form? (theme-candidates root rows))
+                     (story-candidates root rows)
+                     (when-not sprint-form? (implementer-batch-candidates root rows))
+                     (when-not sprint-form? (batch-candidates root rows))
+                     (merger-candidates root rows)
+                     (generic-ready-assignment-candidates root rows)
+                     (when-not sprint-form? (theme-finalize-candidates root))
+                     sprint))))
 
 (defn rows-without-agents [rows agents]
   (remove #(contains? agents (first %)) rows))

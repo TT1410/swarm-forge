@@ -28,7 +28,11 @@
    ;; B23: theme slice finalize/ship requires user approval by default
    "finalize" true
    "theme_finalize" true
-   "theme-finalize" true})
+   "theme-finalize" true
+   "sprint-0-maps" true
+   "sprint_0_maps" true
+   "sprint-plan" true
+   "sprint_plan" true})
 
 (defn squad-env-long [name default-value]
   (if-let [value (System/getenv name)]

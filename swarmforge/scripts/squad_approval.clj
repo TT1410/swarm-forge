@@ -24,7 +24,9 @@
                    "code_review" "code-review" "hardening" "qa" "architecture" "final"
                    "implementation-order" "implementation_order"
                    "dependency-checker" "dependency_checker"
-                   "finalize" "theme_finalize" "theme-finalize"})
+                   "finalize" "theme_finalize" "theme-finalize"
+                   "sprint-0-maps" "sprint_0_maps"
+                   "sprint-plan" "sprint_plan"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -54,7 +56,7 @@
   (when-not (contains? valid-gates gate)
     (exit! 2 (str "Approval gate must be theme, story, gherkin, qa-procedure, implementation, "
                   "code-review, hardening, qa, architecture, final, implementation-order, "
-                  "dependency-checker, or finalize."))))
+                  "dependency-checker, finalize, sprint-0-maps, or sprint-plan."))))
 
 (defn write-atomic! [file content]
   (fs/create-dirs (fs/parent file))
