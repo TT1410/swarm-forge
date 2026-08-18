@@ -1650,7 +1650,7 @@
 	                       "artifacts" "none"
 	                       "review_decision" nil}
             :body "body\n"}
-           (assign/validate-result-handoff! "a1" "implementer" handoff-file)))
+           (assign/validate-result-handoff! root "a1" "implementer" handoff-file)))
     (write-file review-file "review\n")
     (let [source (assign/review-source! root review-file)]
       (is (:durable? source))

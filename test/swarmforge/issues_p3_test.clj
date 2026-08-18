@@ -28,7 +28,7 @@
 (deftest b102-backlog-is-top-button-not-board-lane
   (let [html web/dashboard-html]
     (is (str/includes? html "id=\"backlog-deck\""))
-    (is (str/includes? html "Add New Item"))
+    (is (str/includes? html "Add Story"))
     (is (not (str/includes? html "cols=['backlog'"))
         "B102: backlog is not a board column")
     (is (not (str/includes? html "backlog-col"))

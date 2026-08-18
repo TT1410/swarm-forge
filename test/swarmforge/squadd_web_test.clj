@@ -645,7 +645,7 @@
 	          (is (str/includes? page "id=\"ts-busy\""))
 	          (is (str/includes? page "data.troubleshooter"))
 	          (is (str/includes? page "id=\"sl-message\""))
-	          (is (str/includes? page "Add New Item"))
+	          (is (str/includes? page "Add Story"))
 	          (is (str/includes? page "work_in_flight"))
 	          (is (str/includes? page "backlog"))
 	          (is (str/includes? page "/api/backlog"))

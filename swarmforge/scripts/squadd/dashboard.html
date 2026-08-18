@@ -49,6 +49,53 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .deck-btn .sheet:nth-child(1){transform:translate(4px,3px) rotate(8deg);opacity:.55}
 .deck-btn .sheet:nth-child(2){transform:translate(2px,1px) rotate(3deg);opacity:.8}
 .deck-btn .sheet:nth-child(3){display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);transform:none}
+.sprint-btn{display:flex;align-items:center;gap:6px;border:1px solid #c9c2a8;background:var(--card);border-radius:8px;padding:3px 8px 3px 6px;cursor:pointer;font:inherit;color:inherit;height:30px}
+.sprint-btn:hover{border-color:#a89f7e}
+.sprint-btn .name{font-weight:700;font-size:11px;color:var(--ink)}
+.sprint-btn .sub{font-size:10px;color:var(--muted)}
+.ctl-group{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.ico{display:inline-block;width:12px;height:12px;vertical-align:-2px;margin-right:4px;flex:0 0 12px}
+.ico-card{background:#fffdf6;border:1px solid #c9c2a8;border-radius:1px;box-shadow:1px 1px 0 #c9c2a8;position:relative}
+.ico-card::before{content:"";position:absolute;left:3px;top:0;bottom:0;width:1px;background:#c45c5c}
+.ico-clip{background:#8a8174;border-radius:2px;position:relative;border:1px solid #6a6358}
+.ico-clip::before{content:"";position:absolute;left:3px;right:3px;top:1px;height:3px;background:#c5ccd1;border-radius:1px}
+.ico-clip::after{content:"";position:absolute;left:2px;right:2px;top:5px;bottom:1px;background:#fffef9;border-radius:1px}
+.card.story{background:linear-gradient(#c45c5c,#c45c5c) 12px 0/1.5px 100% no-repeat,repeating-linear-gradient(#fffdf6 0 16px,#e8dfc8 16px 17px);border:1px solid #c9c2a8;border-radius:2px;padding:8px 8px 8px 18px;box-shadow:1px 1px 0 #efe6d0,2px 2px 0 #c9c2a8}
+.card.story:hover{border-color:#a89f7e}
+.clipboard{position:relative;background:#8a8174;border:1px solid #6a6358;border-radius:6px;padding:16px 5px 5px;min-width:calc(var(--card-min-w) + 8px);box-shadow:0 1px 0 #5a544c;cursor:pointer}
+.clipboard:hover{border-color:#4a453e}
+.clipboard .clip{position:absolute;top:2px;left:50%;transform:translateX(-50%);width:30px;height:13px;background:linear-gradient(#eef1f3,#9aa3ab);border:1px solid #6d757c;border-radius:3px 3px 2px 2px;box-shadow:inset 0 1px 0 #fff}
+.clipboard .clip::after{content:"";position:absolute;left:50%;bottom:-3px;transform:translateX(-50%);width:10px;height:6px;background:#7b838a;border-radius:0 0 2px 2px}
+.clipboard .paper{background:#fffef9;border:1px solid #d0cbb8;border-radius:2px;padding:6px 7px;min-height:var(--card-min-h);display:flex;flex-direction:column;gap:3px}
+.card.sprint-card{background:var(--card);border:1px solid #d0cbb8;border-radius:8px;padding:7px 8px;min-width:168px}
+.card.sprint-card:hover{border-color:#a89f7e}
+.scrim{position:fixed;inset:0;background:rgba(30,34,31,.28);z-index:80;display:none}
+.scrim.open{display:block}
+.planner{position:fixed;z-index:90;top:72px;left:50%;transform:translateX(-50%);width:min(820px,calc(100vw - 40px));background:#f8f8f5;border:1px solid #8a9188;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.2);display:none;max-height:calc(100vh - 100px);overflow:hidden}
+.planner.open{display:flex;flex-direction:column}
+.planner .titlebar{display:flex;align-items:center;gap:8px;padding:8px 12px;background:linear-gradient(180deg,#eceee8,#e0e3dc);font-weight:600;font-size:12px}
+.planner .pad{display:grid;grid-template-columns:220px 1fr 200px;gap:0;min-height:320px;background:#fffef9}
+.planner .list{border-right:1px solid var(--line);padding:10px;overflow:auto}
+.planner .list h3,.planner .detail h3{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted)}
+.planner .item{display:block;width:100%;text-align:left;border:1px solid transparent;background:#fff;border-radius:6px;padding:7px 8px;margin-bottom:4px;cursor:pointer;font:inherit}
+.planner .item:hover{background:#f0f4f0}
+.planner .item.on{border-color:#2f6b3a;background:#f3faf4}
+.planner .item .t{font-weight:700;font-size:12px;display:block}
+.planner .item .d{font-size:10px;color:var(--muted);margin-top:2px}
+.planner .detail{padding:10px 12px;overflow:auto}
+.story-chip{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:6px 8px;border:1px solid var(--line-soft);border-radius:6px;margin-bottom:4px;font-size:11px;background:#fff}
+.planner .backlog{padding:10px;overflow:auto;background:#f4f6f2}
+.planner .actions{display:flex;gap:8px;justify-content:flex-end;padding:10px 12px;border-top:1px solid var(--line);background:#f4f5f1}
+.sprint-row{display:flex;align-items:center;gap:6px;padding:5px 6px;border-radius:6px;margin-bottom:3px;background:#fff;border:1px solid var(--line-soft);font-size:11px}
+.sprint-row.active{border-color:#2f6b3a;background:#f3faf4}
+.sprint-row .n{font-weight:700;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.create-float{position:fixed;z-index:95;top:120px;left:50%;transform:translateX(-50%);background:#fffef9;border:1px solid #8a9188;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.2);min-width:320px;padding:12px;display:none}
+.create-float.open{display:block}
+.create-float label{display:block;font-size:10px;text-transform:uppercase;color:var(--muted);font-weight:700;margin:0 0 4px}
+.create-float input,.create-float textarea{width:100%;border:1px solid #c6cbc5;border-radius:6px;padding:8px;font:inherit;margin-bottom:10px}
+.create-float textarea{min-height:110px;resize:vertical}
+.create-float .actions{display:flex;gap:8px;justify-content:flex-end}
+.empty{color:var(--muted);font-size:11px;padding:8px}
 /* B60 soft hold */
 .card.hold{border-color:#d48a8a;box-shadow:0 0 0 1px rgba(180,80,80,.28)}
 .deck-wrap{display:flex;flex-direction:column;align-items:center;gap:8px}
@@ -170,13 +217,23 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
     <main class="board">
       <div class="board-toolbar">
         <span>Board</span>
-        <span class="pill" id="theme-pill">project: —</span>
+        <div class="ctl-group">
+          <button class="btn btn-sm" type="button" id="btn-new-project">Project</button>
+          <span class="pill" id="theme-pill">project: —</span>
+          <button type="button" class="btn btn-sm btn-primary" id="btn-add-story">Add Story</button>
+          <button type="button" class="sprint-btn" id="sprint-chip" title="Open sprint list">
+            <span class="pill" id="sprint-state">none</span>
+            <span>
+              <span class="name" id="sprint-name">No sprint</span>
+              <span class="sub" id="sprint-sub">assemble in the list</span>
+            </span>
+          </button>
+        </div>
         <span class="spacer"></span>
         <button type="button" class="deck-btn" id="backlog-deck" title="Backlog">
           <span class="sheet"></span><span class="sheet"></span>
           <span class="sheet"><span class="count" id="backlog-count">0</span></span>
         </button>
-        <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add New Item</button>
       </div>
       <div class="columns" id="columns"></div>
     </main>
@@ -201,6 +258,52 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 <div class="float-layer" id="float-layer"></div>
 <div class="backlog-menu-portal" id="backlog-menu" hidden></div>
 <div class="batch-menu-portal" id="batch-menu" hidden></div>
+<div class="scrim" id="scrim"></div>
+<div class="planner" id="planner">
+  <div class="titlebar">
+    <span>Sprints</span>
+    <span class="pill" id="planner-project">—</span>
+    <span class="spacer"></span>
+    <button type="button" class="btn btn-sm" id="planner-close">Close</button>
+  </div>
+  <div class="pad">
+    <div class="list">
+      <h3>Named sprints</h3>
+      <div id="planner-list"></div>
+      <button type="button" class="btn btn-sm" style="width:100%;margin-top:8px" id="btn-new-sprint">New sprint</button>
+    </div>
+    <div class="detail" id="planner-detail"></div>
+    <div class="backlog" id="planner-backlog"></div>
+  </div>
+  <div class="actions">
+    <button class="btn btn-danger btn-sm" type="button" id="btn-cancel" disabled>Cancel sprint</button>
+    <button class="btn btn-primary btn-sm" type="button" id="btn-schedule" disabled>Schedule</button>
+    <button class="btn btn-sm" type="button" id="planner-ok">OK</button>
+  </div>
+</div>
+<div class="create-float" id="story-float">
+  <label>Name</label><input id="story-name" placeholder="Move">
+  <label>Story</label><textarea id="story-body" placeholder="Describe the story."></textarea>
+  <div class="actions">
+    <button class="btn btn-sm" type="button" id="story-cancel">Cancel</button>
+    <button class="btn btn-sm btn-primary" type="button" id="story-save">Add</button>
+  </div>
+</div>
+<div class="create-float" id="sprint-float">
+  <label>Sprint name</label><input id="sprint-id-input" placeholder="Cave">
+  <div class="actions">
+    <button class="btn btn-sm" type="button" id="sprint-cancel">Cancel</button>
+    <button class="btn btn-sm btn-primary" type="button" id="sprint-save">Create</button>
+  </div>
+</div>
+<div class="create-float" id="project-float">
+  <label>Project id</label><input id="project-id" placeholder="htw">
+  <label>Name</label><input id="project-name" placeholder="Hunt the Wumpus">
+  <div class="actions">
+    <button class="btn btn-sm" type="button" id="project-cancel">Cancel</button>
+    <button class="btn btn-sm btn-primary" type="button" id="project-save">Create</button>
+  </div>
+</div>
 <script>
 /* Combined cockpit — B24/B35. Behavior: ui-design.md + dashboard-mockup.html */
 const esc = s => String(s??'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
@@ -222,6 +325,7 @@ const fmtStamp = iso => {
 };
 let state = {};
 let optimisticBusy = false;
+let selectedSprint = null;
 const windows = new Map();
 let zTop = 100;
 let batchMenuHideTimer = null;
@@ -381,6 +485,25 @@ function renderAttention(data) {
 function cardFingerprint(s) {
   return [s.state||'', s.board_column||'', s.stage_label||'', s.stage_detail||''].join('|');
 }
+function ico(kind) {
+  if (kind==='story') return '<span class="ico ico-card" title="story"></span>';
+  if (kind==='task') return '<span class="ico ico-clip" title="task"></span>';
+  return '';
+}
+function sprintItemCard(item) {
+  const kind = item.kind||'sprint';
+  const name = item.title||item.name||item.id;
+  const sub = kind==='task' ? 'module · '+((item.stories||[]).join(', ')||'—')
+            : kind==='story' ? (item.body||item.stage||'story') : (item.tag?('tag '+item.tag):'sprint');
+  const badge = item.stage||item.state||kind;
+  const inner = `<div class="title"><span class="name">${ico(kind)}${esc(name)}</span><span></span></div>
+    <div class="theme">${esc(sub)}</div>
+    <div class="badges"><span class="pill">${esc(badge)}</span></div>
+    <div class="foot"><span>${esc(kind)}</span><span></span></div>`;
+  if (kind==='task')
+    return `<div class="clipboard" title="task"><span class="clip"></span><div class="paper">${inner}</div></div>`;
+  return `<div class="card ${kind==='story'?'story':'sprint-card'}">${inner}</div>`;
+}
 function storyCard(s, glow) {
   const col=boardColumn(s);
   const label=(s.story_number?('#'+s.story_number+' '):'')+(s.story_id||'');
@@ -388,8 +511,8 @@ function storyCard(s, glow) {
   const hold=!!s.hold;
   const holdTitle=s.hold_reason||'';
   const tip=hold?(label+' — '+holdTitle):label;
-  return `<div class="card${glow?' glow':''}${hold?' hold':''}" data-story="${esc(s.story_id)}" data-status-fp="${esc(cardFingerprint(s))}" title="${esc(tip)}">
-    <div class="title"><span class="name">${esc(label)}</span><span class="timer">${esc(age(s.updated_at))}</span></div>
+  return `<div class="card story${glow?' glow':''}${hold?' hold':''}" data-story="${esc(s.story_id)}" data-status-fp="${esc(cardFingerprint(s))}" title="${esc(tip)}">
+    <div class="title"><span class="name">${ico('story')}${esc(label)}</span><span class="timer">${esc(age(s.updated_at))}</span></div>
     <div class="theme">${esc(s.theme_id||'—')}</div>
     <div class="badges"><span class="pill">${esc(s.stage_label||s.state||col)}</span></div>
     <div class="foot"><span>${esc(detail)}</span><span></span></div></div>`;
@@ -454,8 +577,18 @@ function renderBoard(data) {
     const batchedIds=new Set();
     showBats.forEach(b=>(b.members||[]).forEach(id=>batchedIds.add(id)));
     const colStories=sortByProgress(stories.filter(s=>boardColumn(s)===c && !batchedIds.has(s.story_id)));
-    const cards=colStories.map(s=>storyCard(s, glowIds.has(s.story_id))).join('');
-    const bats=showBats.map(batchCard).join('');
+    let cards=colStories.map(s=>storyCard(s, glowIds.has(s.story_id))).join('');
+    let bats=showBats.map(batchCard).join('');
+    if (c==='coding') {
+      const tasks=(data.coding||[]).filter(x=>x.kind==='task');
+      bats=tasks.map(sprintItemCard).join('')+bats;
+    }
+    if (c==='done' && (data.done||[]).length) {
+      cards=(data.done||[]).map(sprintItemCard).join('');
+      bats='';
+    } else if (c==='finalizing' && (data.finalizing||[]).some(x=>x.kind==='sprint')) {
+      cards=(data.finalizing||[]).map(sprintItemCard).join('');
+    }
     return `<div class="col"><h3>${titles[c]}</h3><div class="col-body">${bats}${cards}</div></div>`;
   }).join('');
   bindBacklogDeck(openBl);
@@ -469,7 +602,7 @@ function bindBacklogDeck(openBl) {
     menu.innerHTML=openBl.length?openBl.map(b=>`<button type="button" class="mi" data-edit-bl="${esc(b.id)}">
       <span class="t">${esc(b.title||b.id)}</span>
       <span class="d">created ${esc(fmt(b.created_at))} · modified ${esc(fmt(b.updated_at))}</span></button>`).join(''):
-      '<div style="padding:12px;color:#68726c;font-size:11px">Empty — Add New Item</div>';
+      '<div style="padding:12px;color:#68726c;font-size:11px">Empty — Add Story</div>';
   };
   const pos=()=>{const r=deck.getBoundingClientRect(); menu.style.left=Math.max(8, r.right-280)+'px'; menu.style.top=(r.bottom+6)+'px';};
   let hideT;
@@ -477,18 +610,21 @@ function bindBacklogDeck(openBl) {
   const hide=()=>{hideT=setTimeout(()=>{menu.classList.remove('open'); menu.hidden=true;},180);};
   deck.onclick=e=>{e.stopPropagation(); if(menu.classList.contains('open')) hide(); else show();};
   menu.onmouseenter=()=>clearTimeout(hideT); menu.onmouseleave=hide;
-  const add=document.getElementById('btn-add-item');
-  if(add) add.onclick=()=>openBacklogEditor(null);
 }
 
 function renderThemes(data) {
-  const tid=data.current_theme_id;
+  const p=data.project;
+  const tid=(p&&p.id)||data.current_theme_id;
   document.getElementById('theme-pill').textContent='project: '+(tid||'—');
+  const liveId=data.scheduled&&data.scheduled.id;
+  const sprintRows=(data.sprints||data['open-sprints']||[]).map(s=>
+    `<div class="sprint-row ${s.id===liveId?'active':''}"><span class="n">${esc(s.name||s.id)}</span>
+      <span class="pill ${s.state==='done'||s.state==='scheduled'?'pill-ok':''}">${esc(s.state||'')}${s.stories&&s.stories.length?' · '+s.stories.length:''}</span></div>`).join('');
   // B42: always link to theme package when a current theme exists
   document.getElementById('themes').innerHTML=tid?
     `<div class="theme-card"><div class="name">${esc(tid)} <span class="pill pill-ok">active</span></div>
-     <div class="meta" style="font-size:10px;margin-top:4px">Package on disk</div>
-     <button type="button" class="btn btn-sm" style="margin-top:6px" data-view-theme="${esc(tid)}">View project</button></div>`:
+     <div class="meta" style="font-size:10px;margin-top:4px">${esc((p&&p.name)||'Package on disk')}</div>
+     <button type="button" class="btn btn-sm" style="margin-top:6px" data-view-theme="${esc(tid)}">View project</button></div>`+sprintRows:
     '<div class="meta">No project</div>';
   const btn=document.querySelector('[data-view-theme]');
   if(btn) btn.onclick=()=>openAgentWindow('/artifact/theme/'+encodeURIComponent(btn.getAttribute('data-view-theme')),'squad-theme');
@@ -498,11 +634,12 @@ function renderWork(data) {
   const rows=data.work_in_flight||data.assignments||[];
   document.getElementById('work').innerHTML=`<table class="work"><colgroup>
     <col class="c-story"><col class="c-role"><col class="c-state"><col class="c-age"></colgroup>
-    <thead><tr><th>Story</th><th>Role</th><th></th><th>Age</th></tr></thead>
+    <thead><tr><th>Work</th><th>Role</th><th></th><th>Age</th></tr></thead>
     <tbody>${rows.map((w,i)=>{
-      const story=w.story||w.story_id||w.assignment_id||'';
+      const story=w.module||w.task_id||w.story||w.story_id||w.assignment_id||'';
       const ids=w.story_ids||(w.story_id?[w.story_id]:[]);
       const isBatch=!!w.is_batch;
+      const workKind=w.task_id||w.module?'task':(w.sprint_id&&!w.story_id?'sprint':'story');
       const agent=w.agent_id||'';
       const roleFull=w.role||w.template||'';
       const ico=stateIcon(w.state);
@@ -517,7 +654,7 @@ function renderWork(data) {
         ? `<button type="button" class="linkish" data-open-agent="${esc(agent)}" title="${esc(roleFull+' · open '+agent)}">${esc(roleFull)}</button>${therm}`
         : `<span title="${esc(roleFull)}">${esc(roleFull)}</span>`;
       return `<tr data-work-idx="${i}" data-story-ids="${esc(JSON.stringify(ids))}" data-batch-id="${esc(w.batch_id||'')}" data-work-batch="${isBatch?'1':'0'}">
-        <td title="${esc(story)}"><button type="button" class="linkish">${esc(story)}</button></td>
+        <td title="${esc(story)}">${ico(workKind)}<button type="button" class="linkish">${esc(story)}</button></td>
         <td>${agentCell}</td>
         <td title="${esc(ico.title)}"><span class="${ico.cls}" title="${esc(ico.title)}"></span></td>
         <td>${esc(age(w.updated_at))}</td></tr>`;
@@ -580,49 +717,32 @@ function renderChat(data) {
 }
 
 function openBacklogEditor(item) {
-  const isNew=!item;
-  const id=isNew?'bl-new':'bl-'+item.id;
+  if (!item || item.kind==='story') { openStoryFloat(); return; }
+  const id='bl-'+item.id;
   openFloat({
-    id, title: isNew?'New backlog item':('Edit · '+(item.title||item.id)),
+    id, title: 'Edit · '+(item.title||item.id),
     left: Math.max(40, innerWidth/2-180), top: 100,
-    bodyHtml: `<label>Title</label><input type="text" id="be-title" value="${esc(item&&item.title||'')}">
-      <label>Description</label><textarea id="be-body">${esc(item&&item.body||'')}</textarea>
-      <div class="dates">${isNew?'Not saved yet.':`Created ${esc(fmt(item.created_at))} · Modified ${esc(fmt(item.updated_at))}`}</div>
-      <div class="note"><strong>Add</strong> → backlog only. <strong>Approve</strong> → pipeline; SL classifies project vs story.</div>
+    bodyHtml: `<label>Name</label><input type="text" id="be-title" value="${esc(item.title||'')}">
+      <label>Story</label><textarea id="be-body">${esc(item.body||'')}</textarea>
+      <div class="dates">Created ${esc(fmt(item.created_at))} · Modified ${esc(fmt(item.updated_at))}</div>
       <div class="actions">
         <button type="button" class="btn" data-be="cancel">Cancel</button>
-        ${!isNew?'<button type="button" class="btn btn-danger" data-be="delete">Delete</button>':''}
-        <button type="button" class="btn" data-be="add">${isNew?'Add':'Save'}</button>
-        <button type="button" class="btn btn-approve" data-be="approve">Approve</button>
+        <button type="button" class="btn btn-danger" data-be="delete">Delete</button>
+        <button type="button" class="btn btn-primary" data-be="add">Save</button>
       </div>`,
     onMount(el){
       el.querySelector('[data-be=cancel]').onclick=()=>closeWindow(id);
       el.querySelector('[data-be=add]').onclick=async()=>{
         const title=el.querySelector('#be-title').value.trim();
         const body=el.querySelector('#be-body').value;
-        if(!title){alert('Title required');return;}
-        if(isNew) await post('/api/backlog', JSON.stringify({title,body}), 'application/json; charset=utf-8');
-        else await post('/api/backlog/'+encodeURIComponent(item.id), JSON.stringify({title,body}), 'application/json; charset=utf-8');
+        if(!title){alert('Name required');return;}
+        await post('/api/backlog/'+encodeURIComponent(item.id), JSON.stringify({title,body}), 'application/json; charset=utf-8');
         closeWindow(id); refresh();
       };
       const del=el.querySelector('[data-be=delete]');
       if(del) del.onclick=async()=>{
         if(!confirm('Delete this backlog item?'))return;
         await post('/api/backlog/'+encodeURIComponent(item.id)+'/delete', '{}', 'application/json; charset=utf-8');
-        closeWindow(id); refresh();
-      };
-      el.querySelector('[data-be=approve]').onclick=async()=>{
-        const title=el.querySelector('#be-title').value.trim();
-        const body=el.querySelector('#be-body').value;
-        if(!title){alert('Title required');return;}
-        let blId=item&&item.id;
-        if(isNew){
-          const r=await post('/api/backlog', JSON.stringify({title,body}), 'application/json; charset=utf-8');
-          const j=await r.json(); blId=j.item&&j.item.id;
-        } else {
-          await post('/api/backlog/'+encodeURIComponent(item.id), JSON.stringify({title,body}), 'application/json; charset=utf-8');
-        }
-        await post('/api/backlog/'+encodeURIComponent(blId)+'/approve', '{}', 'application/json; charset=utf-8');
         closeWindow(id); refresh();
       };
     }
@@ -691,6 +811,8 @@ async function refresh() {
     renderWork(data);
     renderSlTherm(data);
     renderChat(data);
+    renderSprintChrome(data);
+    if (document.getElementById('planner').classList.contains('open')) renderPlanner();
   } catch(err) {
     document.getElementById('error').textContent=err.message||String(err);
   }
@@ -837,6 +959,130 @@ document.getElementById('work').addEventListener('mouseout',e=>{
 });
 document.getElementById('batch-menu').addEventListener('mouseenter',()=>clearTimeout(batchMenuHideTimer));
 document.getElementById('batch-menu').addEventListener('mouseleave',()=>{hideMembersSoon();clearHl();});
+
+function slug(s){return String(s||'').toLowerCase().replace(/[^a-z0-9]+/g,'-').replace(/^-|-$/g,'')||('s'+Date.now());}
+function openFloatEl(id, open) {
+  document.getElementById(id).classList.toggle('open', open);
+}
+function openPlanner(open) {
+  document.getElementById('planner').classList.toggle('open', open);
+  document.getElementById('scrim').classList.toggle('open', open);
+  if (open) renderPlanner();
+}
+function openStoryFloat() {
+  document.getElementById('story-name').value='';
+  document.getElementById('story-body').value='';
+  openFloatEl('story-float', true);
+  document.getElementById('story-name').focus();
+}
+function renderSprintChrome(data) {
+  const live = data.scheduled;
+  const st = document.getElementById('sprint-state');
+  const name = document.getElementById('sprint-name');
+  const sub = document.getElementById('sprint-sub');
+  if (!st) return;
+  st.textContent = live ? (live.phase||live.state) : 'none';
+  st.className = 'pill '+(live?'pill-ok':'');
+  name.textContent = live ? live.name : 'No sprint';
+  sub.textContent = live ? (live.kind==='sprint-0'?'architecture only':'locked') : 'assemble in the list';
+}
+function openSprints() {
+  return (state['open-sprints']||state.sprints||[]).filter(s=>s.state!=='done');
+}
+function renderPlanner() {
+  const sprints = openSprints();
+  if (selectedSprint && !sprints.some(s=>s.id===selectedSprint)) selectedSprint = null;
+  if (!selectedSprint && sprints.length) selectedSprint = (state.scheduled&&state.scheduled.id)||sprints[0].id;
+  document.getElementById('planner-project').textContent = (state.project&&state.project.id)||state.current_theme_id||'—';
+  document.getElementById('planner-list').innerHTML = sprints.map(s=>`
+    <button type="button" class="item ${s.id===selectedSprint?'on':''}" data-sp="${esc(s.id)}">
+      <span class="t">${esc(s.name)}</span>
+      <span class="d">${esc(s.state)} · ${(s.stories||[]).length} stories${s.tag?' · '+s.tag:''}</span>
+    </button>`).join('') || '<div class="empty">No sprints yet</div>';
+  document.querySelectorAll('#planner-list [data-sp]').forEach(b=>b.onclick=()=>{selectedSprint=b.dataset.sp; renderPlanner();});
+  const sp = sprints.find(s=>s.id===selectedSprint);
+  const locked = !sp || (sp.state!=='draft' && sp.state!=='abandoned');
+  const inflight = !!(state.scheduled);
+  document.getElementById('planner-detail').innerHTML = sp
+    ? `<h3>${esc(sp.name)}</h3>`+
+      ((sp.stories||[]).map(s=>`<div class="story-chip"><span>${ico('story')}${esc(s.title||s.id)}</span>
+        ${locked?'<span class="pill">locked</span>':`<button class="btn btn-sm" data-rm="${esc(s.id)}">Remove</button>`}</div>`).join('')
+        || '<div class="empty">No stories in this sprint</div>')+
+      (sp.kind==='sprint-0'?'<p class="empty">Implements no stories. Maps cover every story known at schedule time.</p>':'')
+    : '<div class="empty">Select a sprint</div>';
+  document.getElementById('planner-detail').querySelectorAll('[data-rm]').forEach(b=>
+    b.onclick=()=>post('/api/stories/'+encodeURIComponent(b.dataset.rm)+'/move',
+                       JSON.stringify({sprint_id:'backlog'}),
+                       'application/json; charset=utf-8').then(refresh));
+  document.getElementById('planner-backlog').innerHTML = '<h3>Backlog</h3>'+
+    ((state.backlog||[]).map(s=>`<div class="story-chip"><span>${ico('story')}${esc(s.title||s.id)}</span>
+      <button class="btn btn-sm" data-mv="${esc(s.id)}" ${!sp||locked?'disabled':''}>Move</button></div>`).join('')
+      || '<div class="empty">Backlog empty</div>');
+  document.getElementById('planner-backlog').querySelectorAll('[data-mv]').forEach(b=>
+    b.onclick=()=>post('/api/stories/'+encodeURIComponent(b.dataset.mv)+'/move',
+                       JSON.stringify({sprint_id:selectedSprint}),
+                       'application/json; charset=utf-8').then(refresh));
+  document.getElementById('btn-schedule').disabled = !sp || (sp.state!=='draft' && sp.state!=='abandoned') || inflight;
+  document.getElementById('btn-cancel').disabled = !sp || sp.state!=='scheduled';
+}
+async function saveStory() {
+  const name = document.getElementById('story-name').value.trim();
+  const body = document.getElementById('story-body').value;
+  if (!name) return;
+  openFloatEl('story-float', false);
+  await post('/api/stories', JSON.stringify({name, body}), 'application/json; charset=utf-8');
+  refresh();
+}
+
+document.getElementById('sprint-chip').onclick = () => openPlanner(true);
+document.getElementById('planner-close').onclick = () => openPlanner(false);
+document.getElementById('planner-ok').onclick = () => openPlanner(false);
+document.getElementById('scrim').onclick = () => {
+  openPlanner(false);
+  openFloatEl('story-float', false);
+  openFloatEl('sprint-float', false);
+  openFloatEl('project-float', false);
+};
+document.getElementById('btn-schedule').onclick = async () => {
+  if (!selectedSprint) return;
+  await post('/api/sprints/'+encodeURIComponent(selectedSprint)+'/schedule', '{}', 'application/json; charset=utf-8');
+  openPlanner(false);
+  refresh();
+};
+document.getElementById('btn-cancel').onclick = async () => {
+  if (!selectedSprint) return;
+  await post('/api/sprints/'+encodeURIComponent(selectedSprint)+'/cancel', '{}', 'application/json; charset=utf-8');
+  refresh();
+};
+document.getElementById('btn-new-sprint').onclick = () => openFloatEl('sprint-float', true);
+document.getElementById('sprint-cancel').onclick = () => openFloatEl('sprint-float', false);
+document.getElementById('sprint-save').onclick = async () => {
+  const name = document.getElementById('sprint-id-input').value.trim();
+  if (!name) return;
+  const id = slug(name);
+  selectedSprint = id;
+  openFloatEl('sprint-float', false);
+  await post('/api/sprints', JSON.stringify({id, name}), 'application/json; charset=utf-8');
+  refresh();
+};
+document.getElementById('btn-add-story').onclick = openStoryFloat;
+document.getElementById('story-cancel').onclick = () => openFloatEl('story-float', false);
+document.getElementById('story-save').onclick = saveStory;
+document.getElementById('story-float').addEventListener('keydown', e => {
+  if (e.key!=='Enter' || e.shiftKey) return;
+  e.preventDefault();
+  saveStory();
+});
+document.getElementById('btn-new-project').onclick = () => openFloatEl('project-float', true);
+document.getElementById('project-cancel').onclick = () => openFloatEl('project-float', false);
+document.getElementById('project-save').onclick = async () => {
+  const id = slug(document.getElementById('project-id').value.trim());
+  const name = document.getElementById('project-name').value.trim()||id;
+  if (!id) return;
+  openFloatEl('project-float', false);
+  await post('/api/project', JSON.stringify({id, name}), 'application/json; charset=utf-8');
+  refresh();
+};
 
 setInterval(()=>{const busy=document.getElementById('ts-busy'); if(busy&&busy.style.display!=='none'){const d=((Date.now()/400)|0)%3; busy.textContent='.'.repeat(d+1);}},400);
 refresh(); setInterval(refresh, 4000);

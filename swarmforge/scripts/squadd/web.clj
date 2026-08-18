@@ -9,6 +9,7 @@
             [clojure.string :as str]
             [squad-dashboard-request :as dashreq]
             [squad-records :as rec]
+            [squad-sprint :as sprint]
             [squad-state :as squad-state]
             [stop-squadd :as stop-squadd])
   (:import [java.net InetAddress ServerSocket URLDecoder]))
@@ -1294,6 +1295,214 @@
       (when-let [m (re-find (re-pattern (str "(?s)\"" key "\"\\s*:\\s*\"([^\"]*)\"")) body)]
         (second m))))
 
+(defn slug-id [s]
+  (let [x (-> (str/lower-case (str (or s "")))
+              (str/replace #"[^a-z0-9]+" "-")
+              (str/replace #"^-|-$" ""))]
+    (when (re-matches sprint/valid-id x) x)))
+
+(defn story-title [root story-id]
+  (let [f (fs/path root "stories" (str story-id ".md"))]
+    (if (fs/regular-file? f)
+      (or (some (fn [line]
+                  (when (str/starts-with? line "# ")
+                    (str/trim (subs line 2))))
+                (str/split-lines (slurp (str f))))
+          story-id)
+      story-id)))
+
+(defn project-map [root]
+  (let [f (fs/path root ".squad" "project")]
+    (if (fs/regular-file? f)
+      {"id" (or (sprint/read-field f "id") "")
+       "name" (or (sprint/read-field f "name") "")
+       "theme_id" (or (sprint/read-field f "theme_id") "")}
+      (when-let [tid (current-theme-id root)]
+        {"id" tid "name" tid "theme_id" tid}))))
+
+(defn sprint-json [root id]
+  (when-let [sp (sprint/load-sprint root id)]
+    {"id" id
+     "name" (or (:name sp) id)
+     "kind" (or (:kind sp) "impl")
+     "state" (or (:state sp) "draft")
+     "phase" (or (:phase sp) "")
+     "tag" (or (:tag sp) "")
+     "branch" (or (:branch sp) "")
+     "stories" (mapv (fn [sid]
+                       {"id" sid
+                        "title" (story-title root sid)
+                        "kind" "story"})
+                     (sprint/read-members root id))}))
+
+(defn all-sprint-json [root]
+  (->> (sprint/sprint-ids root)
+       (keep #(sprint-json root %))
+       vec))
+
+(defn done-sprint-json [root]
+  (mapv (fn [s] (assoc s "kind" "sprint" "title" (get s "name")))
+        (filter #(= "done" (get % "state")) (all-sprint-json root))))
+
+(defn sprint-tasks [root sprint-id]
+  (let [dir (fs/path root ".squad" "sprints" sprint-id "tasks")]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/regular-file?)
+           (sort-by fs/file-name)
+           (mapv (fn [f]
+                   (let [mod (fs/file-name f)
+                         raw (or (sprint/read-field f "stories") "")]
+                     {"id" mod
+                      "title" mod
+                      "kind" "task"
+                      "module" mod
+                      "stage" (or (sprint/read-field f "stage") "queued")
+                      "stories" (vec (remove str/blank?
+                                             (str/split raw #",")))}))))
+      [])))
+
+(defn unscheduled-story-json [root]
+  (let [taken (sprint/assigned-story-ids root)]
+    (->> (sprint/registered-story-ids root)
+         (remove taken)
+         (mapv (fn [sid]
+                 {"id" sid
+                  "title" (story-title root sid)
+                  "kind" "story"
+                  "status" "open"})))))
+
+(defn merged-backlog [root]
+  (let [items (list-backlog root)
+        seen (set (map #(get % "id") items))]
+    (into items (remove #(contains? seen (get % "id"))
+                        (unscheduled-story-json root)))))
+
+(defn story-card-json [root story]
+  {"id" (get story "story_id")
+   "title" (story-title root (get story "story_id"))
+   "kind" "story"
+   "stage" (or (get story "stage_label") (get story "state"))})
+
+(defn specifying-json [root stories scheduled]
+  (let [ids (when scheduled
+              (set (map #(get % "id") (get scheduled "stories"))))]
+    (->> stories
+         (filter #(= "specifying" (get % "board_column")))
+         (filter #(or (nil? ids) (contains? ids (get % "story_id"))))
+         (mapv #(story-card-json root %)))))
+
+(defn coding-json [root stories scheduled]
+  (if scheduled
+    (sprint-tasks root (get scheduled "id"))
+    (->> stories
+         (filter #(= "coding" (get % "board_column")))
+         (mapv #(story-card-json root %)))))
+
+(defn finalize-phase? [phase]
+  (boolean (re-find #"harden|qa|arch|senior|final" (str phase))))
+
+(defn finalizing-json [root stories scheduled]
+  (cond
+    (and scheduled (= "sprint-0" (get scheduled "kind")))
+    [{"id" (get scheduled "id")
+      "title" (get scheduled "name")
+      "kind" "sprint"
+      "stage" (or (get scheduled "phase") "maps")}]
+
+    (and scheduled (finalize-phase? (get scheduled "phase")))
+    [(assoc scheduled "kind" "sprint" "title" (get scheduled "name"))]
+
+    :else
+    (->> stories
+         (filter #(= "finalizing" (get % "board_column")))
+         (mapv #(story-card-json root %)))))
+
+(defn run-squad-script [root script & args]
+  (apply process/sh (concat [{:continue true :dir (str root)}]
+                            [(str (fs/path (script-dir) script))]
+                            args)))
+
+(defn script-ok? [result]
+  (zero? (:exit result)))
+
+(defn script-error [result]
+  (str/trim (str (:err result) (:out result))))
+
+(defn create-project! [root {:keys [id name]}]
+  (let [id (or (slug-id id) "")
+        name (let [n (str/trim (or name ""))]
+               (if (str/blank? n) id n))]
+    (cond
+      (str/blank? id) {:ok false :error "id required" :status 400}
+      (project-map root) {:ok false :error "project exists" :status 409}
+      :else
+      (do
+        (spit (str (fs/path root "theme.md")) (str "# " name "\n\n" name "\n"))
+        (let [r (run-squad-script root "squad_theme.sh" "create" id "theme.md")]
+          (if (script-ok? r)
+            {:ok true :project (project-map root)}
+            {:ok false :error (script-error r) :status 409}))))))
+
+(defn register-story! [root {:keys [id name body]}]
+  (let [title (str/trim (or name id ""))
+        id (or (slug-id id) (slug-id title))
+        theme (or (get (project-map root) "theme_id")
+                  (get (project-map root) "id"))]
+    (cond
+      (str/blank? theme) {:ok false :error "no project" :status 409}
+      (str/blank? id) {:ok false :error "name required" :status 400}
+      :else
+      (do
+        (fs/create-dirs (fs/path root "stories"))
+        (spit (str (fs/path root "stories" (str id ".md")))
+              (str "# " title "\n\n" (or body "") "\n"))
+        (let [r (run-squad-script root "squad_theme.sh" "story" theme id
+                                  (str "stories/" id ".md"))]
+          (if (script-ok? r)
+            {:ok true :story {"id" id "title" title "body" (or body "")}}
+            {:ok false :error (script-error r) :status 409}))))))
+
+(defn create-sprint-web! [root {:keys [id name]}]
+  (let [title (str/trim (or name id ""))
+        id (or (slug-id id) (slug-id title))]
+    (cond
+      (str/blank? id) {:ok false :error "name required" :status 400}
+      (sprint/load-sprint root id)
+      {:ok false :error (str "Sprint already exists: " id) :status 409}
+      :else
+      (do
+        (sprint/write-sprint! root {:id id :name (if (str/blank? title) id title)
+                                    :kind "impl" :state "draft"})
+        (sprint/write-members! root id [])
+        {:ok true :sprint (sprint-json root id)}))))
+
+(defn schedule-sprint-web! [root id]
+  (let [sp (sprint/load-sprint root id)]
+    (cond
+      (nil? sp) {:ok false :error (str "Unknown sprint: " id) :status 404}
+      (sprint/scheduled-id root)
+      {:ok false :error "A sprint is already scheduled" :status 409}
+      (not (contains? #{"draft" "abandoned"} (:state sp)))
+      {:ok false :error "Only a draft or abandoned sprint can be scheduled" :status 409}
+      :else
+      (do
+        (sprint/write-sprint! root (assoc sp :state "scheduled" :phase "scheduled"))
+        {:ok true :sprint (sprint-json root id)}))))
+
+(defn cancel-sprint-web! [root id]
+  (let [r (run-squad-script root "squad_sprint.sh" "cancel" id)]
+    (if (script-ok? r)
+      {:ok true :sprint (sprint-json root id)}
+      {:ok false :error (script-error r) :status 409})))
+
+(defn move-story-web! [root story-id dest]
+  (let [dest (or dest "backlog")
+        r (run-squad-script root "squad_sprint.sh" "move" story-id dest)]
+    (if (script-ok? r)
+      {:ok true :story_id story-id :sprint dest}
+      {:ok false :error (script-error r) :status 409})))
+
 (defn web-state [root]
   (let [assignments (assignment-state root)
         agents (agent-state root)
@@ -1312,13 +1521,17 @@
                                   (if (zero? c) (compare ub ua) c))))
                      vec)
         batches (batches-enriched root)
-        backlog (list-backlog root)
+        backlog (merged-backlog root)
         approvals {"pending" (approval-state-for root "pending")}
         wif (->> (work-in-flight-rows root assignments batches)
                  (mapv (fn [row]
                          (if-let [heat (agent-pane-heat root (get row "agent_id"))]
                            (assoc row "activity" heat)
                            row))))
+        project (project-map root)
+        sprints (all-sprint-json root)
+        open-sprints (filterv #(not= "done" (get % "state")) sprints)
+        scheduled (first (filter #(= "scheduled" (get % "state")) open-sprints))
         base {"generated_at" (now)
               "project_root" (str root)
               "stories" stories
@@ -1334,7 +1547,15 @@
               "sl_queue_depth" (sl-queue-depth root)
               "sl_activity" (sl-activity root)
               "troubleshooter" {"working" (troubleshooter-working? root)
-                                "session" (troubleshooter-session-name)}}
+                                "session" (troubleshooter-session-name)}
+              "project" project
+              "sprints" sprints
+              "open-sprints" open-sprints
+              "scheduled" scheduled
+              "specifying" (specifying-json root stories scheduled)
+              "coding" (coding-json root stories scheduled)
+              "finalizing" (finalizing-json root stories scheduled)
+              "done" (done-sprint-json root)}
         with-theme (cond-> base theme-id (assoc "current_theme_id" theme-id))
         next-a (dashboard-next-action with-theme)
         product (product-pending-label sl-requests)]
@@ -1347,6 +1568,46 @@
 
 (defn url-decode [value]
   (URLDecoder/decode value "UTF-8"))
+
+(defn json-ok [payload]
+  (response 200 "application/json; charset=utf-8" (to-json (assoc payload "ok" true))))
+
+(defn action-response [result]
+  (if (:ok result)
+    (json-ok (dissoc result :ok :status))
+    (response (:status result 400) "text/plain; charset=utf-8"
+              (str (:error result) "\n"))))
+
+(defn project-create-response [root body]
+  (action-response (create-project! root {:id (extract-json-field body "id")
+                                          :name (extract-json-field body "name")})))
+
+(defn story-create-response [root body]
+  (action-response (register-story! root {:id (extract-json-field body "id")
+                                          :name (extract-json-field body "name")
+                                          :body (or (extract-json-field body "body") "")})))
+
+(defn sprint-create-response [root body]
+  (action-response (create-sprint-web! root {:id (extract-json-field body "id")
+                                             :name (extract-json-field body "name")})))
+
+(defn sprint-action-response [root path]
+  (let [[_ id action] (re-matches #"/api/sprints/([^/]+)/(schedule|cancel)" path)
+        id (when id (url-decode id))]
+    (cond
+      (nil? id) (response 400 "text/plain; charset=utf-8" "bad sprint path\n")
+      (= action "schedule") (action-response (schedule-sprint-web! root id))
+      :else (action-response (cancel-sprint-web! root id)))))
+
+(defn story-move-response [root path body]
+  (let [[_ id] (re-matches #"/api/stories/([^/]+)/move" path)
+        id (when id (url-decode id))
+        dest (or (extract-json-field body "sprint_id")
+                 (extract-json-field body "dest")
+                 "backlog")]
+    (if id
+      (action-response (move-story-web! root id dest))
+      (response 400 "text/plain; charset=utf-8" "bad story path\n"))))
 
 (defn html-escape [value]
   (-> (str value)
@@ -2082,7 +2343,22 @@
     :handler (fn [root _ body] (backlog-create-response root body))}
    {:method "POST"
     :pattern #"/api/backlog/[^/]+(?:/(approve|delete))?"
-    :handler (fn [root path body] (backlog-item-response root path body))}])
+    :handler (fn [root path body] (backlog-item-response root path body))}
+   {:method "POST"
+    :path "/api/project"
+    :handler (fn [root _ body] (project-create-response root body))}
+   {:method "POST"
+    :path "/api/stories"
+    :handler (fn [root _ body] (story-create-response root body))}
+   {:method "POST"
+    :path "/api/sprints"
+    :handler (fn [root _ body] (sprint-create-response root body))}
+   {:method "POST"
+    :pattern #"/api/sprints/[^/]+/(schedule|cancel)"
+    :handler (fn [root path _] (sprint-action-response root path))}
+   {:method "POST"
+    :pattern #"/api/stories/[^/]+/move"
+    :handler (fn [root path body] (story-move-response root path body))}])
 
 (defn route-matches? [{:keys [method path pattern]} request-method request-path]
   (and (= method request-method)
