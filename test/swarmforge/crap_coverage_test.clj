@@ -1679,9 +1679,9 @@
       (is (true? (assign/story-file-required? "story")))
       (is (false? (assign/story-file-required? "theme")))
       (is (false? (assign/story-file-required? "batch")))
-      (is (= {:theme-scoped? true :batch-scoped? false}
+      (is (= {:theme-scoped? true :batch-scoped? false :sprint-scoped? false}
              (assign/assignment-scope-flags "theme")))
-      (is (= {:theme-scoped? false :batch-scoped? true}
+      (is (= {:theme-scoped? false :batch-scoped? true :sprint-scoped? false}
              (assign/assignment-scope-flags "batch")))
       (let [story-context (assign/assignment-create-context
                            {:theme-id "wumpus"

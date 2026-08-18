@@ -29,16 +29,24 @@
   (run {:dir root} (script "squad_theme.sh") "module-map" "htw" "module-map.md")
   (run {:dir root} (script "squad_theme.sh") "implementation-order" "htw" "order.md"))
 
-(deftest draft-sprint-0-assembles-not-theme-map
+(deftest draft-sprint-0-waits-for-operator
   ;; Given a new project (draft Sprint 0 only)
   ;; When residual runs
-  ;; Then assemble the next sprint; do not start the old theme-map path
+  ;; Then the Squad Leader is idle; Sprint 0 is not started
   (let [root (tmp-dir)]
     (try
       (setup! root)
       (let [out (next-out root)]
-        (is (str/includes? out "NEXT_ACTION: assemble_sprint"))
-        (is (not (str/includes? out "write_theme_module_map"))))
+        (is (str/includes? out "NEXT_ACTION: wait"))
+        (is (not (str/includes? out "assemble_sprint")))
+        (is (not (str/includes? out "write_theme_module_map")))
+        (is (not (str/includes? out "write_sprint0_maps")))
+        (is (= "draft"
+               (let [sf (fs/path root ".squad/sprints/s0/sprint")
+                     prefix "state: "]
+                 (some #(when (str/starts-with? % prefix)
+                          (subs % (count prefix)))
+                       (str/split-lines (slurp (str sf))))))))
       (finally (fs/delete-tree root)))))
 
 (deftest scheduled-sprint-0-asks-for-maps
@@ -106,11 +114,13 @@
         (is (str/includes? analyst "NEXT_ACTION: create_assignment"))
         (is (str/includes? analyst "TEMPLATE: analyst"))
         (is (str/includes? analyst "cave")))
-      (write-file (fs/path root ".squad/assignments/cave-analysis/metadata")
-                  (str "assignment_id: cave-analysis\n"
-                       "theme_id: htw\n"
-                       "story_id: cave\n"
-                       "template: analyst\n"))
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt") "Analyze.\n")
+      (let [created (run {:dir root}
+                         (script "squad_assign.sh") "create" "htw" "cave"
+                         "analyst" "cave-analysis"
+                         "--auto-instructions")]
+        (is (zero? (:exit created)))
+        (is (fs/directory? (fs/path root ".squad/assignments/cave-analysis"))))
       (write-file (fs/path root ".squad/assignments/cave-analysis/status")
                   "assignment_id: cave-analysis\nstate: merged\n")
       (run {:dir root} (script "squad_sprint.sh") "task" "cave" "world" "move")

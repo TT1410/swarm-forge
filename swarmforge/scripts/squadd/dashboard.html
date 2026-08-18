@@ -579,6 +579,9 @@ function renderBoard(data) {
     const colStories=sortByProgress(stories.filter(s=>boardColumn(s)===c && !batchedIds.has(s.story_id)));
     let cards=colStories.map(s=>storyCard(s, glowIds.has(s.story_id))).join('');
     let bats=showBats.map(batchCard).join('');
+    if (c==='specifying' && (data.specifying||[]).length) {
+      cards=(data.specifying||[]).map(sprintItemCard).join('');
+    }
     if (c==='coding') {
       const tasks=(data.coding||[]).filter(x=>x.kind==='task');
       bats=tasks.map(sprintItemCard).join('')+bats;
@@ -642,7 +645,7 @@ function renderWork(data) {
       const workKind=w.task_id||w.module?'task':(w.sprint_id&&!w.story_id?'sprint':'story');
       const agent=w.agent_id||'';
       const roleFull=w.role||w.template||'';
-      const ico=stateIcon(w.state);
+      const stIco=stateIcon(w.state);
       // B66: three-bar pane activity therm for live agent
       const act=w.activity||{};
       const alvl=act.level||'';
@@ -656,7 +659,7 @@ function renderWork(data) {
       return `<tr data-work-idx="${i}" data-story-ids="${esc(JSON.stringify(ids))}" data-batch-id="${esc(w.batch_id||'')}" data-work-batch="${isBatch?'1':'0'}">
         <td title="${esc(story)}">${ico(workKind)}<button type="button" class="linkish">${esc(story)}</button></td>
         <td>${agentCell}</td>
-        <td title="${esc(ico.title)}"><span class="${ico.cls}" title="${esc(ico.title)}"></span></td>
+        <td title="${esc(stIco.title)}"><span class="${stIco.cls}" title="${esc(stIco.title)}"></span></td>
         <td>${esc(age(w.updated_at))}</td></tr>`;
     }).join('')}</tbody></table>`;
   document.getElementById('work').onclick=e=>{

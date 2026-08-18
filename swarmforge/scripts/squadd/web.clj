@@ -1385,12 +1385,20 @@
    "stage" (or (get story "stage_label") (get story "state"))})
 
 (defn specifying-json [root stories scheduled]
-  (let [ids (when scheduled
-              (set (map #(get % "id") (get scheduled "stories"))))]
+  (if-not scheduled
     (->> stories
          (filter #(= "specifying" (get % "board_column")))
-         (filter #(or (nil? ids) (contains? ids (get % "story_id"))))
-         (mapv #(story-card-json root %)))))
+         (mapv #(story-card-json root %)))
+    (let [by-id (into {} (map (fn [s] [(get s "story_id") s]) stories))]
+      (mapv (fn [member]
+              (let [id (get member "id")]
+                (if-let [s (get by-id id)]
+                  (story-card-json root s)
+                  {"id" id
+                   "title" (or (get member "title") (story-title root id))
+                   "kind" "story"
+                   "stage" (or (get scheduled "phase") "specifying")})))
+            (or (get scheduled "stories") [])))))
 
 (defn coding-json [root stories scheduled]
   (if scheduled

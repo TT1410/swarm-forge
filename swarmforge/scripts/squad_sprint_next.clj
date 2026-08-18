@@ -246,12 +246,6 @@
              :priority 60
              :stage-order 130))))
 
-(defn assemble-candidate [root theme-id]
-  (cand "assemble_sprint" theme-id "project"
-        "no sprint in flight; assemble or schedule the next named sprint"
-        "squad_sprint.sh list"
-        {}))
-
 (defn sprint-candidates [root]
   (when (sprint-workflow-active? root)
     (let [theme-id (theme-id root)
@@ -259,7 +253,7 @@
           sp (scheduled-sprint root)]
       (cond
         (nil? sp)
-        [(assemble-candidate root theme-id)]
+        []
 
         (= "sprint-0" (:kind sp))
         (sprint-0-candidates root theme-id)

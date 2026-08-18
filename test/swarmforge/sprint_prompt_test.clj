@@ -29,6 +29,8 @@
     (is (str/includes? p "plan approval"))
     (is (str/includes? p "squad_sprint.sh"))
     (is (str/includes? p "write_sprint0_maps"))
+    (is (str/includes? p "Do not schedule"))
+    (is (not (str/includes? p "assemble_sprint")))
     (is (not (str/includes? p "write_theme_module_map")))
     (is (not (str/includes? p "Before requesting theme approval")))
     (is (not (str/includes? (str/lower-case p) "approve this backlog item for analysis")))

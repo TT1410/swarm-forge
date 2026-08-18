@@ -393,10 +393,14 @@
     (or (referenced-project-file root (fs/path theme "stories" (str story-id ".ref")))
         (fs/path theme "stories" (str story-id ".md")))))
 
-(defn assignment-scope [{:keys [template story-id scope]}]
+(defn sprint-record? [root story-id]
+  (fs/regular-file? (fs/path root ".squad" "sprints" story-id "sprint")))
+
+(defn assignment-scope [{:keys [template story-id scope root]}]
   (cond
     (theme-scoped-assignment? template story-id) "theme"
     (batch-scoped-assignment? scope story-id) "batch"
+    (and root (sprint-record? root story-id)) "sprint"
     :else "story"))
 
 (defn story-file-required? [scope]
@@ -404,12 +408,13 @@
 
 (defn assignment-scope-flags [scope]
   {:theme-scoped? (= "theme" scope)
-   :batch-scoped? (= "batch" scope)})
+   :batch-scoped? (= "batch" scope)
+   :sprint-scoped? (= "sprint" scope)})
 
 (defn assignment-create-context [{:keys [theme-id story-id template assignment-id instructions-file requirement scope queue-spawn? batch-stories]}]
   (let [root (fs/absolutize (project-root))
         theme (theme-dir root theme-id)
-        resolved-scope (assignment-scope {:template template :story-id story-id :scope scope})
+        resolved-scope (assignment-scope {:template template :story-id story-id :scope scope :root root})
         scope-flags (assignment-scope-flags resolved-scope)
         auto-instructions? (auto-instructions? instructions-file)]
     {:root root
@@ -423,6 +428,7 @@
      :batch-stories batch-stories
      :theme-scoped? (:theme-scoped? scope-flags)
      :batch-scoped? (:batch-scoped? scope-flags)
+     :sprint-scoped? (:sprint-scoped? scope-flags)
      :scope resolved-scope
      :theme-file (fs/path theme "theme.md")
      :module-map-file (fs/path theme "module-map.md")
@@ -443,9 +449,9 @@
     (exit! 2
            (str "Story packet " story-id " belongs to a different theme."))))
 
-(defn ensure-create-context! [{:keys [theme-file theme-scoped? batch-scoped? story-file template-file dir] :as context}]
+(defn ensure-create-context! [{:keys [theme-file theme-scoped? batch-scoped? sprint-scoped? story-file template-file dir] :as context}]
   (ensure-file! "Theme file not found" theme-file)
-  (when-not (or theme-scoped? batch-scoped?)
+  (when-not (or theme-scoped? batch-scoped? sprint-scoped?)
     (ensure-file! "Story file not found" story-file))
   (ensure-file! "Role template not found" template-file)
   (ensure-packet-theme! context)

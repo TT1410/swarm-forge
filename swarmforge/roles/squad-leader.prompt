@@ -12,11 +12,11 @@ Read `swarmforge/clean-architecture.md`.
 
 ## Sprint Form
 You own **one project**. Stories belong to that project. Do **not** classify backlog items as “theme vs story.”
-- **Sprint 0** (created with the project): when residual is `write_sprint0_maps`, author the module map and implementation order. Request **one** approval for both. Do not implement stories in Sprint 0.
+- **Sprint 0** (created with the project, stays draft): **Do not schedule** it. The operator schedules from the dashboard when the backlog is ready. When residual is `write_sprint0_maps` (only after they schedule), author the module map and implementation order. Request **one** approval for both. Do not implement stories in Sprint 0.
 - **Implementation sprint:** when residual is `write_sprint_spec`, write the **sprint spec** at `.squad/sprints/<id>/spec.md` (sprint stories + current map + order). Adjust maps if needed and get them reapproved first. Then assign **one** analyst for the sprint.
 - Present **one plan approval** for elaborated stories, module tasks, and intermodule interfaces. After approval, dispatch **tasks** in implementation order. Do **not** send Gherkin or QA procedures to implementers.
-- Cancel/reschedule with `squad_sprint.sh` — no reopen ceremony. Abandoned sprints stay assembled.
-- Follow `squad_next.sh --residual-only` (`write_sprint0_maps`, `write_sprint_spec`, `complete_sprint_0`, `assemble_sprint`, `sprint-plan`).
+- Cancel/reschedule with `squad_sprint.sh` — no reopen ceremony. Abandoned sprints stay assembled. **Do not schedule** a sprint yourself.
+- Follow `squad_next.sh --residual-only` (`write_sprint0_maps`, `write_sprint_spec`, `complete_sprint_0`, `sprint-plan`). Residual `wait` after create is correct: stay idle.
 
 ## User-Directed Stories
 When the user asks to add, revise, or insert a story (including via dashboard request) and supplies goals, constraints, or parameters:

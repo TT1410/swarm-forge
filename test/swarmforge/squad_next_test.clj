@@ -46,7 +46,8 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (let [needs-map (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out needs-map) "NEXT_ACTION: assemble_sprint"))
+        (is (str/includes? (:out needs-map) "NEXT_ACTION: wait"))
+        (is (not (str/includes? (:out needs-map) "assemble_sprint")))
         (is (not (str/includes? (:out needs-map) "write_theme_module_map"))))
       (legacy-story-swarm! root)
       (write-file (fs/path root "module-map.md") minimal-module-map)

@@ -26,7 +26,9 @@
     (is (str/includes? html "id=\"story-body\""))
     (is (not (str/includes? html "Add New Item")))
     (is (not (str/includes? html "SL classifies project vs story")))
-    (is (not (str/includes? html "sprint-kind")))))
+    (is (not (str/includes? html "sprint-kind")))
+    (is (not (str/includes? html "const ico=stateIcon"))
+        "Work Queue must not shadow kindIco with stateIcon")))
 
 (deftest web-state-exposes-sprint-board
   ;; Given a project with Sprint 0 done and Cave draft
@@ -44,6 +46,29 @@
         (is (= "htw" (get-in state ["project" "id"])))
         (is (some #(= "cave" (get % "id")) open))
         (is (not (some #(= "s0" (get % "id")) open)))
+        (is (some #(= "s0" (get % "id")) done)))
+      (finally (fs/delete-tree root)))))
+
+(deftest scheduled-sprint-stories-appear-on-specifying
+  ;; Given a scheduled impl sprint whose stories have no packets yet
+  ;; When /api/state is built
+  ;; Then specifying lists those stories and done still lists Sprint 0
+  (let [root (tmp-dir)]
+    (try
+      (setup-project! root)
+      (run {:dir root} (script "squad_sprint.sh") "complete" "s0" "sprint-0" "aaa")
+      (run {:dir root} (script "squad_sprint.sh") "create" "setup" "setup")
+      (doseq [id ["cave-topology" "hunt-setup"]]
+        (write-file (fs/path root "stories" (str id ".md")) (str "# " id "\n\nbody\n"))
+        (run {:dir root} (script "squad_theme.sh") "story" "htw" id (str "stories/" id ".md"))
+        (run {:dir root} (script "squad_sprint.sh") "move" id "setup"))
+      (run {:dir root} (script "squad_sprint.sh") "schedule" "setup")
+      (let [state (web/web-state root)
+            spec (get state "specifying")
+            done (get state "done")]
+        (is (some #(= "cave-topology" (get % "id")) spec))
+        (is (some #(= "hunt-setup" (get % "id")) spec))
+        (is (every? #(= "story" (get % "kind")) spec))
         (is (some #(= "s0" (get % "id")) done)))
       (finally (fs/delete-tree root)))))
 
