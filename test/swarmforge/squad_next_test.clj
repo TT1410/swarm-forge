@@ -2534,7 +2534,7 @@
             out)
         (is (str/includes? out "finalize")
             out)
-        (is (str/includes? out "theme-slice-ready-to-finalize")))
+        (is (str/includes? out "project-slice-ready-to-finalize")))
       (run {:dir root} (script "squad_theme.sh") "finalize" "hello" "ship-it")
       (let [status (:out (run {:dir root} (script "squad_theme.sh") "status" "hello"))]
         (is (str/includes? status "LIFECYCLE: finalized")))

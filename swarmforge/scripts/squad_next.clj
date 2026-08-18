@@ -663,8 +663,8 @@
          :reason "theme slice complete; user finalize/ship approval"
          :command (str "squad_approval.sh request " approval-id
                        " theme " theme-id
-                       " finalize Approve_theme_finalize "
-                       "theme-slice-ready-to-finalize")}
+                       " finalize Approve_project_finalize "
+                       "project-slice-ready-to-finalize")}
         {:priority (plane/ready-priority-of :theme-finalize)
          :stage-order 1
          :next-action "record_auto_approval"
@@ -1300,15 +1300,15 @@
                                  :theme-id (:theme-id theme)
                                  :story-id "theme"
                                  :gate "theme"
-                                 :reason "theme and module map ready for user approval"
+                                 :reason "project and module map ready for user approval"
                                  :command (str "squad_approval.sh request " approval-id
                                                " theme " (:theme-id theme)
-                                               " theme Approve_theme_and_module_map "
-                                               "theme-and-module-map-ready")})
+                                               " theme Approve_project_and_module_map "
+                                               "project-and-module-map-ready")})
                      analyst (when (:approved-theme? theme)
                                (theme-assignment-candidate root assignments agents theme
                                                            "analyst" "analysis"
-                                                           "approved theme needs story analysis"
+                                                           "approved project needs story analysis"
                                                            60 5 "theme"))
                      candidate (cond
                                  (:approved-theme? theme) analyst

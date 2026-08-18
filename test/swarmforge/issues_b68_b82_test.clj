@@ -116,7 +116,7 @@
                "template" "analyst"
                "state" "in_progress"}
             rows (web/work-in-flight-rows root [a] [])]
-        (is (= "domain-cave-state" (get (first rows) "story"))))
+        (is (= "htw:domain-cave-state" (get (first rows) "story"))))
       (finally
         (fs/delete-tree root)))))
 

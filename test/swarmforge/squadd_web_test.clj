@@ -263,13 +263,13 @@
       (let [parts (web/theme-package-parts root "hello")
             order (first (filter #(= "Implementation Order" (:title %)) parts))
             checker (first (filter #(= "Dependency Checker" (:title %)) parts))
-            life (first (filter #(= "Theme Lifecycle" (:title %)) parts))]
+            life (first (filter #(= "Project Lifecycle" (:title %)) parts))]
         (is (str/includes? (:body order) "awaiting user approval"))
         (is (str/includes? (:body checker) "awaiting user approval"))
         (is (str/includes? (:body life) "open")))
       (write-file (fs/path root ".squad/themes/hello/lifecycle")
                   "theme_id: hello\nlifecycle: finalized\ndetail: shipped\n")
-      (let [life (first (filter #(= "Theme Lifecycle" (:title %))
+      (let [life (first (filter #(= "Project Lifecycle" (:title %))
                                 (web/theme-package-parts root "hello")))]
         (is (str/includes? (:body life) "finalized")))
       (finally
@@ -368,7 +368,7 @@
   ;; B42 theme, B43 WIF agent, B56 therm, B57 buttons, B58 no Live agents,
   ;; B61 icons, B62 Specifying, B64 splitter, B52 chat stick
   (let [html web/dashboard-html]
-    (is (str/includes? html "View theme"))
+    (is (str/includes? html "View project"))
     (is (str/includes? html "data-view-theme"))
     (is (str/includes? html "data-open-agent"))
     (is (str/includes? html "finalizing"))

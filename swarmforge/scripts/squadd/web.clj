@@ -969,37 +969,64 @@
         (when-let [parent (parent-batch-id id)]
           (get batch-by-id parent)))))
 
+(defn strip-theme-project-prefix
+  "B91: theme.md H1 is often '# Theme: HTW' — never show that prefix."
+  [s]
+  (str/trim (str/replace (str s) #"(?i)^(theme|project)\s*:\s*" "")))
+
 (defn theme-display-name
-  "B83: human theme label from theme.md title or theme_id."
+  "B83/B88/B91: human project label from theme.md title or theme_id."
   [root theme-id]
   (when-not (str/blank? theme-id)
     (let [theme-md (fs/path root ".squad" "themes" theme-id "theme.md")
           from-file (when (fs/regular-file? theme-md)
                       (when-let [line (first (filter #(re-find #"(?i)^#\s+" %)
                                                      (str/split-lines (slurp (str theme-md)))))]
-                        (str/trim (str/replace line #"(?i)^#\s+" ""))))]
+                        (strip-theme-project-prefix
+                         (str/replace line #"(?i)^#\s+" ""))))]
       (or (not-empty from-file) theme-id))))
 
+(defn inferred-story-slug
+  "B91: recover a story token from assignment id when story_id is still 'theme'."
+  [assignment-id theme-id]
+  (let [id (str assignment-id)
+        tid (str theme-id)
+        stripped (-> id
+                     (str/replace #"(?i)^(analyst|specifier)-" "")
+                     (str/replace (re-pattern (str "(?i)^" (java.util.regex.Pattern/quote tid) "-")) "")
+                     (str/replace #"(?i)-analysis(-.*)?$" "")
+                     (str/replace #"(?i)^analysis$" ""))]
+    (when (and (not (str/blank? stripped))
+               (not= (str/lower-case stripped) (str/lower-case tid)))
+      stripped)))
+
 (defn wif-story-label
-  "B83: never show bare theme/batch placeholders when better names exist."
+  "B83/B91: project:story when a story is known; project name only for whole-project work."
   [root a members batch-kind]
   (let [id (get a "assignment_id" "")
         story (get a "story_id" "")
         theme-id (get a "theme_id" "")
-        scope (get a "scope" "")]
+        scope (get a "scope" "")
+        project (or (theme-display-name root theme-id)
+                    (not-empty theme-id))]
     (cond
       (seq members)
       (str (or batch-kind "batch") " ×" (count members))
 
       (or (= "theme" story)
           (= "theme" scope)
-          (= "Theme" story))
-      (or (theme-display-name root theme-id)
-          (not-empty theme-id)
-          id)
+          (= "Theme" story)
+          (= "project" story))
+      (if-let [inferred (inferred-story-slug id theme-id)]
+        (str (or theme-id project) ":" inferred)
+        (or project id))
 
       (or (str/blank? story) (= "batch" story))
       id
+
+      (and (not (str/blank? theme-id))
+           (not= story theme-id))
+      (str theme-id ":" story)
 
       :else
       story)))
@@ -1455,10 +1482,10 @@
         lifecycle (theme-lifecycle-status root theme-id)
         lifecycle-body (str "_Lifecycle: **" lifecycle "**_\n\n"
                             (if (= "finalized" lifecycle)
-                              (str "Theme slice is finalized (shipped/accepted). "
+                              (str "Project slice is finalized (shipped/accepted). "
                                    "New stories re-open automatically, or run "
                                    "`squad_theme.sh reopen " theme-id " <detail>`.")
-                              (str "Theme slice is open. When every story has finished QA and "
+                              (str "Project slice is open. When every story has finished QA and "
                                    "architecture is accepted (or senior-implementer has closed "
                                    "changes-requested), the project is done. Then request "
                                    "finalize approval, or run "
@@ -1494,9 +1521,9 @@
                             "Non-trivial policy requires user approval (B25)."))]
     (cond-> []
       true
-      (conj {:id "lifecycle" :title "Theme Lifecycle" :body lifecycle-body})
+      (conj {:id "lifecycle" :title "Project Lifecycle" :body lifecycle-body})
       (not (str/blank? theme))
-      (conj {:id "theme" :title "Theme (scheme)" :body theme})
+      (conj {:id "theme" :title "Project" :body theme})
       (not (str/blank? module-map))
       (conj {:id "module-map" :title "Module Map" :body module-map})
       true
@@ -1529,7 +1556,7 @@
                    parts))]
     (str "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
          "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-         "<title>Theme " (html-escape theme-id) "</title>"
+         "<title>Project " (html-escape theme-id) "</title>"
          "<style>:root{font-family:ui-sans-serif,system-ui,sans-serif;color-scheme:light dark}"
          "body{margin:0;background:#f7f7f4;color:#202124}"
          "header{padding:14px 18px;border-bottom:1px solid #d9d9d2}"
@@ -1540,7 +1567,7 @@
          "section.pkg{background:white;border:1px solid #d9d9d2;border-radius:8px;padding:14px}"
          "section.pkg pre{white-space:pre-wrap;margin:0;overflow:auto;font-size:13px;line-height:1.45}"
          "</style></head><body>"
-         "<header><h1>Theme package: " (html-escape theme-id) "</h1></header>"
+         "<header><h1>Project package: " (html-escape theme-id) "</h1></header>"
          (or nav "")
          "<main>" body "</main></body></html>")))
 
@@ -1604,7 +1631,7 @@
       (let [parts (theme-package-parts root id)]
         (if (seq parts)
           (response 200 "text/html; charset=utf-8" (theme-package-page id parts))
-          (response 404 "text/plain; charset=utf-8" "Theme package not found\n")))
+          (response 404 "text/plain; charset=utf-8" "Project package not found\n")))
       (if-let [content (not-empty (or (artifact-content root kind id) ""))]
         (response 200 "text/html; charset=utf-8" (artifact-page title content))
         (response 404 "text/plain; charset=utf-8" "Artifact not found\n")))))

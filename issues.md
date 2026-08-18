@@ -13,12 +13,9 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Pri | ID | Title | Kind | Area |
 |-----|-----|--------|------|------|
-| **P2** | B88 | Rename product vocabulary: theme → project | Product / UX | IA / dashboard / copy |
 | **P2** | B89 | Projects live in appropriately named subdirectories | Product / IA | Project layout / filesystem |
-| **P2** | B91 | WIF analyst label: project:story (e.g. HTW:HHG), not “Theme: HTW” | UX / Bug | Dashboard / WIF |
 | **P2** | B103 | Project-first intake: one project, many stories, explicit start | Product direction | Backlog / SL / analyst |
 | **P2** | B96 | Analyst plans implementer batches (≤2 same-level, related modules) | Process / policy | Analyst / implementer / merge |
-| **P3** | B87 | Rename “Work in flight” to “Work Queue” | UX | Dashboard / Ops rail |
 | **P3** | B102 | Backlog should be a top button, not a full board lane | UX | Dashboard / Board |
 | **P3** | B92 | Status bar: say “next action”, not “residual” | UX | Dashboard / status |
 | **P3** | B93 | Card status-change green flash: slower, pulse three times | UX | Dashboard / Board |
@@ -28,8 +25,8 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 ## Suggested fix order
 
-1. **P2:** **B103** (project-first intake/start), **B96** (analyst implementer batches), **B91** (WIF project:story labels), **B88** (theme → project vocabulary), **B89** (project subdirectories).
-2. **P3:** **B95** (therm hash ignore timer line), **B93** (card glow pulse), **B92** (status “next action”), **B102** (Backlog button), **B87** (Work Queue label).
+1. **P2:** **B103** (project-first intake/start), **B96** (analyst implementer batches), **B89** (project subdirectories).
+2. **P3:** **B95** (therm hash ignore timer line), **B93** (card glow pulse), **B92** (status “next action”), **B102** (Backlog button).
 
 ---
 
@@ -37,69 +34,12 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Cluster | Bugs | Note |
 |---------|------|------|
-| Product intake | **B88**, **B89**, **B91**, **B96**, **B103** | Project vocab/layout; WIF labels; analyst batch plan; project-first start |
-| Operator chat / dashboard IO | **B87**, **B88**, **B91**, **B92**, **B93**, **B95**, **B102** | Work Queue; project vocab; WIF labels; next-action; card glow; therm timer noise; backlog button |
+| Product intake | **B89**, **B96**, **B103** | Project directories; analyst batch plan; project-first start |
+| Operator chat / dashboard IO | **B92**, **B93**, **B95**, **B102** | next-action; card glow; therm timer noise; backlog button |
 
 ---
 
 ## Open detail
-
-### B88 — Rename product vocabulary: theme → project
-
-**Policy:** Throughout the product, the operator-facing term **theme** should be **project**.
-
-**Scope (operator-facing first):**
-1. Dashboard chrome: section labels (e.g. Themes → Projects), pills (`theme: htw` → `project: htw`), cards, tooltips, empty states.
-2. Approvals / Attention: gate titles and reasons that say “theme” (e.g. Approve theme → Approve project).
-3. Status bar / residual strings that expose “theme” to the operator.
-4. Troubleshooter / SL-facing product copy in templates and dashboard answers that refer to “theme” as the product unit.
-5. User docs when next edited — use **project** for the same concept.
-
-**Durable identifiers (compatibility):**
-- On-disk paths and keys may remain `theme_id`, `.squad/themes/`, `squad_theme.sh`, packet `theme_id`, approval gates named `theme`, etc. **unless** a full migration is planned.
-- Prefer a **display layer** rename (label “project”, value still `theme_id`) for v1 so existing swarms keep working.
-- If API JSON exposes `"theme"` / `"themes"` to the browser, either dual-key or rename with a short compatibility period.
-- Document the mapping: **project (UI) = theme (storage/API)**.
-
-**Expected:**
-1. No operator-visible “theme” in the live cockpit where “project” is meant (except possibly raw ids in advanced tooltips if needed).
-2. Board / Ops / backlog approve-for-analysis flows read consistently as project-scoped work.
-3. Tests that assert UI copy updated; storage tests unchanged if keys stay.
-4. Optional follow-up issue for full storage rename (`themes/` → `projects/`) if desired later — **not** required for this issue.
-
-**Priority (P2):** Vocabulary consistency; reduces confusion with “theme” as design/styling.
-
-**Where:** `squadd/dashboard.html`, `squadd/web.clj` labels; approval titles/reasons; residual/product strings; role prompts that talk to operators.
-
-**Related:** B35 backlog; B87 Work Queue naming; **B89** project directories; **B91** WIF labels.
-
----
-
-### B91 — WIF analyst label: project:story (e.g. HTW:HHG), not “Theme: HTW”
-
-**Symptom (live):** While **Holy Hand Grenade (HHG)** is being analyzed, Work Queue / WIF shows something like **`Theme: HTW`** instead of a scannable **`HTW:HHG`** (project:story).
-
-**Root cause (two layers):**
-1. Mid-theme / story-targeted analyst assignments still store **`story_id: theme`** + **`scope: theme`** (e.g. `analyst-htw-holy-hand-grenade`), so WIF treats them as theme-wide and shows only the theme label.
-2. Theme title from `theme.md` is often literally **`# Theme: HTW`**, so the “human” label becomes **`Theme: HTW`** — worse than a bare id.
-
-**Expected:**
-1. WIF story column for analysis (and similar) prefers **`{project}:{story}`** when a specific story is known — e.g. **`HTW:HHG`** or **`htw:holy-hand-grenade`** (document one display convention; short aliases OK if durable).
-2. Infer story when metadata still says `story_id: theme`:
-   - from assignment id patterns (`analyst-<theme>-<story>`, `htw-holy-hand-grenade-analysis`, …), and/or
-   - from assignment instructions / backlog title, and/or
-   - fix **create path** so story-targeted analyst assignments set real `story_id` / `scope: story` (preferred long-term).
-3. Theme/project display name: strip a leading **`Theme:`** / **`Project:`** prefix from `theme.md` H1; never show the word **Theme** as the WIF label after **B88**.
-4. Full theme-wide analysis (true greenfield, no single story): show **project name only** (e.g. `HTW`), not `Theme: HTW`.
-5. Tests: HHG-style assignment with `story_id: theme` but id/title implying holy-hand-grenade → WIF label contains both project and story tokens; theme.md `# Theme: HTW` does not produce label starting with `Theme:`.
-
-**Priority (P2):** Operator cannot tell which story an analyst is working from WIF.
-
-**Where:** `squadd/web.clj` `wif-story-label` / `theme-display-name`; analyst assignment create (`squad_assign` / residual) for mid-theme stories; optional short-name map for HHG.
-
-**Related:** **B88** project vocabulary; mid-theme analysis.
-
----
 
 ### B103 — Project-first intake: one project, many stories, explicit start
 
@@ -122,14 +62,14 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 1. Exact backlog UI shape: whether Add Project / Add Story / Start Project live under the backlog deck button, a project menu, or a top-level intake control.
 2. Durable state model for one pending project plus many attached stories.
 3. Validation rules when no project exists, when a project is already pending, and when stories are added before start.
-4. How this interacts with B89 project directories and B88 display vocabulary.
+4. How this interacts with B89 project directories and project display vocabulary.
 5. Whether starting a project creates a project-scoped SL assignment, an analyst assignment, or a two-step SL-design-then-analyst pipeline.
 
 **Priority (P2):** This changes the product intake model and should be settled before deeper backlog/project implementation.
 
 **Where:** Backlog UI/API; project/theme creation flow; Squad Leader prompt/residual; analyst handoff input; `.squad/backlog` / `.squad/themes` durable state.
 
-**Related:** B88 project vocabulary; B89 project directories; B96 analyst batching; B102 backlog button; B35 backlog approve-for-analysis.
+**Related:** B89 project directories; B96 analyst batching; B102 backlog button; B35 backlog approve-for-analysis.
 
 ---
 
@@ -145,33 +85,16 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 5. Existing swarms: migration path or “root continues to work” until re-homed — do not break open htw mid-flight without a plan.
 
 **Expected:**
-1. `squad_theme.sh create` / project-create path (after **B88** naming) creates the named subdirectory and seeds standard layout.
+1. `squad_theme.sh create` / project-create path creates the named subdirectory and seeds standard layout.
 2. Dashboard / tools / agent worktrees default cwd or artifact paths to that project dir when scoped.
 3. Tests: create project `foo` → `projects/foo/` (or chosen root) exists with expected skeleton; no requirement that all of `stories/` live only at monorepo root.
 4. Docs: one paragraph on project directory layout vs `.squad` control plane.
 
-**Priority (P2):** Multi-project hygiene; pairs with **B88** project vocabulary.
+**Priority (P2):** Multi-project hygiene.
 
 **Where:** `squad_theme` create; assignment/worktree root selection; packet story paths; templates that write `stories/` / `features/`; optional `projects/` convention in product templates.
 
-**Related:** **B88** theme→project; B23 project/theme lifecycle; B35 backlog approve → analysis.
-
----
-
-### B87 — Rename “Work in flight” to “Work Queue”
-
-**Policy / UX:** The Ops rail section currently labeled **Work in flight** should be named **Work Queue**.
-
-**Expected:**
-1. Visible section heading: **Work Queue** (not “Work in flight” / “WIF”).
-2. Update any operator-facing strings in the live dashboard (`dashboard.html` / `web.clj`) that show this label.
-3. Internal ids/API keys (`work_in_flight`, CSS classes, code comments) may stay for compatibility unless a rename is cheap and complete — prefer not to break clients for a display-only change.
-
-**Priority (P3):** Naming clarity.
-
-**Where:** `squadd/dashboard.html` (section `<h2>` / Work in flight); any user-visible copy in `squadd/web.clj`.
-
-**Related:** B46/B59 WIF table; Ops rail layout.
+**Related:** B23 project/theme lifecycle; B35 backlog approve → analysis.
 
 ---
 
@@ -191,7 +114,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 **Where:** `squadd/dashboard.html` `renderBoard` / backlog deck binding; optional `squadd_web_test` dashboard HTML assertions.
 
-**Related:** B35 backlog CRUD / approve-for-analysis; B62 board columns; B88 project vocabulary.
+**Related:** B35 backlog CRUD / approve-for-analysis; B62 board columns.
 
 ---
 

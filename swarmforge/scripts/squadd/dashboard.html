@@ -166,15 +166,15 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
     <main class="board">
       <div class="board-toolbar">
         <span>Board</span>
-        <span class="pill" id="theme-pill">theme: —</span>
+        <span class="pill" id="theme-pill">project: —</span>
         <span class="spacer"></span>
       </div>
       <div class="columns" id="columns"></div>
     </main>
     <div class="splitter" id="splitter" title="Drag to resize" role="separator" aria-orientation="vertical"></div>
     <aside class="rail">
-      <section class="shrink"><h2>Themes</h2><div class="scroll-body" id="themes"></div></section>
-      <section class="work-sec"><h2>Work in flight</h2><div class="work-wrap" id="work"></div></section>
+      <section class="shrink"><h2>Projects</h2><div class="scroll-body" id="themes"></div></section>
+      <section class="work-sec"><h2>Work Queue</h2><div class="work-wrap" id="work"></div></section>
       <section class="ts">
         <div class="ts-head">
           <h2 id="sl-requests-title">Troubleshooter</h2>
@@ -480,13 +480,13 @@ function bindBacklogDeck(openBl) {
 
 function renderThemes(data) {
   const tid=data.current_theme_id;
-  document.getElementById('theme-pill').textContent='theme: '+(tid||'—');
+  document.getElementById('theme-pill').textContent='project: '+(tid||'—');
   // B42: always link to theme package when a current theme exists
   document.getElementById('themes').innerHTML=tid?
     `<div class="theme-card"><div class="name">${esc(tid)} <span class="pill pill-ok">active</span></div>
      <div class="meta" style="font-size:10px;margin-top:4px">Package on disk</div>
-     <button type="button" class="btn btn-sm" style="margin-top:6px" data-view-theme="${esc(tid)}">View theme</button></div>`:
-    '<div class="meta">No theme</div>';
+     <button type="button" class="btn btn-sm" style="margin-top:6px" data-view-theme="${esc(tid)}">View project</button></div>`:
+    '<div class="meta">No project</div>';
   const btn=document.querySelector('[data-view-theme]');
   if(btn) btn.onclick=()=>openAgentWindow('/artifact/theme/'+encodeURIComponent(btn.getAttribute('data-view-theme')),'squad-theme');
 }
@@ -585,7 +585,7 @@ function openBacklogEditor(item) {
     bodyHtml: `<label>Title</label><input type="text" id="be-title" value="${esc(item&&item.title||'')}">
       <label>Description</label><textarea id="be-body">${esc(item&&item.body||'')}</textarea>
       <div class="dates">${isNew?'Not saved yet.':`Created ${esc(fmt(item.created_at))} · Modified ${esc(fmt(item.updated_at))}`}</div>
-      <div class="note"><strong>Add</strong> → backlog only. <strong>Approve</strong> → pipeline; SL classifies theme vs story.</div>
+      <div class="note"><strong>Add</strong> → backlog only. <strong>Approve</strong> → pipeline; SL classifies project vs story.</div>
       <div class="actions">
         <button type="button" class="btn" data-be="cancel">Cancel</button>
         ${!isNew?'<button type="button" class="btn btn-danger" data-be="delete">Delete</button>':''}
@@ -634,7 +634,7 @@ function openStoryDetail(s) {
     left: Math.max(40,innerWidth-460), top:100,
     bodyHtml:`<div style="font-weight:700;font-size:14px">${esc(label)}</div>
       <div class="dates">Updated ${esc(fmt(s.updated_at))} · ${esc(age(s.updated_at))}</div>
-      <p style="font-size:12px">Theme <strong>${esc(s.theme_id||'—')}</strong> · ${esc(s.state||'')} · ${esc(boardColumn(s))}</p>
+      <p style="font-size:12px">Project <strong>${esc(s.theme_id||'—')}</strong> · ${esc(s.state||'')} · ${esc(boardColumn(s))}</p>
       <div class="stat-grid">
         <div class="k">Gherkin</div><div class="v">${esc(s.gherkin_review_state||s.gherkin_review||'—')}</div>
         <div class="k">QA proc</div><div class="v">${esc(s.qa_procedure_review_state||'—')}</div>
