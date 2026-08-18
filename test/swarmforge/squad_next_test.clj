@@ -988,8 +988,8 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-next-creates-code-reviewer-after-new-cleaner-version
-  ;; After a re-clean (second cleaner), allow exactly one new code-reviewer
+(deftest squad-next-does-not-create-code-reviewer-after-new-cleaner-version
+  ;; B101: one CR per story. A second cleaner after the first CR does not spawn CR-r2.
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -1000,7 +1000,8 @@
                        "theme_id: wumpus\n"
                        "implementation_sha: abcdef2222\n"
                        "cleaner_sha: abcdef2222\n"
-                       "cleaner_assignment: alpha-cleaner-r2\n"))
+                       "cleaner_assignment: alpha-cleaner-r2\n"
+                       "code_review_iterations: alpha-code-review=changes-requested\n"))
       (doseq [id ["alpha-cleaner" "alpha-cleaner-r2"]]
         (write-file (fs/path root ".squad/assignments" id "metadata")
                     (str "assignment_id: " id "\ntheme_id: wumpus\nstory_id: alpha\ntemplate: cleaner\n"))
@@ -1009,9 +1010,8 @@
                   "assignment_id: alpha-code-review\ntheme_id: wumpus\nstory_id: alpha\ntemplate: code-reviewer\n")
       (write-file (fs/path root ".squad/assignments/alpha-code-review/status") "state: merged\n")
       (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "TEMPLATE: code-reviewer"))
-        (is (str/includes? (:out next) "ASSIGNMENT: alpha-code-review-r2"))
-        (is (not (str/includes? (:out next) "alpha-code-review-r3"))))
+        (is (not (str/includes? (:out next) "alpha-code-review-r2")))
+        (is (not (str/includes? (:out next) "TEMPLATE: code-reviewer"))))
       (finally
         (fs/delete-tree root)))))
 

@@ -4,7 +4,7 @@ Read and obey `swarmforge/role-templates/hardener.contract.edn`.
 
 ## Owns
 
-- Apply assigned hardening work after code review acceptance.
+- Apply assigned hardening work after code review acceptance, or after the single CR requested changes and implementer/cleaner rework landed (B101).
 - Improve robustness, edge handling, mutation resistance, and verification depth within the assigned scope.
 
 ## Tools

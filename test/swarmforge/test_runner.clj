@@ -9,6 +9,7 @@
             [swarmforge.handoff-test]
             [swarmforge.handoff-lib-test]
             [swarmforge.issues-b68-b82-test]
+            [swarmforge.issues-b94-b99-b101-test]
             [swarmforge.launcher-test]
             [swarmforge.recover-test]
             [swarmforge.role-contract-test]
@@ -29,6 +30,7 @@
     swarmforge.durable-blocker-test
     swarmforge.handoff-lib-test
     swarmforge.issues-b68-b82-test
+    swarmforge.issues-b94-b99-b101-test
     swarmforge.launcher-test
     swarmforge.recover-test
     swarmforge.role-contract-test

@@ -440,7 +440,9 @@
           (recur (inc iteration))
           candidate)))))
 
-(declare agent-state transient-row? next-batch-id visible-handoff-agents capacity-counted-agent? ready-actions)
+(declare agent-state transient-row? next-batch-id visible-handoff-agents
+         capacity-counted-agent? ready-actions hardener-member-ready?
+         held-handoff-files)
 
 (defn agent-files [root agent]
   (let [agent-dir (fs/path root ".squad" "agents" agent)]
@@ -1065,8 +1067,8 @@
 
 (defn implementation-revision-candidate
   "At most one implementer rework while code_review is currently changes-requested.
-  After that rework merges and is re-recorded, clear-downstream drops CR and a
-  fresh code-review cycle is required."
+  After that rework merges and is re-recorded, clear-downstream drops CR and
+  B101 sends the story to a new cleaner then hardener — not a second CR."
   [root assignments agents packet reason priority stage-order]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         theme-id (get packet "theme_id")]
@@ -1115,12 +1117,12 @@
       n)))
 
 (defn code-review-create-allowed?
-  "At most one code-reviewer assignment per cleaner version. Stops unbounded
-  *-code-review-rN when a review result was never recorded on the packet."
+  "B101: at most one code-reviewer assignment and one recorded verdict per story."
   [assignments packet story-id]
-  (let [reviewers (assignment-count-for assignments story-id "code-reviewer")
-        cleaners (cleaner-version-count assignments packet story-id)]
-    (< reviewers cleaners)))
+  (not (or (assignment-ever-for? assignments story-id "code-reviewer")
+           (field-accepted? packet "code_review")
+           (field-changes-requested? packet "code_review")
+           (field-present? packet "code_review_iterations"))))
 
 (defn code-review-assignment-candidate [root assignments agents packet]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
@@ -1597,12 +1599,36 @@
        :command (str "squad_packet.sh record " story-id " " kind " "
                      (:assignment-id assignment) " master " sha)})))
 
+(defn inferred-batch-member-rows
+  "B99: senior-implementer reform often has no manifest. Infer members from
+  architecture changes-requested stories in the same theme."
+  [root assignment kind]
+  (when (and (= "batch" (:story-id assignment))
+             (= "senior-implementer" kind))
+    (->> (packets root)
+         (filter #(= (:theme-id assignment) (get % "theme_id")))
+         (filter #(and (field-changes-requested? % "architecture_review")
+                       (packet-result-missing? % kind)))
+         (map (fn [packet]
+                {:story-id (get packet "story_id" (get packet "_story_id"))
+                 :stage "architecture_changes_requested"
+                 :assignment-id (:assignment-id assignment)
+                 :branch "master"
+                 :sha nil}))
+         vec)))
+
+(defn batch-member-rows [root assignment kind]
+  (let [rows (batch-manifest-rows root (assignment-batch-id assignment))]
+    (if (seq rows)
+      rows
+      (or (inferred-batch-member-rows root assignment kind) []))))
+
 (defn batch-result-record-candidates [root assignments packets]
   (let [packets-by-story (packet-by-story packets)]
     (->> (for [assignment assignments
                :let [kind (get result-assignment-rules (:template assignment))]
                :when (and kind (= "batch" (:story-id assignment)))
-               member (batch-manifest-rows root (assignment-batch-id assignment))
+               member (batch-member-rows root assignment kind)
                :let [candidate (batch-result-record-candidate root packets-by-story assignment kind member)]
                :when candidate]
            candidate)
@@ -2001,14 +2027,15 @@
     :priority 60
     :stage-order 130
     :candidate (fn [ctx packet]
-                 (when (and (approval-satisfied? (:root ctx) packet "code-review")
-                            (field-accepted? packet "code_review")
-                            (field-present? packet "code_review_sha")
+                 (when (and (hardener-member-ready? (:root ctx) packet)
                             (not (field-present? packet "hardener_batch")))
                    (batch-candidate (:root ctx) (:assignments ctx) packet "hardener" "hardener"
                                     "code_reviewed"
                                     "code-reviewed story is ready for hardener batch"
-                                    60 125 "code_review")))}
+                                    60 125
+                                    (if (field-present? packet "code_review_sha")
+                                      "code_review"
+                                      "cleaner"))))}
    {:id :hardening-approval
     :priority 30
     :stage-order 140
@@ -2081,11 +2108,24 @@
 (defn same-theme-packets [all-packets theme-id]
   (filter #(= theme-id (get % "theme_id")) all-packets))
 
+(defn code-review-iteration-changes-requested? [packet]
+  (str/includes? (str (get packet "code_review_iterations" "")) "changes-requested"))
+
+(defn post-rework-ready-for-hardener?
+  "B101: after the single CR requested changes, a recorded rework cleaner
+  is enough to enter harden — no second CR accept required."
+  [packet]
+  (and (field-present? packet "cleaner_sha")
+       (not (field-accepted? packet "code_review"))
+       (not (field-changes-requested? packet "code_review"))
+       (code-review-iteration-changes-requested? packet)))
+
 (defn hardener-member-ready? [root packet]
   (and (approval-satisfied? root packet "code-review")
-       (field-accepted? packet "code_review")
-       (field-present? packet "code_review_sha")
-       (not (field-present? packet "hardener_sha"))))
+       (not (field-present? packet "hardener_sha"))
+       (or (and (field-accepted? packet "code_review")
+                (field-present? packet "code_review_sha"))
+           (post-rework-ready-for-hardener? packet))))
 
 (defn hardener-stage-clear? [root packet]
   (or (field-present? packet "hardener_sha")
@@ -2410,6 +2450,35 @@
   #{"created" "assignment_created" "in_progress" "handoff_sent"
     "result_received" "merge_ready" "merge_blocked"})
 
+(defn open-depth-2-merger-ids
+  "Unresolved merger assignments at max useful depth (*-merge-merge)."
+  [assignments]
+  (->> assignments
+       (filter #(and (= "merger" (:template %))
+                     (>= (merge-suffix-depth (:assignment-id %)) 2)
+                     (contains? open-merger-states (:state %))))
+       (map :assignment-id)
+       set))
+
+(defn pause-product-accept-merge?
+  "B94: while a depth-2 merger is unresolved, do not accept-merge other work onto main."
+  [assignments assignment-id]
+  (let [open-ids (open-depth-2-merger-ids assignments)]
+    (boolean (and (seq open-ids)
+                  (not (contains? open-ids assignment-id))))))
+
+(defn pause-product-accept-merge-at-root? [root assignment-id]
+  (pause-product-accept-merge? (assignment-records root) assignment-id))
+
+(defn accept-merge-handoff-step [root assignment-id reason]
+  (if (pause-product-accept-merge-at-root? root assignment-id)
+    {:action "wait_for_merge_recovery"
+     :reason (str "depth-2 merger is open; pause product accept-merge of " assignment-id)
+     :command "sleep 5 && squad_next.sh --residual-only"}
+    {:action "accept_merge"
+     :reason reason
+     :command (str "squad_assign.sh accept-merge " assignment-id)}))
+
 (defn open-merger-assignments [assignments]
   (filter #(and (= "merger" (:template %))
                 (contains? open-merger-states (:state %)))
@@ -2700,9 +2769,9 @@
         ;; Status can lag merge file when result was re-recorded after merge-ready.
         (and (= "result_received" state)
              (= "merge_ready" merge-state))
-        {:action "accept_merge"
-         :reason "merge readiness already recorded; accept merge before handoff completion"
-         :command (str "squad_assign.sh accept-merge " assignment-id)}
+        (accept-merge-handoff-step
+         root assignment-id
+         "merge readiness already recorded; accept merge before handoff completion")
 
         (and (= "result_received" state)
              (= "merge_blocked" merge-state))
@@ -2721,9 +2790,9 @@
            :command (str "squad_assign.sh merge-ready " assignment-id)}
 
           "merge_ready"
-          {:action "accept_merge"
-           :reason "merge-ready result must be accepted before handoff completion"
-           :command (str "squad_assign.sh accept-merge " assignment-id)}
+          (accept-merge-handoff-step
+           root assignment-id
+           "merge-ready result must be accepted before handoff completion")
 
           ;; merge_blocked and other unresolved states: no handoff step here.
           nil)))))
@@ -3240,6 +3309,50 @@
 (defn handoff-inbox-dir [root]
   (fs/path root ".swarmforge" "handoffs" "inbox"))
 
+(defn park-paused-product-accept-handoffs!
+  "B94: park product accept-merge handoffs while a depth-2 merger owns main."
+  [root]
+  (let [in-process-dir (fs/path (handoff-inbox-dir root) "in_process")
+        held-dir (fs/path (handoff-inbox-dir root) "held")
+        parked (atom [])]
+    (doseq [file (files-with-extension in-process-dir ".handoff")]
+      (when (= "wait_for_merge_recovery" (:action (in-process-git-handoff-command root file)))
+        (fs/create-dirs held-dir)
+        (let [dest (fs/path held-dir (fs/file-name file))]
+          (fs/move file dest {:replace-existing true})
+          (swap! parked conj
+                 {:next-action "park_paused_product_accept"
+                  :assignment-id (handoff-task dest)
+                  :exit 0
+                  :out ""
+                  :err ""
+                  :command (str "park " (fs/file-name dest))}))))
+    @parked))
+
+(defn restore-held-accept-handoffs-after-depth-2!
+  "After depth-2 recovery ends, return parked merge_ready product mail to in_process."
+  [root]
+  (when (empty? (open-depth-2-merger-ids (assignment-records root)))
+    (let [in-process-dir (fs/path (handoff-inbox-dir root) "in_process")
+          existing (first (files-with-extension in-process-dir ".handoff"))]
+      (when (nil? existing)
+        (some (fn [file]
+                (let [assignment-id (handoff-task file)
+                      state (assignment-status-state root assignment-id)
+                      merge-state (assignment-merge-file-state root assignment-id)]
+                  (when (or (= "merge_ready" state)
+                            (= "merge_ready" merge-state))
+                    (fs/create-dirs in-process-dir)
+                    (fs/move file (fs/path in-process-dir (fs/file-name file))
+                             {:replace-existing true})
+                    [{:next-action "restore_paused_product_accept"
+                      :assignment-id assignment-id
+                      :exit 0
+                      :out ""
+                      :err ""
+                      :command (str "restore " (fs/file-name file))}])))
+              (held-handoff-files root))))))
+
 (defn park-merge-blocked-in-process-handoffs!
   "Free the single in_process slot: park merge_blocked handoffs under inbox/held/
   so later workers' mail can be claimed. Merger residual still sees the assignment."
@@ -3331,10 +3444,13 @@
         stale (or (apply-clear-stale-lock-step! root) [])
         ;; Free in_process before claim so merge_blocked does not starve new mail.
         parked (park-merge-blocked-in-process-handoffs! root)
+        paused (park-paused-product-accept-handoffs! root)
+        restored (or (restore-held-accept-handoffs-after-depth-2! root) [])
         held-finish (or (apply-held-handoff-finish-step! root) [])
         claim (or (apply-process-new-handoff-step! root) [])
         handoff (or (apply-in-process-handoff-step! root) [])]
-    (into [] (concat bookkeeping retires daemon-ready stale parked held-finish claim handoff))))
+    (into [] (concat bookkeeping retires daemon-ready stale parked paused restored
+                     held-finish claim handoff))))
 
 (defn print-sl-facing-residual! []
   (binding [*sl-facing-residual?* true]

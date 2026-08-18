@@ -17,10 +17,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | **P2** | B89 | Projects live in appropriately named subdirectories | Product / IA | Project layout / filesystem |
 | **P2** | B91 | WIF analyst label: project:story (e.g. HTW:HHG), not “Theme: HTW” | UX / Bug | Dashboard / WIF |
 | **P2** | B103 | Project-first intake: one project, many stories, explicit start | Product direction | Backlog / SL / analyst |
-| **P1** | B94 | Pause product accept-merge while depth-2 merger open | Bug / policy | Merge / handoff |
-| **P1** | B99 | Mergers must propagate packet stamps for the blocked product assignment | Bug | Merge / packet / residual |
 | **P1** | B100 | Workflow: story Done after QA; project Done after architect (or senior-impl) | Product / policy | Board / project lifecycle |
-| **P1** | B101 | One code review per story; CR changes-requested → impl→cleaner→hardener (no CR-r2) | Bug / policy | Code review / rework |
 | **P2** | B96 | Analyst plans implementer batches (≤2 same-level, related modules) | Process / policy | Analyst / implementer / merge |
 | **P2** | B97 | Architect / senior-implementer only after all project stories finish QA | Process / policy | Architecture / QA batch |
 | **P2** | B98 | Architect must not require module-map edits as senior-implementer work | Process / policy | Architect / senior-implementer |
@@ -34,7 +31,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 ## Suggested fix order
 
-1. **P1:** **B101** (one CR per story; rework → hardener), **B100** (story Done after QA; project Done after architect/senior-impl), **B94** (pause product merges during double-merge recovery), **B99** (merger resolution must stamp product packets).
+1. **P1:** **B100** (story Done after QA; project Done after architect/senior-impl).
 2. **P2:** **B103** (project-first intake/start), **B98** (no module-map chores for senior-impl), **B97** (arch/senior only after all stories QA), **B96** (analyst implementer batches), **B91** (WIF project:story labels), **B88** (theme → project vocabulary), **B89** (project subdirectories).
 3. **P3:** **B95** (therm hash ignore timer line), **B93** (card glow pulse), **B92** (status “next action”), **B102** (Backlog button), **B87** (Work Queue label).
 
@@ -44,10 +41,10 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Cluster | Bugs | Note |
 |---------|------|------|
-| Packet repair / rework cycle | **B94**, **B96**, **B97**, **B98**, **B99**, **B101** | Depth-2 merge brake; implementer batches; hold architecture until project QA-complete; no late map rewrite chores; merger→packet stamp; one CR then harden |
+| Packet repair / rework cycle | **B96**, **B97**, **B98** | Implementer batches; hold architecture until project QA-complete; no late map rewrite chores. B94/B99/B101 done. |
 | Operator chat / dashboard IO | **B87**, **B88**, **B91**, **B92**, **B93**, **B95**, **B102** | Work Queue; project vocab; WIF labels; next-action; card glow; therm timer noise; backlog button |
 | Product intake | **B88**, **B89**, **B91**, **B96**, **B97**, **B98**, **B100**, **B103** | Project layout/vocab; mid-theme WIF; analyst batch plan; arch gate timing; map ownership; Done semantics; project-first intake/start |
-| Control plane | **B99**, **B100** | residual order, YOLO, dirty soft-defer, QA fail gate closed; merger must project `record_merged_*`; story vs project Done |
+| Control plane | **B100** | story vs project Done. Merger packet stamps (B99) done. |
 | Lifecycle hygiene | — | B11/B12/B37/B38 done |
 | Theme / architecture gates | **B100** | Story Done after QA; project Done after architect accept or senior-impl; supersedes story `final_approved` as Done gate (B23 still related) |
 | Deep durable arch | — | B20–B22 + **B40** write-atomic/kv adoption |
@@ -590,6 +587,7 @@ Former free-standing notes (`architecture-improvements.md`) are superseded: foun
 | P3 WIF therm | **B66** | Per-agent three-bar pane activity on WIF rows |
 | P1–P3 follow-up | **B83**–**B86** | Analyst singleton; WIF theme labels; WIF six-bar therm; session open scrolls to bottom |
 | P1 pane scroll | **B90** | Session pane open-at-bottom failed: `pre` grew with content so `scrollTop` was a no-op; fixed viewport scrollport + reopen reload |
+| P1 merge/rework | **B101**, **B94**, **B99** | One CR then impl→cleaner→hardener; pause product accept-merge while depth-2 merger open; merger resolution stamps product packets (incl. senior-impl without manifest) |
 
 
 ---
