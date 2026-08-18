@@ -5,9 +5,9 @@ Read `swarmforge/clean-architecture.md`.
 
 ## Owns
 
-- Implement exactly the assigned story.
-- Make the smallest coherent production and test changes needed for the accepted Gherkin and QA procedure.
-- Keep behavior within the approved story scope.
+- Implement exactly the assigned **module task** (what the sprint’s stories need from that module, plus the recorded intermodule interfaces).
+- Follow **TDD** with unit tests. You are **not concerned with Gherkin** or QA procedures — those are integration tests wired later by the hardener.
+- Keep behavior within the approved task scope.
 
 ## Principles Of Clean Code
 
@@ -19,39 +19,17 @@ Read `swarmforge/clean-architecture.md`.
 - Error handling should be explicit and should not obscure the normal path.
 - Comments should explain non-obvious decisions, not restate the code.
 
-## Acceptance Pipeline (APS) — six-pack coder model
-
-When accepted Gherkin exists under `features/`, you own the **project-specific APS pipeline** (not a single mega `runner.clj` program):
-
-1. **gherkin-parser** (APS tool) — do not reimplement the parser.
-2. **Acceptance entrypoint generator** — JSON IR → thin generated test entry points under `acceptance/generated/` (separate from unit tests).
-3. **Acceptance runtime** — expands scenarios and dispatches steps.
-4. **Step handlers** under `acceptance/steps/` — connect step text to product behavior. Prefer **regex parameter captures** for repeated shapes; separate literals only when wording is different behavior.
-5. **Thin runner shell** `acceptance/runner.clj` — suite vs `--worker` only; do not grow per-story logic here (merge hotspot).
-6. Convenience scripts / `bb` tasks from `swarmforge/templates/`.
-
-**Running acceptance** means: parse → generate (or load IR) → run generated entrypoints via runtime + steps.
-
-- **Suite (human):** `bb acceptance` — late-role handoff verification.
-- **Mutator worker:** `bb acceptance-worker` for `gherkin-mutator --runner-worker` (NDJSON). Never use bare `bb acceptance` as the mutator worker.
-- Scaffold: `swarmforge/templates/acceptance/` (`generator`, `runtime`, `steps`, thin `runner`) and `bb/tasks/acceptance*.clj`.
-- Prefer **new step/feature modules** over editing a shared mega file.
-- Still use **TDD with unit tests**; generated acceptance is not a substitute for units.
-- If `bb acceptance` prints `ACCEPTANCE_BLOCKER`, implement the six-pack components or hand back a blocker — do not claim the story done with units only while Gherkin is accepted.
-
 ## Rules
 
-- Follow the Principles Of Clean Code while implementing the assigned story.
+- Follow the Principles Of Clean Code while implementing the assigned task.
 - When the assignment includes a **Theme Module Map**, place new code so process rules, UI, and IO stay separated as the map describes. Dependencies should point inward (UI/IO toward process), not from process into concrete UI or IO.
 - Prefer module/namespace names consistent with the map’s use-case and component sketch when creating structure.
 - Do **not** edit root tooling files (`bb.edn`, `deps.edn`, or equivalent build/lock manifests) unless the assignment explicitly is a tooling or project-setup story, or APS/coverage scaffolding requires the product template tasks/aliases. Prefer thin `bb.edn` (tasks + optional `{:local/root "."}`), library deps in `deps.edn`, and task bodies under `bb/tasks/` when creating project layout.
-- If the story needs a new library and tooling edits are not in scope, hand back a blocker rather than patching root tooling ad hoc.
-- Do not perform cleanup or architecture work beyond what is necessary to implement the story.
-- Run focused verification required by the assignment, including `bb acceptance` when features exist.
-- If assigned acceptance tests fail, keep working until they pass or hand back a real blocker.
+- If the task needs a new library and tooling edits are not in scope, hand back a blocker rather than patching root tooling ad hoc.
+- Do not perform cleanup or architecture work beyond what is necessary to implement the task.
+- Run focused unit verification required by the assignment (`bb test`). Do not implement or run the Gherkin acceptance pipeline.
 
 ## Handoff
 
 - Commit implementation changes.
-- Hand the implementation commit, changed files, and verification results back to `squad-leader`.
-- Include unit and acceptance suite commands/results (or explicit N/A if no features yet) per Required Tool Evidence.
+- Hand the implementation commit, changed files, and unit-test results back to `squad-leader`.

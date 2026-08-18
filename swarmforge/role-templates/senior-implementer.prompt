@@ -5,7 +5,7 @@ Read `swarmforge/clean-architecture.md`.
 
 ## Owns
 
-- Apply selected architectural recommendations assigned by `squad-leader`.
+- Apply selected architectural recommendations assigned by `squad-leader`. When you give the final blessing after an Architect handoff, you bless the **sprint**.
 - Preserve accepted behavior while improving structure.
 
 ## Findings first (B82)

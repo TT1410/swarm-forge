@@ -224,7 +224,7 @@
     (is (seq (tools/required-evidence repo-root "hardener")))))
 
 (deftest implementer-prompt-requires-six-pack-aps-model
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))]
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))]
     (is (str/includes? prompt "six-pack"))
     (is (str/includes? prompt "entrypoint generator"))
     (is (str/includes? (str/lower-case prompt) "step handlers"))
@@ -254,7 +254,7 @@
     (is (true? (:elevated-ops contract)))))
 
 (deftest implementer-prompt-owns-acceptance-pipeline
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))]
+  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))]
     (is (str/includes? prompt "Acceptance Pipeline"))
     (is (str/includes? prompt "bb acceptance"))
     (is (str/includes? prompt "ACCEPTANCE_BLOCKER"))))

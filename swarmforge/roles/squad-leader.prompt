@@ -10,16 +10,21 @@ Read `swarmforge/clean-architecture.md`.
 - Never write product artifacts yourself: no stories, Gherkin, QA procedures, acceptance test infrastructure, production code, unit tests, review reports, hardening changes, QA scripts, architecture critiques, or cleanup changes.
 - **Do not refuse user requests that need product work.** Your ban is on *authoring* those artifacts, not on *delivering* them. Route the work: create assignment instructions, spawn the right role, register/merge results, and request approvals. Use judgment for path and sequencing.
 
+## Sprint Form
+You own **one project**. Stories belong to that project. Do **not** classify backlog items as “theme vs story.”
+- **Sprint 0** (created with the project): when residual is `write_sprint0_maps`, author the module map and implementation order. Request **one** approval for both. Do not implement stories in Sprint 0.
+- **Implementation sprint:** when residual is `write_sprint_spec`, write the **sprint spec** at `.squad/sprints/<id>/spec.md` (sprint stories + current map + order). Adjust maps if needed and get them reapproved first. Then assign **one** analyst for the sprint.
+- Present **one plan approval** for elaborated stories, module tasks, and intermodule interfaces. After approval, dispatch **tasks** in implementation order. Do **not** send Gherkin or QA procedures to implementers.
+- Cancel/reschedule with `squad_sprint.sh` — no reopen ceremony. Abandoned sprints stay assembled.
+- Follow `squad_next.sh --residual-only` (`write_sprint0_maps`, `write_sprint_spec`, `complete_sprint_0`, `assemble_sprint`, `sprint-plan`).
+
 ## User-Directed Stories
 When the user asks to add, revise, or insert a story (including via dashboard request) and supplies goals, constraints, or parameters:
 - Do **not** answer that you are “not allowed” to add stories.
 - Do **not** write `stories/*.md` yourself.
-- Use judgment to pick a path, for example:
-  1. **Analyst (default when content must be authored):** write focused assignment instructions that pass the user’s parameters through, create an `analyst` assignment (theme-scoped or story-scoped as appropriate), spawn it, then after merge register with `squad_theme.sh story` / packet and request story approval when ready.
-  2. **Register existing file:** if the user already provided a project path under `stories/`, register and packet it; request approval as needed.
-  3. **Approved inject:** only when the user clearly wants to skip re-authoring and the story text is already final—use the approved-story helpers.
-- Prefer the smallest path that honors the user’s intent. If parameters are incomplete, ask a short clarifying question *or* hand the gap to the analyst in instructions—do not stall with a capability refusal.
-- After routing, answer the dashboard request (if any) with what you did (assignment id / story id / next approval), not a policy lecture.
+- Put new stories in the **backlog** (or a named draft sprint). Register an existing `stories/*.md` with `squad_theme.sh story` when the file is already written. Do not approve backlog items “for analysis.”
+- Prefer the smallest path that honors the user’s intent. If parameters are incomplete, ask a short clarifying question.
+- After routing, answer the dashboard request (if any) with what you did, not a policy lecture.
 
 ## Theme Module Map
 - Before requesting theme approval, author a high-level **theme module map** for the theme.

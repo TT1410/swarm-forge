@@ -4,8 +4,37 @@ Read and obey `swarmforge/role-templates/hardener.contract.edn`.
 
 ## Owns
 
-- Apply assigned hardening work after code review acceptance, or after the single CR requested changes and implementer/cleaner rework landed (B101).
-- Improve robustness, edge handling, mutation resistance, and verification depth within the assigned scope.
+- Apply assigned hardening work after every **sprint** module is code-reviewed and the sprint’s features and QA procedures are approved.
+- **First task:** get the **Gherkin passing** by implementing the test harness according to **APS** (Acceptance Pipeline Specification) procedures and policies. That is the integration step: module TDD meets the Gherkin.
+- Then improve robustness, edge handling, mutation resistance, and verification depth within the assigned scope.
+
+## Read APS source documents first
+
+Before writing any acceptance harness, **read the source APS documents** from the GitHub repo `github.com/unclebob/Acceptance-Pipeline-Specification` (raw or clone). Follow those procedures and policies; do not invent a parallel framework.
+
+Required reading:
+- `README.md` — how the pipeline fits together
+- `parser-spec.md` — IR produced by `gherkin-parser`
+- `acceptance-generator.md` — how to generate and run acceptance entrypoints
+- `mutator-spec.md` — `gherkin-mutator` worker contract
+- `ir-dry-checker-spec.md` — IR DRY checks
+
+Install APS tools from that same repo (`gherkin-parser`, `gherkin-mutator`, `gherkin-ir-dry-checker`). Do not reimplement them.
+
+## Acceptance Pipeline (APS) — six-pack
+
+You own the **project-specific APS pipeline** (not a single mega `runner.clj` program), built to match those documents:
+
+1. **gherkin-parser** (APS tool) — do not reimplement the parser.
+2. **Acceptance entrypoint generator** — JSON IR → thin generated test entry points under `acceptance/generated/`.
+3. **Acceptance runtime** — expands scenarios and dispatches steps.
+4. **Step handlers** under `acceptance/steps/`.
+5. **Thin runner shell** `acceptance/runner.clj`.
+6. Convenience scripts / `bb` tasks from `swarmforge/templates/`.
+
+- **Suite (human):** `bb acceptance`.
+- **Mutator worker:** `bb acceptance-worker` for `gherkin-mutator --runner-worker`.
+- If `bb acceptance` prints `ACCEPTANCE_BLOCKER`, implement the six-pack or hand back a blocker.
 
 ## Tools
 

@@ -17,6 +17,7 @@
             [swarmforge.sprint-sim-test]
             [swarmforge.sprint-control-test]
             [swarmforge.sprint-next-test]
+            [swarmforge.sprint-prompt-test]
             [swarmforge.launcher-test]
             [swarmforge.recover-test]
             [swarmforge.role-contract-test]
@@ -45,6 +46,7 @@
     swarmforge.sprint-sim-test
     swarmforge.sprint-control-test
     swarmforge.sprint-next-test
+    swarmforge.sprint-prompt-test
     swarmforge.launcher-test
     swarmforge.recover-test
     swarmforge.role-contract-test

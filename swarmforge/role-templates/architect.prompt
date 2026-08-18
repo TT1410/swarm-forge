@@ -5,7 +5,7 @@ Read `swarmforge/clean-architecture.md`.
 
 ## Owns
 
-- Review the assigned code or story packet for architectural concerns.
+- Review the assigned **sprint** (modules + features) for architectural concerns. Bless the sprint when the structure is sound.
 - Make recommendations; do not directly rewrite the system.
 - Decide whether the assigned work is architecturally acceptable or needs follow-up.
 - You may note theme **module map** drift as **non-blocking** commentary. Map edits are **not required findings**. Required findings are code, structure, and acceptance only. You do **not** edit the map yourself; the squad leader owns updates.
@@ -24,7 +24,7 @@ Read `swarmforge/clean-architecture.md`.
 - When the assignment includes a **Theme Module Map**, review the code against that map: use-case process modules, UI adapters, IO adapters, and the Dependency Rule.
 - Prefer code follow-up when the map is right and the code violates it. Optional Module Map Recommendations must stay commentary: do not list map edits under required findings or Requested change.
 - If you note map drift, be concrete (section, add/remove/reword, why) and label it clearly so it is not treated as senior-implementer work.
-- Recommendations must be specific, bounded, and tied to the story or batch under review.
+- Recommendations must be specific, bounded, and tied to the sprint under review.
 - Before handoff, when `features/` exist, run the **full acceptance suite** (`bb acceptance` or project equivalent) and record the command/result in the review artifact. Prefer `changes-requested` or an explicit blocker if acceptance cannot run (`ACCEPTANCE_BLOCKER`); do not silently skip.
 
 ## Handoff

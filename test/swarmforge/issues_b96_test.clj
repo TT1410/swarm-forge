@@ -35,11 +35,8 @@
 (deftest b96-analyst-prompt-and-order-template-document-batches
   (let [analyst (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))
         order (slurp (str (fs/path repo-root "swarmforge/templates/theme-implementation-order.md")))]
-    (is (str/includes? analyst "implementer")
-        "analyst owns implementer batching")
-    (is (or (str/includes? analyst "batch")
-            (str/includes? analyst "≤2")
-            (str/includes? analyst "at most two")))
+    (is (str/includes? analyst "task")
+        "analyst emits module tasks")
     (is (str/includes? order "Implementer batches"))))
 
 (deftest b96-residual-creates-one-implementer-for-two-ready-stories
