@@ -245,9 +245,11 @@ async function teardownSwarm() {
   }
 }
 function openAgentWindow(path, name) {
-  // B86: session panes scroll to bottom on open (pane-page also forces first paint)
+  // B86: always load pane-page fresh so open-at-bottom runs (named windows reuse otherwise)
   const w = 900, h = 700, left = Math.max(0, (screen.width-w)/2), top = Math.max(0, (screen.height-h)/2);
-  const win = window.open(path, name || 'squad-agent', `popup=yes,width=${w},height=${h},left=${left},top=${top}`);
+  const sep = path.indexOf('?') >= 0 ? '&' : '?';
+  const url = path + sep + '_open=' + Date.now();
+  const win = window.open(url, name || 'squad-agent', `popup=yes,width=${w},height=${h},left=${left},top=${top}`);
   try { if (win) win.focus(); } catch (_) {}
   return win;
 }
