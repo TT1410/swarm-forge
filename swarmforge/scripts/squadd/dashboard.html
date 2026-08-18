@@ -42,9 +42,13 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .col h3{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);flex:0 0 auto}
 /* B44: grow to bottom of board; scroll only after filling available height */
 .col-body{display:flex;flex-direction:column;align-items:flex-start;gap:8px;flex:1;min-height:100px;max-height:100%;overflow:auto;padding:8px;background:rgba(255,255,255,.35);border:1px dashed #c5cbc2;border-radius:10px;width:max-content;min-width:var(--card-min-w)}
-.backlog-col .col-body{align-items:center;overflow:visible;max-height:none;flex:0 0 auto}
-@keyframes card-glow{0%{box-shadow:0 0 0 3px rgba(47,107,58,.55),0 0 16px rgba(47,107,58,.35)}100%{box-shadow:none}}
-.card.glow{animation:card-glow 1s ease-out}
+@keyframes card-glow{0%,100%{box-shadow:none}50%{box-shadow:0 0 0 3px rgba(47,107,58,.55),0 0 16px rgba(47,107,58,.35)}}
+.card.glow{animation:card-glow .8s ease-in-out 3}
+.deck-btn{position:relative;width:38px;height:30px;border:0;background:transparent;cursor:pointer;flex:0 0 auto}
+.deck-btn .sheet{position:absolute;inset:4px 6px 2px 2px;background:var(--card);border:1px solid #c9c2a8;border-radius:3px}
+.deck-btn .sheet:nth-child(1){transform:translate(4px,3px) rotate(8deg);opacity:.55}
+.deck-btn .sheet:nth-child(2){transform:translate(2px,1px) rotate(3deg);opacity:.8}
+.deck-btn .sheet:nth-child(3){display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);transform:none}
 /* B60 soft hold */
 .card.hold{border-color:#d48a8a;box-shadow:0 0 0 1px rgba(180,80,80,.28)}
 .deck-wrap{display:flex;flex-direction:column;align-items:center;gap:8px}
@@ -168,6 +172,11 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
         <span>Board</span>
         <span class="pill" id="theme-pill">project: —</span>
         <span class="spacer"></span>
+        <button type="button" class="deck-btn" id="backlog-deck" title="Backlog">
+          <span class="sheet"></span><span class="sheet"></span>
+          <span class="sheet"><span class="count" id="backlog-count">0</span></span>
+        </button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add New Item</button>
       </div>
       <div class="columns" id="columns"></div>
     </main>
@@ -409,10 +418,9 @@ function renderBoard(data) {
   const stories=data.stories||[];
   const batches=data.batches||[];
   const openBl=(data.backlog||[]).filter(b=>b.status==='open'||!b.status);
-  const newest=openBl[0];
   // B62: Specifying · Coding · Finalizing · Done (no Ready)
-  const cols=['backlog','specifying','coding','finalizing','done'];
-  const titles={backlog:'Backlog',specifying:'Specifying',coding:'Coding',finalizing:'Finalizing',done:'Done'};
+  const cols=['specifying','coding','finalizing','done'];
+  const titles={specifying:'Specifying',coding:'Coding',finalizing:'Finalizing',done:'Done'};
   const glowIds=new Set();
   if (cardStatusPrimed) {
     stories.forEach(s=>{
@@ -426,14 +434,9 @@ function renderBoard(data) {
     stories.forEach(s=>{ if(s.story_id) cardStatusPrev.set(s.story_id, cardFingerprint(s)); });
     cardStatusPrimed=true;
   }
+  const countEl=document.getElementById('backlog-count');
+  if(countEl) countEl.textContent=String(openBl.length);
   document.getElementById('columns').innerHTML=cols.map(c=>{
-    if(c==='backlog'){
-      return `<div class="col backlog-col"><h3>Backlog</h3><div class="col-body"><div class="deck-wrap">
-        <div class="deck" id="backlog-deck" tabindex="0"><div class="sheet"></div><div class="sheet"></div>
-        <div class="sheet"><div>Backlog</div><div class="count">×${openBl.length}</div><div class="timer">${newest?esc(age(newest.updated_at)):'—'}</div></div></div>
-        <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add New Item</button>
-      </div></div></div>`;
-    }
     // B77: no double vision — hide free-floating story cards for active batch members
     const batFilter=c==='finalizing'
       ? b=>{const t=String(b.batch_kind||b.template||''); return /hardener|qa|architect|senior/i.test(t);}
@@ -468,11 +471,11 @@ function bindBacklogDeck(openBl) {
       <span class="d">created ${esc(fmt(b.created_at))} · modified ${esc(fmt(b.updated_at))}</span></button>`).join(''):
       '<div style="padding:12px;color:#68726c;font-size:11px">Empty — Add New Item</div>';
   };
-  const pos=()=>{const r=deck.getBoundingClientRect(); menu.style.left=(r.right+8)+'px'; menu.style.top=r.top+'px';};
+  const pos=()=>{const r=deck.getBoundingClientRect(); menu.style.left=Math.max(8, r.right-280)+'px'; menu.style.top=(r.bottom+6)+'px';};
   let hideT;
   const show=()=>{clearTimeout(hideT); fill(); menu.hidden=false; menu.classList.add('open'); pos();};
   const hide=()=>{hideT=setTimeout(()=>{menu.classList.remove('open'); menu.hidden=true;},180);};
-  deck.onmouseenter=show; deck.onmouseleave=hide;
+  deck.onclick=e=>{e.stopPropagation(); if(menu.classList.contains('open')) hide(); else show();};
   menu.onmouseenter=()=>clearTimeout(hideT); menu.onmouseleave=hide;
   const add=document.getElementById('btn-add-item');
   if(add) add.onclick=()=>openBacklogEditor(null);
@@ -676,7 +679,7 @@ async function refresh() {
     const residual=data.residual||data.next_action||'—';
     const product=data.product_pending?` · product: ${data.product_pending}`:'';
     document.getElementById('meta').textContent=
-      `slots · ${busyN} busy · ${fmtStamp(data.generated_at)} · residual: ${residual}${product}`;
+      `slots · ${busyN} busy · ${fmtStamp(data.generated_at)} · next action: ${residual}${product}`;
     document.getElementById('error').textContent='';
     // expose for tests / console
     window.__lastState=data;

@@ -15,17 +15,12 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 |-----|-----|--------|------|------|
 | **P2** | B89 | Projects live in appropriately named subdirectories | Product / IA | Project layout / filesystem |
 | **P2** | B103 | Project-first intake: one project, many stories, explicit start | Product direction | Backlog / SL / analyst |
-| **P3** | B102 | Backlog should be a top button, not a full board lane | UX | Dashboard / Board |
-| **P3** | B92 | Status bar: say “next action”, not “residual” | UX | Dashboard / status |
-| **P3** | B93 | Card status-change green flash: slower, pulse three times | UX | Dashboard / Board |
-| **P3** | B95 | Thermometers: drop last pane line before hash (timer noise) | Bug / UX | Dashboard / thermometers |
 
 ---
 
 ## Suggested fix order
 
 1. **P2:** **B103** (project-first intake/start), **B89** (project subdirectories).
-2. **P3:** **B95** (therm hash ignore timer line), **B93** (card glow pulse), **B92** (status “next action”), **B102** (Backlog button).
 
 ---
 
@@ -34,7 +29,6 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 | Cluster | Bugs | Note |
 |---------|------|------|
 | Product intake | **B89**, **B103** | Project directories; project-first start |
-| Operator chat / dashboard IO | **B92**, **B93**, **B95**, **B102** | next-action; card glow; therm timer noise; backlog button |
 
 ---
 
@@ -68,7 +62,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 **Where:** Backlog UI/API; project/theme creation flow; Squad Leader prompt/residual; analyst handoff input; `.squad/backlog` / `.squad/themes` durable state.
 
-**Related:** B89 project directories; B102 backlog button; B35 backlog approve-for-analysis.
+**Related:** B89 project directories; B35 backlog approve-for-analysis.
 
 ---
 
@@ -94,81 +88,3 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 **Where:** `squad_theme` create; assignment/worktree root selection; packet story paths; templates that write `stories/` / `features/`; optional `projects/` convention in product templates.
 
 **Related:** B23 project/theme lifecycle; B35 backlog approve → analysis.
-
----
-
-### B102 — Backlog should be a top button, not a full board lane
-
-**Problem:** The Backlog deck currently consumes a full board lane. That gives pending intake the same visual weight as active workflow columns and squeezes Specifying / Coding / Finalizing / Done.
-
-**Expected:**
-1. Remove the dedicated **Backlog** board column from the main lane set.
-2. Add a compact top dashboard control: a small icon button that looks like an oblique side-view **deck of cards**, showing the open backlog count without taking a board lane.
-3. Clicking the button opens the existing backlog menu/list and preserves current item edit, add, delete, and approve-for-analysis behavior.
-4. Empty backlog still has a clear add-new path from that button/menu.
-5. Keep the durable backlog API and `.squad/backlog` storage unchanged.
-6. Tests/assertions updated so the board columns are workflow columns only, while backlog remains reachable from the top control.
-
-**Priority (P3):** Board space and scanability; backlog is intake, not an active workflow lane.
-
-**Where:** `squadd/dashboard.html` `renderBoard` / backlog deck binding; optional `squadd_web_test` dashboard HTML assertions.
-
-**Related:** B35 backlog CRUD / approve-for-analysis; B62 board columns.
-
----
-
-### B92 — Status bar: say “next action”, not “residual”
-
-**Policy:** Operator-facing status chrome should use **next action**, not **residual**.
-
-**Today (B71):** header meta looks like `… · residual: process_handoff · product: …`.
-
-**Expected:**
-1. Display label **`next action:`** (or compact `next:`) for the same value currently shown as residual.
-2. Keep internal names (`residual`, `--residual-only`, daemon `residual-next` snapshot) unless a later rename is planned — this issue is **status display copy** only.
-3. Product-pending badge wording unchanged unless it also says “residual.”
-4. Tests/assertions that look for `residual:` in dashboard HTML/JS updated to `next action:` / `next:`.
-
-**Priority (P3):** Clearer cockpit language.
-
-**Where:** `squadd/dashboard.html` meta line (B71); any other operator-visible “residual” strings in the live dashboard.
-
-**Related:** **B71** residual header + product badge; B51 next_action heuristic.
-
----
-
-### B93 — Card status-change green flash: slower, pulse three times
-
-**Today:** Board story cards get a brief green **glow** when their status fingerprint changes (B48/card-glow). The flash is easy to miss.
-
-**Expected:**
-1. When a card’s status changes, the green highlight **pulses three times**.
-2. Animation is **slower** than today (noticeable; roughly on the order of ~0.6–1.0s per pulse, or ~2–3s total — tune for readability, not urgency).
-3. After three pulses, glow settles off (same end state as current single flash).
-4. Does not loop forever; does not block clicks; works with existing `.card.glow` / fingerprint change detection.
-5. Optional: same treatment for batch stacks if they use the same glow class.
-
-**Priority (P3):** Glanceability of board updates.
-
-**Where:** `squadd/dashboard.html` `@keyframes card-glow` (or successor) and `.card.glow` animation iteration/duration; keep trigger logic in `renderBoard` fingerprint glow.
-
-**Related:** B48 card progress sort / glow; Board cards.
-
----
-
-### B95 — Thermometers: drop last pane line before hash (timer noise)
-
-**Symptom:** SL and Work Queue activity thermometers can stay warm or pulse even when the agent is idle, because the pane’s **last line** often updates every second (elapsed-time / status counter in Codex/Grok TUIs). Hashing the full tail treats that churn as real activity.
-
-**Expected:**
-1. Before hashing a pane sample for **SL** (`sl-activity`) and **per-agent** (`agent-pane-heat`) thermometers, **drop the last line** of the captured text (trim trailing newlines, then remove the final non-empty line — or equivalent).
-2. Hash the remainder only. Empty-after-drop → treat as idle / heat 0 path as today when no useful content.
-3. Same rule for both thermometers so behavior stays consistent.
-4. Optional later: ignore other known timer/status patterns; v1 is “drop last line.”
-5. Tests: two samples differing only in a trailing timer line → same hash / no heat increase; a real content change above the last line → heat increases.
-
-**Priority (P3):** Thermometers should reflect real pane work, not clock widgets.
-
-**Where:** `squadd/web.clj` `sl-activity` and `agent-pane-heat` (shared helper e.g. `pane-sample-for-hash`); capture still stores/displays full pane elsewhere.
-
-**Related:** B56/B65 SL therm; B66/B84 WIF therm.

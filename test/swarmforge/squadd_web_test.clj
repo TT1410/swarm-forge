@@ -382,7 +382,7 @@
     (is (str/includes? html "card-glow"))
     (is (str/includes? html "chatStickBottom"))
     (is (str/includes? html "fmtStamp"))
-    (is (str/includes? html "residual:"))
+    (is (str/includes? html "next action:"))
     (is (not (str/includes? html "chat-send"))
         "B81: no Send button")
     (is (not (str/includes? html "ui-design.md · mockup"))

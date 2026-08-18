@@ -890,6 +890,15 @@
                 :else s)))
           stories)))
 
+(defn pane-sample-for-hash
+  "B95: drop the last non-empty line (timer/status widgets) before hashing."
+  [text]
+  (let [trimmed (str/replace (str text) #"\s+\z" "")
+        lines (str/split-lines trimmed)]
+    (if (<= (count lines) 1)
+      ""
+      (str/join "\n" (pop (vec lines))))))
+
 (def sl-activity-atom
   "B56: last SL pane sample for heat decay across polls."
   (atom {:hash nil :heat 0}))
@@ -910,7 +919,7 @@
                      (zero? (:exit (sh-continue "tmux" "-S" socket "has-session" "-t" session))))
           text (when live?
                  (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-20")))
-          h (when text (str (hash text)))
+          h (when text (str (hash (pane-sample-for-hash text))))
           prev (get @agent-activity-atom agent-id)
           heat (cond
                  (not live?) 0
@@ -1655,7 +1664,7 @@
                    (zero? (:exit (sh-continue "tmux" "-S" socket "has-session" "-t" session))))
         text (when live?
                (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-40")))
-        h (when text (str (hash text)))
+        h (when text (str (hash (pane-sample-for-hash text))))
         prev @sl-activity-atom
         heat (cond
                (not live?) 0
