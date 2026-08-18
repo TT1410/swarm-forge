@@ -12,7 +12,7 @@
 
 (def usage-text
   (str "Usage:\n"
-       "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
+       "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn] [--batch-stories id,id]\n"
        "  squad_assign.sh create-batch <theme-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
        "  squad_assign.sh create-merger <blocked-assignment-id> <merger-assignment-id> <instructions-file|--auto-instructions> [--queue-spawn]\n"
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
@@ -117,7 +117,7 @@
 
 (defn parse-create-options! [tokens]
   (loop [tokens tokens
-         options {:requirement nil :queue-spawn? false}]
+         options {:requirement nil :queue-spawn? false :batch-stories nil}]
     (if (empty? tokens)
       options
       (case (first tokens)
@@ -130,6 +130,12 @@
 
         "--queue-spawn"
         (recur (rest tokens) (assoc options :queue-spawn? true))
+
+        "--batch-stories"
+        (let [stories (second tokens)]
+          (when (str/blank? stories)
+            (exit! 1 usage-text))
+          (recur (nnext tokens) (assoc options :batch-stories stories)))
 
         (exit! 1 usage-text)))))
 
@@ -400,7 +406,7 @@
   {:theme-scoped? (= "theme" scope)
    :batch-scoped? (= "batch" scope)})
 
-(defn assignment-create-context [{:keys [theme-id story-id template assignment-id instructions-file requirement scope queue-spawn?]}]
+(defn assignment-create-context [{:keys [theme-id story-id template assignment-id instructions-file requirement scope queue-spawn? batch-stories]}]
   (let [root (fs/absolutize (project-root))
         theme (theme-dir root theme-id)
         resolved-scope (assignment-scope {:template template :story-id story-id :scope scope})
@@ -414,6 +420,7 @@
      :assignment-id assignment-id
      :requirement requirement
      :queue-spawn? queue-spawn?
+     :batch-stories batch-stories
      :theme-scoped? (:theme-scoped? scope-flags)
      :batch-scoped? (:batch-scoped? scope-flags)
      :scope resolved-scope
@@ -445,7 +452,7 @@
   (when (fs/exists? dir)
     (exit! 2 (str "Assignment already exists: " (:assignment-id context)))))
 
-(defn default-instructions [{:keys [template story-id scope]}]
+(defn default-instructions [{:keys [template story-id scope batch-stories]}]
   (if (= "senior-implementer" template)
     (str "Apply only the architecture review findings for this " scope " assignment (B82).\n"
          "Lead with reviews/*-architecture-review.md (or the critique path in this package).\n"
@@ -454,7 +461,9 @@
          "Implement the listed code/structure/acceptance recommendations, verify with bb test and bb acceptance, hand off.\n")
     (str "Follow the " template " role contract for this " scope " assignment.\n"
          "Use the provided theme, story packet, and role prompt as the source of truth.\n"
-         "Produce the required artifact for " story-id ", commit the work, and hand it off with the provided draft.\n")))
+         (if-let [stories batch-stories]
+           (str "Implement the batched stories " stories " in one commit and one handoff (B96).\n")
+           (str "Produce the required artifact for " story-id ", commit the work, and hand it off with the provided draft.\n")))))
 
 (defn assignment-instructions-text [context]
   (if (:auto-instructions? context)
@@ -525,12 +534,14 @@
            "- Commit completed work on your transient branch.\n"
            "- Send the result to `squad-leader` with `swarm_handoff.sh`.\n")
       (render-assignment (merge context base)))))
-(defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now merge-for batch-id conflicting-template conflicting-agent conflicting-commit]}]
+(defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now merge-for batch-id batch-stories conflicting-template conflicting-agent conflicting-commit]}]
   (str "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
        "scope: " scope "\n"
        "story_id: " story-id "\n"
        "template: " template "\n"
+       (when-not (str/blank? batch-stories)
+         (str "batch_stories: " batch-stories "\n"))
        (when requirement
          (str "requires: " (:text requirement) "\n"))
        (when merge-for
@@ -625,7 +636,7 @@
       (println "SQUAD_SPAWN_REQUEST:" (fs/file-name request))
       (println "STATE: requested"))))
 
-(defn create-assignment! [{:keys [theme-id story-id template assignment-id instructions-file requirement scope] :as args}]
+(defn create-assignment! [{:keys [theme-id story-id template assignment-id instructions-file requirement scope batch-stories] :as args}]
   (validate-create-ids! theme-id story-id assignment-id)
   (validate-template! template)
   (validate-template-requirement! template story-id requirement)
@@ -633,6 +644,7 @@
                                             :story-id story-id
                                             :template template
                                             :assignment-id assignment-id
+                                            :batch-stories batch-stories
                                             :instructions-file instructions-file
                                             :scope scope
                                             :requirement requirement

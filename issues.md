@@ -15,7 +15,6 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 |-----|-----|--------|------|------|
 | **P2** | B89 | Projects live in appropriately named subdirectories | Product / IA | Project layout / filesystem |
 | **P2** | B103 | Project-first intake: one project, many stories, explicit start | Product direction | Backlog / SL / analyst |
-| **P2** | B96 | Analyst plans implementer batches (≤2 same-level, related modules) | Process / policy | Analyst / implementer / merge |
 | **P3** | B102 | Backlog should be a top button, not a full board lane | UX | Dashboard / Board |
 | **P3** | B92 | Status bar: say “next action”, not “residual” | UX | Dashboard / status |
 | **P3** | B93 | Card status-change green flash: slower, pulse three times | UX | Dashboard / Board |
@@ -25,7 +24,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 ## Suggested fix order
 
-1. **P2:** **B103** (project-first intake/start), **B96** (analyst implementer batches), **B89** (project subdirectories).
+1. **P2:** **B103** (project-first intake/start), **B89** (project subdirectories).
 2. **P3:** **B95** (therm hash ignore timer line), **B93** (card glow pulse), **B92** (status “next action”), **B102** (Backlog button).
 
 ---
@@ -34,7 +33,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 | Cluster | Bugs | Note |
 |---------|------|------|
-| Product intake | **B89**, **B96**, **B103** | Project directories; analyst batch plan; project-first start |
+| Product intake | **B89**, **B103** | Project directories; project-first start |
 | Operator chat / dashboard IO | **B92**, **B93**, **B95**, **B102** | next-action; card glow; therm timer noise; backlog button |
 
 ---
@@ -69,7 +68,7 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 
 **Where:** Backlog UI/API; project/theme creation flow; Squad Leader prompt/residual; analyst handoff input; `.squad/backlog` / `.squad/themes` durable state.
 
-**Related:** B89 project directories; B96 analyst batching; B102 backlog button; B35 backlog approve-for-analysis.
+**Related:** B89 project directories; B102 backlog button; B35 backlog approve-for-analysis.
 
 ---
 
@@ -135,38 +134,6 @@ Prioritized open issues. Priority is **impact on swarm correctness, operator unb
 **Where:** `squadd/dashboard.html` meta line (B71); any other operator-visible “residual” strings in the live dashboard.
 
 **Related:** **B71** residual header + product badge; B51 next_action heuristic.
-
----
-
-### B96 — Analyst plans implementer batches (≤2 same-level, related modules)
-
-**Policy:** The **analyst** plans implementer work as **batches of at most two stories**, grouped by **implementation-order level** (antichain / same ready level) and **module affinity** from the module map / dependency-checker. Control plane assigns **one implementer** per batch (not one per story by default).
-
-**Why:** Parallel same-level implementers are a primary cause of merge pile-ups (shared `acceptance/runner.clj`, tooling, domain). Batching two related stories into **one agent / one commit / one handoff** cuts landing conflicts while still respecting the order DAG.
-
-**Analyst delivers (durable):**
-1. Existing **`implementation-order.md`** (edges → levels).
-2. A batching plan (section of order file, or sibling e.g. `implementer-batches.md` / theme record) listing groups:
-   - each group: **1–2 story ids**, no edge between them, prefer shared module/use-case cluster;
-   - leftovers as solo batches of one.
-3. Do **not** fuse approved story files into one product story — batch **references** existing story ids; implementer-facing work order may summarize both.
-
-**Control plane / SL:**
-1. Spawn implementer from a **batch assignment** listing both stories when a batch is ready (predecessors done).
-2. **Handoff:** one git handoff when **both** stories in the batch are complete; record implementation SHA on **both** packets.
-3. Soft plan: SL may split a batch on reject/rework; don’t treat the plan as frozen forever.
-4. Optional: `max_active_template implementer 1` (or low) so only one batch lands at a time unless capacity explicitly raised.
-
-**Expected:**
-1. Analyst role/prompt + templates document level+module batching (≤2).
-2. Residual create/spawn path consumes batch plan when present; falls back to per-story if absent (compat).
-3. Tests: order with two independent level-1 stories → one batch of two in the plan artifact; implementer assignment carries both ids; single result SHA updates both packets.
-
-**Priority (P2):** Structural fix for merge jams; analyst owns the schedule shape.
-
-**Where:** `analyst.prompt` / contract; `theme-implementation-order` template (+ batch section or sibling); `squad_theme` record helpers; `squad_next` implementer create/spawn; packet `record` for multi-story SHA.
-
-**Related:** implementation-order hard gate; analyst singleton.
 
 ---
 

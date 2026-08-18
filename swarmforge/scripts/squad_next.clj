@@ -321,6 +321,7 @@
                  :requires (get metadata "requires")
                  :replaces (get metadata "replaces")
                  :batch-id (get metadata "batch_id")
+                 :batch-stories (get metadata "batch_stories")
                  :merge-for (get metadata "merge_for")
                  :assignment-file (get metadata "assignment_file")
                  :created-at (get metadata "created_at")
@@ -743,6 +744,90 @@
     (if (fs/regular-file? path)
       (parse-implementation-order-edges (slurp (str path)))
       {})))
+
+(defn story-implementer-level
+  "Longest provider-chain length. Roots (no in-theme providers) are 0."
+  [story-id edges story-set]
+  (letfn [(level [id seen]
+            (if (contains? seen id)
+              0
+              (let [providers (->> (get edges id)
+                                   (filter story-set))]
+                (if (seq providers)
+                  (inc (apply max (map #(level % (conj seen id)) providers)))
+                  0))))]
+    (level story-id #{})))
+
+(defn paired-same-level
+  "Pair sorted same-level stories into groups of 1–2 (B96)."
+  [stories]
+  (loop [xs (vec (sort stories))
+         acc []]
+    (cond
+      (empty? xs) acc
+      (= 1 (count xs)) (conj acc [(first xs)])
+      :else (recur (subvec xs 2) (conj acc [(nth xs 0) (nth xs 1)])))))
+
+(defn derive-implementer-batches
+  "B96: group stories by implementation-order level, then pair (≤2) within a level."
+  [story-ids edges]
+  (let [ids (vec (distinct story-ids))
+        story-set (set ids)
+        grouped (group-by #(story-implementer-level % edges story-set) ids)]
+    (->> (sort (keys grouped))
+         (mapcat #(paired-same-level (get grouped %)))
+         vec)))
+
+(defn parse-implementer-batch-lines [text]
+  (->> (str/split-lines (or text ""))
+       (map #(str/trim (first (str/split % #"#" 2))))
+       (remove str/blank?)
+       (remove #(str/starts-with? % "#"))
+       (remove #(str/starts-with? % ":"))
+       (keep (fn [line]
+               (when-not (str/includes? line ":")
+                 (let [ids (->> (str/split line #"\s+")
+                                (remove str/blank?)
+                                vec)]
+                   (when (and (seq ids) (<= (count ids) 2))
+                     ids)))))
+       vec))
+
+(defn implementer-batches-section [text]
+  (when-let [idx (str/index-of (str/lower-case (str text)) "implementer batches")]
+    (let [from (subs text idx)
+          rest (or (second (str/split from #"(?m)^## " 2)) from)]
+      rest)))
+
+(defn load-explicit-implementer-batches [root theme-id]
+  (let [sibling (fs/path root ".squad" "themes" theme-id "implementer-batches.md")
+        order (implementation-order-path root theme-id)]
+    (or (when (fs/regular-file? sibling)
+          (not-empty (parse-implementer-batch-lines (slurp (str sibling)))))
+        (when (fs/regular-file? order)
+          (not-empty (parse-implementer-batch-lines
+                      (implementer-batches-section (slurp (str order)))))))))
+
+(defn theme-story-ids [root theme-id]
+  (->> (packets root)
+       (filter #(= theme-id (get % "theme_id")))
+       (map #(get % "story_id" (get % "_story_id")))
+       (remove str/blank?)
+       sort
+       vec))
+
+(defn implementer-batch-plan
+  "Explicit analyst plan if present; otherwise derive from order + stories."
+  [root theme-id]
+  (or (load-explicit-implementer-batches root theme-id)
+      (derive-implementer-batches (theme-story-ids root theme-id)
+                                  (load-implementation-order root theme-id))))
+
+(defn batch-covers-story? [batch story-id]
+  (some #{story-id} batch))
+
+(defn implementer-batch-for-story [plan story-id]
+  (first (filter #(batch-covers-story? % story-id) plan)))
 
 (defn story-implementation-complete? [root story-id]
   "True when the story packet has recorded a merged implementation_sha."
@@ -1540,7 +1625,6 @@
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         sha (assignment-effective-sha assignment)]
     (when (and (merged-assignment? assignment)
-               (= story-id (:story-id assignment))
                (should-record-merged-result? packet kind assignment)
                (not (str/blank? sha)))
       {:priority 25
@@ -1554,13 +1638,23 @@
        :command (str "squad_packet.sh record " story-id " " kind " "
                      (:assignment-id assignment) " master " sha)})))
 
+(defn assignment-result-story-ids [assignment]
+  (let [listed (split-list (:batch-stories assignment))]
+    (if (seq listed)
+      listed
+      (when (and (:story-id assignment)
+                 (not= "batch" (:story-id assignment)))
+        [(:story-id assignment)]))))
+
 (defn direct-result-record-candidates [assignments packets]
   (let [packets-by-story (packet-by-story packets)]
     (->> (for [assignment assignments
-               :let [kind (get result-assignment-rules (:template assignment))
-                     packet (get packets-by-story (:story-id assignment))]
-               :when (and kind packet (not= "batch" (:story-id assignment)))
-               :let [candidate (result-record-candidate packet assignment kind)]
+               :let [kind (get result-assignment-rules (:template assignment))]
+               :when kind
+               story-id (assignment-result-story-ids assignment)
+               :let [packet (get packets-by-story story-id)
+                     candidate (when packet
+                                 (result-record-candidate packet assignment kind))]
                :when candidate]
            candidate)
          (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
@@ -2003,10 +2097,15 @@
                  (when (and (approval-satisfied? (:root ctx) packet "implementation")
                             (squad-state/implementation-ready? packet)
                             (not (field-present? packet "implementation_sha")))
-                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                         "implementer" "implementation"
-                                         "story is approved for implementation" 60 90
-                                         nil)))}
+                   (let [story-id (get packet "story_id" (get packet "_story_id"))
+                         batch (implementer-batch-for-story
+                                (implementer-batch-plan (:root ctx) (get packet "theme_id"))
+                                story-id)]
+                     (when-not (and batch (> (count batch) 1))
+                       (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
+                                             "implementer" "implementation"
+                                             "story is approved for implementation" 60 90
+                                             nil)))))}
    {:id :implementation-revision-assignment
     :priority 60
     :stage-order 95
@@ -3104,11 +3203,70 @@
      (println "CHECK_AFTER_SECONDS: 30")
      (println "COMMAND: sleep 30 && squad_next.sh"))))
 
+(defn implementer-covers-story? [assignment story-id]
+  (and (= "implementer" (:template assignment))
+       (or (= story-id (:story-id assignment))
+           (some #{story-id} (split-list (:batch-stories assignment))))))
+
+(defn existing-open-implementer [assignments story-ids]
+  (some (fn [assignment]
+          (when (and (not (contains? terminal-assignment-states (:state assignment)))
+                     (some #(implementer-covers-story? assignment %) story-ids))
+            assignment))
+        assignments))
+
+(defn implementer-batch-member-ready? [root packet]
+  (and packet
+       (packet-ready-for-implementer? root packet)
+       (implementer-dependencies-satisfied? root
+                                            (get packet "theme_id")
+                                            (get packet "story_id" (get packet "_story_id")))))
+
+(defn implementer-batch-create-candidate [root assignments agents theme-id batch]
+  (let [members (vec batch)
+        packets-by-story (packet-by-story (packets root))]
+    (when (and (> (count members) 1)
+               (every? #(implementer-batch-member-ready? root (get packets-by-story %))
+                       members)
+               (not (existing-open-implementer assignments members)))
+      (let [assignment-id (str (str/join "-" members) "-implementation")
+            existing (assignment-by-id assignments assignment-id)]
+        (if existing
+          (when (spawnable-assignment? root agents "implementer" existing)
+            (assignment-spawn-candidate existing theme-id (first members) "implementer"
+                                        "related same-level stories share one implementer batch"
+                                        60 90))
+          {:priority 60
+           :stage-order 90
+           :next-action "create_assignment"
+           :theme-id theme-id
+           :story-id (first members)
+           :template "implementer"
+           :assignment-id assignment-id
+           :reason "related same-level stories share one implementer batch"
+           :command (str "squad_assign.sh create " theme-id " " (first members)
+                         " implementer " assignment-id
+                         " --auto-instructions --queue-spawn --batch-stories "
+                         (str/join "," members))})))))
+
+(defn implementer-batch-candidates [root rows]
+  (let [assignments (assignment-records root)
+        agents (agent-records root rows)]
+    (->> (theme-records root)
+         (map :theme-id)
+         (mapcat (fn [theme-id]
+                   (keep #(implementer-batch-create-candidate
+                           root assignments agents theme-id %)
+                         (implementer-batch-plan root theme-id))))
+         (remove nil?)
+         vec)))
+
 (defn ready-actions [root rows]
   (sort-by (juxt :priority :theme-id :stage-order :story-id :assignment-id)
            (concat (packet-repair-candidates root)
                    (theme-candidates root rows)
                    (story-candidates root rows)
+                   (implementer-batch-candidates root rows)
                    (batch-candidates root rows)
                    (merger-candidates root rows)
                    (generic-ready-assignment-candidates root rows)
