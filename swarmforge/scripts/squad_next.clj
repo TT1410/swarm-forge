@@ -442,7 +442,7 @@
 
 (declare agent-state transient-row? next-batch-id visible-handoff-agents
          capacity-counted-agent? ready-actions hardener-member-ready?
-         held-handoff-files)
+         held-handoff-files all-theme-stories-qa-complete? same-theme-packets)
 
 (defn agent-files [root agent]
   (let [agent-dir (fs/path root ".squad" "agents" agent)]
@@ -606,20 +606,33 @@
        vec))
 
 (defn packet-story-done?
-  "Story finished its product pipeline (final approved)."
+  "Legacy per-story final gate (B23 compat). Story cards use QA (B100)."
   [packet]
   (or (= "final_approved" (get packet "state"))
       (= "final_approved" (get packet "final_state"))
       (field-approved? packet "final_approval")))
 
+(defn packet-architecture-closed?
+  "Project architecture pass is satisfied for this story (B100)."
+  [packet]
+  (or (field-accepted? packet "architecture_review")
+      (and (field-changes-requested? packet "architecture_review")
+           (field-present? packet "senior_implementer_sha"))))
+
 (defn theme-packets [root theme-id]
   (filterv #(= theme-id (get % "theme_id")) (packets root)))
 
 (defn theme-slice-complete?
-  "True when theme has at least one packet and every packet is final-approved."
+  "Project is done when every story has QAd and architecture is closed (B100).
+  final_approved packets still count as complete for older slices."
   [root theme-id]
   (let [ps (theme-packets root theme-id)]
-    (and (seq ps) (every? packet-story-done? ps))))
+    (and (seq ps)
+         (every? (fn [packet]
+                   (or (packet-story-done? packet)
+                       (and (field-present? packet "qa_sha")
+                            (packet-architecture-closed? packet))))
+                 ps))))
 
 (defn theme-has-open-assignment?
   [root theme-id]
@@ -2065,7 +2078,11 @@
     :priority 60
     :stage-order 170
     :candidate (fn [ctx packet]
-                 (when (and (approval-satisfied? (:root ctx) packet "qa")
+                 (when (and (all-theme-stories-qa-complete?
+                             (:root ctx)
+                             (same-theme-packets (packets (:root ctx))
+                                                 (get packet "theme_id")))
+                            (approval-satisfied? (:root ctx) packet "qa")
                             (field-present? packet "qa_sha")
                             (not (field-present? packet "architecture_batch")))
                    (batch-candidate (:root ctx) (:assignments ctx) packet "architecture" "architecture"
@@ -2107,6 +2124,17 @@
 
 (defn same-theme-packets [all-packets theme-id]
   (filter #(= theme-id (get % "theme_id")) all-packets))
+
+(defn packet-qa-complete? [root packet]
+  (and (approval-satisfied? root packet "qa")
+       (field-present? packet "qa_sha")))
+
+(defn all-theme-stories-qa-complete?
+  "B97: architecture / senior-impl wait until every project story has finished QA."
+  [root theme-packets]
+  (boolean
+   (and (seq theme-packets)
+        (every? #(packet-qa-complete? root %) theme-packets))))
 
 (defn code-review-iteration-changes-requested? [packet]
   (str/includes? (str (get packet "code_review_iterations" "")) "changes-requested"))
@@ -2310,12 +2338,12 @@
                      (or (batch-id-needing-result theme-packets "qa_batch" "qa_sha")
                          (when-not (any-unbatched-qa-member-ready? root theme-packets)
                            (open-batch-with-members batches "qa" (str theme-id "-qa")))))
-     :architecture-ready? (and (seq theme-packets)
+     :architecture-ready? (and (all-theme-stories-qa-complete? root theme-packets)
                                (or (architecture-batch-needing-review theme-packets)
                                    (when-not (any-unbatched-architecture-member-ready? root theme-packets)
                                      (open-batch-with-members batches "architecture" (str theme-id "-architecture")))))
-   :senior-ready? (and (seq theme-packets)
-                       (any-architecture-needs-senior? theme-packets))}))
+     :senior-ready? (and (all-theme-stories-qa-complete? root theme-packets)
+                         (any-architecture-needs-senior? theme-packets))}))
 
 (defn batch-candidate-for-rule [root assignments agents theme-id readiness
                                 {:keys [ready? template suffix reason stage-order]}]

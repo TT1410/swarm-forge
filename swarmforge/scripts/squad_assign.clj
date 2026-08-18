@@ -450,7 +450,8 @@
     (str "Apply only the architecture review findings for this " scope " assignment (B82).\n"
          "Lead with reviews/*-architecture-review.md (or the critique path in this package).\n"
          "Do not greenfield-rebuild modules the review accepted; preserve working process/domain code.\n"
-         "Implement the listed recommendations, verify with bb test and bb acceptance, hand off.\n")
+         "Skip Module Map Recommendations unless the squad leader explicitly assigned a map-only chore (B98).\n"
+         "Implement the listed code/structure/acceptance recommendations, verify with bb test and bb acceptance, hand off.\n")
     (str "Follow the " template " role contract for this " scope " assignment.\n"
          "Use the provided theme, story packet, and role prompt as the source of truth.\n"
          "Produce the required artifact for " story-id ", commit the work, and hand it off with the provided draft.\n")))
@@ -465,15 +466,24 @@
              (fs/regular-file? (:module-map-file context)))
     (slurp (str (:module-map-file context)))))
 
+(defn strip-module-map-recommendations
+  "B98: map commentary is not senior-implementer work."
+  [text]
+  (str/trim
+   (str/replace (str text)
+                #"(?ms)^#{1,6}\s+Module Map Recommendations\b.*?(?=^#{1,6} |\z)"
+                "")))
+
 (defn architecture-review-text
-  "B82: surface architect critique for senior-implementer assignments."
+  "B82: surface architect critique for senior-implementer assignments.
+  B98: drop Module Map Recommendations so they are not assigned work."
   [{:keys [root theme-id assignment-id]}]
   (let [candidates [(fs/path root "reviews" (str theme-id "-architecture-review.md"))
                     (fs/path root "reviews" "htw-architecture-review.md")
                     (fs/path root "reviews" (str assignment-id "-review.md"))]
         hit (first (filter fs/regular-file? candidates))]
     (when hit
-      (str "Source: " hit "\n\n" (slurp (str hit))))))
+      (str "Source: " hit "\n\n" (strip-module-map-recommendations (slurp (str hit)))))))
 
 (defn assignment-text [context]
   (let [base {:theme-text (slurp (str (:theme-file context)))
@@ -510,6 +520,7 @@
            "## Required Transient Protocol\n\n"
            "- Stay inside this assignment boundary.\n"
            "- Apply architecture findings only; do not rewrite healthy modules.\n"
+           "- Skip Module Map Recommendations unless the squad leader assigned a map-only chore (B98).\n"
            "- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent.\n"
            "- Commit completed work on your transient branch.\n"
            "- Send the result to `squad-leader` with `swarm_handoff.sh`.\n")

@@ -747,17 +747,18 @@
   No Ready column: implementation_approved is Coding; implementation_approval_ready is Specifying.
   code_review_approved is Finalizing."
   {"final_approved" "done"
-   ;; Finalizing: CR done through quality / architecture / senior-impl
-   "architecture_approved" "finalizing"
-   "architecture_reviewed" "finalizing"
-   "architecture_revision_returned" "finalizing"
-   "architecture_returned" "finalizing"
-   "qa_approved" "finalizing"
+   ;; B100: story Done after QA; architecture/senior-impl are project-level
+   "architecture_approved" "done"
+   "architecture_reviewed" "done"
+   "architecture_revision_returned" "done"
+   "architecture_returned" "done"
+   "qa_approved" "done"
+   "final_approval_ready" "done"
+   "senior_implementer_returned" "done"
+   ;; Finalizing: post-CR through QA result, before QA success
    "qa_returned" "finalizing"
    "hardening_approved" "finalizing"
    "hardener_returned" "finalizing"
-   "final_approval_ready" "finalizing"
-   "senior_implementer_returned" "finalizing"
    "code_review_approved" "finalizing"
    ;; Coding: approved to implement through code review result
    "code_reviewed" "coding"
@@ -1457,8 +1458,10 @@
                               (str "Theme slice is finalized (shipped/accepted). "
                                    "New stories re-open automatically, or run "
                                    "`squad_theme.sh reopen " theme-id " <detail>`.")
-                              (str "Theme slice is open. When all stories are final-approved, "
-                                   "request finalize approval, or run "
+                              (str "Theme slice is open. When every story has finished QA and "
+                                   "architecture is accepted (or senior-implementer has closed "
+                                   "changes-requested), the project is done. Then request "
+                                   "finalize approval, or run "
                                    "`squad_theme.sh finalize " theme-id " <detail>`.")))
         order-status (theme-content-gate-status
                       root theme-id "implementation-order"

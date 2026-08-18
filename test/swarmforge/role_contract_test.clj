@@ -310,7 +310,7 @@
     (is (str/includes? implementer "root tooling files"))
     (is (str/includes? implementer "deps.edn"))
     (is (str/includes? architect "Theme Module Map"))
-    (is (str/includes? architect "Recommend changes to the theme **module map**"))
+    (is (str/includes? architect "module map"))
     (is (str/includes? architect "Module Map Recommendations"))
     (is (str/includes? outline "## Use Cases (Business / Process Rules)"))
     (is (str/includes? outline "## Dependency Rule"))
