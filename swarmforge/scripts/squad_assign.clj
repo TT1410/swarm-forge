@@ -441,15 +441,15 @@
 
 (defn default-instructions [{:keys [template story-id scope batch-stories]}]
   (if (= "senior-implementer" template)
-    (str "Apply only the architecture review findings for this " scope " assignment (B82).\n"
+    (str "Apply only the architecture review findings for this " scope " assignment.\n"
          "Lead with reviews/*-architecture-review.md (or the critique path in this package).\n"
          "Do not greenfield-rebuild modules the review accepted; preserve working process/domain code.\n"
-         "Skip Module Map Recommendations unless the squad leader explicitly assigned a map-only chore (B98).\n"
+         "Skip Module Map Recommendations unless the squad leader explicitly assigned a map-only chore.\n"
          "Implement the listed code/structure/acceptance recommendations, verify with bb test and bb acceptance, hand off.\n")
     (str "Follow the " template " role contract for this " scope " assignment.\n"
          "Use the provided theme, story packet, and role prompt as the source of truth.\n"
          (if-let [stories batch-stories]
-           (str "Implement the batched stories " stories " in one commit and one handoff (B96).\n")
+           (str "Implement the batched stories " stories " in one commit and one handoff.\n")
            (str "Produce the required artifact for " story-id ", commit the work, and hand it off with the provided draft.\n")))))
 
 (defn assignment-instructions-text [context]
@@ -463,7 +463,7 @@
     (slurp (str (:module-map-file context)))))
 
 (defn strip-module-map-recommendations
-  "B98: map commentary is not senior-implementer work."
+  "Map commentary is not senior-implementer work."
   [text]
   (str/trim
    (str/replace (str text)
@@ -471,8 +471,8 @@
                 "")))
 
 (defn architecture-review-text
-  "B82: surface architect critique for senior-implementer assignments.
-  B98: drop Module Map Recommendations so they are not assigned work."
+  "Surface architect critique for senior-implementer assignments.
+  Drop Module Map Recommendations so they are not assigned work."
   [{:keys [root theme-id assignment-id]}]
   (let [candidates [(fs/path root "reviews" (str theme-id "-architecture-review.md"))
                     (fs/path root "reviews" "htw-architecture-review.md")
@@ -495,7 +495,7 @@
         review (when (= "senior-implementer" (:template context))
                  (architecture-review-text context))]
     (if review
-      ;; B82: findings before full theme dump
+      ;; Findings before full theme dump
       (str "# Squad Assignment\n\n"
            "assignment_id: " (:assignment-id context) "\n"
            "theme_id: " (:theme-id context) "\n"
@@ -516,7 +516,7 @@
            "## Required Transient Protocol\n\n"
            "- Stay inside this assignment boundary.\n"
            "- Apply architecture findings only; do not rewrite healthy modules.\n"
-           "- Skip Module Map Recommendations unless the squad leader assigned a map-only chore (B98).\n"
+           "- Skip Module Map Recommendations unless the squad leader assigned a map-only chore.\n"
            "- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent.\n"
            "- Commit completed work on your transient branch.\n"
            "- Send the result to `squad-leader` with `swarm_handoff.sh`.\n")
@@ -668,32 +668,6 @@
     (ensure-batch-manifest! root (:template args) (:assignment-id args))
     (create-assignment! args)
     (close-batch-for-assignment! root (:assignment-id args))))
-
-(defn merge-suffix-depth [assignment-id]
-  (count (re-seq #"-merge" (str assignment-id))))
-
-(defn merge-lineage-root [assignment-id]
-  (str/replace (str assignment-id) #"(?:-merge)+$" ""))
-
-(defn assignment-in-merge-lineage? [assignment-id lineage-root]
-  (or (= assignment-id lineage-root)
-      (str/starts-with? (str assignment-id) (str lineage-root "-merge"))))
-
-(defn assignment-blocked-for-merge-limit? [root assignment-id]
-  (or (= "blocked" (read-value (fs/path root ".squad" "assignments" assignment-id "status") "state"))
-      (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "blocker"))
-      (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "blocker.md"))))
-
-(defn lineage-max-depth-exhausted? [root lineage-root max-depth]
-  (let [assignments-dir (fs/path root ".squad" "assignments")]
-    (boolean
-     (when (fs/directory? assignments-dir)
-       (some (fn [dir]
-               (let [id (fs/file-name dir)]
-                 (and (assignment-in-merge-lineage? id lineage-root)
-                      (>= (merge-suffix-depth id) max-depth)
-                      (assignment-blocked-for-merge-limit? root id))))
-             (filter fs/directory? (fs/list-dir assignments-dir)))))))
 
 (defn assignment-status-paths [dir]
   {:metadata (fs/path dir "metadata")
@@ -990,7 +964,7 @@
 (def main-git-lock-poll-ms 50)
 
 (defn main-git-owner
-  "Who may mutate main repo merge-ready/accept. Default daemon (squadd)."
+  "Who may mutate main repo merge-ready. Default daemon (squadd)."
   []
   (or (not-empty (System/getenv "SWARMFORGE_MAIN_GIT_OWNER")) "daemon"))
 
@@ -1000,20 +974,33 @@
   (or (= "1" (System/getenv "SWARMFORGE_MAIN_GIT"))
       (= "squadd" (System/getenv "SWARMFORGE_ROLE"))))
 
+(defn squad-leader-role? []
+  (= "squad-leader" (System/getenv "SWARMFORGE_ROLE")))
+
+(defn accept-merge-allowed? []
+  (or (main-git-allowed?)
+      (squad-leader-role?)
+      (= "any" (main-git-owner))))
+
 (defn ensure-main-git-owner!
-  "Reject merge-ready/accept-merge unless caller is the daemon owner."
+  "Reject merge-ready unless caller is the daemon. accept-merge is SL's."
   [op]
-  (when (and (= "daemon" (main-git-owner))
-             (not (main-git-allowed?)))
-    (exit! 3
-           (str "MAIN_GIT_OWNER: only squadd may run " op)
-           "Set SWARMFORGE_MAIN_GIT=1 (or SWARMFORGE_ROLE=squadd) from the daemon, or SWARMFORGE_MAIN_GIT_OWNER=any for tests.")))
+  (if (= "accept-merge" op)
+    (when-not (accept-merge-allowed?)
+      (exit! 3
+             "MAIN_GIT_OWNER: squad-leader (or squadd) may run accept-merge"
+             "Set SWARMFORGE_ROLE=squad-leader, or SWARMFORGE_MAIN_GIT=1 from tests."))
+    (when (and (= "daemon" (main-git-owner))
+               (not (main-git-allowed?)))
+      (exit! 3
+             (str "MAIN_GIT_OWNER: only squadd may run " op)
+             "Set SWARMFORGE_MAIN_GIT=1 (or SWARMFORGE_ROLE=squadd) from the daemon, or SWARMFORGE_MAIN_GIT_OWNER=any for tests."))))
 
 (defn main-git-lock-dir [root]
   (lease/lease-dir root "main-git"))
 
 (defn with-main-git-lock
-  "Serialize main-repo dry-run worktree and accept-merge under shared lease (B20)."
+  "Serialize accept-merge under shared lease."
   [root f]
   (try
     (lease/with-lease root "main-git"
@@ -1112,12 +1099,12 @@
     (mark-merge-ready-state! root dir assignment-id commit now "ready to accept-merge")))
 
 (defn dirt-defer-detail? [detail]
-  "B75: transient main dirt is not a durable merge evaluation."
+  "Transient main dirt is not a durable merge evaluation."
   (and detail (str/includes? (str detail) "tracked checkout dirty")))
 
 (defn existing-merge-evaluation [dir commit]
   "Return prior merge_ready/merge_blocked outcome for the same result commit, if any.
-  B75: do not replay tracked-checkout-dirty as a permanent merge_blocked."
+  Do not replay tracked-checkout-dirty as a permanent merge_blocked."
   (let [merge-file (fs/path dir "merge")
         prior-state (read-value merge-file "state")
         prior-commit (read-value merge-file "commit")
@@ -1234,7 +1221,7 @@
     (println "BLOCKER:" (str (fs/path dir "blocker.md")))))
 
 (defn record-accepted-merge! [root dir assignment-id commit detail now]
-  "B21: durable accept-merge success via transition apply (multi-file side effects)."
+  "Durable accept-merge success via transition apply (multi-file side effects)."
   (let [head (str/trim (:out (sh-at root "git" "rev-parse" "--short=10" "HEAD")))
         metadata (fs/path dir "metadata")
         theme-id (read-value metadata "theme_id")
@@ -1250,29 +1237,24 @@
       :story-id story-id})
     head))
 
-(defn ensure-merge-ready! [merge-file]
-  (when-not (= "merge_ready" (read-value merge-file "state"))
-    (exit! 3 "Assignment is not merge_ready.")))
-
 (defn result-commit! [result-file]
   (let [commit (read-value result-file "commit")]
     (when-not (and commit (re-matches #"[0-9a-fA-F]{10}" commit))
       (exit! 2 "Assignment result must contain a 10-character commit."))
     commit))
 
-(defn print-merge-blocked! [assignment-id commit detail]
+(defn print-merge-failed! [assignment-id commit detail]
   (binding [*out* *err*]
     (println "SQUAD_ASSIGNMENT:" assignment-id)
-    (println "STATE: merge_blocked")
+    (println "STATE: merge_failed")
     (println "COMMIT:" commit)
     (println "DETAIL:" detail))
   (System/exit 4))
 
-(defn block-merge! [root dir assignment-id phase detail commit now result]
+(defn fail-merge! [root dir assignment-id phase detail commit now result]
   (when result
     (write-merge-error! dir phase result))
-  (write-merge-state! root dir assignment-id "merge_blocked" detail commit now)
-  (print-merge-blocked! assignment-id commit detail))
+  (print-merge-failed! assignment-id commit detail))
 
 (defn merge-detail! [root dir assignment-id commit now]
   (let [ancestor (sh-at root "git" "merge-base" "--is-ancestor" commit "HEAD")]
@@ -1284,7 +1266,7 @@
                            (str "Merge squad assignment " assignment-id) commit))]
         (when-not (zero? (:exit merge))
           (abort-merge! root)
-          (block-merge! root dir assignment-id "accept-merge" "accepted merge failed" commit now merge))
+          (fail-merge! root dir assignment-id "accept-merge" "accepted merge failed" commit now merge))
         "merged result commit"))))
 
 (defn print-merge-accepted! [assignment-id commit merge-commit detail]
@@ -1316,18 +1298,15 @@
   (let [root (fs/absolutize (project-root))
         dir (assignment-dir root assignment-id)
         result-file (fs/path dir "result")
-        merge-file (fs/path dir "merge")
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
     (ensure-file! "Assignment result not found" result-file)
-    (ensure-file! "Assignment merge readiness not found" merge-file)
-    (ensure-merge-ready! merge-file)
     (let [commit (result-commit! result-file)]
       (with-main-git-lock
         root
         (fn []
           (try
-            ;; B75: transient dirty main soft-defers; leave merge_ready for retry.
+            ;; Transient dirty main soft-defers; leave merge_ready for retry.
             ;; Do not write merge_blocked / spawn merger recovery for dirt alone.
             (if (tracked-dirty? root)
               (do
@@ -1346,20 +1325,6 @@
                   (print-merge-accepted! assignment-id commit merge-commit detail))))
             (finally
               (abort-merge! root))))))))
-
-(defn ensure-not-max-depth-merge-escape! [root assignment-id action]
-  "At max_merger_depth, merge_blocked work must hard-block — not reject/replace rework."
-  (let [max-depth (cfg/squad-max-merger-depth root)
-        depth (merge-suffix-depth assignment-id)
-        state (read-value (fs/path root ".squad" "assignments" assignment-id "status") "state")
-        lineage-root (merge-lineage-root assignment-id)]
-    (when (and (= "merge_blocked" state)
-               (or (>= depth max-depth)
-                   (lineage-max-depth-exhausted? root lineage-root max-depth)))
-      (exit! 2
-             (str "Cannot " action " assignment " assignment-id
-                  ": merge recovery is at max_merger_depth (" max-depth "). "
-                  "Use squad_assign.sh block (declare_merge_blocker), not reject/replace.")))))
 
 (defn archive-rejection! [root assignment-id reason-text]
   (let [archive (fs/path root ".squad" "rejections" (str assignment-id ".md"))]
@@ -1386,7 +1351,6 @@
         reason-text (slurp (str reason-source))
         now (timestamp)]
     (ensure-assignment-dir! dir assignment-id)
-    (ensure-not-max-depth-merge-escape! root assignment-id "reject")
     (write-atomic! (fs/path dir "rejection.md") reason-text)
     (write-atomic! (fs/path dir "rejection")
                    (str "assignment_id: " assignment-id "\n"
@@ -1421,7 +1385,6 @@
         requirement-text (read-value old-metadata "requires")
         now (timestamp)]
     (ensure-assignment-dir! old-dir old-assignment-id)
-    (ensure-not-max-depth-merge-escape! root old-assignment-id "replace")
     (when-not (and theme-id story-id)
       (exit! 2 "Original assignment metadata must include theme_id and story_id."))
     (create-assignment! {:theme-id theme-id

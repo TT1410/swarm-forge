@@ -1,5 +1,5 @@
 (ns squad-transition
-  "Explicit FSM transition persistence (B21).
+  "Explicit FSM transition persistence.
 
   A transition is a pure description of before → after durable writes.
   apply-transition! is the single persistence entry for that change.
@@ -79,7 +79,7 @@
                         (or story-id "unknown"))}))))
 
 (defn apply-transition!
-  "B21: apply one named transition. Returns {:op :before :after :writes-count}.
+  "Apply one named transition. Returns {:op :before :after :writes-count}.
 
   Currently supported:
   :accept-merge — durable records after git merge succeeded

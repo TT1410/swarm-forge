@@ -11,7 +11,7 @@ body{background:#cfd4cc;color:var(--ink);height:100vh;display:flex;flex-directio
 .cockpit{flex:1;min-height:0;margin:10px;background:var(--bg);border:1px solid #b8bfb6;border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
 header.top{display:flex;gap:12px;align-items:center;padding:10px 14px;background:#f4f5f1;border-bottom:1px solid var(--line);flex-wrap:wrap}
 header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.meta .dot{color:var(--green)}.spacer{flex:1}
-/* B57: Idle / Hover (subtle) / Pressed (overt); contrast every state */
+/* Idle / Hover (subtle) / Pressed (overt); contrast every state */
 .btn{border:1px solid #9aa59e;background:#fff;color:var(--ink);padding:5px 10px;border-radius:7px;font-size:12px;cursor:pointer}
 .btn:hover,.btn:focus-visible{background:#f0f2ee;color:var(--ink);border-color:#8a9188}
 .btn:active{background:#d5d9d2;color:#000;border-color:#6a726c;transform:translateY(1px)}
@@ -30,7 +30,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .att-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(255,255,255,.65);border:1px solid #efd7a8;border-radius:6px;padding:4px 8px;margin-bottom:4px}
 .pill{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;background:var(--chip)}
 .pill-warn{background:#ffe2a8;color:#7a4e00}.pill-ok{background:var(--green-bg);color:var(--green)}.pill-bad{background:#f8d7da;color:var(--red)}.pill-info{background:#e2eaf8;color:#274a7a}.pill-batch{background:#ebe4f7;color:#553c8b}
-/* B54/B64: stable splitter — fixed track, no hover reflow; rail reserves scrollbar gutter */
+/* Stable splitter — fixed track, no hover reflow; rail reserves scrollbar gutter */
 .body{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr) 8px minmax(220px,var(--rail));overflow:hidden}
 .splitter{cursor:col-resize;background:var(--line);position:relative;z-index:5;width:8px;min-width:8px;flex:0 0 8px;touch-action:none;user-select:none}
 .splitter:hover,.splitter.dragging{background:#8a9188}
@@ -40,7 +40,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .columns{display:flex;gap:12px;align-items:stretch;min-width:min-content;flex:1;min-height:0}
 .col{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;min-height:0;max-height:100%}
 .col h3{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);flex:0 0 auto}
-/* B44: grow to bottom of board; scroll only after filling available height */
+/* Grow to bottom of board; scroll only after filling available height */
 .col-body{display:flex;flex-direction:column;align-items:flex-start;gap:8px;flex:1;min-height:100px;max-height:100%;overflow:auto;padding:8px;background:rgba(255,255,255,.35);border:1px dashed #c5cbc2;border-radius:10px;width:max-content;min-width:var(--card-min-w)}
 @keyframes card-glow{0%,100%{box-shadow:none}50%{box-shadow:0 0 0 3px rgba(47,107,58,.55),0 0 16px rgba(47,107,58,.35)}}
 .card.glow{animation:card-glow .8s ease-in-out 3}
@@ -49,7 +49,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .deck-btn .sheet:nth-child(1){transform:translate(4px,3px) rotate(8deg);opacity:.55}
 .deck-btn .sheet:nth-child(2){transform:translate(2px,1px) rotate(3deg);opacity:.8}
 .deck-btn .sheet:nth-child(3){display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:700;color:var(--accent);transform:none}
-/* B60 soft hold */
+/*  soft hold */
 .card.hold{border-color:#d48a8a;box-shadow:0 0 0 1px rgba(180,80,80,.28)}
 .deck-wrap{display:flex;flex-direction:column;align-items:center;gap:8px}
 .deck{width:var(--card-min-w);height:88px;position:relative;cursor:pointer}
@@ -80,11 +80,11 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .work{width:100%;table-layout:fixed;border-collapse:collapse;font-size:11px}
 .work th,.work td{padding:5px 4px;border-bottom:1px solid var(--line-soft);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .work th{text-align:left;color:var(--muted);font-weight:600;font-size:10px;background:#f3f4f0;position:sticky;top:0}
-/* B59: story ~20% narrower; role/state get room */
+/* Story ~20% narrower; role/state get room */
 .work col.c-story{width:38%}.work col.c-role{width:5rem}.work col.c-state{width:2.25rem}.work col.c-age{width:2.75rem}
 .work td:nth-child(4),.work th:nth-child(4){text-align:right}
 .work tbody tr.hl{background:#e8f5ea}
-/* B61 state icons */
+/*  state icons */
 .st-ico{display:inline-block;width:10px;height:10px;vertical-align:middle;margin-right:2px}
 .st-ico.dot{border-radius:50%}
 .st-ico.dot-yellow{background:#d4a017}
@@ -97,10 +97,10 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .st-ico.arrow-amber{border-color:transparent transparent transparent #c9851a}
 @keyframes pulse-dot{0%,100%{opacity:1;transform:scale(1)}50%{opacity:.45;transform:scale(1.25)}}
 @keyframes pulse-arrow{0%,100%{opacity:1}50%{opacity:.4}}
-/* B56 SL thermometer */
+/*  SL thermometer */
 .sl-therm{display:inline-flex;align-items:center;gap:2px;margin-right:6px;vertical-align:middle}
 .sl-therm .bar{width:3px;height:10px;border-radius:1px;background:#c5cbc2}
-/* B65: six bars, heat 0–6 */
+/* Six bars, heat 0–6 */
 .sl-therm.quiet .bar:nth-child(-n+1){background:#c9851a}
 .sl-therm.warm .bar:nth-child(-n+2){background:#c9851a}
 .sl-therm.busy .bar:nth-child(-n+3){background:var(--green)}
@@ -108,7 +108,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .sl-therm.hot .bar:nth-child(-n+5){background:var(--green)}
 .sl-therm.max .bar{background:var(--green)}
 .sl-therm.max .bar:nth-child(6){animation:pulse-dot 0.9s ease-in-out infinite}
-/* B84: six-bar WIF therm (parity with SL B65) */
+/* Six-bar WIF therm (parity with SL ) */
 .wif-therm{display:inline-flex;align-items:center;gap:1px;margin-left:4px;vertical-align:middle}
 .wif-therm .bar{width:2px;height:8px;border-radius:1px;background:#c5cbc2}
 .wif-therm.quiet .bar:nth-child(-n+1){background:#c9851a}
@@ -202,7 +202,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 <div class="backlog-menu-portal" id="backlog-menu" hidden></div>
 <div class="batch-menu-portal" id="batch-menu" hidden></div>
 <script>
-/* Combined cockpit — B24/B35. Behavior: ui-design.md + dashboard-mockup.html */
+/* Combined cockpit — . Behavior: ui-design.md + dashboard-mockup.html */
 const esc = s => String(s??'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const age = iso => {
   if (!iso) return '—';
@@ -210,7 +210,7 @@ const age = iso => {
   if (m < 60) return m+'m'; if (m < 2880) return Math.floor(m/60)+'h'; return Math.floor(m/1440)+'d';
 };
 const fmt = iso => iso ? new Date(iso).toLocaleString() : '—';
-/** B51: no T, no sub-second precision */
+/** No T, no sub-second precision */
 const fmtStamp = iso => {
   if (!iso) return '—';
   const d = new Date(iso);
@@ -225,9 +225,9 @@ let optimisticBusy = false;
 const windows = new Map();
 let zTop = 100;
 let batchMenuHideTimer = null;
-/** B52: pin chat to bottom only when operator is near bottom / just sent */
+/** Pin chat to bottom only when operator is near bottom / just sent */
 let chatStickBottom = true;
-/** B49: previous status fingerprint per story_id */
+/** Previous status fingerprint per story_id */
 const cardStatusPrev = new Map();
 let cardStatusPrimed = false;
 
@@ -254,7 +254,7 @@ async function teardownSwarm() {
   }
 }
 function openAgentWindow(path, name) {
-  // B86: always load pane-page fresh so open-at-bottom runs (named windows reuse otherwise)
+  // Always load pane-page fresh so open-at-bottom runs (named windows reuse otherwise)
   const w = 900, h = 700, left = Math.max(0, (screen.width-w)/2), top = Math.max(0, (screen.height-h)/2);
   const sep = path.indexOf('?') >= 0 ? '&' : '?';
   const url = path + sep + '_open=' + Date.now();
@@ -272,7 +272,7 @@ function makeDraggable(win, bar) {
     bar.setPointerCapture(e.pointerId);
   });
   bar.addEventListener('pointermove', e => { if(!drag)return; win.style.left=Math.max(0,e.clientX-ox)+'px'; win.style.top=Math.max(0,e.clientY-oy)+'px'; });
-  bar.addEventListener('pointerup', () => { drag=false; });
+  bar.addEventListener('pointerup', => { drag=false; });
 }
 function closeWindow(id) { const w=windows.get(id); if(!w)return; w.el.remove(); windows.delete(id); }
 function openFloat({id,title,bodyHtml,onMount,left,top}) {
@@ -294,7 +294,7 @@ function boardColumn(s) {
   return c;
 }
 function stateIcon(state) {
-  // B61
+  //
   const s = String(state||'').toLowerCase();
   if (s==='created'||s==='assigned'||s==='queued') return {cls:'st-ico dot dot-grey', title:s||'created'};
   if (s==='starting'||s==='started') return {cls:'st-ico dot dot-yellow', title:s};
@@ -406,7 +406,7 @@ function batchCard(b) {
 }
 
 function sortByProgress(stories) {
-  // B48: later pipeline_rank first, then newer updated_at
+  // Later pipeline_rank first, then newer updated_at
   return stories.slice().sort((a,b)=>{
     const ra=Number(a.pipeline_rank||0), rb=Number(b.pipeline_rank||0);
     if (ra!==rb) return rb-ra;
@@ -418,7 +418,7 @@ function renderBoard(data) {
   const stories=data.stories||[];
   const batches=data.batches||[];
   const openBl=(data.backlog||[]).filter(b=>b.status==='open'||!b.status);
-  // B62: Specifying · Coding · Finalizing · Done (no Ready)
+  // Specifying · Coding · Finalizing · Done (no Ready)
   const cols=['specifying','coding','finalizing','done'];
   const titles={specifying:'Specifying',coding:'Coding',finalizing:'Finalizing',done:'Done'};
   const glowIds=new Set();
@@ -437,7 +437,7 @@ function renderBoard(data) {
   const countEl=document.getElementById('backlog-count');
   if(countEl) countEl.textContent=String(openBl.length);
   document.getElementById('columns').innerHTML=cols.map(c=>{
-    // B77: no double vision — hide free-floating story cards for active batch members
+    // No double vision — hide free-floating story cards for active batch members
     const batFilter=c==='finalizing'
       ? b=>{const t=String(b.batch_kind||b.template||''); return /hardener|qa|architect|senior/i.test(t);}
       : c==='coding'
@@ -484,7 +484,7 @@ function bindBacklogDeck(openBl) {
 function renderThemes(data) {
   const tid=data.current_theme_id;
   document.getElementById('theme-pill').textContent='project: '+(tid||'—');
-  // B42: always link to theme package when a current theme exists
+  // Always link to theme package when a current theme exists
   document.getElementById('themes').innerHTML=tid?
     `<div class="theme-card"><div class="name">${esc(tid)} <span class="pill pill-ok">active</span></div>
      <div class="meta" style="font-size:10px;margin-top:4px">Package on disk</div>
@@ -494,7 +494,7 @@ function renderThemes(data) {
   if(btn) btn.onclick=()=>openAgentWindow('/artifact/theme/'+encodeURIComponent(btn.getAttribute('data-view-theme')),'squad-theme');
 }
 function renderWork(data) {
-  // B46: server already sorts later pipeline higher
+  // Server already sorts later pipeline higher
   const rows=data.work_in_flight||data.assignments||[];
   document.getElementById('work').innerHTML=`<table class="work"><colgroup>
     <col class="c-story"><col class="c-role"><col class="c-state"><col class="c-age"></colgroup>
@@ -506,13 +506,13 @@ function renderWork(data) {
       const agent=w.agent_id||'';
       const roleFull=w.role||w.template||'';
       const ico=stateIcon(w.state);
-      // B66: three-bar pane activity therm for live agent
+      // Three-bar pane activity therm for live agent
       const act=w.activity||{};
       const alvl=act.level||'';
       const therm=agent
         ? `<span class="wif-therm ${esc(alvl||'idle')}" title="${esc((alvl||'idle')+' · '+(agent||''))}"><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span><span class="bar"></span></span>`
         : '';
-      // B43 + B59: full role name on hover
+      //  + Full role name on hover
       const agentCell=agent
         ? `<button type="button" class="linkish" data-open-agent="${esc(agent)}" title="${esc(roleFull+' · open '+agent)}">${esc(roleFull)}</button>${therm}`
         : `<span title="${esc(roleFull)}">${esc(roleFull)}</span>`;
@@ -530,7 +530,7 @@ function renderWork(data) {
   };
 }
 function renderSlTherm(data) {
-  // B56
+  //
   const el=document.getElementById('sl-therm');
   if(!el) return;
   const a=data.sl_activity||{};
@@ -543,7 +543,7 @@ function renderSlTherm(data) {
 function renderChat(data) {
   const reqs=data.sl_requests||[];
   const el=document.getElementById('sl-requests');
-  // B52: use sticky flag from scroll listener — do not re-stick on every poll.
+  // Use sticky flag from scroll listener — do not re-stick on every poll.
   const prevTop=el.scrollTop;
   const prevHeight=el.scrollHeight;
 
@@ -674,8 +674,8 @@ async function refresh() {
     const data=await (await fetch('/api/state',{cache:'no-store'})).json();
     state=data;
     const busyN=(data.agents||[]).filter(a=>a.state&&a.state!=='retired'&&a.state!=='idle').length;
-    // B51: human date/time + FSM next action after stamp
-    // B71: residual primary + product pending badge
+    // Human date/time + FSM next action after stamp
+    // Residual primary + product pending badge
     const residual=data.residual||data.next_action||'—';
     const product=data.product_pending?` · product: ${data.product_pending}`:'';
     document.getElementById('meta').textContent=
@@ -699,12 +699,12 @@ async function refresh() {
 document.getElementById('btn-open-sl').onclick=()=>openAgentWindow('/agent/squad-leader','squad-sl');
 document.getElementById('btn-open-ts').onclick=()=>openAgentWindow('/agent/troubleshooter','squad-ts');
 document.getElementById('btn-open-ts-2').onclick=()=>openAgentWindow('/agent/troubleshooter','squad-ts');
-// B81: no Send button — Enter sends; Shift+Enter newline
+// No Send button — Enter sends; Shift+Enter newline
 async function sendTsChat(){
   const ta=document.getElementById('sl-message');
   const text=ta.value.trim(); if(!text)return;
   optimisticBusy=true;
-  chatStickBottom=true; // B52: after send, follow new messages
+  chatStickBottom=true; // After send, follow new messages
   document.getElementById('ts-busy').style.display='inline-block';
   try {
     await post('/api/sl-requests', JSON.stringify({body:text}), 'application/json; charset=utf-8', false);
@@ -714,7 +714,7 @@ async function sendTsChat(){
 document.getElementById('sl-message').addEventListener('keydown',e=>{
   if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); sendTsChat(); }
 });
-// B52: track whether operator is reading history
+// Track whether operator is reading history
 (function bindChatScroll(){
   const el=document.getElementById('sl-requests');
   if(!el||el._chatScrollBound) return;
@@ -724,7 +724,7 @@ document.getElementById('sl-message').addEventListener('keydown',e=>{
     chatStickBottom=dist<48;
   },{passive:true});
 })();
-// B54/B64: resizable Board | Ops split — no layout shift on hover
+// Resizable Board | Ops split — no layout shift on hover
 (function bindSplitter(){
   const split=document.getElementById('splitter');
   const root=document.documentElement;

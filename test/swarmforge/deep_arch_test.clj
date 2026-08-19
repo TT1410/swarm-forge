@@ -7,7 +7,7 @@
             [squad-transition :as transition]
             [swarmforge.test-support :refer :all]))
 
-(deftest b22-kv-and-headers-body-roundtrip
+(deftest kv-and-headers-body-roundtrip
   (let [root (tmp-dir)
         kv (fs/path root "status")
         msg (fs/path root "note.request")]
@@ -27,7 +27,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b20-lease-acquire-release-and-exclusion
+(deftest lease-acquire-release-and-exclusion
   (let [root (tmp-dir)]
     (try
       (fs/create-dirs (fs/path root ".swarmforge" "squad"))
@@ -41,7 +41,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b20-with-lease-always-releases
+(deftest with-lease-always-releases
   (let [root (tmp-dir)]
     (try
       (fs/create-dirs (fs/path root ".swarmforge" "squad"))
@@ -50,7 +50,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b21-accept-merge-transition-writes-full-after-state
+(deftest accept-merge-transition-writes-full-after-state
   ;; Given assignment merge_ready artifacts
   ;; When apply-transition! accept-merge
   ;; Then status, accepted-merge, and events all show merged

@@ -8,12 +8,11 @@
             [swarmforge.crap-coverage-test]
             [swarmforge.handoff-test]
             [swarmforge.handoff-lib-test]
-            [swarmforge.issues-b68-b82-test]
-            [swarmforge.issues-b94-b99-b101-test]
-            [swarmforge.issues-b97-b98-b100-test]
-            [swarmforge.issues-b87-b88-b91-test]
-            [swarmforge.issues-b96-test]
-            [swarmforge.issues-p3-test]
+            [swarmforge.residual-priority-test]
+            [swarmforge.code-review-and-stamps-test]
+            [swarmforge.architecture-and-done-test]
+            [swarmforge.dashboard-labels-test]
+            [swarmforge.dashboard-polish-test]
             [swarmforge.launcher-test]
             [swarmforge.recover-test]
             [swarmforge.redo-next-test]
@@ -34,12 +33,11 @@
     swarmforge.dashboard-request-test
     swarmforge.durable-blocker-test
     swarmforge.handoff-lib-test
-    swarmforge.issues-b68-b82-test
-    swarmforge.issues-b94-b99-b101-test
-    swarmforge.issues-b97-b98-b100-test
-    swarmforge.issues-b87-b88-b91-test
-    swarmforge.issues-b96-test
-    swarmforge.issues-p3-test
+    swarmforge.residual-priority-test
+    swarmforge.code-review-and-stamps-test
+    swarmforge.architecture-and-done-test
+    swarmforge.dashboard-labels-test
+    swarmforge.dashboard-polish-test
     swarmforge.launcher-test
     swarmforge.recover-test
     swarmforge.redo-next-test

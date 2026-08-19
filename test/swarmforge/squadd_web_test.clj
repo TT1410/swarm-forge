@@ -40,7 +40,7 @@
         (fs/delete-tree root)))))
 
 (deftest stall-report-surfaces-ts-needed-not-recoverable-merge
-  ;; B29 + B63: failed agents and non-merge held handoffs stall;
+  ;;  + Failed agents and non-merge held handoffs stall;
   ;; recoverable merge_blocked does not.
   (let [root (tmp-dir)]
     (try
@@ -80,7 +80,7 @@
   (is (str/includes? web/dashboard-html "r.progress")))
 
 (deftest backlog-crud-and-approve-for-analysis
-  ;; B35: durable backlog under .squad/backlog; approve creates SL-owned request
+  ;; Durable backlog under .squad/backlog; approve creates SL-owned request
   (let [root (tmp-dir)]
     (try
       (let [created (web/create-backlog! root {:title "Fog cues" :body "Stronger adjacency hints."})]
@@ -96,7 +96,7 @@
           (is (= "squad-leader" (get-in approved [:request "owner"])))
           (is (str/includes? (get-in approved [:request "body"] "") "Fog cues"))
           (is (str/includes? (get-in approved [:request "body"] "") "NEW THEME"))
-          ;; B53: full product body survives durable re-read
+          ;; Full product body survives durable re-read
           (let [req-id (get-in approved [:request "id"])
                 on-disk (dashreq/file-map
                          (fs/path root ".swarmforge/dashboard/requests/pending"
@@ -107,7 +107,7 @@
         (fs/delete-tree root)))))
 
 (deftest board-column-mapping-for-stories
-  ;; B62 Specifying / Coding / Finalizing (no Ready)
+  ;;  Specifying / Coding / Finalizing (no Ready)
   (is (= "done" (web/board-column "final_approved")))
   (is (= "coding" (web/board-column "cleaned")))
   (is (= "coding" (web/board-column "implemented")))
@@ -126,7 +126,7 @@
          (web/pipeline-rank "implementer"))))
 
 (deftest merge-blocked-is-not-attention-stall
-  ;; B63: recoverable merge_blocked + related held handoff are not stalls
+  ;; Recoverable merge_blocked + related held handoff are not stalls
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad" "assignments" "story-impl" "metadata")
@@ -154,7 +154,7 @@
         (fs/delete-tree root)))))
 
 (deftest wif-sorts-in-progress-above-created
-  ;; B46: assignment lifecycle outranks same-role newer-created rows
+  ;; Assignment lifecycle outranks same-role newer-created rows
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad" "assignments" "a-created" "metadata")
@@ -182,7 +182,7 @@
         (fs/delete-tree root)))))
 
 (deftest teardown-requires-confirm-and-is-wired-in-ui
-  ;; B37: Teardown button + POST /api/teardown with TEARDOWN confirm
+  ;; Teardown button + POST /api/teardown with TEARDOWN confirm
   (is (str/includes? web/dashboard-html "teardownSwarm()"))
   (is (str/includes? web/dashboard-html "id=\"teardown-btn\""))
   (is (str/includes? web/dashboard-html "/api/teardown"))
@@ -227,7 +227,7 @@
         (fs/delete-tree root)))))
 
 (deftest theme-package-includes-dependency-checker-card
-  ;; B14: theme package always shows dependency-checker (content or missing)
+  ;; Theme package always shows dependency-checker (content or missing)
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad/themes/hello/theme.md") "Hello theme.\n")
@@ -251,7 +251,7 @@
         (fs/delete-tree root)))))
 
 (deftest theme-package-shows-architecture-gate-status
-  ;; B25: order and checker sections show approval status
+  ;; Order and checker sections show approval status
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad/themes/hello/theme.md") "Hello theme.\n")
@@ -307,7 +307,7 @@
                   "state: created\ndetail: active\nupdated_at: 2026-08-10T00:00:00Z\n")
       (is (str/includes? (web/artifact-content root "assignment" "story-1-implementer")
                          "Leader instructions for implementer"))
-      ;; Combined cockpit (B24): work-in-flight table + artifact routes still available
+      ;; Combined cockpit: work-in-flight table + artifact routes still available
       (is (str/includes? web/dashboard-html "work_in_flight"))
       (is (str/includes? web/dashboard-html "/artifact/"))
       (finally
@@ -365,8 +365,8 @@
         (fs/delete-tree root)))))
 
 (deftest dashboard-html-has-navigation-and-layout-affordances
-  ;; B42 theme, B43 WIF agent, B56 therm, B57 buttons, B58 no Live agents,
-  ;; B61 icons, B62 Specifying, B64 splitter, B52 chat stick
+  ;;  theme,  WIF agent,  therm,  buttons,  no Live agents,
+  ;;  icons,  Specifying,  splitter,  chat stick
   (let [html web/dashboard-html]
     (is (str/includes? html "View project"))
     (is (str/includes? html "data-view-theme"))
@@ -384,9 +384,9 @@
     (is (str/includes? html "fmtStamp"))
     (is (str/includes? html "next action:"))
     (is (not (str/includes? html "chat-send"))
-        "B81: no Send button")
+        "No Send button")
     (is (not (str/includes? html "ui-design.md · mockup"))
-        "B78: no mockup footer")
+        "No mockup footer")
     (is (str/includes? html "id=\"splitter\""))
     (is (str/includes? html "scrollbar-gutter:stable"))
     (is (str/includes? html "sortByProgress"))
@@ -396,7 +396,7 @@
 (deftest dashboard-shows-merge-blocked-hides-terminal-assignments
   ;; Given merge_blocked (non-terminal) and merged (terminal) assignments
   ;; When assignment-state is built
-  ;; Then merge_blocked is listed and merged is not (B28 terminal deny-list)
+  ;; Then merge_blocked is listed and merged is not
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad" "assignments" "blocked-impl" "metadata")
@@ -640,7 +640,7 @@
 	          (is (< (str/index-of state "\"assignment_id\":\"newer-assignment\"")
 	                 (str/index-of state "\"assignment_id\":\"active-assignment\"")))
 	          (is (not (str/includes? state "\"assignment_id\":\"merged-assignment\"")))
-	          ;; Combined cockpit UI (B24/B35) — markers, not legacy table JS
+	          ;; Combined cockpit UI — markers, not legacy table JS
 	          (is (str/includes? page "Troubleshooter"))
 	          (is (str/includes? page "id=\"ts-busy\""))
 	          (is (str/includes? page "data.troubleshooter"))

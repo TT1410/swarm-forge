@@ -1,5 +1,5 @@
 (ns squad-actions
-  "Typed workflow actions (B17).
+  "Typed workflow actions.
 
   Candidates should carry :op (keyword or string) and :authority.
   :command remains the shell rendering for the current executor; shell is an
@@ -10,22 +10,17 @@
   #{:daemon :sl-residual :troubleshooter :operator})
 
 (def op-authority
-  "Default authority for known ops (B16). Unknown ops default to :sl-residual.
-  Daemon-only main-git ops (accept_merge, merge_ready, check_merge_readiness) must
-  never default to SL residual."
+  "Default authority for known ops. Unknown ops default to :sl-residual.
+  accept_merge is the squad leader's. merge_ready stays daemon-only if used."
   {"wait" :sl-residual
-   "wait_for_daemon_main_git" :sl-residual
    "wait_for_spawn" :sl-residual
-   "wait_for_merge_recovery" :sl-residual
    "request_user_approval" :sl-residual
    ;; Residual only after Troubleshooter route-to-sl (product). Repair chat is TS wake.
    "answer_dashboard_request" :sl-residual
    "handle_durable_blocker" :sl-residual
    "recover_agent" :sl-residual
-   ;; B38: session-dead repair — owner is SL (clean) or Troubleshooter (dirty) via REPAIR_OWNER.
+   ;; Session-dead repair — owner is SL (clean) or Troubleshooter (dirty) via REPAIR_OWNER.
    "repair_dead_agent" :sl-residual
-   "write_theme_module_map" :sl-residual
-   "complete_dependency_checker" :sl-residual
    "retire_agent" :daemon
    "request_spawn" :daemon
    ;; Daemon owns mechanical create/spawn/approval-request; SL residual may still
@@ -39,22 +34,19 @@
    "record_batch_membership" :daemon
    "record_review_result" :daemon
    "record_post_revision_review_acceptance" :daemon
-   "record_implementation_order" :daemon
    "register_story_artifact" :daemon
    "register_story_packet" :daemon
    "attach_story_artifact" :daemon
    "declare_merge_blocker" :daemon
    "merge_ready" :daemon
-   "accept_merge" :daemon
+   "accept_merge" :sl-residual
    "check_merge_readiness" :daemon
    "record_assignment_result" :daemon
    "claim_handoff" :daemon
    "process_handoff" :daemon
    "finish_held_handoff" :daemon
    "finish_in_process_handoff" :daemon
-   "clear_stale_lock" :daemon
-   "park_merge_blocked" :daemon
-   "hold_merge_blocked" :daemon})
+   "clear_stale_lock" :daemon})
 
 (defn normalize-op
   "Canonical string op name from keyword or string."

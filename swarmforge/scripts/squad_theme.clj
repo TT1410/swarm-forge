@@ -328,7 +328,7 @@
     (println "STATE: acceptance_added")))
 
 (def content-gated-theme-gates
-  "Theme gates whose approval is bound to a content fingerprint (B25 re-approve on revision)."
+  "Theme gates whose approval is bound to a content fingerprint."
   #{"implementation-order" "implementation_order"
     "dependency-checker" "dependency_checker"})
 
@@ -360,7 +360,7 @@
   (fs/path dir "lifecycle"))
 
 (defn read-lifecycle
-  "Theme slice lifecycle: open (default) or finalized (B23)."
+  "Theme slice lifecycle: open (default) or finalized."
   [dir]
   (or (read-value (lifecycle-path dir) "lifecycle")
       (when (= "finalized"
@@ -416,11 +416,11 @@
       (println "LIFECYCLE: finalized"))))
 
 (defn finalize! [theme-id detail-parts]
-  "Mark current theme slice finalized (B23). Same as approve finalize."
+  "Mark current theme slice finalized. Same as approve finalize."
   (approve! theme-id "finalize" detail-parts))
 
 (defn reopen! [theme-id detail-parts]
-  "Re-open a finalized theme for a new story slice (B23)."
+  "Re-open a finalized theme for a new story slice."
   (validate-id! "Theme id" theme-id)
   (let [root (fs/absolutize (project-root))
         dir (theme-dir root theme-id)
@@ -443,7 +443,7 @@
     (println "DETAIL:" detail)))
 
 (defn maybe-reopen-on-new-story! [dir theme-id story-id now]
-  "If theme was finalized, registering a new story re-opens the slice (B23)."
+  "If theme was finalized, registering a new story re-opens the slice."
   (when (= "finalized" (read-lifecycle dir))
     (let [detail (str "reopened-by-story " story-id)]
       (write-lifecycle! dir theme-id "open" detail now)

@@ -48,7 +48,7 @@
     (fs/move tmp file {:replace-existing true})))
 
 (defn acquire-lock!
-  "B20: shared spawn/registry lease."
+  "Shared spawn/registry lease."
   [lock-dir]
   (let [lock-dir (fs/path lock-dir)
         root (-> lock-dir fs/parent fs/parent fs/parent)]
@@ -144,7 +144,7 @@
      :branch branch}))
 
 (defn session-target
-  "Exact tmux session target (B11: avoid prefix false matches / misses)."
+  "Exact tmux session target (Avoid prefix false matches / misses)."
   [session]
   (str "=" session))
 
@@ -181,7 +181,7 @@
   (run-continue "tmux" "-S" socket "kill-session" "-t" session))
 
 (defn stop-running-session! [socket session]
-  "B11: kill, wait, force kill again if lingering, wait once more."
+  "Kill, wait, force kill again if lingering, wait once more."
   (kill-session-attempts! socket session)
   (let [first-wait (wait-session-stopped socket session)]
     (if (:stopped? first-wait)
@@ -261,7 +261,7 @@
             {:keys [stopped? detail]} (stop-session! socket session)
             worktree-cleanup (remove-worktree! root agent-id worktree)
             branch-cleanup (delete-branch! root agent-id)
-            ;; B11: after kill path, session may still linger; role is gone so
+            ;; After kill path, session may still linger; role is gone so
             ;; squadd orphan reconcile can finish it off.
             leak? (and (not (str/blank? session))
                        (not (str/blank? socket))

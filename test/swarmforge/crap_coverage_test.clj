@@ -506,46 +506,6 @@
     (is (= [] @terminated))
     (is (not (fs/exists? pid-file)))))
 
-(deftest squad-next-theme-candidates-cover-approval-assignment-and-skip-branches
-  (let [root (tmp-dir)]
-    (write-file (fs/path root "swarmforge/squad.conf") "approval_required theme true\n")
-    (write-file (fs/path root ".squad/themes/alpha/status") "state: theme_created\n")
-    (write-file (fs/path root ".squad/themes/bravo/status") "state: theme_created\n")
-    (write-file (fs/path root ".squad/themes/bravo/module-map.md") minimal-module-map)
-    (write-file (fs/path root ".squad/themes/charlie/status") "state: theme_created\n")
-    (write-file (fs/path root ".squad/themes/charlie/module-map.md") minimal-module-map)
-    (write-file (fs/path root ".squad/themes/bravo/approvals.tsv") "now\ttheme\tok\n")
-    (write-file (fs/path root ".squad/approvals/pending/theme__charlie.approval")
-                "target_kind: theme\ntarget_id: charlie\ngate: theme\n")
-    (write-file (fs/path root ".squad/stories/skip/packet")
-                "story_id: skip\ntheme_id: delta\n")
-    (write-file (fs/path root ".squad/themes/delta/status") "state: theme_created\n")
-    (let [candidates (next/theme-candidates root [])
-          by-theme (into {} (map (juxt :theme-id identity) candidates))]
-      (is (= "write_theme_module_map" (:next-action (by-theme "alpha"))))
-      (is (= "create_assignment" (:next-action (by-theme "bravo"))))
-      (is (nil? (by-theme "charlie")))
-      (is (nil? (by-theme "delta"))))
-    (write-file (fs/path root ".squad/themes/alpha/module-map.md") minimal-module-map)
-    (let [candidates (next/theme-candidates root [])
-          by-theme (into {} (map (juxt :theme-id identity) candidates))]
-      (is (= "create_approval_request" (:next-action (by-theme "alpha"))))
-      (is (str/includes? (:reason (by-theme "alpha")) "module map")))
-    (write-file (fs/path root ".squad/assignments/bravo-analysis/metadata")
-                (str "assignment_id: bravo-analysis\n"
-                     "theme_id: bravo\n"
-                     "story_id: theme\n"
-                     "template: analyst\n"
-                     "assignment_file: " root "/.squad/assignments/bravo-analysis/assignment.md\n"
-                     "created_at: now\n"
-                     "requires: approval:theme\n"))
-    (write-file (fs/path root ".squad/assignments/bravo-analysis/status")
-                "state: created\n")
-    (write-file (fs/path root ".squad/assignments/bravo-analysis/assignment.md") "assignment\n")
-    (let [candidate (some #(when (= "bravo" (:theme-id %)) %) (next/theme-candidates root []))]
-      (is (= "request_spawn" (:next-action candidate)))
-      (is (= "bravo-analysis" (:assignment-id candidate))))))
-
 (deftest handoff-canonical-commit-covers-resolution-branches
   (with-redefs [handoff/command (fn [_ & args]
                                   (let [args (vec args)]
@@ -1849,7 +1809,7 @@
       (is (= 2 (exit-status #(report/validate-id! "Theme id" "bad/id")))))))
 
 (deftest p1-file-map-survives-missing-and-vanished-files
-  ;; B08: missing or race-deleted agent files must not crash mechanical apply
+  ;; Missing or race-deleted agent files must not crash mechanical apply
   (let [missing (fs/path "/tmp/swarmforge-no-such-file-map-test")
         dir (fs/create-temp-dir {:prefix "swarmforge-file-map."})
         path (fs/path dir "heartbeat")]

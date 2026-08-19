@@ -1,5 +1,5 @@
-(ns swarmforge.issues-b68-b82-test
-  "Regression coverage for issue batch B68–B82 (2026-08-17)."
+(ns swarmforge.residual-priority-test
+  "Regression coverage for dashboard residual, dirt deferral, YOLO, and WIF labels."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
@@ -13,12 +13,12 @@
             [swarmforge :as forge]
             [swarmforge.test-support :refer :all]))
 
-(deftest b68-dashboard-request-outranks-pending-spawn
+(deftest dashboard-request-outranks-pending-spawn
   (is (plane/residual-class-before? :dashboard-request :pending-spawn)
-      "B68: product dashboard residual beats spawn wait")
+      "Product dashboard residual beats spawn wait")
   (is (not (plane/residual-class-before? :pending-spawn :dashboard-request))))
 
-(deftest b75-dirt-detail-not-replayed
+(deftest dirt-detail-not-replayed
   (is (true? (assign/dirt-defer-detail? "tracked checkout dirty")))
   (is (false? (assign/dirt-defer-detail? "dry-run merge failed")))
   (let [root (tmp-dir)]
@@ -27,11 +27,11 @@
         (write-file (fs/path dir "merge")
                     "state: merge_blocked\ncommit: abcdef0123\ndetail: tracked checkout dirty\n")
         (is (nil? (assign/existing-merge-evaluation dir "abcdef0123"))
-            "B75: dirt block is not durable merge evaluation"))
+            "Dirt block is not durable merge evaluation"))
       (finally
         (fs/delete-tree root)))))
 
-(deftest b76-persistent-yolo-roles
+(deftest persistent-yolo-roles
   (is (true? (forge/persistent-yolo-role? "squad-leader")))
   (is (true? (forge/persistent-yolo-role? "troubleshooter")))
   (is (false? (forge/persistent-yolo-role? "implementer")))
@@ -43,9 +43,9 @@
               :extra-args ""}
              (fs/path "/tmp/prompt.md"))]
     (is (str/includes? cmd "--dangerously-bypass-approvals-and-sandbox")
-        "B76: TS codex is YOLO")))
+        "TS codex is YOLO")))
 
-(deftest b80-parent-batch-id-and-wif-resolve
+(deftest parent-batch-id-and-wif-resolve
   (is (= "htw-architecture" (web/parent-batch-id "htw-architecture-fix")))
   (is (= "htw-qa" (web/parent-batch-id "htw-qa-r2")))
   (let [batches [{"batch_id" "htw-architecture"
@@ -63,12 +63,12 @@
       (is (= ["room-perception"] (get (first rows) "story_ids")))
       (is (true? (get (first rows) "is_batch"))))))
 
-(deftest b67-stage-labels-written-approved-in-process
+(deftest stage-labels-written-approved-in-process
   (is (= "written" (web/stage-label "story_recorded")))
   (is (= "approved" (web/stage-label "story_approved")))
   (is (= "in-process" (web/stage-label "specification_in_progress"))))
 
-(deftest b79-qa-fail-subject-detection
+(deftest qa-fail-subject-detection
   (with-redefs [packet/git-commit-subject
                 (fn [_ _] "Record HTW batch QA failure")]
     (is (true? (packet/qa-commit-failed? "/tmp" "abc"))))
@@ -76,7 +76,7 @@
                 (fn [_ _] "Merge squad assignment htw-qa")]
     (is (false? (packet/qa-commit-failed? "/tmp" "abc")))))
 
-(deftest b83-wif-theme-label-not-placeholder
+(deftest wif-theme-label-not-placeholder
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad" "themes" "htw" "theme.md")
@@ -89,7 +89,7 @@
                "state" "in_progress"}
             rows (web/work-in-flight-rows root [a] [])]
         (is (= "Hunt the Wumpus" (get (first rows) "story"))
-            "B83: theme-scoped analyst shows theme title not Theme"))
+            "Theme-scoped analyst shows theme title not Theme"))
       (let [a {"assignment_id" "cave-analysis"
                "story_id" "domain-cave-state"
                "theme_id" "htw"

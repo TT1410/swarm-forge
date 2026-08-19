@@ -332,7 +332,7 @@
       (write-approval-blocker! root approval-id approval reason now)
       (when (= "story" target-kind)
         (update-story-packet-on-approval-reject! root target-id gate reason)
-        ;; B72: rejected story returns to backlog for edit + re-approve
+        ;; Rejected story returns to backlog for edit + re-approve
         (when (= "story" gate)
           (let [story-path (or (read-value (fs/path root ".squad" "stories" target-id "packet")
                                            "story_path")

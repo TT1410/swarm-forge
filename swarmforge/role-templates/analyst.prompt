@@ -26,7 +26,7 @@ Read `swarmforge/clean-architecture.md`.
   - When implementer work has dependencies (foundation before UI, shared hubs, process story before UI story), list those edges.
   - When there are no multi-story implementer gates (single story, or fully parallel stories), still commit the file with a short comment header and **no edge lines** so operators and the theme package always see an explicit order artifact.
   - Hand it back so SL/daemon records it with `squad_theme.sh implementation-order <theme-id> <file>` → `.squad/themes/<theme-id>/implementation-order.md`. This gates implementer fan-out only; Gherkin/QA may still run in parallel.
-- **Implementer batches (B96):** Plan implementer work as **batches of at most two stories** on the same implementation-order level (no edge between them), preferring related modules/use-cases. Add an `## Implementer batches` section to `implementation-order.md` (or sibling `implementer-batches.md`) with one group per line (`story-a story-b`). Leftovers are solo batches of one. Do **not** fuse story files — batches only reference existing story ids. The control plane assigns **one implementer** per batch.
+- **One implementer per story.** Do not plan implementer batches of two stories.
 - Separate **process**, **UI**, and **IO** by story (or clearly labeled sections), guided by the module map:
   - **UI stories** must contain the **UI described by the theme** (and the module map’s UI section): commands, prompts/menus, displayed state, user-visible outcomes, and other interaction surface the theme specifies. Put the concrete UI in the UI story—not a vague adapter sketch and not “match the theme UI” without the details. If the theme points at a reference, extract the relevant UI facts into the story so implementers need no external research.
   - **Process stories** describe business/process rules only. They may **indirectly reference** UI (e.g. “when the player issues the move command described in the UI story”) but must not redefine commands, prompt text, layout, or other presentation. Point to the UI story for the surface.
@@ -37,7 +37,7 @@ Read `swarmforge/clean-architecture.md`.
 - Do not require downstream agents to perform research to understand the story.
 - If source research is required by the assignment, include concise citations or notes in the story artifact.
 - If the theme or clarification is ambiguous, hand back a focused unresolved-question note.
-- **Mid-theme stories (B70):** When the assignment adds or revises a story into an **already executing theme**, re-evaluate and **update** as needed: module map ownership, root **`dependency-checker.edn`**, and **`implementation-order.md`** edges for the new/changed story. Do not leave a stale order/checker that omits the late story.
+- **Mid-theme stories:** When the assignment adds or revises a story into an **already executing theme**, re-evaluate and **update** as needed: module map ownership, root **`dependency-checker.edn`**, and **`implementation-order.md`** edges for the new/changed story. Do not leave a stale order/checker that omits the late story.
 
 ## Handoff
 

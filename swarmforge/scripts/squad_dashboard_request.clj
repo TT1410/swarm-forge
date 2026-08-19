@@ -49,7 +49,7 @@
        (not (str/includes? value ".."))))
 
 (defn write-atomic!
-  "Atomic write via squad-records (B40). Request parse-kv keeps multiline B10 form."
+  "Atomic write via squad-records. Request parse-kv keeps multiline  form."
   [file content]
   (rec/write-atomic! file content))
 
@@ -63,17 +63,17 @@
   (fs/path (state-dir root state) (str id ".request")))
 
 (defn progress-file
-  "Append-only interim status notes for a request (B36). Sibling of .request."
+  "Append-only interim status notes for a request. Sibling of .request."
   [root state id]
   (fs/path (state-dir root state) (str id ".progress")))
 
 (def multiline-field-keys
-  "Fields that may contain newlines. Written as key: | block form (B10)."
+  "Fields that may contain newlines. Written as key: | block form."
   #{"body" "response" "detail"})
 
 (def request-field-keys
   "Top-level durable request fields. Multiline body/response/detail may contain
-  free text that looks like `key: value` (e.g. backlog_id: …). B53: only these
+  free text that looks like `key: value` (e.g. backlog_id: …). Only these
   keys end a multiline block — arbitrary `foo: bar` lines stay inside the body."
   #{"id" "kind" "status" "owner" "created_at" "updated_at" "answered_at"
     "routed_at" "body" "response" "detail"})
@@ -89,8 +89,8 @@
 
 (defn parse-kv
   "Parse request records. Single-line `key: value` plus multiline `key: |`
-  blocks for body/response/detail (B10). Legacy single-line files still parse.
-  Multiline blocks end only at a known request-field header (B53)."
+  blocks for body/response/detail. Legacy single-line files still parse.
+  Multiline blocks end only at a known request-field header."
   [text]
   (loop [lines (str/split-lines (or text ""))
          acc {}]
@@ -131,7 +131,7 @@
   (normalize-owner (get m "owner")))
 
 (defn render-field
-  "Single-line `key: value` unless value has a newline — then `key: |` block (B10)."
+  "Single-line `key: value` unless value has a newline — then `key: |` block."
   [k v]
   (let [s (str v)]
     (if (and (contains? multiline-field-keys k)
@@ -246,7 +246,7 @@
         {"at" "" "text" line}))))
 
 (defn read-progress
-  "Ordered interim notes for request id (B36)."
+  "Ordered interim notes for request id."
   [root state id]
   (let [file (progress-file root state id)]
     (if (fs/regular-file? file)
@@ -386,7 +386,7 @@
     m))
 
 (defn append-progress-note!
-  "B36: interim status while request stays pending. Does not complete the request."
+  "Interim status while request stays pending. Does not complete the request."
   [root id note-text]
   (cond
     (not (valid-id? id))
@@ -424,7 +424,7 @@
     (if (str/blank? text) "Done" text)))
 
 (defn claims-empty-product-body?
-  "True when answer asserts the request body was empty (B55 false-empty pattern)."
+  "True when answer asserts the request body was empty."
   [answer]
   (let [a (str/lower-case (str answer))]
     (boolean
@@ -458,7 +458,7 @@
             (> (count answer) max-body-chars)
             {:ok false :error (str "Answer exceeds " max-body-chars " characters.")}
 
-            ;; B55: refuse false "empty body" answers when durable body is present
+            ;; Refuse false "empty body" answers when durable body is present
             (and (not (str/blank? body))
                  (claims-empty-product-body? answer))
             {:ok false

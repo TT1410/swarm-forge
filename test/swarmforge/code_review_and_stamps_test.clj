@@ -1,5 +1,5 @@
-(ns swarmforge.issues-b94-b99-b101-test
-  "Regression coverage for B101 (one CR), B94 (depth-2 accept pause), B99 (merger stamps)."
+(ns swarmforge.code-review-and-stamps-test
+  "Regression coverage for  (one CR),  (depth-2 accept pause),  (merger stamps)."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
@@ -50,7 +50,7 @@
                    "template: implementer\n\n"
                    "merge_and_process " from " abcdef1234\n")))
 
-(deftest b101-one-code-review-then-hardener-after-rework-cleaner
+(deftest one-code-review-then-hardener-after-rework-cleaner
   ;; Given: first CR requested changes; implementer rework and cleaner-r2 are recorded
   ;; When: squad_next runs
   ;; Then: no code-review-r2; story is eligible for hardener
@@ -88,17 +88,17 @@
                                     :merge-commit "eeeeeeeeee"}))
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
         (is (not (str/includes? out "alpha-code-review-r2"))
-            "B101: never emit a second code-reviewer")
+            "Never emit a second code-reviewer")
         (is (not (re-find #"TEMPLATE: code-reviewer" out))
-            "B101: first CR verdict is final")
+            "First CR verdict is final")
         (is (or (str/includes? out "TEMPLATE: hardener")
                 (str/includes? out "record_batch_membership")
                 (str/includes? out "hardener"))
-            "B101: after CR changes-requested + rework cleaner, hardener is next"))
+            "After CR changes-requested + rework cleaner, hardener is next"))
       (finally
         (fs/delete-tree root)))))
 
-(deftest b101-existing-code-review-assignment-blocks-second-create
+(deftest existing-code-review-assignment-blocks-second-create
   ;; Given: a story already has a code-reviewer assignment
   ;; When: a newer cleaner is recorded
   ;; Then: residual does not create code-review-r2
@@ -123,28 +123,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b94-still-accepts-the-open-depth-2-merger
-  ;; Given: the open depth-2 merger itself is merge_ready
-  ;; When: squad_next inspects
-  ;; Then: accept-merge of that merger is still offered
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-roles! root)
-      (write-file (fs/path root "swarmforge/squad.conf") "max_merger_depth 2\n")
-      (write-assignment! root "cave-impl-merge-merge"
-                         {:story "cave" :template "merger" :state "merge_ready"
-                          :merge-for "cave-impl-merge"
-                          :merge-file-state "merge_ready"})
-      (write-in-process-handoff! root "cave-impl-merge-merge" "merger-002")
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? out "NEXT_ACTION: accept_merge"))
-        (is (str/includes? out "cave-impl-merge-merge"))
-        (is (not (str/includes? out "wait_for_merge_recovery"))))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest b94-resumes-product-accept-after-depth-2-resolves
+(deftest resumes-product-accept-after-depth-2-resolves
   ;; Given: depth-2 merger is terminal-merged and a product assignment is merge_ready
   ;; When: squad_next inspects
   ;; Then: product accept-merge proceeds again
@@ -167,7 +146,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b99-merger-resolved-senior-impl-stamps-member-packets
+(deftest merger-resolved-senior-impl-stamps-member-packets
   ;; Given: senior-implementer reform landed via merger; no batch manifest
   ;;        and stories still have architecture changes-requested
   ;; When: mechanical residual runs
@@ -195,13 +174,13 @@
             alpha (slurp (str (fs/path root ".squad/stories/alpha/packet")))
             beta (slurp (str (fs/path root ".squad/stories/beta/packet")))]
         (is (str/includes? out "record_merged_batch_result")
-            "B99: merger resolution must project the product result")
+            "Merger resolution must project the product result")
         (is (str/includes? alpha "senior_implementer_sha: 7931912abc"))
         (is (str/includes? beta "senior_implementer_sha: 7931912abc")))
       (finally
         (fs/delete-tree root)))))
 
-(deftest b99-merger-resolved-implementer-stamps-story-packet
+(deftest merger-resolved-implementer-stamps-story-packet
   ;; Given: a story implementer was merge_blocked then marked merged by a merger
   ;; When: mechanical residual runs
   ;; Then: the story packet records implementation_sha

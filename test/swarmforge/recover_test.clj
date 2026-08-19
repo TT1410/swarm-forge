@@ -99,7 +99,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b38-session-dead-dirty-open-assignment-owned-by-troubleshooter
+(deftest session-dead-dirty-open-assignment-owned-by-troubleshooter
   ;; Given dead session, open assignment, dirty worktree
   ;; When classify
   ;; Then session_dead + REPAIR_OWNER troubleshooter + repair command
@@ -137,7 +137,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b38-session-dead-clean-open-assignment-owned-by-squad-leader
+(deftest session-dead-clean-open-assignment-owned-by-squad-leader
   (let [root (tmp-dir)
         worktree (fs/path root ".worktrees/implementer-001")]
     (try
@@ -170,7 +170,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b38-repair-removes-agent-and-requeues-assignment
+(deftest repair-removes-agent-and-requeues-assignment
   ;; Given session-dead hardener with open assignment and dirty tree
   ;; When repair runs
   ;; Then agent removed from roles, assignment created, worktree archived
@@ -217,7 +217,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b38-residual-offers-repair-dead-agent-when-session-gone
+(deftest residual-offers-repair-dead-agent-when-session-gone
   (let [root (tmp-dir)
         worktree (fs/path root ".worktrees/hardener-001")]
     (try

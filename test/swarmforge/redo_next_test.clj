@@ -69,6 +69,52 @@
                   "assignment_id: cave-impl\nstate: merge_blocked\n")
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
         (is (not (str/includes? out "TEMPLATE: merger")))
-        (is (not (str/includes? out "create-merger"))))
+        (is (not (str/includes? out "create-merger")))
+        (is (not (str/includes? out "wait_for_merge_recovery")))
+        (is (str/includes? out "NEXT_ACTION: wait")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest empty-swarm-waits
+  ;; Given a new repo with only SL registered
+  ;; When residual runs
+  ;; Then wait — not write_theme_module_map
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "NEXT_ACTION: wait"))
+        (is (not (str/includes? out "write_theme_module_map")))
+        (is (not (str/includes? out "create_approval_request"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest implementer-is-one-story-without-order-file
+  ;; Given two implementer-ready stories and no implementation-order.md
+  ;; When residual runs
+  ;; Then each story may get its own implementer; no batch of two
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
+      (doseq [story ["alpha" "beta"]]
+        (write-file (fs/path root ".squad/stories" story "packet")
+                    (str "story_id: " story "\n"
+                         "theme_id: swarm\n"
+                         "story_approval: approved\n"
+                         "gherkin_path: features/" story ".feature\n"
+                         "gherkin_approval: approved\n"
+                         "gherkin_review: accepted\n"
+                         "qa_procedure_path: qa/" story ".md\n"
+                         "qa_procedure_approval: approved\n"
+                         "qa_procedure_review: accepted\n"
+                         "implementation_approval: approved\n"))
+        (write-file (fs/path root "stories" (str story ".md")) (str "Story " story ".\n")))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "TEMPLATE: implementer"))
+        (is (not (str/includes? out "--batch-stories")))
+        (is (not (str/includes? out "record_implementation_order"))))
       (finally
         (fs/delete-tree root)))))

@@ -374,7 +374,7 @@
                               "git" "log" "-1" "--pretty=%s" sha))))
 
 (defn qa-commit-failed?
-  "B79: detect explicit batch QA failure in commit subject (handoff artifact)."
+  "Detect explicit batch QA failure in commit subject (handoff artifact)."
   [root sha]
   (boolean (re-find #"(?i)qa failure|failed final batch qa|final_qa_fail|htw_final_qa_fail"
                     (or (git-commit-subject root sha) ""))))
@@ -406,7 +406,7 @@
     (event! root story-id (str prefix (if qa-failed? "_failed" "_recorded"))
             assignment-id branch sha)
     (when qa-failed?
-      ;; B79: durable Attention signal — not auto-approved
+      ;; Durable Attention signal — not auto-approved
       (let [blocker-dir (fs/path root ".squad" "blockers")
             bid (str "qa-failed__" story-id)]
         (fs/create-dirs blocker-dir)

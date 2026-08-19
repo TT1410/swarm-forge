@@ -59,7 +59,7 @@
        "## Out of Scope\n\nDetailed APIs.\n"))
 
 (def minimal-dependency-checker
-  "Non-trivial product policy for tests (B13 quality bar)."
+  "Non-trivial product policy for tests."
   (str "{:allowed-dependencies {:greeting []\n"
        "                        :ui [:greeting]}\n"
        " :fail-on-cycles true\n"
@@ -69,7 +69,7 @@
   "{:allowed-dependencies {}\n :fail-on-cycles true\n :fail-on-violations true}\n")
 
 (defn write-nontrivial-checker!
-  "Install non-trivial root dependency-checker so implementer gates pass B13."
+  "Install non-trivial root dependency-checker so implementer gates pass."
   [root]
   (write-file (fs/path root "dependency-checker.edn") minimal-dependency-checker))
 

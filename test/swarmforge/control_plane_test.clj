@@ -6,7 +6,7 @@
             [babashka.fs :as fs]
             [swarmforge.test-support :refer :all]))
 
-(deftest b19-residual-class-order-is-single-policy
+(deftest residual-class-order-is-single-policy
   ;; Given the control-plane residual ranking
   ;; When comparing classes
   ;; Then handoffs outrank dashboard, dashboard outranks ready-actions, etc.
@@ -22,7 +22,7 @@
   (is (= (dec (count plane/residual-class-order))
          (plane/residual-class-rank :wait))))
 
-(deftest b19-select-residual-class-uses-policy-order
+(deftest select-residual-class-uses-policy-order
   (is (= :dashboard-request
          (plane/select-residual-class
           {:pending-dashboard-request {:id "1"}
@@ -34,7 +34,7 @@
            :pending-approval-file "/x"})))
   (is (= :wait (plane/select-residual-class {}))))
 
-(deftest b19-ready-priority-bands-are-ordered
+(deftest ready-priority-bands-are-ordered
   (is (< (plane/ready-priority-of :existing-spawn)
          (plane/ready-priority-of :theme-module-map)))
   (is (< (plane/ready-priority-of :bookkeeping-register)
@@ -46,27 +46,27 @@
   (is (= 60 (plane/ready-priority-of :spawn-worker)))
   (is (= 30 (plane/ready-priority-of :user-approval))))
 
-(deftest b16-sl-owns-accept-merge
+(deftest sl-owns-accept-merge
   (is (plane/op-allowed? :sl-residual :accept_merge))
   (is (not (plane/op-allowed? :daemon :accept_merge)))
   (is (not (plane/op-allowed? :sl-residual :check_merge_readiness)))
   (is (not (plane/op-allowed? :daemon :merge_ready))))
 
-(deftest b16-sl-residual-may-repair-and-approve
+(deftest sl-residual-may-repair-and-approve
   (is (plane/op-allowed? :sl-residual :repair_dead_agent))
   (is (plane/op-allowed? :sl-residual :recover_agent))
   (is (plane/op-allowed? :sl-residual :request_user_approval))
   (is (plane/op-allowed? :sl-residual :answer_dashboard_request))
   (is (plane/op-allowed? :troubleshooter :repair_dead_agent)))
 
-(deftest b16-filter-allowed-strips-daemon-only-for-sl
+(deftest filter-allowed-strips-daemon-only-for-sl
   (let [cands [(actions/action :accept_merge :command "x")
                (actions/action :repair_dead_agent :command "y")
                (actions/action :wait :command "z")]
         filtered (plane/filter-allowed :sl-residual cands)]
     (is (= ["accept_merge" "repair_dead_agent" "wait"] (mapv actions/op-of filtered)))))
 
-(deftest b16-executor-refuses-disallowed-op
+(deftest executor-refuses-disallowed-op
   (let [root (tmp-dir)]
     (try
       (is (thrown-with-msg? Exception #"may not execute"
@@ -78,7 +78,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b18-plan-view-shape
+(deftest plan-view-shape
   (let [plan (plane/plan-view {:residual-class :ready-action
                                :ready-actions [{:next-action "create_assignment"}]
                                :concurrent-actions []

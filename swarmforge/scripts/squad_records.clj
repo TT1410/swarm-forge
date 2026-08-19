@@ -1,5 +1,5 @@
 (ns squad-records
-  "Shared durable record formats (B22).
+  "Shared durable record formats.
 
   Categories:
   - kv: flat `key: value` lines (status, metadata, lifecycle)
@@ -66,7 +66,7 @@
    (write-atomic! file (format-kv m key-order))))
 
 (defn parse-headers-body
-  "Split text into headers map + body string after first blank line (B10 style)."
+  "Split text into headers map + body string after first blank line."
   [text]
   (let [lines (str/split-lines (or text ""))
         [header-lines body-lines]

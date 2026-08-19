@@ -1,7 +1,7 @@
 # Redo UI
 
-**Spec:** `redo.md`  
-**Plan:** `redo-implementation-plan.md` (Task 7)  
+**Spec:** `redo.md`
+**Plan:** `redo-implementation-plan.md` (Task 7)
 **Base:** cockpit at `b73c972` (`squadd/dashboard.html`)
 
 The unit is one end-to-end **story**. No sprints. No project. No theme.

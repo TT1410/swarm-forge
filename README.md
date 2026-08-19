@@ -279,7 +279,7 @@ transient_agent hardener grok
 
 With that config, an `implementer` spawn uses `codex`, a `code-reviewer` uses `claude`, a `hardener` uses `grok`, and any other template (for example `analyst`) inherits the global default and therefore the squad-leader backend.
 
-These lines only select the tool when a worker is spawned. They do not start agents by themselves. The squad leader remains the persistent role defined in `swarmforge.conf` (default: `window-invisible squad-leader …` — B41; use `window squad-leader …` if you want a Terminal surface at launch). Open SL via the dashboard or `tmux attach`.
+These lines only select the tool when a worker is spawned. They do not start agents by themselves. The squad leader remains the persistent role defined in `swarmforge.conf` (default: `window-invisible squad-leader …`; use `window squad-leader …` if you want a Terminal surface at launch). Open SL via the dashboard or `tmux attach`.
 
 ### Related capacity settings
 

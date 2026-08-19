@@ -1,5 +1,5 @@
 (ns squad-renderer
-  "Present control-plane plan views (B18). Pure printing — no state mutation."
+  "Present control-plane plan views. Pure printing — no state mutation."
   (:require [squad-actions :as actions]
             [squad-control-plane :as plane]
             [clojure.string :as str]))

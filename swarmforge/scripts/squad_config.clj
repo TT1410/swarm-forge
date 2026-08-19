@@ -4,7 +4,6 @@
             [clojure.string :as str]))
 
 (def squad-default-max-transient-agents 10)
-(def squad-default-max-merger-depth 2)
 (def squad-default-recovery-quiet-seconds 300)
 (def squad-default-recovery-retry-seconds 60)
 (def squad-default-approval-required
@@ -20,12 +19,12 @@
    "qa" false
    "architecture" false
    "final" false
-   ;; B25: non-empty order and non-trivial checker require user approval by default
+   ;; Non-empty order and non-trivial checker require user approval by default
    "implementation_order" true
    "implementation-order" true
    "dependency_checker" true
    "dependency-checker" true
-   ;; B23: theme slice finalize/ship requires user approval by default
+   ;; Theme slice finalize/ship requires user approval by default
    "finalize" true
    "theme_finalize" true
    "theme-finalize" true})
@@ -162,9 +161,6 @@
     (squad-env-long "SWARMFORGE_SQUAD_MAX_AGENTS"
                     (squad-config-long root "max_transient_agents" squad-default-max-transient-agents))
     (squad-config-long root "max_transient_agents" squad-default-max-transient-agents)))
-
-(defn squad-max-merger-depth [root]
-  (squad-config-long root "max_merger_depth" squad-default-max-merger-depth))
 
 (defn squad-recovery-quiet-seconds [root]
   (if (System/getenv "SWARMFORGE_SQUAD_RECOVERY_QUIET_SECONDS")

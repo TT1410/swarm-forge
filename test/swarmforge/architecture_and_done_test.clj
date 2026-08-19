@@ -1,5 +1,5 @@
-(ns swarmforge.issues-b97-b98-b100-test
-  "Regression coverage for B97 (arch after all QA), B100 (Done semantics), B98 (no map chores)."
+(ns swarmforge.architecture-and-done-test
+  "Regression coverage for  (arch after all QA),  (Done semantics),  (no map chores)."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
@@ -47,7 +47,7 @@
        "code_review: accepted\n"
        "code_review_sha: cccccccccc\n"))
 
-(deftest b97-no-architect-until-every-story-has-qa
+(deftest no-architect-until-every-story-has-qa
   ;; Given two stories in one project and only one has finished QA
   ;; When residual runs
   ;; Then no architect or senior-implementer is created
@@ -64,13 +64,13 @@
       (write-file (fs/path root ".squad/stories/beta/packet") (coding-packet "beta"))
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
         (is (not (str/includes? out "TEMPLATE: architect"))
-            "B97: do not start architecture on a partial QA set")
+            "Do not start architecture on a partial QA set")
         (is (not (str/includes? out "TEMPLATE: senior-implementer")))
         (is (not (str/includes? out "BATCH_KIND: architecture"))))
       (finally
         (fs/delete-tree root)))))
 
-(deftest b97-architect-after-all-stories-qa
+(deftest architect-after-all-stories-qa
   ;; Given every project story is qa_approved
   ;; When residual runs
   ;; Then an architecture batch/assignment becomes a candidate
@@ -89,11 +89,11 @@
         (is (or (str/includes? out "TEMPLATE: architect")
                 (str/includes? out "BATCH_KIND: architecture")
                 (str/includes? out "architecture"))
-            "B97: full QA set opens the project architecture pass"))
+            "Full QA set opens the project architecture pass"))
       (finally
         (fs/delete-tree root)))))
 
-(deftest b100-story-board-done-after-qa
+(deftest story-board-done-after-qa
   ;; Given packet states after QA
   ;; Then the story card is Done; pre-QA late pipeline stays Finalizing
   (is (= "done" (web/board-column "qa_approved")))
@@ -105,7 +105,7 @@
   (is (= "finalizing" (web/board-column "hardening_approved")))
   (is (= "finalizing" (web/board-column "qa_returned"))))
 
-(deftest b100-project-not-done-until-architecture-closes
+(deftest project-not-done-until-architecture-closes
   ;; Given all stories QAd but architecture still open
   ;; Then the project slice is not complete
   (let [root (tmp-dir)]
@@ -113,11 +113,11 @@
       (write-file (fs/path root ".squad/stories/alpha/packet") (qa-complete-packet "alpha"))
       (write-file (fs/path root ".squad/stories/beta/packet") (qa-complete-packet "beta"))
       (is (false? (next/theme-slice-complete? root "wumpus"))
-          "B100: QA alone does not finish the project")
+          "QA alone does not finish the project")
       (finally
         (fs/delete-tree root)))))
 
-(deftest b100-project-done-after-architect-accept-or-senior-impl
+(deftest project-done-after-architect-accept-or-senior-impl
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad/stories/alpha/packet")
@@ -127,7 +127,7 @@
                   (str (qa-complete-packet "beta")
                        "architecture_review: accepted\n"))
       (is (true? (next/theme-slice-complete? root "wumpus"))
-          "B100: architect accept closes the project")
+          "Architect accept closes the project")
       (write-file (fs/path root ".squad/stories/alpha/packet")
                   (str (qa-complete-packet "alpha")
                        "architecture_review: changes-requested\n"
@@ -137,27 +137,27 @@
                        "architecture_review: changes-requested\n"
                        "senior_implementer_sha: 7931912abc\n"))
       (is (true? (next/theme-slice-complete? root "wumpus"))
-          "B100: senior-impl stamp closes the project")
+          "Senior-impl stamp closes the project")
       (finally
         (fs/delete-tree root)))))
 
-(deftest b98-architect-prompt-marks-module-map-as-commentary
+(deftest architect-prompt-marks-module-map-as-commentary
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))]
     (is (str/includes? prompt "non-blocking")
-        "B98: module-map recommendations are commentary")
+        "Module-map recommendations are commentary")
     (is (str/includes? prompt "not required findings")
-        "B98: map edits are not required architecture findings")))
+        "Map edits are not required architecture findings")))
 
-(deftest b98-senior-implementer-skips-module-map-chores
+(deftest senior-implementer-skips-module-map-chores
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/senior-implementer.prompt")))]
     (is (str/includes? prompt "Module Map")
-        "B98: senior-impl is told about map sections")
+        "Senior-impl is told about map sections")
     (is (or (str/includes? prompt "skip")
             (str/includes? prompt "ignore")
             (str/includes? prompt "not"))
-        "B98: senior-impl skips map chores unless SL assigns them")))
+        "Senior-impl skips map chores unless SL assigns them")))
 
-(deftest b98-senior-impl-assignment-omits-map-recommendations
+(deftest senior-impl-assignment-omits-map-recommendations
   ;; Given an architecture review that includes Module Map Recommendations
   ;; When a senior-implementer assignment is created
   ;; Then the work order does not treat map bullets as required findings
@@ -189,10 +189,9 @@
         (is (str/includes? text "Fix IO randomness")
             "code findings stay in the work order")
         (is (not (str/includes? text "Add HHG use case to the module map."))
-            "B98: map bullets are not assigned work")
-        (is (or (str/includes? text "B98")
-                (str/includes? text "skip")
+            "Map bullets are not assigned work")
+        (is (or (str/includes? text "skip")
                 (str/includes? text "Module Map Recommendations"))
-            "B98: assignment tells senior-impl to skip map chores"))
+            "Assignment tells senior-impl to skip map chores"))
       (finally
         (fs/delete-tree root)))))

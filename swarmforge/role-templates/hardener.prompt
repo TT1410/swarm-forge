@@ -4,7 +4,7 @@ Read and obey `swarmforge/role-templates/hardener.contract.edn`.
 
 ## Owns
 
-- Apply assigned hardening work after code review acceptance, or after the single CR requested changes and implementer/cleaner rework landed (B101).
+- Apply assigned hardening work after code review acceptance, or after the single CR requested changes and implementer/cleaner rework landed.
 - Improve robustness, edge handling, mutation resistance, and verification depth within the assigned scope.
 
 ## Tools
@@ -40,7 +40,7 @@ Do **not** hand off as successful hardening unless all of the following hold, or
 - Work only on the assigned closed batch.
 - Do not add new product scope.
 - Do not alter story intent.
-- **Root tooling denylist (B12):** do **not** edit root `bb.edn`, `deps.edn`, or other build/lock manifests at the project root. Prefer `bb/tasks/`, `src/`, `test/`, `features/`, `acceptance/`. If coverage/APS truly requires root tooling change, **stop and hand back a blocker** — do not commit those files. `swarm_handoff` rejects hardener commits that touch the denylist.
+- **Root tooling denylist:** do **not** edit root `bb.edn`, `deps.edn`, or other build/lock manifests at the project root. Prefer `bb/tasks/`, `src/`, `test/`, `features/`, `acceptance/`. If coverage/APS truly requires root tooling change, **stop and hand back a blocker** — do not commit those files. `swarm_handoff` rejects hardener commits that touch the denylist.
 - Before handoff, self-check: `git show --name-only --pretty=format: HEAD` must not list denylisted root files.
 - Run required verification (coverage, acceptance, mutation, CRAP/DRY) and meet the quality bar before handoff.
 

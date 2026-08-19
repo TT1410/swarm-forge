@@ -47,20 +47,6 @@ Missing root draft is incomplete analysis. Empty file (no comments, no edges) is
 when recording. Comment-only is valid and means no implementation-order gates.
 Durable record: `squad_theme.sh implementation-order <theme-id> implementation-order.md`.
 
-## Implementer batches
-
-Optional analyst schedule for implementers (B96). One group per line, **1–2 story ids**,
-same implementation-order level, no edge between members. Prefer related modules.
-
-```text
-## Implementer batches
-cave-topology room-reporting
-move-command
-```
-
-If this section is omitted, `squad_next` derives pairs from order levels (≤2 per batch).
-The control plane assigns one implementer per group and records one SHA on every member packet.
-
 ## Notes
 
 - Module map remains structural (entities, use cases, UI/IO).

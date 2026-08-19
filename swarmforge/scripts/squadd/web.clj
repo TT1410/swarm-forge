@@ -14,7 +14,7 @@
   (:import [java.net InetAddress ServerSocket URLDecoder]))
 
 (def approval-wake-message
-  "A web approval changed state. If idle, run squad_next.sh --residual-only and handle only residual judgment or user-facing work. The daemon owns merge-ready/accept-merge and other mechanical applies.")
+  "A web approval changed state. If idle, run squad_next.sh --residual-only. Residual accept-merge is yours; the daemon does not merge.")
 
 (defn dashboard-html-path []
   "Prefer dashboard.html beside this script (squadd/dashboard.html)."
@@ -25,7 +25,7 @@
     (first (filter #(and % (fs/regular-file? %)) candidates))))
 
 (def dashboard-html
-  "Live combined cockpit (B24/B35). Source: squadd/dashboard.html — see ui-design.md
+  "Live combined cockpit. Source: squadd/dashboard.html — see ui-design.md
   and dashboard-mockup.html for behavior."
   (if-let [p (dashboard-html-path)]
     (slurp (str p))
@@ -215,7 +215,7 @@
          (strip-grok-input-region text))))))
 
 (def pane-capture-lines
-  "How many history lines to mirror in the dashboard agent pane (B15)."
+  "How many history lines to mirror in the dashboard agent pane."
   2000)
 
 (defn capture-pane-tail
@@ -226,7 +226,7 @@
                        "-S" (str "-" pane-capture-lines)))
     backend)))
 (defn parse-kv-file
-  "Flat key:value status/metadata files via squad-records (B40)."
+  "Flat key:value status/metadata files via squad-records."
   [file]
   (rec/read-kv-file file))
 
@@ -291,7 +291,7 @@
   (assoc (parse-kv-file file) id-key id))
 
 (def stage-labels
-  ;; B67: early Specifying pills are distinct (written / approved / in-process)
+  ;; Early Specifying pills are distinct (written / approved / in-process)
   {"story_recorded" "written"
    "story_approved" "approved"
    "specification_in_progress" "in-process"
@@ -652,18 +652,18 @@
   (into {} (map (fn [a] [(get a "assignment_id") a]) assignments)))
 
 (defn recoverable-merge-block?
-  "B63: merge_blocked is auto-recovered by merger path — not a TS stall."
+  "Merge_blocked is auto-recovered by merger path — not a TS stall."
   [assignment]
   (= "merge_blocked" (get assignment "state")))
 
 (defn assignment-stall-item [root assignment]
-  "B63: only stalls that need TS/operator intervention.
+  "Only stalls that need TS/operator intervention.
   Recoverable merge_blocked is excluded (merger pipeline handles it)."
   (let [state (get assignment "state")
         id (get assignment "assignment_id")
         detail (str/trim (or (get assignment "detail") ""))]
     (cond
-      ;; B63: do not Attention-stall auto-recoverable merges
+      ;; Do not Attention-stall auto-recoverable merges
       (recoverable-merge-block? assignment)
       nil
 
@@ -672,14 +672,6 @@
        "id" id
        "state" state
        "reason" (or (not-empty detail) "assignment blocked")}
-
-      ;; Max-depth / hard merge stops often use detail language; surface as stall
-      (and (str/includes? (str/lower-case detail) "max_merger_depth")
-           (not (str/blank? detail)))
-      {"kind" "assignment"
-       "id" id
-       "state" (or state "blocked")
-       "reason" detail}
 
       :else nil)))
 
@@ -694,7 +686,7 @@
        "reason" (or (not-empty detail) (str "agent " state))})))
 
 (defn held-handoff-stall-items
-  "B63: held handoffs for recoverable merge_blocked tasks are not stalls."
+  "Held handoffs for recoverable merge_blocked tasks are not stalls."
   [root assignments]
   (let [by-id (assignment-by-id assignments)
         dir (fs/path root ".swarmforge" "handoffs" "inbox" "held")]
@@ -718,7 +710,7 @@
       [])))
 
 (defn stall-report
-  "B29/B63: operator-facing stalls = needs TS/operator, not auto-merger recovery."
+  "Operator-facing stalls = needs TS/operator, not auto-merger recovery."
   [root assignments agents]
   (let [items (vec
                (concat (keep #(assignment-stall-item root %) assignments)
@@ -740,14 +732,14 @@
      "items" items
      "summary" summary}))
 
-;;; --- Board columns + backlog (B24 / B35) ---
+;;; --- Board columns + backlog ---
 
 (def board-column-by-state
-  "Map packet state → board column (B47 Finalizing, B62 Specifying/Coding).
+  "Map packet state → board column.
   No Ready column: implementation_approved is Coding; implementation_approval_ready is Specifying.
   code_review_approved is Finalizing."
   {"final_approved" "done"
-   ;; B100: story Done after QA; architecture/senior-impl are project-level
+   ;; Story Done after QA; architecture/senior-impl are project-level
    "architecture_approved" "done"
    "architecture_reviewed" "done"
    "architecture_revision_returned" "done"
@@ -778,7 +770,7 @@
   (get board-column-by-state state "specifying"))
 
 (def pipeline-stage-rank
-  "Higher = later progress (B46/B48). Used for WIP and in-column card sort."
+  "Higher = later progress. Used for WIP and in-column card sort."
   {"story_recorded" 10
    "story_approved" 20
    "specification_in_progress" 30
@@ -801,7 +793,7 @@
    "final_approved" 200})
 
 (def wif-role-rank
-  "Later pipeline roles rank higher within WIF (B46)."
+  "Later pipeline roles rank higher within WIF."
   {"analyst" 10
    "gherkin-writer" 20
    "gherkin-reviewer" 25
@@ -817,7 +809,7 @@
    "merger" 110})
 
 (def wif-assignment-state-rank
-  "Later assignment lifecycle ranks higher (B46). Prevents created above in_progress
+  "Later assignment lifecycle ranks higher. Prevents created above in_progress
   when role ranks match and created has a newer updated_at."
   {"created" 10
    "starting" 15
@@ -858,7 +850,7 @@
            "updated_at" (or (get story "updated_at") ""))))
 
 (defn enrich-story-holds
-  "B60: temporary hold reason for soft-red card outline + hover."
+  "Temporary hold reason for soft-red card outline + hover."
   [stories assignments]
   (let [coding-impl-states #{"created" "starting" "in_progress" "running"
                              "handoff_ready" "handoff_sent" "merge_ready"
@@ -891,7 +883,7 @@
           stories)))
 
 (defn pane-sample-for-hash
-  "B95: drop the last non-empty line (timer/status widgets) before hashing."
+  "Drop the last non-empty line (timer/status widgets) before hashing."
   [text]
   (let [trimmed (str/replace (str text) #"\s+\z" "")
         lines (str/split-lines trimmed)]
@@ -900,17 +892,17 @@
       (str/join "\n" (pop (vec lines))))))
 
 (def sl-activity-atom
-  "B56: last SL pane sample for heat decay across polls."
+  "Last SL pane sample for heat decay across polls."
   (atom {:hash nil :heat 0}))
 
 (def agent-activity-atom
-  "B66: last pane hash/heat per agent_id for WIF thermometers."
+  "Last pane hash/heat per agent_id for WIF thermometers."
   (atom {}))
 
 (declare sl-activity socket-value agent-session-name)
 
 (defn agent-pane-heat
-  "B66/B84: heat 0–6 for one agent pane (observe only; six-bar WIF therm)."
+  "Heat 0–6 for one agent pane (observe only; six-bar WIF therm)."
   [root agent-id]
   (when-not (str/blank? agent-id)
     (let [socket (socket-value root)
@@ -960,14 +952,14 @@
                         "batch_kind" kind))))))
 
 (defn parent-batch-id
-  "B80: map rework batch ids (e.g. htw-architecture-fix) to parent batch."
+  "Map rework batch ids (e.g. htw-architecture-fix) to parent batch."
   [batch-id]
   (when-not (str/blank? batch-id)
     (or (second (re-matches #"(.+)-fix$" batch-id))
         (second (re-matches #"(.+)-r\d+$" batch-id)))))
 
 (defn resolve-wif-batch
-  "B80: find batch record for assignment, including parent of -fix / -rN ids."
+  "Find batch record for assignment, including parent of -fix / -rN ids."
   [batch-by-id a]
   (let [id (get a "assignment_id" "")
         bid (or (get a "batch_id") "")]
@@ -979,12 +971,12 @@
           (get batch-by-id parent)))))
 
 (defn strip-theme-project-prefix
-  "B91: theme.md H1 is often '# Theme: HTW' — never show that prefix."
+  "Theme.md H1 is often '# Theme: HTW' — never show that prefix."
   [s]
   (str/trim (str/replace (str s) #"(?i)^(theme|project)\s*:\s*" "")))
 
 (defn theme-display-name
-  "B83/B88/B91: human project label from theme.md title or theme_id."
+  "Human project label from theme.md title or theme_id."
   [root theme-id]
   (when-not (str/blank? theme-id)
     (let [theme-md (fs/path root ".squad" "themes" theme-id "theme.md")
@@ -996,7 +988,7 @@
       (or (not-empty from-file) theme-id))))
 
 (defn inferred-story-slug
-  "B91: recover a story token from assignment id when story_id is still 'theme'."
+  "Recover a story token from assignment id when story_id is still 'theme'."
   [assignment-id theme-id]
   (let [id (str assignment-id)
         tid (str theme-id)
@@ -1010,7 +1002,7 @@
       stripped)))
 
 (defn wif-story-label
-  "B83/B91: project:story when a story is known; project name only for whole-project work."
+  "Project:story when a story is known; project name only for whole-project work."
   [root a members batch-kind]
   (let [id (get a "assignment_id" "")
         story (get a "story_id" "")
@@ -1042,11 +1034,11 @@
 
 (defn work-in-flight-rows
   "Active assignments as WIF table rows; batch assignments include members.
-  B46: later progress on top —
+  Later progress on top —
   1) assignment lifecycle (in_progress > created, …)
   2) pipeline role (implementer > gherkin-writer, …)
   3) updated_at newest first.
-  B83: pass root for theme display names."
+  Pass root for theme display names."
   ([assignments batches] (work-in-flight-rows nil assignments batches))
   ([root assignments batches]
    (let [batch-by-id (into {} (map (fn [b] [(get b "batch_id") b]) batches))]
@@ -1094,7 +1086,7 @@
           vec))))
 
 (defn product-pending-label
-  "B71: short label for pending product/SL dashboard request."
+  "Short label for pending product/SL dashboard request."
   [sl-requests]
   (when-let [req (some (fn [r]
                          (when (and (= "pending" (get r "status"))
@@ -1109,15 +1101,15 @@
         "pending")))
 
 (defn residual-snapshot
-  "B71: prefer daemon-written residual file; else nil."
+  "Prefer daemon-written residual file; else nil."
   [root]
   (let [f (fs/path root ".swarmforge" "daemon" "residual-next")]
     (when (fs/regular-file? f)
       (not-empty (str/trim (slurp (str f)))))))
 
 (defn dashboard-next-action
-  "Cheap FSM-ish label for header (B51) — no full residual scan.
-  B71: when residual snapshot exists, prefer it over product-request heuristic alone."
+  "Cheap FSM-ish label for header — no full residual scan.
+  When residual snapshot exists, prefer it over product-request heuristic alone."
   [{:strs [approvals stalls sl_requests agents] :as state}]
   (let [snap (residual-snapshot (get state "project_root" "."))
         pending-appr (seq (get approvals "pending"))
@@ -1257,8 +1249,8 @@
 (defn approve-backlog!
   "Mark item dispatched and open a product request owned by squad-leader.
   SL decides theme vs story (ui-design.md).
-  B53: do not embed bare `key: value` header-shaped lines in the body text;
-  free-text labels keep the full product description through B10 re-parse."
+  Do not embed bare `key: value` header-shaped lines in the body text;
+  free-text labels keep the full product description through  re-parse."
   [root id]
   (if-let [item (get-backlog root id)]
     (let [title (get item "title" id)
@@ -1303,7 +1295,7 @@
         stories (->> (story-state root)
                      (mapv story-board-row)
                      (#(enrich-story-holds % assignments))
-                     ;; B48: later progress first within column (client also sorts)
+                     ;; Later progress first within column (client also sorts)
                      (sort-by (fn [s]
                                 [(- (long (or (get s "pipeline_rank") 0)))
                                  (str (get s "updated_at" ""))])
@@ -1429,7 +1421,7 @@
     (.toString (BigInteger. 1 digest) 16)))
 
 (defn- theme-content-gate-status
-  "Status badge for B25 content gates: missing | hollow | unapproved | approved | n/a."
+  "Status badge for  content gates: missing | hollow | unapproved | approved | n/a."
   [root theme-id gate content]
   (let [theme-dir (fs/path root ".squad" "themes" theme-id)
         gate-norm (str/replace gate "_" "-")
@@ -1468,7 +1460,7 @@
       :else "awaiting user approval")))
 
 (defn theme-lifecycle-status [root theme-id]
-  "B23: open (default) or finalized."
+  "Open (default) or finalized."
   (let [life (slurp-if-exists (fs/path root ".squad" "themes" theme-id "lifecycle"))
         status (slurp-if-exists (fs/path root ".squad" "themes" theme-id "status"))]
     (or (when (not (str/blank? life))
@@ -1481,8 +1473,8 @@
 (defn theme-package-parts [root theme-id]
   "Ordered package sections. Implementation order and dependency-checker always
   appear (explicit missing markers) so operators notice incomplete analysis.
-  B25: status line for approval of non-empty order / non-trivial checker.
-  B23: lifecycle open/finalized."
+  Status line for approval of non-empty order / non-trivial checker.
+  Lifecycle open/finalized."
   (let [theme (slurp-if-exists (fs/path root ".squad" "themes" theme-id "theme.md"))
         module-map (slurp-if-exists (fs/path root ".squad" "themes" theme-id "module-map.md"))
         durable-order (slurp-if-exists (fs/path root ".squad" "themes" theme-id "implementation-order.md"))
@@ -1512,7 +1504,7 @@
                      (not (str/blank? draft-order))
                      (str (status-line "draft — not yet recorded")
                           "_(Not yet recorded under .squad/themes/" theme-id
-                          "/ — run `squad_theme.sh implementation-order "
+                          " — run `squad_theme.sh implementation-order "
                           theme-id " implementation-order.md`.)_\n\n"
                           draft-order)
                      :else
@@ -1527,7 +1519,7 @@
                             "_(Missing.)_ Analyst must commit root `dependency-checker.edn` "
                             "from the module map (real components/edges, not a hollow stub). "
                             "See `swarmforge/templates/dependency-checker.edn`. "
-                            "Non-trivial policy requires user approval (B25)."))]
+                            "Non-trivial policy requires user approval."))]
     (cond-> []
       true
       (conj {:id "lifecycle" :title "Project Lifecycle" :body lifecycle-body})
@@ -1656,7 +1648,7 @@
       (str/trim (slurp (str socket-file))))))
 
 (defn sl-activity
-  "B56/B65: idle…max from SL pane change rate (observe only). Heat 0–6 for six bars."
+  "Idle…max from SL pane change rate (observe only). Heat 0–6 for six bars."
   [root]
   (let [socket (socket-value root)
         session "swarmforge-squad-leader"
@@ -1744,7 +1736,7 @@
         "")))
 
 (defn pane-page [agent-id]
-  "B86/B69: session window (agent/SL/TS) — scroll container is the pane, open at end.
+  "Session window (agent/SL/TS) — scroll container is the pane, open at end.
   Root cause of failed open-at-bottom: pre used min-height only so it grew with
   content and the *window* scrolled; pre.scrollTop was a no-op."
   (str "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
@@ -1853,7 +1845,7 @@
        :body text})))
 
 (defn dashboard-request-wake-message
-  "B34: raw tmux inject of id-prefixed operator text. Durable request already
+  "Raw tmux inject of id-prefixed operator text. Durable request already
   exists; answer still via squad_dashboard_request.sh answer (pane alone does not
   complete). Single-line: [id] body. Multiline body: [id] then body on next lines."
   [request]
@@ -1879,7 +1871,7 @@
     false))
 
 (defn wake-sl-for-request! [root request]
-  "Legacy name: operator dashboard requests wake the Troubleshooter (B09)."
+  "Legacy name: operator dashboard requests wake the Troubleshooter."
   (wake-troubleshooter-for-request! root request))
 
 (defn create-sl-request-action! [root body]

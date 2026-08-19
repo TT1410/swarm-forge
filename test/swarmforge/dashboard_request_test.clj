@@ -51,7 +51,7 @@
         (fs/delete-tree root)))))
 
 (deftest answer-refuses-false-empty-body-claim
-  ;; B55: cannot answer "body was empty" when durable body is present
+  ;; Cannot answer "body was empty" when durable body is present
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -75,7 +75,7 @@
         (fs/delete-tree root)))))
 
 (deftest multiline-body-survives-embedded-key-value-lines
-  ;; B53: free-text lines that look like `key: value` must not truncate body
+  ;; Free-text lines that look like `key: value` must not truncate body
   (let [root (tmp-dir)
         body (str "PRODUCT BACKLOG APPROVED FOR ANALYSIS\n"
                   "backlog_id: bl-20260817-001\n"
@@ -99,7 +99,7 @@
         (fs/delete-tree root)))))
 
 (deftest multiline-body-and-response-round-trip
-  ;; Given a dashboard request with multiline body and answer (B10)
+  ;; Given a dashboard request with multiline body and answer
   ;; When answered and re-read via list/status helpers
   ;; Then every line is preserved including blank lines and shell-like text
   (let [root (tmp-dir)
@@ -361,7 +361,7 @@
         (fs/delete-tree root)))))
 
 (deftest troubleshooter-wake-is-id-prefixed-raw-body
-  ;; Given a new dashboard request (B34)
+  ;; Given a new dashboard request
   ;; When building the Troubleshooter wake paste
   ;; Then it is raw inject: [id] body — not a long instructional essay
   (let [req {"id" "dashboard-20260812T000000Z-001"
@@ -381,7 +381,7 @@
 (deftest dashboard-html-preserves-multiline-request-text
   (is (or (str/includes? web/dashboard-html "white-space: pre-wrap")
           (str/includes? web/dashboard-html "white-space:pre-wrap"))
-      "B10: request body/response must keep newlines in the UI")
+      "Request body/response must keep newlines in the UI")
   (is (str/includes? web/dashboard-html "bubble-you")
       "request body class present")
   (is (str/includes? web/dashboard-html "bubble-ts")
@@ -392,7 +392,7 @@
       "single-confirm teardown; no type-TEARDOWN step"))
 
 (deftest progress-notes-keep-request-pending
-  ;; B36: interim notes while Troubleshooter works; answer still closes
+  ;; Interim notes while Troubleshooter works; answer still closes
   (let [root (tmp-dir)]
     (try
       (init-repo! root)

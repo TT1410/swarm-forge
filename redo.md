@@ -71,7 +71,7 @@ This tree has a lot of leftover machinery. Redo is not another overlay.
 
 **Delete with each task.** When a path dies, delete its functions, templates, config lines, and tests in that same commit. No empty stubs. No `theme-candidates` or `merger-candidates` that always returns `[]`. If a helper is only called by a deleted path, delete the helper too.
 
-Dead with the matching task: merger, dry-run, `merge_blocked`, **`squad_theme.sh` / `squad_theme.clj`**, `.squad/themes/`, theme create/map/approve/finalize, implementation-order gate, B96 implementer pairs, Gherkin/QA reviewers, final bless, hardcoded singleton set.
+Dead with the matching task: merger, dry-run, `merge_blocked`, **`squad_theme.sh` / `squad_theme.clj`**, `.squad/themes/`, theme create/map/approve/finalize, implementation-order gate, implementer pairs, Gherkin/QA reviewers, final bless, hardcoded singleton set.
 
 A story packet has no `theme_id`. `squad_packet.sh create` takes a story id, not a theme. Module map and dependency rules are ordinary files that architect and SI edit. They are not theme records.
 

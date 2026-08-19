@@ -31,7 +31,7 @@ bb crap
 
 `bb crap` runs `bb coverage` then scores `swarmforge/scripts`. Filter to the module you touched (`bb crap squad_next`). The cap still applies to every leftover function in that module. After Task 7, a full `bb crap` is a check that shipped scripts are already at 6 — not a new project.
 
-**Out of scope:** Rewriting `squad_simulator.clj`. B89 project directories. Converting a mid-flight sprint swarm. Keeping B96 story-pair implementer batches.
+**Out of scope:** Rewriting `squad_simulator.clj`. Project directories. Converting a mid-flight sprint swarm. Keeping story-pair implementer batches.
 
 ---
 
@@ -44,7 +44,7 @@ bb crap
 | `test/swarmforge/redo_ui_test.clj` | **New.** Dashboard HTML/API: no project rail, Start not classify, stage pills. |
 | `test/swarmforge/test_runner.clj` | Register the three new namespaces in `script-test-namespaces`. |
 | `test/swarmforge/test_support.clj` | Shared fixtures only if a helper is used by more than one redo test. Prefer locals first. |
-| `swarmforge/scripts/squad_next.clj` | Residuals. Drop merger, `merge_blocked`, impl-order gates, B96 implementer pairs, Gherkin/QA reviewers, theme-first map, final bless. Analyst-per-started-story. Keep hardener/QA/architect/SI batches of ready stories. |
+| `swarmforge/scripts/squad_next.clj` | Residuals. Drop merger, `merge_blocked`, impl-order gates, implementer pairs, Gherkin/QA reviewers, theme-first map, final bless. Analyst-per-started-story. Keep hardener/QA/architect/SI batches of ready stories. |
 | `swarmforge/scripts/squad_assign.clj` | Daemon does not `merge-ready` / `accept-merge`. SL merges the handed SHA. Delete dry-run. |
 | `swarmforge/scripts/squad_config.clj` | Default approvals: `implementation-plan`, `gherkin`, `qa-procedure` only. Not theme/order/checker/final. |
 | `swarmforge/scripts/squadd/web.clj` | `approve-backlog!` **starts** a story (packet + story file, no theme). No SL classify request. Board columns/pills. Drop project from `/api/state`. |
@@ -57,7 +57,7 @@ bb crap
 | `swarmforge/role-templates/hardener.prompt` | Apply CR recs, then harden as in six-pack. |
 | `swarmforge/role-templates/{gherkin,qa-procedure}-writer.prompt` | No reviewer; user approves the file. |
 | `swarmforge/constitution/articles/local-workflow.prompt` | Target pipeline only. |
-| Existing tests listed per task | Invert or delete assertions that encode merger, dry-run, B96, reviewers, theme-first, impl-order gate. |
+| Existing tests listed per task | Invert or delete assertions that encode merger, dry-run, reviewers, theme-first, impl-order gate. |
 
 Do not add sprints. **Delete `squad_theme.sh` and `squad_theme.clj`** in the no-theme task. Packets are per story only: drop `theme_id` from `squad_packet.sh create` and from packet files. Module map is a product file, not a theme record.
 
@@ -69,7 +69,7 @@ Do not add sprints. **Delete `squad_theme.sh` and `squad_theme.clj`** in the no-
 
 ## Current pipeline at `b73c972` (leaving)
 
-Theme map → theme approval → analyst writes many stories → story approval → Gherkin writer → **Gherkin reviewer** → Gherkin approve → QA writer → **QA reviewer** → QA approve → **impl-order + B96 pairs** → implementer → **cleaner** → **CR** → hardener → QA → architect (after **all** theme stories QA) → SI → story/theme finalize.
+Theme map → theme approval → analyst writes many stories → story approval → Gherkin writer → **Gherkin reviewer** → Gherkin approve → QA writer → **QA reviewer** → QA approve → **impl-order + implementer pairs** → implementer → **cleaner** → **CR** → hardener → QA → architect (after **all** theme stories QA) → SI → story/theme finalize.
 
 Merger + dry-run own main-git. Residual `--residual-only` defers `accept-merge` to the daemon. That split **goes away**: SL merges.
 
@@ -147,7 +147,7 @@ Do not rewrite `squad_simulator.clj`. Simulator tests are **not** in `bb test`. 
 - Modify: `swarmforge/scripts/squad_next.clj` (`ready-actions`, `merger-candidates`, handoff/merge residual)
 - Modify: `swarmforge/scripts/squad_assign.clj` (stop daemon `merge-ready` / dry-run path)
 - Modify: `test/swarmforge/squad_next_test.clj` (merger-routing and residual-only-defer tests)
-- Modify: `test/swarmforge/issues_b94_b99_b101_test.clj` (B94 depth-2 pause, B99 merger stamps)
+- Modify: `test/swarmforge/code_review_and_stamps_test.clj` (depth-2 pause, merger stamps)
 - Modify: `swarmforge/scripts/squad_next.clj` — delete hardcoded `singleton-templates`; treat `max_active_template` 1 as singleton
 
 - [ ] **Step 1: Write the failing tests**
@@ -225,7 +225,7 @@ Stop calling `dry-run-merge` / daemon `merge-ready`. There is no `merge_blocked`
 - `pause-product-accept-merge?`, `pause-product-accept-merge-at-root?`
 - `merger-spawn-action?`, `merger-holds-capacity-slot?` (and the copies in `squadd.clj` / `squad_spawn.clj` if only merger uses them)
 - `lineage-max-depth-exhausted?` / `merge-lineage-root` / `assignment-in-merge-lineage?` **in next** if only the merger path used them
-- `park-paused-product-accept-handoffs!`, `restore-held-accept-handoffs-after-depth-2!`, `open-depth-2-merger-ids` if they exist only for B94 depth-2 pause
+- `park-paused-product-accept-handoffs!`, `restore-held-accept-handoffs-after-depth-2!`, `open-depth-2-merger-ids` if they exist only for depth-2 pause
 - `print-daemon-owned-main-git-wait!` if residual no longer defers merge
 
 Drop merger from `ready-actions`. Singleton list comes from `squad.conf` (`max_active_template` 1), not a hardcoded set that still names `merger`.
@@ -242,7 +242,7 @@ No live callers. Tests that only existed to lock those functions are deleted, no
 
 - [ ] **Step 4: Invert old tests**
 
-Delete or invert every test that requires merger, dry-run, `merge_blocked`, depth-2 pause (B94), merger stamps (B99), or “residual defers accept-merge to daemon.” Those last two (`residual-only-defers-accept-merge-to-daemon`, `residual-only-defers-merge-ready-to-daemon`) **invert**: SL residual is the merge.
+Delete or invert every test that requires merger, dry-run, `merge_blocked`, depth-2 pause, merger stamps, or “residual defers accept-merge to daemon.” Those last two (`residual-only-defers-accept-merge-to-daemon`, `residual-only-defers-merge-ready-to-daemon`) **invert**: SL residual is the merge.
 
 - [ ] **Step 5: Run `bb test`. Then `bb crap` (or `bb crap squad_next` / `squad_assign`). Confirm green and leftover functions in touched files have CRAP ≤ 6.**
 
@@ -257,12 +257,12 @@ EOF
 
 ---
 
-### Task 2: Empty swarm waits; one story; no impl-order; no B96
+### Task 2: Empty swarm waits; one story; no impl-order; no implementer pairs
 
 **Files:**
 - Modify: `test/swarmforge/redo_next_test.clj`
 - Modify: `swarmforge/scripts/squad_next.clj` (`theme-candidates`, `implementation-order-record-candidate`, `implementer-batch-candidates` / `derive-implementer-batches` call sites, `implementation-assignment` in `story-transition-table`)
-- Modify: `test/swarmforge/issues_b96_test.clj`
+- Modify: `test/swarmforge/implementer_pairs_test.clj`
 - Modify: `test/swarmforge/squad_next_test.clj` (`squad-next-hard-gates-implementer-on-implementation-order`, `p0-missing-durable-implementation-order-blocks-all-implementers`, `squad-next-reports-highest-priority-workflow-action` theme-map assertion)
 
 - [ ] **Step 1: Write the failing tests**
@@ -316,7 +316,7 @@ For this task, isolate **order/batch** only. After later tasks, tighten the pack
 
 Expected: `empty-swarm-waits` is already close to true on a bare repo; `squad-next-reports-highest-priority-workflow-action` still expects `write_theme_module_map` after `squad_theme.sh create`. Invert that old test to `wait`. Do **not** add a hidden-theme fixture.
 
-`implementer-is-one-story-without-order-file` fails because `implementation-order-record-candidate` emits `record_implementation_order` or B96 batches two stories.
+`implementer-is-one-story-without-order-file` fails because `implementation-order-record-candidate` emits `record_implementation_order` or  batches two stories.
 
 - [ ] **Step 3: Minimal implementation**
 
@@ -337,9 +337,9 @@ Expected: `empty-swarm-waits` is already close to true on a bare repo; `squad-ne
 | `p0-missing-durable-implementation-order-blocks-all-implementers` | implementer **is** created |
 | `missing-order-without-draft-offers-seed-record-not-silent-block` | delete |
 | `p0-mechanical-records-root-implementation-order-draft` | delete |
-| `b25-*` order/checker user approval | delete or skip; redo has no those gates |
-| `b13-hollow-or-missing-checker-is-incomplete-analysis-residual` | delete or invert (analyst no longer must emit checker) |
-| `issues_b96_test.clj` entire file | invert: two ready stories are **not** one `--batch-stories` assignment; `derive-implementer-batches` may stay as dead code or be deleted |
+| `nonempty-order-and-checker-require-user-approval` and related order/checker tests | delete or skip; redo has no those gates |
+| `hollow-or-missing-checker-is-incomplete-analysis-residual` | delete or invert (analyst no longer must emit checker) |
+| `implementer_pairs_test.clj` entire file | invert: two ready stories are **not** one `--batch-stories` assignment; `derive-implementer-batches` may stay as dead code or be deleted |
 
 - [ ] **Step 5: `bb test` green. `bb crap` on touched modules: leftover functions CRAP ≤ 6.**
 
@@ -347,7 +347,7 @@ Expected: `empty-swarm-waits` is already close to true on a bare repo; `squad-ne
 
 ```bash
 git commit -m "$(cat <<'EOF'
-One story at a time; no theme-first residual, order gate, or B96 pairs.
+One story at a time; no theme-first residual, order gate, or implementer pairs.
 EOF
 )"
 ```
@@ -506,9 +506,9 @@ Mechanical record of the plan: when the analyst assignment merges, attach `imple
 
 - [ ] **Step 4: Invert `backlog-crud-and-approve-for-analysis`**
 
-Assert: after approve/start, item status is `started`, a `stories/*.md` exists, **no** request body containing `NEW THEME`. Keep B53 body-preservation on the **story file**, not the SL request.
+Assert: after approve/start, item status is `started`, a `stories/*.md` exists, **no** request body containing `NEW THEME`. Keep body-preservation on the **story file**, not the SL request.
 
-B72 rejected-story-returns-to-backlog stays: reject of `implementation-plan`, Gherkin, or QA procedure reopens the backlog item. No final bless.
+Rejected stories return to the backlog: reject of `implementation-plan`, Gherkin, or QA procedure reopens the backlog item. No final bless.
 
 - [ ] **Step 5: `bb test` green. `bb crap` on touched modules: leftover functions CRAP ≤ 6.**
 
@@ -652,8 +652,8 @@ EOF
 - Modify: `swarmforge/role-templates/code-reviewer.prompt`
 - Modify: `swarmforge/role-templates/cleaner.prompt`
 - Modify: `test/swarmforge/squad_next_test.clj` (`squad-next-creates-first-code-reviewer-for-cleaned-story` and cleaner-before-CR tests)
-- Modify: `test/swarmforge/issues_b97_b98_b100_test.clj` (architect after **all** stories QA)
-- Modify: `test/swarmforge/issues_b94_b99_b101_test.clj` (B101: recs go to hardener, not a rework implementer)
+- Modify: `test/swarmforge/architecture_and_done_test.clj` (architect after **all** stories QA)
+- Modify: `test/swarmforge/code_review_and_stamps_test.clj` (Recs go to hardener, not a rework implementer)
 - Modify: `test/swarmforge/role_contract_test.clj` (drop merger from singleton required list if still there)
 - Optional delete: `swarmforge/role-templates/merger.prompt` only if nothing references it
 
@@ -780,7 +780,7 @@ EOF
         (fs/delete-tree root)))))
 ```
 
-- [ ] **Step 2: Run. Confirm fail** where today’s table or B97/B100 disagree.
+- [ ] **Step 2: Run. Confirm fail** where today’s table or architecture/Done semantics disagree.
 
 - [ ] **Step 3: Minimal implementation**
 
@@ -804,8 +804,8 @@ Drop `:final-approval` and `theme-finalize-candidates` (`[]`). Story is done whe
 |------|-----------------|
 | `squad-next-creates-first-code-reviewer-for-cleaned-story` | keep if it already is cleaner then CR |
 | `squad-next-routes-code-review-rejection-back-to-implementer` | invert: recs go to hardener, not a new implementer |
-| B97 “arch after all QA” | invert: batch the ready stories; do not wait on unready siblings |
-| B100 Done after QA | Done only after SI / architect-no-recs. Architect/SI stay Finalizing. |
+| “arch after all QA” | invert: batch the ready stories; do not wait on unready siblings |
+| Done after QA | Done only after SI / architect-no-recs. Architect/SI stay Finalizing. |
 | `role_contract_test` `analyst-must-author-implementation-order` | invert: plan, not order file |
 | merger in `singleton-roles` | remove |
 
@@ -894,7 +894,7 @@ EOF
 - Modify: `test/swarmforge/test_runner.clj`
 - Modify: `swarmforge/scripts/squadd/dashboard.html`
 - Modify: `swarmforge/scripts/squadd/web.clj` (`web-state`, `board-column-by-state`, Attention payload, Work Queue)
-- Modify: `test/swarmforge/issues_p3_test.clj` (B102 backlog button stays)
+- Modify: `test/swarmforge/dashboard_polish_test.clj` (backlog button stays)
 - Modify: `test/swarmforge/squadd_web_test.clj` (theme package / project copy)
 
 Follow `redo-ui.md` exactly.
@@ -945,7 +945,7 @@ Also a `web-state` test: backlog open items in `backlog`; started stories in `st
 - Rail: delete Projects section. Work Queue: story · role. No merger rows.
 - Troubleshooter chat unchanged (Enter send, hold scroll).
 
-`board-column-by-state`: plan / gherkin / qa-proc → Specifying; implement / clean / review → Coding; harden / qa / architect / si → Finalizing; done → Done. Architect is **not** Done (overrides B100).
+`board-column-by-state`: plan / gherkin / qa-proc → Specifying; implement / clean / review → Coding; harden / qa / architect / si → Finalizing; done → Done. Architect is **not** Done (overrides Done-after-QA).
 
 - [ ] **Step 4: `bb test` green. `bb crap` on touched modules: leftover functions CRAP ≤ 6. Verify in the browser if squadd is up; otherwise the HTML/API tests are the stand-in.
 

@@ -1052,59 +1052,36 @@
         (fs/delete-tree root)))))
 
 
-(deftest squad-assign-refuses-reject-at-max-depth-merge-blocked
+(deftest sl-accept-merge-is-allowed
+  ;; Given a recorded result commit and no daemon main-git env
+  ;; When the squad leader runs accept-merge
+  ;; Then the assignment is merged
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf") "max_merger_depth 2\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/metadata")
-                  (str "assignment_id: cave-impl-merge-merge\ntheme_id: wumpus\nstory_id: cave\n"
-                       "template: merger\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/status")
-                  "state: merge_blocked\n")
-      (write-file (fs/path root "reason.md") "give up\n")
-      (let [result (run {:dir root
-                         :ok? false}
-                        (script "squad_assign.sh")
-                        "reject"
-                        "cave-impl-merge-merge"
-                        "reason.md")]
-        (is (= 2 (:exit result)))
-        (is (str/includes? (:err result) "max_merger_depth"))
-        (is (str/includes? (:err result) "block"))
-        (is (str/includes? (slurp (str (fs/path root ".squad/assignments/cave-impl-merge-merge/status")))
-                           "state: merge_blocked")))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest non-daemon-accept-merge-is-rejected
-  ;; Given merge_ready work and SWARMFORGE_MAIN_GIT unset (not the daemon)
-  ;; When accept-merge runs
-  ;; Then it is refused with MAIN_GIT_OWNER
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
-                  "assignment_id: cave-impl\ntemplate: implementer\ntheme_id: wumpus\nstory_id: cave\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl/result")
-                  "assignment_id: cave-impl\nfrom: implementer-001\ncommit: abcdef1234\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl/merge")
-                  "assignment_id: cave-impl\nstate: merge_ready\ncommit: abcdef1234\ndetail: dry-run merge passed\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl/status")
-                  "assignment_id: cave-impl\nstate: merge_ready\n")
-      (let [result (run {:dir root
-                         :ok? false
-                         :env {"SWARMFORGE_MAIN_GIT" "0"
-                               "SWARMFORGE_ROLE" "squad-leader"
-                               "SWARMFORGE_MAIN_GIT_OWNER" "daemon"}}
-                        (script "squad_assign.sh")
-                        "accept-merge"
-                        "cave-impl")]
-        (is (= 3 (:exit result)))
-        (is (str/includes? (:err result) "MAIN_GIT_OWNER"))
-        (is (str/includes? (:err result) "only squadd may run accept-merge")))
+      (write-file (fs/path root "swarmforge/role-templates/implementer.prompt") "impl\n")
+      (write-file (fs/path root "theme.md") "Theme.\n")
+      (write-file (fs/path root "stories/cave.md") "Story.\n")
+      (write-file (fs/path root "instructions.md") "Do work.\n")
+      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave" "stories/cave.md")
+      (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
+           "cave-impl" "instructions.md")
+      (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+        (write-file (fs/path root "result.handoff")
+                    (result-handoff-text "1" "implementer-001" "cave-impl" "implementer" commit
+                                         (str "merge_and_process implementer-001 " commit)))
+        (run {:dir root} (script "squad_assign.sh") "result" "cave-impl" "result.handoff")
+        (let [accepted (run {:dir root
+                             :env {"SWARMFORGE_MAIN_GIT" "0"
+                                   "SWARMFORGE_ROLE" "squad-leader"
+                                   "SWARMFORGE_MAIN_GIT_OWNER" "daemon"}}
+                            (script "squad_assign.sh") "accept-merge" "cave-impl")]
+          (is (str/includes? (:out accepted) "STATE: merged"))
+          (is (str/includes? (slurp (str (fs/path root ".squad/assignments/cave-impl/status")))
+                             "state: merged"))))
       (finally
         (fs/delete-tree root)))))
 

@@ -144,7 +144,7 @@
 (deftest analyst-must-author-dependency-checker-config
   ;; Given analysis is the place Clean Architecture components are cut into stories
   ;; When the analyst role is specified
-  ;; Then dependency-checker.edn is required product policy at handoff (B13)
+  ;; Then dependency-checker.edn is required product policy at handoff
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))
         template (slurp (str (fs/path repo-root "swarmforge/templates/dependency-checker.edn")))
         c (contract "analyst")]
@@ -196,7 +196,7 @@
     (is (str/includes? startup "record `blocked`"))))
 
 (deftest hardener-forbids-root-tooling-files
-  ;; B12: hardener must not thrash root bb.edn/deps.edn
+  ;; Hardener must not thrash root bb.edn/deps.edn
   (let [c (contract "hardener")
         prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))]
     (is (some #{"bb.edn"} (:forbidden-root-files c)))

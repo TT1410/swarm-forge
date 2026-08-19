@@ -1,9 +1,9 @@
 (ns squad-control-plane
-  "Control-plane policy for SwarmForge (B18 / B16 / B19).
+  "Control-plane policy for SwarmForge.
 
-  B19 — Single residual-class ranking and ready-action priority bands.
-  B16 — Authority allow-lists: which actor may execute which ops.
-  B18 — Planner selects residual class + ready actions; executor filters by
+  Single residual-class ranking and ready-action priority bands.
+  Authority allow-lists: which actor may execute which ops.
+  Planner selects residual class + ready actions; executor filters by
         authority; renderer is pure presentation of a plan view.
 
   squad_next remains the state scanner and CLI entry; this ns owns policy."
@@ -11,13 +11,13 @@
             [clojure.string :as str]))
 
 ;;; ---------------------------------------------------------------------------
-;;; B19 — Residual class ranking (top-level next-action selection)
+;;; Residual class ranking (top-level next-action selection)
 ;;; Lower index = higher priority. First match wins.
 ;;; ---------------------------------------------------------------------------
 
 (def residual-class-order
   "Ordered residual classes. Index is the rank (0 = highest priority).
-  B68: dashboard-request outranks pending-spawn so product intake is not starved."
+  Dashboard-request outranks pending-spawn so product intake is not starved."
   [:finish-in-process
    :process-handoff
    :stale-lock
@@ -42,7 +42,7 @@
   (< (residual-class-rank class-a) (residual-class-rank class-b)))
 
 ;;; ---------------------------------------------------------------------------
-;;; B19 — Ready-action priority bands (within :ready-action class)
+;;; Ready-action priority bands (within :ready-action class)
 ;;; Lower number = higher priority (matches existing sort-by :priority).
 ;;; ---------------------------------------------------------------------------
 
@@ -73,7 +73,7 @@
   (sort-by (comp ready-priority-of first) ready-priority))
 
 ;;; ---------------------------------------------------------------------------
-;;; B16 — Authority allow-lists
+;;; Authority allow-lists
 ;;; ---------------------------------------------------------------------------
 
 (def daemon-ops
@@ -89,7 +89,6 @@
     :record_batch_membership
     :record_review_result
     :record_post_revision_review_acceptance
-    :record_implementation_order
     :register_story_artifact
     :register_story_packet
     :attach_story_artifact
@@ -114,8 +113,6 @@
     :repair_dead_agent
     :create_assignment
     :create_approval_request
-    :write_theme_module_map
-    :complete_dependency_checker
     :record_auto_approval
     :retire_agent
     :request_spawn
@@ -163,7 +160,7 @@
            candidates))
 
 ;;; ---------------------------------------------------------------------------
-;;; B18 — Plan view (planner output shape)
+;;; Plan view (planner output shape)
 ;;; ---------------------------------------------------------------------------
 
 (defn plan-view
@@ -183,7 +180,7 @@
             :ready-priority ready-priority}})
 
 (defn select-residual-class
-  "B19/B18: pure selection of residual class from a context map of presence flags.
+  "Pure selection of residual class from a context map of presence flags.
   ctx keys match residual-class-order (except :wait default)."
   [ctx]
   (or (some (fn [class]

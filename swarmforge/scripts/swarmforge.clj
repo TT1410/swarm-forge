@@ -396,7 +396,7 @@
     (check-dependency! agent)))
 
 (defn create-role-session! [ctx session title]
-  ;; Large default size + deep history so detached/agent panes are not stuck at ~25 lines (B15).
+  ;; Large default size + deep history so detached/agent panes are not stuck at ~25 lines.
   (sh "tmux" "-S" (:tmux-socket ctx) "new-session" "-d" "-s" session "-n" agent-window "-x" "200" "-y" "50")
   (sh "tmux" "-S" (:tmux-socket ctx) "rename-window" "-t" (str session ":" agent-window) title)
   (sh "tmux" "-S" (:tmux-socket ctx) "set-window-option" "-t" (str session ":" title) "allow-rename" "off")
@@ -412,7 +412,7 @@
     (if (str/blank? args) "" (str args " "))))
 
 (defn persistent-yolo-role?
-  "B76: SL and TS always run fully auto-approved (in-swarm operators)."
+  "SL and TS always run fully auto-approved (in-swarm operators)."
   [role]
   (contains? #{"squad-leader" "troubleshooter"} role))
 
@@ -425,7 +425,7 @@
 
 (defn grok-permission-prefix [row]
   ;; acceptEdits only auto-approves file edits; bypassPermissions is the
-  ;; CLI-enforced mode that matches --always-approve / --yolo / B76 SL+TS.
+  ;; CLI-enforced mode that matches --always-approve / --yolo / SL+TS.
   (if (grok-wants-auto-approve? row)
     "--permission-mode bypassPermissions "
     "--permission-mode acceptEdits "))
@@ -517,7 +517,7 @@
          "\"$(cat " (sq (str prompt-file)) ")\"")))
 
 (defn codex-launch-command [_ row prompt-file]
-  ;; B76: SL/TS always YOLO; same bypass as squad_spawn for transients.
+  ;; SL/TS always YOLO; same bypass as squad_spawn for transients.
   (str "codex -C " (sq (str (:worktree-path row))) " "
        (when (persistent-yolo-role? (:role row))
          "--dangerously-bypass-approvals-and-sandbox ")
@@ -531,7 +531,7 @@
        "-i \"$(cat " (sq (str prompt-file)) ")\""))
 
 (defn grok-launch-command [_ row prompt-file]
-  ;; --minimal: scrollback-native TUI so terminal/tmux scroll works (B15).
+  ;; --minimal: scrollback-native TUI so terminal/tmux scroll works.
   ;; --no-alt-screen: keep output in main buffer for capture-pane / host scroll.
   (str "grok --cwd " (sq (str (:worktree-path row))) " "
        "--minimal --no-alt-screen "
@@ -763,7 +763,7 @@
   (println)
   (println (str green "Tip: Write a handoff draft and run swarm_handoff.sh while the swarm is running." reset))
   (println (str green "Tip: Reattach manually with 'tmux -S " (:tmux-socket ctx) " attach-session -t <session-name>' if needed." reset))
-  (println (str green "Tip: Squad Leader and Troubleshooter are invisible by default (B41); open via dashboard Open SL / chat or tmux attach." reset))
+  (println (str green "Tip: Squad Leader and Troubleshooter are invisible by default; open via dashboard Open SL / chat or tmux attach." reset))
   (println))
 
 (defn start-runtime! [ctx]

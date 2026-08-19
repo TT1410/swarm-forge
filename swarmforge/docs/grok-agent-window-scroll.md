@@ -1,4 +1,4 @@
-# Grok Agent Window Scrolling (B15)
+# Grok Agent Window Scrolling
 
 **Bug context:** Operators could not usefully scroll live Grok-backed agent
 sessions in tmux panes / terminal windows. Panes looked ~25 lines pinned.
@@ -22,7 +22,7 @@ sessions in tmux panes / terminal windows. Panes looked ~25 lines pinned.
 | Follow live output | Stay at bottom in terminal, or open dashboard agent pane |
 | Read earlier output | Terminal/tmux native scroll (with `--minimal`), dashboard pane, or tmux copy-mode |
 | Deep history | tmux `history-limit` is already raised at spawn; use copy-mode search if needed |
-| Open hidden SL/TS | Dashboard **Open SL** / chat, or `tmux -S <socket> attach -t swarmforge-squad-leader` (B41) |
+| Open hidden SL/TS | Dashboard **Open SL** / chat, or `tmux -S <socket> attach -t swarmforge-squad-leader` |
 
 ## tmux native scroll (fallback)
 
@@ -35,6 +35,5 @@ host scroll. Re-spawn agents after upgrading SwarmForge so new flags apply.
 
 ## Related
 
-- B15 — this fix
-- B41 — SL/TS `window-invisible` by default; dashboard is the operator surface
+- SL/TS `window-invisible` by default; dashboard is the operator surface
 - `ui-design.md` — cockpit; agent panes are separate from the web board

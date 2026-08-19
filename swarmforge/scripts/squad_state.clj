@@ -1,5 +1,5 @@
 (ns squad-state
-  "Squad packet/assignment state helpers. Kv reads go through squad-records (B40)."
+  "Squad packet/assignment state helpers. Kv reads go through squad-records."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [squad-records :as rec]))
@@ -65,12 +65,12 @@
    "senior-implementer" ["final_approval" "final_approval_detail"]})
 
 (defn parse-kv-lines
-  "Parse flat key: value lines. Delegates to squad-records (B40)."
+  "Parse flat key: value lines. Delegates to squad-records."
   [text]
   (rec/parse-kv-text text))
 
 (defn read-kv-file
-  "Read a flat key:value file. Delegates to squad-records (B40)."
+  "Read a flat key:value file. Delegates to squad-records."
   [file]
   (rec/read-kv-file file))
 

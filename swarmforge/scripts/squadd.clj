@@ -20,17 +20,17 @@
 ;; Log each deferred spawn request at most once until it leaves `new/` (bug #4).
 (def deferred-spawn-log-keys (atom #{}))
 (def handoff-wake-message
-  "You have new handoff mail. If idle, run squad_next.sh --residual-only and handle only residual judgment, recovery, or user-facing work. The daemon owns merge-ready/accept-merge and other mechanical applies.")
+  "You have new handoff mail. If idle, run squad_next.sh --residual-only. Residual accept-merge is yours; the daemon does not merge.")
 (def status-wake-message
-  "Squad status needs attention. If idle, run squad_next.sh --residual-only and handle only residual judgment, recovery, or user-facing work. The daemon owns main-git merges.")
+  "Squad status needs attention. If idle, run squad_next.sh --residual-only. Residual accept-merge is yours.")
 (def sl-watchdog-message
-  "Run squad_next.sh --residual-only. Handle residual judgment/recovery/user work only; do not run merge-ready, accept-merge, or --apply-mechanical (daemon owns those).")
+  "Run squad_next.sh --residual-only. Follow residual COMMAND, including accept-merge. Do not run --apply-mechanical (daemon owns mechanical apply).")
 (def sl-judgment-actions
   #{"request_user_approval"
     "answer_dashboard_request"
     "handle_durable_blocker"
     "recover_agent"
-    "hold_merge_blocked_handoff"})
+    "accept_merge"})
 (def script-dir (fs/parent *file*))
 (def stopping? (atom false))
 (def last-status-poll (atom 0))
@@ -105,7 +105,7 @@
             (str/split-lines (slurp (str file)))))))
 
 (defn parse-kv-file
-  "Flat key:value status/metadata via squad-records (B40)."
+  "Flat key:value status/metadata via squad-records."
   [file]
   (rec/read-kv-file file))
 
@@ -126,7 +126,7 @@
                  :receive-mode (or receive-mode "task")}])))
 
 (defn write-atomic!
-  "Atomic write via squad-records (B40)."
+  "Atomic write via squad-records."
   [file content]
   (rec/write-atomic! file content))
 
@@ -882,7 +882,7 @@
              set)))))
 
 (defn orphan-swarmforge-sessions [root socket]
-  "B11: swarmforge-* sessions not registered in roles/sessions (retire leak)."
+  "Swarmforge-* sessions not registered in roles/sessions (retire leak)."
   (let [registered (registered-tmux-sessions root)
         live (or (live-tmux-sessions socket) #{})]
     (->> live
@@ -903,7 +903,7 @@
       (println "ORPHAN_SESSION_KILLED:" session))))
 
 (defn reconcile-orphan-tmux-sessions!
-  "B11: after retire leaks, kill swarmforge-* sessions not in roles.tsv."
+  "After retire leaks, kill swarmforge-* sessions not in roles.tsv."
   [root skip-tmux?]
   (when-not skip-tmux?
     (when-let [socket (tmux-socket root)]
@@ -1168,7 +1168,7 @@
 (defn total-capacity-pressure-blocker?
   "Only global max_transient_agents pressure should stop the spawn queue scan.
   Template/group capacity full must defer that request and continue so other
-  templates can spawn (P0 B04 head-of-line)."
+  templates can spawn ( head-of-line)."
   [blocker]
   (= "capacity-full" blocker))
 
@@ -1221,7 +1221,7 @@
 
 (defn apply-workflow-mechanical!
   "Drain deterministic workflow steps via squad_next --apply-mechanical.
-  Sets main-git owner env so merge-ready/accept-merge are allowed only here."
+  Sets main-git owner env so leftover merge-ready stays daemon-only."
   [root]
   (let [result (process/sh {:continue true
                             :dir (str root)
@@ -1238,7 +1238,7 @@
       (log! root "workflow-mechanical-applied" (str (count (re-seq #"APPLIED_TRANSITION:" out)))))
     (when-not (zero? (:exit result))
       (log! root "workflow-mechanical-failed" (str (:exit result)) (str/trim (or (:err result) ""))))
-    ;; B71: durable residual snapshot for dashboard header
+    ;; Durable residual snapshot for dashboard header
     (when-not (str/blank? action)
       (let [dir (fs/path root ".swarmforge" "daemon")]
         (fs/create-dirs dir)

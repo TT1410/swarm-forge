@@ -1,7 +1,7 @@
 #!/usr/bin/env bb
 
 (ns squad-recover
-  "Classify missing/dead agents and repair session-dead workers (B38).
+  "Classify missing/dead agents and repair session-dead workers.
 
   Usage:
     squad_recover.sh <agent-id>           — classify and print recovery plan
@@ -187,7 +187,7 @@
    "failed_no_work" "It is safe to reject or replace if the assignment still needs work."})
 
 (defn repair-owner
-  "B38: dirty/committed work → Troubleshooter; clean session_dead → Squad Leader."
+  "Dirty/committed work → Troubleshooter; clean session_dead → Squad Leader."
   [state dirty committed]
   (when (= "session_dead" state)
     (if (or (seq dirty) (pos? committed))
@@ -212,7 +212,7 @@
                                      (empty? dirty)
                                      (zero? committed)
                                      (recent-status? root agent)))]
-   ;; B38: silent death with open work — primary repair path.
+   ;; Silent death with open work — primary repair path.
    ["session_dead" session-dead-context?]
    ["dirty_worktree" #(seq (:dirty %))]
    ["committed_no_handoff" #(pos? (:committed %))]])
@@ -311,7 +311,7 @@
     (write-recovery-check! root agent (:state check))
     (merge context check {:agent agent})))
 
-;;; --- B38 repair: remove dead agent, clear blockers, requeue same task ---
+;;; ---  repair: remove dead agent, clear blockers, requeue same task ---
 
 (defn read-role-rows [roles-file]
   (if (fs/exists? roles-file)
@@ -440,7 +440,7 @@
         (do (Thread/sleep 50) (recur))))))
 
 (defn repair!
-  "B38: archive dirty tree if needed, requeue assignment, free dead agent."
+  "Archive dirty tree if needed, requeue assignment, free dead agent."
   [agent]
   (when (or (str/blank? agent)
             (#{"squad-leader" "troubleshooter"} agent))

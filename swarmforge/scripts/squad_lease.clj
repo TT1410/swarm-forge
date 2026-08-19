@@ -1,5 +1,5 @@
 (ns squad-lease
-  "Shared lease/lock primitive (B20).
+  "Shared lease/lock primitive.
 
   Directory leases under `.swarmforge/squad/<name>.lock` with owner pid file.
   Stale reclaim when owner pid is dead. Not one mega-lock — call per resource

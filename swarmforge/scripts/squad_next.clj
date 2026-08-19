@@ -43,7 +43,7 @@
   "Read a line-oriented `key: value` file into a map.
 
   Missing files and races where the file disappears between exists? and slurp
-  (TOCTOU during agent retire) return {} — never throw (P1 B08)."
+  (TOCTOU during agent retire) return {} — never throw."
   [file]
   (try
     (if (fs/exists? file)
@@ -221,7 +221,7 @@
         (pending-dashboard-request-files root)))
 
 (defn body-preview
-  "First line of body, truncated for unmissable residual display (B55)."
+  "First line of body, truncated for unmissable residual display."
   [body]
   (let [line (or (first (remove str/blank? (str/split-lines (or body "")))) "")
         line (str/trim line)]
@@ -238,7 +238,7 @@
         preview (body-preview body)]
     (println "NEXT_ACTION: answer_dashboard_request")
     (println "REQUEST_ID:" id)
-    ;; B55: put intent where collapsed tool UIs still show it
+    ;; Put intent where collapsed tool UIs still show it
     (println "BODY_NONEMPTY:" nonempty?)
     (println "BODY_PREVIEW:" (if nonempty? preview "(empty)"))
     (println "KIND:" kind)
@@ -553,7 +553,7 @@
   (fs/regular-file? (theme-module-map-path theme-dir)))
 
 (defn theme-lifecycle
-  "B23: open (default) or finalized. Stored in lifecycle file or status."
+  "Open (default) or finalized. Stored in lifecycle file or status."
   [theme-dir]
   (let [life (fs/path theme-dir "lifecycle")
         status (fs/path theme-dir "status")]
@@ -581,14 +581,14 @@
        vec))
 
 (defn packet-story-done?
-  "Legacy per-story final gate (B23 compat). Story cards use QA (B100)."
+  "Legacy per-story final gate. Story cards use QA."
   [packet]
   (or (= "final_approved" (get packet "state"))
       (= "final_approved" (get packet "final_state"))
       (field-approved? packet "final_approval")))
 
 (defn packet-architecture-closed?
-  "Project architecture pass is satisfied for this story (B100)."
+  "Project architecture pass is satisfied for this story."
   [packet]
   (or (field-accepted? packet "architecture_review")
       (and (field-changes-requested? packet "architecture_review")
@@ -598,7 +598,7 @@
   (filterv #(= theme-id (get % "theme_id")) (packets root)))
 
 (defn theme-slice-complete?
-  "Project is done when every story has QAd and architecture is closed (B100).
+  "Project is done when every story has QAd and architecture is closed.
   final_approved packets still count as complete for older slices."
   [root theme-id]
   (let [ps (theme-packets root theme-id)]
@@ -620,7 +620,7 @@
          (assignment-records root))))
 
 (defn theme-finalize-candidate
-  "B23: when slice is done and theme not finalized, request finalize approval."
+  "When slice is done and theme not finalized, request finalize approval."
   [root theme]
   (when (and (not (:finalized? theme))
              (theme-slice-complete? root (:theme-id theme))
@@ -658,7 +658,7 @@
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         field (str (gate-key gate) "_approval")
         id (approval-id gate story-id)
-        ;; B79: failed batch QA must not auto-approve or request approval as pass
+        ;; Failed batch QA must not auto-approve or request approval as pass
         qa-failed? (and (= "qa" gate)
                         (= "failed" (get packet "qa_verdict")))]
     (when (and (not (field-approved? packet field))
@@ -686,448 +686,21 @@
          stale-changes-requested?
          architecture-gate-satisfied-for-final?)
 
-(defn implementation-order-path [root theme-id]
-  (fs/path root ".squad" "themes" theme-id "implementation-order.md"))
-
-(defn parse-implementation-order-edges
-  "Parse makefile-style `dependent: provider [provider...]` lines into map dependent -> providers.
-  Lines using the word `after` are ignored (invalid; record step rejects them)."
-  [text]
-  (reduce (fn [m raw]
-            (let [line (str/trim (first (str/split raw #"#" 2)))]
-              (if-let [[_ dep providers]
-                       (re-matches #"([A-Za-z0-9][A-Za-z0-9._-]*)\s*:\s*(.+)" line)]
-                (let [ps (->> (str/split providers #"\s+")
-                              (remove str/blank?)
-                              vec)]
-                  (if (seq ps)
-                    (update m dep (fnil into []) ps)
-                    m))
-                m)))
-          {}
-          (str/split-lines (or text ""))))
-
-(defn implementation-order-recorded?
-  "True when durable theme implementation-order.md exists (even if empty)."
-  [root theme-id]
-  (and (not (str/blank? theme-id))
-       (fs/regular-file? (implementation-order-path root theme-id))))
-
-(defn load-implementation-order [root theme-id]
-  (let [path (implementation-order-path root theme-id)]
-    (if (fs/regular-file? path)
-      (parse-implementation-order-edges (slurp (str path)))
-      {})))
-
-(defn story-implementer-level
-  "Longest provider-chain length. Roots (no in-theme providers) are 0."
-  [story-id edges story-set]
-  (letfn [(level [id seen]
-            (if (contains? seen id)
-              0
-              (let [providers (->> (get edges id)
-                                   (filter story-set))]
-                (if (seq providers)
-                  (inc (apply max (map #(level % (conj seen id)) providers)))
-                  0))))]
-    (level story-id #{})))
-
-(defn paired-same-level
-  "Pair sorted same-level stories into groups of 1–2 (B96)."
-  [stories]
-  (loop [xs (vec (sort stories))
-         acc []]
-    (cond
-      (empty? xs) acc
-      (= 1 (count xs)) (conj acc [(first xs)])
-      :else (recur (subvec xs 2) (conj acc [(nth xs 0) (nth xs 1)])))))
-
-(defn derive-implementer-batches
-  "B96: group stories by implementation-order level, then pair (≤2) within a level."
-  [story-ids edges]
-  (let [ids (vec (distinct story-ids))
-        story-set (set ids)
-        grouped (group-by #(story-implementer-level % edges story-set) ids)]
-    (->> (sort (keys grouped))
-         (mapcat #(paired-same-level (get grouped %)))
-         vec)))
-
-(defn parse-implementer-batch-lines [text]
-  (->> (str/split-lines (or text ""))
-       (map #(str/trim (first (str/split % #"#" 2))))
-       (remove str/blank?)
-       (remove #(str/starts-with? % "#"))
-       (remove #(str/starts-with? % ":"))
-       (keep (fn [line]
-               (when-not (str/includes? line ":")
-                 (let [ids (->> (str/split line #"\s+")
-                                (remove str/blank?)
-                                vec)]
-                   (when (and (seq ids) (<= (count ids) 2))
-                     ids)))))
-       vec))
-
-(defn implementer-batches-section [text]
-  (when-let [idx (str/index-of (str/lower-case (str text)) "implementer batches")]
-    (let [from (subs text idx)
-          rest (or (second (str/split from #"(?m)^## " 2)) from)]
-      rest)))
-
-(defn load-explicit-implementer-batches [root theme-id]
-  (let [sibling (fs/path root ".squad" "themes" theme-id "implementer-batches.md")
-        order (implementation-order-path root theme-id)]
-    (or (when (fs/regular-file? sibling)
-          (not-empty (parse-implementer-batch-lines (slurp (str sibling)))))
-        (when (fs/regular-file? order)
-          (not-empty (parse-implementer-batch-lines
-                      (implementer-batches-section (slurp (str order)))))))))
-
-(defn theme-story-ids [root theme-id]
-  (->> (packets root)
-       (filter #(= theme-id (get % "theme_id")))
-       (map #(get % "story_id" (get % "_story_id")))
-       (remove str/blank?)
-       sort
-       vec))
-
-(defn implementer-batch-plan
-  "Explicit analyst plan if present; otherwise derive from order + stories."
-  [root theme-id]
-  (or (load-explicit-implementer-batches root theme-id)
-      (derive-implementer-batches (theme-story-ids root theme-id)
-                                  (load-implementation-order root theme-id))))
-
-(defn batch-covers-story? [batch story-id]
-  (some #{story-id} batch))
-
-(defn implementer-batch-for-story [plan story-id]
-  (first (filter #(batch-covers-story? % story-id) plan)))
-
-(defn story-implementation-complete? [root story-id]
-  "True when the story packet has recorded a merged implementation_sha."
-  (let [packet-file (fs/path root ".squad" "stories" story-id "packet")]
-    (and (fs/regular-file? packet-file)
-         (not (str/blank? (get (file-map packet-file) "implementation_sha"))))))
-
-(declare implementer-dependencies-satisfied? implementer-dependency-block-reason
-         dependency-checker-nontrivial? theme-architecture-gate-satisfied?
-         dependency-checker-quality-at)
-
-(defn root-implementation-order-draft-path [root]
-  (fs/path root "implementation-order.md"))
-
-(defn default-implementation-order-seed
-  "Comment-only order: valid to record, means no multi-story implementer gates."
-  []
-  (str "# No multi-story implementer dependencies declared for this theme.\n"
-       "# Stories may implement when story/spec gates allow.\n"))
-
-(defn packet-ready-for-implementer?
-  "True when a story would seek implementer work if order allowed it."
-  [root packet]
-  (and (approval-satisfied? root packet "implementation")
-       (squad-state/implementation-ready? packet)
-       (not (field-present? packet "implementation_sha"))))
-
-(defn theme-has-implementer-ready-story? [root theme-id]
-  (boolean
-   (some (fn [packet]
-           (and (= theme-id (get packet "theme_id"))
-                (packet-ready-for-implementer? root packet)))
-         (packets root))))
-
-(defn implementation-order-record-candidate
-  "Durable theme order must exist before implementers (P0 B03).
-  - Root draft present → record it (even mid-pipeline).
-  - No draft → seed comment-only order only when some story is implementer-ready,
-    so missing analyst order does not permanently block; early pipeline stages
-    are not pre-empted by seed."
-  [root theme-id]
-  (when (and (not (str/blank? theme-id))
-             (not (implementation-order-recorded? root theme-id)))
-    (let [draft (root-implementation-order-draft-path root)
-          has-draft? (fs/regular-file? draft)
-          needs-impl? (theme-has-implementer-ready-story? root theme-id)]
-      (when (or has-draft? needs-impl?)
-        (let [seed-cmd (str "cat > implementation-order.md <<'SF_IMPL_ORDER_EOF'\n"
-                            (default-implementation-order-seed)
-                            "SF_IMPL_ORDER_EOF\n"
-                            "squad_theme.sh implementation-order " theme-id " implementation-order.md")
-              record-cmd (str "squad_theme.sh implementation-order " theme-id " implementation-order.md")]
-          {:priority 26
-           :stage-order 1
-           :next-action "record_implementation_order"
-           :theme-id theme-id
-           :story-id "theme"
-           :reason (if has-draft?
-                     "root implementation-order.md must be recorded into durable theme path before implementers"
-                     "durable implementation order missing; seed comment-only order so implementers are not stuck")
-           :command (if has-draft? record-cmd seed-cmd)})))))
-
-(defn implementation-order-record-candidates [root]
-  (->> (packets root)
-       (map #(get % "theme_id"))
-       (remove str/blank?)
-       distinct
-       (keep #(implementation-order-record-candidate root %))
-       vec))
-
-;;; --- B13 checker quality + B25 theme architecture approval gates ---
-
-(defn dependency-checker-path [root]
-  (fs/path root "dependency-checker.edn"))
-
-(defn parse-dependency-checker-edn [text]
-  (try
-    (edn/read-string {:readers *data-readers*} text)
-    (catch Exception _ nil)))
-
-(defn dependency-checker-quality
-  "Classify product dependency-checker policy text.
-  :missing — blank/absent content
-  :hollow  — unparseable, not a map, or empty :allowed-dependencies
-  :ok      — at least one component under :allowed-dependencies"
-  [text]
-  (if (str/blank? text)
-    :missing
-    (let [data (parse-dependency-checker-edn text)]
-      (if-not (map? data)
-        :hollow
-        (let [deps (get data :allowed-dependencies)]
-          (if (and (map? deps) (seq deps))
-            :ok
-            :hollow))))))
-
-(defn dependency-checker-quality-at [root]
-  (let [path (dependency-checker-path root)]
-    (if (fs/regular-file? path)
-      (dependency-checker-quality (slurp (str path)))
-      :missing)))
-
-(defn dependency-checker-nontrivial? [root]
-  (= :ok (dependency-checker-quality-at root)))
-
-(defn implementation-order-nonempty?
-  "True when durable order has at least one makefile edge (B25 non-empty order)."
-  [root theme-id]
-  (boolean (seq (load-implementation-order root theme-id))))
-
-(defn content-sha [text]
-  (let [md (java.security.MessageDigest/getInstance "SHA-256")
-        digest (.digest md (.getBytes (str text) "UTF-8"))]
-    (.toString (BigInteger. 1 digest) 16)))
-
-(defn theme-gate-content-path [root theme-id gate]
-  (case (str/replace gate "_" "-")
-    "implementation-order" (implementation-order-path root theme-id)
-    "dependency-checker" (dependency-checker-path root)
-    nil))
-
-(defn theme-gate-fingerprint-path [root theme-id gate]
-  (fs/path root ".squad" "themes" theme-id "approval-fingerprints"
-           (str (str/replace gate "_" "-") ".sha")))
-
-(defn theme-content-gate-approved?
-  "Theme gate approved in approvals.tsv and content fingerprint still matches (B25)."
-  [root theme-id gate]
-  (let [theme-dir (fs/path root ".squad" "themes" theme-id)
-        gate-norm (str/replace gate "_" "-")
-        approved? (or (theme-approved? theme-dir gate)
-                      (theme-approved? theme-dir gate-norm)
-                      (theme-approved? theme-dir (str/replace gate "-" "_")))
-        content-path (theme-gate-content-path root theme-id gate)
-        fp-path (theme-gate-fingerprint-path root theme-id gate)]
-    (and approved?
-         (fs/regular-file? content-path)
-         (fs/regular-file? fp-path)
-         (= (str/trim (slurp (str fp-path)))
-            (content-sha (slurp (str content-path)))))))
-
-(defn theme-architecture-gate-satisfied?
-  "Order/checker gate satisfied: not required, no material to approve, or approved with fingerprint."
-  [root theme-id gate]
-  (let [gate-norm (str/replace gate "_" "-")
-        required? (cfg/squad-approval-required? root gate-norm)
-        needs-material?
-        (case gate-norm
-          "implementation-order" (implementation-order-nonempty? root theme-id)
-          "dependency-checker" (dependency-checker-nontrivial? root)
-          false)]
-    (cond
-      (not required?) true
-      (not needs-material?) true
-      :else (theme-content-gate-approved? root theme-id gate-norm))))
-
-(defn pending-theme-gate-approval? [root theme-id gate]
-  (boolean
-   (some #(and (= "theme" (get % "target_kind"))
-               (= theme-id (get % "target_id"))
-               (or (= gate (get % "gate"))
-                   (= (str/replace gate "_" "-") (str/replace (get % "gate" "") "_" "-")))
-               (= "pending" (:state %)))
-         (approval-records root))))
-
-(defn approved-theme-gate-record [root theme-id gate]
-  (some #(when (and (= "theme" (get % "target_kind"))
-                    (= theme-id (get % "target_id"))
-                    (or (= gate (get % "gate"))
-                        (= (str/replace gate "_" "-") (str/replace (get % "gate" "") "_" "-")))
-                    (= "approved" (:state %)))
-           %)
-        (approval-records root)))
-
-(defn theme-ids-with-packets [root]
-  (->> (packets root)
-       (map #(get % "theme_id"))
-       (remove str/blank?)
-       distinct
-       vec))
-
-(defn incomplete-dependency-checker-candidate
-  "B13: when implementers would run but checker is missing/hollow, surface residual
-  (implementer hard-gate alone is silent). Earlier pipeline stages may proceed."
-  [root theme-id]
-  (when (and (not (str/blank? theme-id))
-             (not (dependency-checker-nontrivial? root))
-             ;; Only surface when implementers would otherwise schedule — earlier
-             ;; stages (story approval, Gherkin) may still proceed.
-             (theme-has-implementer-ready-story? root theme-id))
-    (let [q (dependency-checker-quality-at root)
-          reason (case q
-                   :missing "dependency-checker.edn is missing; analysis incomplete without product policy"
-                   :hollow "dependency-checker.edn is hollow (empty or unparseable :allowed-dependencies); author a real component graph from the module map"
-                   "dependency-checker.edn is not a non-trivial product policy")]
-      {:priority 27
-       :stage-order 1
-       :next-action "complete_dependency_checker"
-       :theme-id theme-id
-       :story-id "theme"
-       :gate "dependency-checker"
-       :reason reason
-       :command (str "echo 'Author non-trivial root dependency-checker.edn from the theme module map "
-                     "(see swarmforge/templates/dependency-checker.edn); reject hollow two-node stubs. "
-                     "Then user-approve via dashboard (B25).'")})))
-
-(defn incomplete-dependency-checker-candidates [root]
-  (->> (theme-ids-with-packets root)
-       (keep #(incomplete-dependency-checker-candidate root %))
-       vec))
-
-(defn theme-architecture-approval-candidate
-  "B25: request (or auto-record) approval for non-empty order / non-trivial checker."
-  [root theme-id gate title reason]
-  (let [gate-norm (str/replace gate "_" "-")
-        needs-material?
-        (case gate-norm
-          "implementation-order"
-          (and (implementation-order-recorded? root theme-id)
-               (implementation-order-nonempty? root theme-id))
-          "dependency-checker" (dependency-checker-nontrivial? root)
-          false)
-        satisfied? (theme-architecture-gate-satisfied? root theme-id gate-norm)
-        approval-id (str gate-norm "__" theme-id)
-        pending? (pending-theme-gate-approval? root theme-id gate-norm)
-        stale-approved (when (and needs-material? (not satisfied?))
-                         (approved-theme-gate-record root theme-id gate-norm))]
-    (when (and needs-material? (not satisfied?) (not pending?))
-      (if (cfg/squad-approval-required? root gate-norm)
-        (let [clear-cmd (when stale-approved
-                          (str "mkdir -p .squad/approvals/cleared && "
-                               "mv -f " (pr-str (:file stale-approved))
-                               " .squad/approvals/cleared/ 2>/dev/null; "))
-              request-cmd (str "squad_approval.sh request " approval-id
-                               " theme " theme-id " " gate-norm " "
-                               title " " reason)]
-          {:priority 28
-           :stage-order (if (= gate-norm "implementation-order") 1 2)
-           :next-action "create_approval_request"
-           :theme-id theme-id
-           :story-id "theme"
-           :gate gate-norm
-           :reason (if stale-approved
-                     (str reason " (content revised since prior approval)")
-                     reason)
-           :command (str clear-cmd request-cmd)})
-        {:priority 28
-         :stage-order (if (= gate-norm "implementation-order") 1 2)
-         :next-action "record_auto_approval"
-         :theme-id theme-id
-         :story-id "theme"
-         :gate gate-norm
-         :reason (str gate-norm " approval is not required by configuration")
-         :command (str "squad_theme.sh approve " theme-id " " gate-norm
-                       " auto-approved-by-config")}))))
-
-(defn theme-architecture-approval-candidates [root]
-  (vec
-   (mapcat
-    (fn [theme-id]
-      (keep identity
-            [(theme-architecture-approval-candidate
-              root theme-id "implementation-order"
-              "Approve_implementation_order"
-              "non-empty-implementation-order-ready-for-approval")
-             (theme-architecture-approval-candidate
-              root theme-id "dependency-checker"
-              "Approve_dependency_checker"
-              "non-trivial-dependency-checker-ready-for-approval")]))
-    (theme-ids-with-packets root))))
-
-(defn implementer-dependencies-satisfied?
-  "Hard gate (P0 B03 + B13 + B25):
-  - durable implementation order recorded
-  - non-trivial dependency-checker present (B13 quality)
-  - non-empty order / non-trivial checker user-approved when required (B25)
-  - providers listed for story-id each have implementation_sha"
-  [root theme-id story-id]
-  (and (implementation-order-recorded? root theme-id)
-       (dependency-checker-nontrivial? root)
-       (theme-architecture-gate-satisfied? root theme-id "implementation-order")
-       (theme-architecture-gate-satisfied? root theme-id "dependency-checker")
-       (let [providers (get (load-implementation-order root theme-id) story-id)]
-         (or (empty? providers)
-             (every? #(story-implementation-complete? root %) providers)))))
-
-(defn implementer-dependency-block-reason [root theme-id story-id]
-  (cond
-    (not (implementation-order-recorded? root theme-id))
-    "implementation order not recorded for theme"
-
-    (not (dependency-checker-nontrivial? root))
-    (case (dependency-checker-quality-at root)
-      :missing "dependency-checker.edn missing (analysis incomplete)"
-      :hollow "dependency-checker.edn hollow (analysis incomplete)"
-      "dependency-checker.edn not ready")
-
-    (not (theme-architecture-gate-satisfied? root theme-id "implementation-order"))
-    "implementation-order awaiting user approval"
-
-    (not (theme-architecture-gate-satisfied? root theme-id "dependency-checker"))
-    "dependency-checker awaiting user approval"
-
-    :else
-    (let [providers (get (load-implementation-order root theme-id) story-id)
-          pending (remove #(story-implementation-complete? root %) providers)]
-      (when (seq pending)
-        (str "implementation order: waiting on " (str/join ", " pending))))))
 
 (defn assignment-candidate [root assignments agents packet template assignment-suffix reason priority stage-order requirement]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         theme-id (get packet "theme_id")
         assignment-id (next-assignment-id assignments story-id assignment-suffix)
-        assignment (assignment-for assignments theme-id story-id template)
-        blocked-by-order? (and (= "implementer" template)
-                               (not (implementer-dependencies-satisfied? root theme-id story-id)))]
-    (when-not blocked-by-order?
-      (if assignment
-        (when (spawnable-assignment? root agents template assignment)
-          (assignment-spawn-candidate assignment theme-id story-id template reason priority stage-order))
-        (assignment-create-candidate theme-id story-id template assignment-id reason priority stage-order requirement)))))
+        assignment (assignment-for assignments theme-id story-id template)]
+    (if assignment
+      (when (spawnable-assignment? root agents template assignment)
+        (assignment-spawn-candidate assignment theme-id story-id template reason priority stage-order))
+      (assignment-create-candidate theme-id story-id template assignment-id reason priority stage-order requirement))))
 
 (defn implementer-rework-already-created?
   "True when an implementer assignment exists beyond the packet's recorded
   implementation_assignment — the one allowed rework for a current code_review
-  changes-requested cycle (P0 B01 thrash stop)."
+  changes-requested cycle ( thrash stop)."
   [assignments packet story-id]
   (let [recorded (get packet "implementation_assignment")]
     (boolean
@@ -1140,7 +713,7 @@
 (defn implementation-revision-candidate
   "At most one implementer rework while code_review is currently changes-requested.
   After that rework merges and is re-recorded, clear-downstream drops CR and
-  B101 sends the story to a new cleaner then hardener — not a second CR."
+   sends the story to a new cleaner then hardener — not a second CR."
   [root assignments agents packet reason priority stage-order]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         theme-id (get packet "theme_id")]
@@ -1149,8 +722,7 @@
                (approval-satisfied? root packet "story")
                (approval-satisfied? root packet "gherkin")
                (approval-satisfied? root packet "qa-procedure")
-               (approval-satisfied? root packet "implementation")
-               (implementer-dependencies-satisfied? root theme-id story-id))
+               (approval-satisfied? root packet "implementation"))
       (if-let [assignment (assignment-for assignments theme-id story-id "implementer")]
         (when (spawnable-assignment? root agents "implementer" assignment)
           (assignment-spawn-candidate assignment theme-id story-id "implementer" reason priority stage-order))
@@ -1189,7 +761,7 @@
       n)))
 
 (defn code-review-create-allowed?
-  "B101: at most one code-reviewer assignment and one recorded verdict per story."
+  "At most one code-reviewer assignment and one recorded verdict per story."
   [assignments packet story-id]
   (not (or (assignment-ever-for? assignments story-id "code-reviewer")
            (field-accepted? packet "code_review")
@@ -1308,75 +880,6 @@
       (when (spawnable-assignment? root agents template assignment)
         (assignment-spawn-candidate assignment theme-id "batch" template reason priority stage-order))
       (batch-assignment-create-candidate theme-id template assignment-id reason priority stage-order nil))))
-
-(defn theme-assignment-candidate [root assignments agents theme template assignment-suffix reason priority stage-order requirement]
-  (let [theme-id (:theme-id theme)
-        assignment-id (next-assignment-id assignments theme-id assignment-suffix)
-        assignment (assignment-for assignments theme-id "theme" template)]
-    (if assignment
-      (when (spawnable-assignment? root agents template assignment)
-        (assignment-spawn-candidate assignment theme-id "theme" template reason priority stage-order))
-      (assignment-create-candidate theme-id "theme" template assignment-id reason priority stage-order requirement))))
-
-(defn theme-analysis-complete? [assignments theme-id]
-  (boolean
-   (some #(and (= theme-id (:theme-id %))
-               (= "theme" (:story-id %))
-               (= "analyst" (:template %))
-               (= "merged" (:state %)))
-         assignments)))
-
-(defn theme-module-map-candidate [theme]
-  {:priority (plane/ready-priority-of :theme-module-map)
-   :stage-order 1
-   :next-action "write_theme_module_map"
-   :theme-id (:theme-id theme)
-   :story-id "theme"
-   :gate "theme"
-   :reason (str "theme needs a Clean Architecture module map before theme approval; "
-                "fill swarmforge/templates/theme-module-map.md for this theme, then "
-                "record it with squad_theme.sh module-map")
-   :command (str "squad_theme.sh module-map " (:theme-id theme)
-                 " <filled-module-map.md>")})
-
-(defn theme-candidates [root rows]
-  (let [assignments (assignment-records root)
-        agents (agent-records root rows)
-        packet-themes (set (map #(get % "theme_id") (packets root)))]
-    (->> (for [theme (theme-records root)
-               :when (not (or (contains? packet-themes (:theme-id theme))
-                              (theme-analysis-complete? assignments (:theme-id theme))))
-               :let [approval-id (str "theme__" (:theme-id theme))
-                     write-map (when (and (not (:module-map-present? theme))
-                                          (not (:approved-theme? theme)))
-                                 (theme-module-map-candidate theme))
-                     approval (when (and (:module-map-present? theme)
-                                         (not (:approved-theme? theme))
-                                         (not (approval-record-exists-for? root "theme" (:theme-id theme) "theme")))
-                                {:priority (plane/ready-priority-of :theme-approval)
-                                 :stage-order 1
-                                 :next-action "create_approval_request"
-                                 :theme-id (:theme-id theme)
-                                 :story-id "theme"
-                                 :gate "theme"
-                                 :reason "project and module map ready for user approval"
-                                 :command (str "squad_approval.sh request " approval-id
-                                               " theme " (:theme-id theme)
-                                               " theme Approve_project_and_module_map "
-                                               "project-and-module-map-ready")})
-                     analyst (when (:approved-theme? theme)
-                               (theme-assignment-candidate root assignments agents theme
-                                                           "analyst" "analysis"
-                                                           "approved project needs story analysis"
-                                                           60 5 "theme"))
-                     candidate (cond
-                                 (:approved-theme? theme) analyst
-                                 write-map write-map
-                                 :else approval)]
-               :when candidate]
-           candidate)
-         (sort-by (juxt :priority :theme-id :stage-order :assignment-id))
-         vec)))
 
 (defn analyst-story-registration-candidate [root assignment path]
   (let [story-id (artifact-story-id path)
@@ -1535,7 +1038,7 @@
 (defn packet-iteration-mentions-assignment?
   "True when packet history lists assignment-id under the given iterations field
   (e.g. cleaner_iterations: alpha-cleaner=recorded). Used so clear-downstream
-  does not get undone by re-recording the same merged assignment (B39)."
+  does not get undone by re-recording the same merged assignment."
   [packet iterations-field assignment-id]
   (let [iters (str (get packet iterations-field ""))]
     (and (not (str/blank? assignment-id))
@@ -1550,7 +1053,7 @@
 (defn packet-result-stale-for-assignment?
   "True when a merged assignment should re-record its result on the packet.
   Prevents implementer thrash: reworks never re-recorded while implementation_sha
-  already existed (P0 B01)."
+  already existed."
   [packet kind assignment]
   (let [kind-key (gate-key kind)
         sha-field (str kind-key "_sha")
@@ -1573,7 +1076,7 @@
 
 (defn should-record-merged-result?
   "Whether residual should write this merged assignment onto the packet.
-  B39: if clear-downstream removed the sha but iterations still show this
+  If clear-downstream removed the sha but iterations still show this
   assignment was already recorded, leave it cleared so a fresh cycle can start
   (do not re-apply superseded cleaner/hardener/etc.)."
   [packet kind assignment]
@@ -1650,7 +1153,7 @@
       [])))
 
 (defn assignment-batch-id
-  "Batch membership lives under batch_id (B32). Replacements set batch_id to the
+  "Batch membership lives under batch_id. Replacements set batch_id to the
   original batch assignment id so merged replacements still project to members."
   [assignment]
   (or (not-empty (:batch-id assignment))
@@ -1681,7 +1184,7 @@
                      (:assignment-id assignment) " master " sha)})))
 
 (defn inferred-batch-member-rows
-  "B99: senior-implementer reform often has no manifest. Infer members from
+  "Senior-implementer reform often has no manifest. Infer members from
   architecture changes-requested stories in the same theme."
   [root assignment kind]
   (when (and (= "batch" (:story-id assignment))
@@ -1803,7 +1306,7 @@
       (stale-changes-requested? packet review-field)))
 
 (defn review-already-recorded-for-assignment?
-  "B39: after clear-downstream, review_* fields are gone but *_review_iterations
+  "After clear-downstream, review_* fields are gone but *_review_iterations
   still lists the assignment decision. Do not re-apply that superseded decision."
   [packet review-field assignment-id]
   (packet-iteration-mentions-assignment?
@@ -1898,10 +1401,7 @@
 (defn packet-repair-candidates [root]
   (let [assignments (assignment-records root)
         packets (packets root)]
-    (vec (concat (implementation-order-record-candidates root)
-                 (incomplete-dependency-checker-candidates root)
-                 (theme-architecture-approval-candidates root)
-                 (analyst-story-registration-candidates root assignments)
+    (vec (concat (analyst-story-registration-candidates root assignments)
                  (direct-story-packet-candidates root)
                  (artifact-attachment-candidates root assignments packets)
                  (direct-result-record-candidates assignments packets)
@@ -2071,15 +1571,10 @@
                  (when (and (approval-satisfied? (:root ctx) packet "implementation")
                             (squad-state/implementation-ready? packet)
                             (not (field-present? packet "implementation_sha")))
-                   (let [story-id (get packet "story_id" (get packet "_story_id"))
-                         batch (implementer-batch-for-story
-                                (implementer-batch-plan (:root ctx) (get packet "theme_id"))
-                                story-id)]
-                     (when-not (and batch (> (count batch) 1))
-                       (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                             "implementer" "implementation"
-                                             "story is approved for implementation" 60 90
-                                             nil)))))}
+                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
+                                         "implementer" "implementation"
+                                         "story is approved for implementation" 60 90
+                                         nil)))}
    {:id :implementation-revision-assignment
     :priority 60
     :stage-order 95
@@ -2203,7 +1698,7 @@
        (field-present? packet "qa_sha")))
 
 (defn all-theme-stories-qa-complete?
-  "B97: architecture / senior-impl wait until every project story has finished QA."
+  "Architecture / senior-impl wait until every project story has finished QA."
   [root theme-packets]
   (boolean
    (and (seq theme-packets)
@@ -2213,7 +1708,7 @@
   (str/includes? (str (get packet "code_review_iterations" "")) "changes-requested"))
 
 (defn post-rework-ready-for-hardener?
-  "B101: after the single CR requested changes, a recorded rework cleaner
+  "After the single CR requested changes, a recorded rework cleaner
   is enough to enter harden — no second CR accept required."
   [packet]
   (and (field-present? packet "cleaner_sha")
@@ -2516,8 +2011,7 @@
     "record_post_revision_review_acceptance"
     "record_auto_approval"
     "record_batch_membership"
-    "declare_merge_blocker"
-    "record_implementation_order"})
+    "declare_merge_blocker"})
 
 ;; Deterministic ready-actions the daemon applies under capacity/dependency scheduling.
 (def daemon-ready-actions
@@ -2543,7 +2037,7 @@
               "bash" "-c" (str "PATH=" script-dir ":$PATH; " command)))
 
 (defn apply-candidate!
-  "B16/B18: apply via executor under :daemon authority by default."
+  "Apply via executor under :daemon authority by default."
   [root candidate]
   (executor/apply-candidate! root candidate :daemon))
 
@@ -2659,9 +2153,7 @@
     "review_accepted" "review_changes_requested" "cancelled" "abandoned"})
 
 (defn completed-handoff-retirable? [root {:keys [agent assignment-id]}]
-  "Retire only when the assignment handoff is terminal. merge_blocked agents
-  keep their worktree for merger recovery until the assignment is merged (or
-  otherwise resolved) — not merely when a downstream merger recorded a result."
+  "Retire only when the assignment handoff is terminal."
   (and (not= "unknown" agent)
        (if (assignment-dir-exists? root assignment-id)
          (contains? resolved-handoff-assignment-states
@@ -2703,7 +2195,9 @@
 
         (and (= "result_received" state)
              (= "merge_blocked" merge-state))
-        nil
+        (accept-merge-handoff-step
+         root assignment-id
+         "prior merge failed; squad leader retries accept-merge")
 
         :else
         (case state
@@ -2722,7 +2216,11 @@
            root assignment-id
            "merge-ready result must be accepted before handoff completion")
 
-          ;; merge_blocked and other unresolved states: no handoff step here.
+          "merge_blocked"
+          (accept-merge-handoff-step
+           root assignment-id
+           "prior merge failed; squad leader retries accept-merge")
+
           nil)))))
 
 (defn in-process-needs-action?
@@ -2867,7 +2365,7 @@
         (boolean (seq (remove str/blank? (str/split-lines out))))))))
 
 (defn session-dead-repair-candidate?
-  "B38: quiet agent, session gone, open assignment → repair residual (not vague recover)."
+  "Quiet agent, session gone, open assignment → repair residual (not vague recover)."
   [root {:keys [agent task-id] :as record}]
   (and (active-agent? record)
        (assignment-open-for-repair? root task-id)
@@ -2954,7 +2452,7 @@
                   "active agents are still working or awaiting handoff delivery"
                   (seq finalized)
                   (str "theme(s) finalized (" (str/join ", " finalized)
-                       "); no open product work — idle until reopen or new stories (B23)")
+                       "); no open product work — idle until reopen or new stories")
                   :else
                   "no handoffs, pending approvals, active transient agents, or stale locks")]
      (println "NEXT_ACTION: wait")
@@ -2970,70 +2468,10 @@
      (println "CHECK_AFTER_SECONDS: 30")
      (println "COMMAND: sleep 30 && squad_next.sh"))))
 
-(defn implementer-covers-story? [assignment story-id]
-  (and (= "implementer" (:template assignment))
-       (or (= story-id (:story-id assignment))
-           (some #{story-id} (split-list (:batch-stories assignment))))))
-
-(defn existing-open-implementer [assignments story-ids]
-  (some (fn [assignment]
-          (when (and (not (contains? terminal-assignment-states (:state assignment)))
-                     (some #(implementer-covers-story? assignment %) story-ids))
-            assignment))
-        assignments))
-
-(defn implementer-batch-member-ready? [root packet]
-  (and packet
-       (packet-ready-for-implementer? root packet)
-       (implementer-dependencies-satisfied? root
-                                            (get packet "theme_id")
-                                            (get packet "story_id" (get packet "_story_id")))))
-
-(defn implementer-batch-create-candidate [root assignments agents theme-id batch]
-  (let [members (vec batch)
-        packets-by-story (packet-by-story (packets root))]
-    (when (and (> (count members) 1)
-               (every? #(implementer-batch-member-ready? root (get packets-by-story %))
-                       members)
-               (not (existing-open-implementer assignments members)))
-      (let [assignment-id (str (str/join "-" members) "-implementation")
-            existing (assignment-by-id assignments assignment-id)]
-        (if existing
-          (when (spawnable-assignment? root agents "implementer" existing)
-            (assignment-spawn-candidate existing theme-id (first members) "implementer"
-                                        "related same-level stories share one implementer batch"
-                                        60 90))
-          {:priority 60
-           :stage-order 90
-           :next-action "create_assignment"
-           :theme-id theme-id
-           :story-id (first members)
-           :template "implementer"
-           :assignment-id assignment-id
-           :reason "related same-level stories share one implementer batch"
-           :command (str "squad_assign.sh create " theme-id " " (first members)
-                         " implementer " assignment-id
-                         " --auto-instructions --queue-spawn --batch-stories "
-                         (str/join "," members))})))))
-
-(defn implementer-batch-candidates [root rows]
-  (let [assignments (assignment-records root)
-        agents (agent-records root rows)]
-    (->> (theme-records root)
-         (map :theme-id)
-         (mapcat (fn [theme-id]
-                   (keep #(implementer-batch-create-candidate
-                           root assignments agents theme-id %)
-                         (implementer-batch-plan root theme-id))))
-         (remove nil?)
-         vec)))
-
 (defn ready-actions [root rows]
   (sort-by (juxt :priority :theme-id :stage-order :story-id :assignment-id)
            (concat (packet-repair-candidates root)
-                   (theme-candidates root rows)
                    (story-candidates root rows)
-                   (implementer-batch-candidates root rows)
                    (batch-candidates root rows)
                    (generic-ready-assignment-candidates root rows)
                    (theme-finalize-candidates root))))
@@ -3164,7 +2602,7 @@
      concurrent)))
 
 (def action-rule-predicates
-  "Predicates for residual classes. Order comes from plane/residual-class-order (B19)."
+  "Predicates for residual classes. Order comes from plane/residual-class-order."
   {:finish-in-process in-process-needs-action?
    :process-handoff :new-handoff
    :stale-lock :stale-lock-info
@@ -3180,7 +2618,7 @@
    :pending-approval :pending-approval-file})
 
 (def action-rules
-  "B19: residual ranking is plane/residual-class-order, not ad-hoc list order here."
+  "Residual ranking is plane/residual-class-order, not ad-hoc list order here."
   (mapv (fn [class]
           [class (get action-rule-predicates class (constantly false))])
         (remove #{:wait} plane/residual-class-order)))
@@ -3191,7 +2629,7 @@
     (predicate ctx)))
 
 (defn action-printer [ctx]
-  "B18/B19: select residual class via control-plane policy."
+  "Select residual class via control-plane policy."
   (let [presence {:in-process-needs-action? (in-process-needs-action? ctx)
                   :new-handoff (:new-handoff ctx)
                   :stale-lock-info (:stale-lock-info ctx)

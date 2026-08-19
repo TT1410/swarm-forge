@@ -239,7 +239,7 @@
        (format "Missing required header '%s' for git_handoff result manifest." field)))))
 
 (def hardener-forbidden-root-files
-  "B12: hardener must not thrash root build/lock manifests (merge conflicts)."
+  "Hardener must not thrash root build/lock manifests (merge conflicts)."
   #{"bb.edn" "deps.edn" "package.json" "package-lock.json"
     "Cargo.toml" "go.mod" "pom.xml" "build.gradle" "Makefile"
     "project.clj" "shadow-cljs.edn"})
@@ -255,7 +255,7 @@
              vec)))))
 
 (defn hardener-root-tooling-errors
-  "Reject hardener git_handoffs whose commit touches denylisted root files (B12)."
+  "Reject hardener git_handoffs whose commit touches denylisted root files."
   [headers canonical-commit]
   (when (and (= "git_handoff" (get headers "type"))
              (= "hardener" (get headers "template"))
@@ -266,7 +266,7 @@
                               (contains? hardener-forbidden-root-files p)))
                        paths)]
       (when (seq hits)
-        [(str "Hardener commits must not change root tooling files (B12): "
+        [(str "Hardener commits must not change root tooling files: "
               (str/join ", " (sort hits))
               ". Prefer bb/tasks/, src/, test/, acceptance/; hand back a blocker if root tooling is required.")]))))
 

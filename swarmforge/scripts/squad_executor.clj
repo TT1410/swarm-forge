@@ -1,5 +1,5 @@
 (ns squad-executor
-  "Apply control-plane actions with authority checks (B16 / B18).
+  "Apply control-plane actions with authority checks.
 
   The executor is the only path that runs shell for daemon mechanical work.
   It refuses ops not on the authority allow-list."

@@ -8,7 +8,7 @@
          (retire/session-target "swarmforge-implementer-001"))))
 
 (deftest stop-running-session-force-kills-when-lingering
-  ;; B11: first kill may leave the session; force path kills again
+  ;; First kill may leave the session; force path kills again
   (let [kills (atom [])
         waits (atom 0)]
     (with-redefs [retire/kill-session-attempts!

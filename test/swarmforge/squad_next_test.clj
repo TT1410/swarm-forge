@@ -46,9 +46,8 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (let [needs-map (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out needs-map) "NEXT_ACTION: write_theme_module_map"))
-        (is (str/includes? (:out needs-map) "THEME: wumpus"))
-        (is (str/includes? (:out needs-map) "squad_theme.sh module-map wumpus")))
+        (is (str/includes? (:out needs-map) "NEXT_ACTION: wait"))
+        (is (not (str/includes? (:out needs-map) "write_theme_module_map"))))
       (write-file (fs/path root "module-map.md") minimal-module-map)
       (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
       (run {:dir root}
@@ -984,7 +983,7 @@
         (fs/delete-tree root)))))
 
 (deftest squad-next-does-not-create-code-reviewer-after-new-cleaner-version
-  ;; B101: one CR per story. A second cleaner after the first CR does not spawn CR-r2.
+  ;; One CR per story. A second cleaner after the first CR does not spawn CR-r2.
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -1424,7 +1423,7 @@
         (fs/delete-tree root)))))
 
 (deftest squad-next-projects-batch-result-from-replacement-assignment-batch-id
-  ;; Given batch members under original batch id, assignment replaced then merged (B32)
+  ;; Given batch members under original batch id, assignment replaced then merged
   ;; When mechanical repair runs
   ;; Then packets receive hardener_sha from the replacement assignment
   (let [root (tmp-dir)]
@@ -1614,9 +1613,9 @@
         (fs/delete-tree root)))))
 
 (deftest squad-next-hard-gates-implementer-on-implementation-order
-  ;; Given story B requires story A in implementation-order.md and A has no implementation_sha
-  ;; When both are approved for implementation
-  ;; Then only A may get an implementer assignment
+  ;; Given two implementer-ready stories and an order file that used to serialize them
+  ;; When residual runs
+  ;; Then each story may get its own implementer; order does not block
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -1637,26 +1636,10 @@
                          "qa_procedure_review: accepted\n"
                          "implementation_approval: approved\n")))
       (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "story-a")
-            "foundation story should be scheduled")
         (is (str/includes? (:out next) "implementer"))
-        (is (not (str/includes? (:out next) "story-b-implementation"))
-            "dependent implementer must wait for provider implementation_sha"))
-      (write-file (fs/path root ".squad/stories/story-a/packet")
-                  (str "story_id: story-a\n"
-                       "theme_id: wumpus\n"
-                       "story_approval: approved\n"
-                       "gherkin_approval: approved\n"
-                       "qa_procedure_approval: approved\n"
-                       "gherkin_review: accepted\n"
-                       "qa_procedure_review: accepted\n"
-                       "implementation_approval: approved\n"
-                       "implementation_sha: abcdef1234\n"
-                       "implementation_branch: master\n"))
-      (let [after (run {:dir root} (script "squad_next.sh"))]
-        (is (or (str/includes? (:out after) "story-b")
-                (str/includes? (:out after) "story_b"))
-            "after provider implementation_sha, dependent may schedule"))
+        (is (str/includes? (:out next) "story-a-implementation"))
+        (is (str/includes? (:out next) "story-b-implementation"))
+        (is (not (str/includes? (:out next) "--batch-stories"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -1817,7 +1800,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b39-does-not-replay-superseded-cleaner-or-code-review-after-impl-rework
+(deftest does-not-replay-superseded-cleaner-or-code-review-after-impl-rework
   ;; Given: code_review changes-requested, one implementer rework already recorded,
   ;;        clear-downstream left cleaner/CR empty, but old cleaner + CR still merged
   ;;        and present in iterations history.
@@ -1833,7 +1816,7 @@
       (write-nontrivial-checker! root)
       (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
                   "alpha:\n")
-      ;; Post clear-downstream state after implementation-r2 record (B39 live shape).
+      ;; Post clear-downstream state after implementation-r2 record.
       (write-file (fs/path root ".squad/stories/alpha/packet")
                   (str "story_id: alpha\n"
                        "theme_id: wumpus\n"
@@ -1876,9 +1859,9 @@
       (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
             packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
         (is (not (str/includes? out "record_merged_result story=alpha assignment=alpha-cleaner"))
-            "B39: must not re-record superseded cleaner after impl rework clear")
+            "Must not re-record superseded cleaner after impl rework clear")
         (is (not (str/includes? out "record_review_result story=alpha assignment=alpha-code-review"))
-            "B39: must not re-apply superseded code_review changes-requested")
+            "Must not re-apply superseded code_review changes-requested")
         (is (not (str/includes? packet "cleaner_sha: bbbbbbbbbb"))
             "packet must not regain old cleaner_sha")
         (is (not (str/includes? packet "\ncode_review: changes-requested\n"))
@@ -1892,9 +1875,9 @@
         (fs/delete-tree root)))))
 
 (deftest p0-missing-durable-implementation-order-blocks-all-implementers
-  ;; Given root draft only — durable theme order missing
-  ;; When stories are ready for implementation
-  ;; Then implementers are not created; record_implementation_order is offered
+  ;; Given implementer-ready stories and no durable order
+  ;; When residual runs
+  ;; Then implementers are created; order is not a gate
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -1915,55 +1898,12 @@
                          "qa_procedure_review: accepted\n"
                          "implementation_approval: approved\n")))
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? out "record_implementation_order")
-            "must surface recording durable order")
-        (is (not (str/includes? out "story-a-implementation"))
-            "foundation implementer blocked until durable order exists")
-        (is (not (str/includes? out "story-b-implementation"))
-            "dependent implementer blocked until durable order exists"))
+        (is (not (str/includes? out "record_implementation_order")))
+        (is (str/includes? out "story-a-implementation"))
+        (is (str/includes? out "story-b-implementation")))
       (finally
         (fs/delete-tree root)))))
 
-(deftest missing-order-without-draft-offers-seed-record-not-silent-block
-  ;; Given implementer-ready story and no durable order and no root draft
-  ;; When squad_next runs
-  ;; Then record_implementation_order is offered (seed path) so the story is not stuck forever
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "troubleshooter\tmaster\t" root "\tswarmforge-troubleshooter\tTroubleshooter\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
-      (write-nontrivial-checker! root)
-      (write-file (fs/path root ".squad/stories/hello-world/packet")
-                  (str "story_id: hello-world\n"
-                       "theme_id: hello-world\n"
-                       "story_approval: approved\n"
-                       "gherkin_approval: approved\n"
-                       "qa_procedure_approval: approved\n"
-                       "gherkin_review: accepted\n"
-                       "qa_procedure_review: accepted\n"
-                       "implementation_approval: approved\n"))
-      (fs/create-dirs (fs/path root ".squad/themes/hello-world"))
-      (write-file (fs/path root ".squad/themes/hello-world/theme.md") "theme\n")
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? out "record_implementation_order")
-            "must not silently skip order when draft is missing")
-        (is (str/includes? out "seed comment-only")
-            "reason explains seed path"))
-      (let [mech (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
-            durable (fs/path root ".squad/themes/hello-world/implementation-order.md")]
-        (is (or (fs/exists? durable)
-                (str/includes? mech "record_implementation_order"))
-            "mechanical records or still offers seed")
-        (when (fs/exists? durable)
-          (let [after (:out (run {:dir root} (script "squad_next.sh")))]
-            (is (str/includes? after "implementer")
-                "after seed order, implementer can schedule")
-            (is (str/includes? after "hello-world")))))
-      (finally
-        (fs/delete-tree root)))))
 
 (deftest troubleshooter-is-not-active-transient-for-wait
   ;; Given only persistent roles in roles.tsv and no transient workers
@@ -1984,34 +1924,11 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest p0-mechanical-records-root-implementation-order-draft
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "implementation-order.md")
-                  "story-b: story-a\n")
-      (write-file (fs/path root ".squad/stories/story-a/packet")
-                  (str "story_id: story-a\ntheme_id: wumpus\n"
-                       "story_approval: approved\n"))
-      ;; theme dir must exist for squad_theme.sh
-      (fs/create-dirs (fs/path root ".squad/themes/wumpus"))
-      (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
-      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
-            durable (str (fs/path root ".squad/themes/wumpus/implementation-order.md"))]
-        (is (or (fs/exists? durable)
-                (str/includes? out "record_implementation_order"))
-            "mechanical path records or offers durable order")
-        (when (fs/exists? durable)
-          (is (str/includes? (slurp durable) "story-b: story-a"))))
-      (finally
-        (fs/delete-tree root)))))
 
-(deftest b23-theme-finalize-and-reopen
+(deftest theme-finalize-and-reopen
   ;; Given a theme with all stories final-approved
   ;; When squad_next runs
-  ;; Then finalize approval is requested; after finalize residual idles with B23 reason
+  ;; Then finalize approval is requested; after finalize residual idles with  reason
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -2053,162 +1970,6 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b13-hollow-or-missing-checker-is-incomplete-analysis-residual
-  ;; Given stories exist but dependency-checker is missing or hollow
-  ;; When squad_next runs
-  ;; Then complete_dependency_checker residual surfaces and implementers do not
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
-      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md") "")
-      (write-file (fs/path root ".squad/stories/alpha/packet")
-                  (str "story_id: alpha\n"
-                       "theme_id: wumpus\n"
-                       "story_approval: approved\n"
-                       "gherkin_approval: approved\n"
-                       "qa_procedure_approval: approved\n"
-                       "gherkin_review: accepted\n"
-                       "qa_procedure_review: accepted\n"
-                       "implementation_approval: approved\n"))
-      (let [missing (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? missing "complete_dependency_checker")
-            "missing checker is incomplete analysis")
-        (is (not (str/includes? missing "alpha-implementation"))
-            "implementer blocked without non-trivial checker"))
-      (write-file (fs/path root "dependency-checker.edn") hollow-dependency-checker)
-      (let [hollow (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? hollow "complete_dependency_checker")
-            "hollow empty map is incomplete analysis")
-        (is (str/includes? hollow "hollow")))
-      (write-nontrivial-checker! root)
-      (let [ok (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (not (str/includes? ok "complete_dependency_checker")))
-        (is (str/includes? ok "implementer")))
-      (finally
-        (fs/delete-tree root)))))
 
-(deftest b25-nonempty-order-and-checker-require-user-approval
-  ;; Given non-empty durable order and non-trivial checker
-  ;; When approval is required (defaults)
-  ;; Then create_approval_request for both gates; implementers wait until approved
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  (str "max_transient_agents 10\n"
-                       "approval_required implementation false\n"
-                       "approval_required implementation_order true\n"
-                       "approval_required dependency_checker true\n"))
-      (fs/create-dirs (fs/path root ".squad/themes/wumpus"))
-      (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
-      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
-                  "story-b: story-a\n")
-      (write-nontrivial-checker! root)
-      (write-file (fs/path root ".squad/stories/story-a/packet")
-                  (str "story_id: story-a\n"
-                       "theme_id: wumpus\n"
-                       "story_approval: approved\n"
-                       "gherkin_approval: approved\n"
-                       "qa_procedure_approval: approved\n"
-                       "gherkin_review: accepted\n"
-                       "qa_procedure_review: accepted\n"
-                       "implementation_approval: approved\n"))
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? out "create_approval_request")
-            "must request architecture gate approval")
-        (is (or (str/includes? out "implementation-order")
-                (str/includes? out "dependency-checker"))
-            "gate must be order or checker")
-        (is (not (str/includes? out "story-a-implementation"))
-            "implementer blocked until gates approved"))
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "implementation-order" "ok")
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "dependency-checker" "ok")
-      (let [after (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? after "implementer")
-            "after both content gates approved, implementer may schedule")
-        (is (str/includes? after "story-a")))
-      (finally
-        (fs/delete-tree root)))))
 
-(deftest b25-comment-only-order-skips-order-approval
-  ;; Given comment-only durable order (no edges)
-  ;; When checker is approved or not required
-  ;; Then no implementation-order approval request
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  (str "max_transient_agents 10\n"
-                       "approval_required implementation false\n"
-                       "approval_required implementation_order true\n"
-                       "approval_required dependency_checker false\n"))
-      (fs/create-dirs (fs/path root ".squad/themes/hello"))
-      (write-file (fs/path root ".squad/themes/hello/theme.md") "theme\n")
-      (write-file (fs/path root ".squad/themes/hello/implementation-order.md")
-                  "# No multi-story implementer dependencies.\n")
-      (write-nontrivial-checker! root)
-      (write-file (fs/path root ".squad/stories/hello/packet")
-                  (str "story_id: hello\n"
-                       "theme_id: hello\n"
-                       "story_approval: approved\n"
-                       "gherkin_approval: approved\n"
-                       "qa_procedure_approval: approved\n"
-                       "gherkin_review: accepted\n"
-                       "qa_procedure_review: accepted\n"
-                       "implementation_approval: approved\n"))
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (not (str/includes? out "Approve_implementation_order"))
-            "empty order needs no approval")
-        (is (str/includes? out "implementer")))
-      (finally
-        (fs/delete-tree root)))))
 
-(deftest b25-material-revision-invalidates-order-approval
-  ;; Given approved non-empty order, then content revised
-  ;; When squad_next runs
-  ;; Then approval is no longer satisfied and re-request is offered
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  (str "max_transient_agents 10\n"
-                       "approval_required implementation false\n"
-                       "approval_required implementation_order true\n"
-                       "approval_required dependency_checker false\n"))
-      (fs/create-dirs (fs/path root ".squad/themes/wumpus"))
-      (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
-      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
-                  "story-b: story-a\n")
-      (write-nontrivial-checker! root)
-      (write-file (fs/path root ".squad/stories/story-a/packet")
-                  (str "story_id: story-a\n"
-                       "theme_id: wumpus\n"
-                       "story_approval: approved\n"
-                       "gherkin_approval: approved\n"
-                       "qa_procedure_approval: approved\n"
-                       "gherkin_review: accepted\n"
-                       "qa_procedure_review: accepted\n"
-                       "implementation_approval: approved\n"))
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "implementation-order" "ok")
-      (let [ok (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? ok "implementer")
-            "approved order allows implementer"))
-      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md")
-                  "story-b: story-a\nstory-c: story-b\n")
-      (let [revised (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? revised "create_approval_request")
-            "material revision re-opens approval")
-        (is (str/includes? revised "implementation-order"))
-        (is (not (str/includes? revised "story-a-implementation"))
-            "implementer stays blocked until re-approved"))
-      (finally
-        (fs/delete-tree root)))))
