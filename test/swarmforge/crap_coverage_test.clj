@@ -1106,8 +1106,8 @@
     (is (= "pane" (:activity-source (first (next/agent-records root rows)))))
     (write-file (fs/path root ".squad/batches/theme-hardener/status") "state: open\n")
     (write-file (fs/path root ".squad/batches/theme-hardener/metadata") "kind: hardener\n")
-    (is (= "theme-hardener" (next/next-batch-id root [] "theme" "hardener" "hardener")))
-    (is (= "theme-qa" (next/next-batch-id root [] "theme" "qa" "qa")))
+    (is (= "hardener" (next/next-batch-id root [] "theme" "hardener" "hardener")))
+    (is (= "qa" (next/next-batch-id root [] "theme" "qa" "qa")))
     (is (true? (next/requirement-satisfied? root {"story_approval" "approved"} [] "approval:story")))
     (is (false? (next/requirement-satisfied? root nil [] "bogus:story")))))
 

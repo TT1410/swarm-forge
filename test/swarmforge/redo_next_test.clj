@@ -626,3 +626,132 @@
         (is (not (str/includes? out "story-ready-for-final-acceptance"))))
       (finally
         (fs/delete-tree root)))))
+
+(defn- themeless-cr-ready [story]
+  (str "story_id: " story "\n"
+       "story_path: stories/" story ".md\n"
+       "implementation_plan_path: .squad/stories/" story "/plan.md\n"
+       "implementation_plan_approval: approved\n"
+       "gherkin_path: features/" story ".feature\n"
+       "gherkin_approval: approved\n"
+       "qa_procedure_path: qa/" story ".md\n"
+       "qa_procedure_approval: approved\n"
+       "implementation_sha: abcdef1111\n"
+       "cleaner_sha: abcdef2222\n"
+       "code_review: accepted\n"
+       "code_review_sha: abcdef3333\n"))
+
+(deftest themeless-story-gets-hardener-after-cr
+  ;; Given a Start packet (no theme_id) with CR recorded
+  ;; When residual runs
+  ;; Then hardener — not wait
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (themeless-cr-ready "cave-graph"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "TEMPLATE: hardener"))
+        (is (not (str/includes? out "NEXT_ACTION: wait"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest themeless-ready-stories-share-one-hardener
+  ;; Given two themeless CR-ready stories
+  ;; When residual runs
+  ;; Then one hardener batch covers both
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (doseq [story ["alpha" "beta"]]
+        (write-file (fs/path root "stories" (str story ".md")) (str story "\n"))
+        (write-file (fs/path root ".squad/stories" story "packet")
+                    (themeless-cr-ready story)))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "TEMPLATE: hardener"))
+        (is (str/includes? out "alpha"))
+        (is (str/includes? out "beta")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest themeless-architect-after-qa
+  ;; Given a themeless packet with qa_sha
+  ;; When residual runs
+  ;; Then architect
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (themeless-cr-ready "cave-graph")
+                       "hardener_sha: abcdef4444\n"
+                       "qa_sha: abcdef5555\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "TEMPLATE: architect")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest themeless-si-after-architect-recs
+  ;; Given themeless architecture_review changes-requested
+  ;; When residual runs
+  ;; Then senior-implementer
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (themeless-cr-ready "cave-graph")
+                       "hardener_sha: abcdef4444\n"
+                       "qa_sha: abcdef5555\n"
+                       "architecture_review: changes-requested\n"
+                       "architecture_sha: abcdef6666\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "TEMPLATE: senior-implementer")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest architect-accepted-no-recs-is-done
+  ;; Given architecture_review accepted, no recs
+  ;; When residual runs
+  ;; Then wait — not Approve_architecture, not SI
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (themeless-cr-ready "cave-graph")
+                       "hardener_sha: abcdef4444\n"
+                       "qa_sha: abcdef5555\n"
+                       "architecture_review: accepted\n"
+                       "architecture_sha: abcdef6666\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "NEXT_ACTION: wait"))
+        (is (not (str/includes? out "Approve_architecture")))
+        (is (not (str/includes? out "TEMPLATE: senior-implementer"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest extra-user-gates-are-gone
+  ;; Given CR accepted on a themeless packet
+  ;; When residual runs
+  ;; Then no leftover user gates for CR, hardening, QA result, or architecture
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (themeless-cr-ready "cave-graph"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "approve cave-graph code-review")))
+        (is (not (str/includes? out "approve cave-graph hardening")))
+        (is (not (str/includes? out "approve cave-graph qa auto-approved")))
+        (is (not (str/includes? out "approve cave-graph architecture"))))
+      (finally
+        (fs/delete-tree root)))))

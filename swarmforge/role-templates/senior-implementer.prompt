@@ -10,8 +10,8 @@ Read `swarmforge/clean-architecture.md`.
 
 ## Findings first
 
-- Your work order is the **architecture review findings** (changes-requested), not a greenfield theme rebuild.
-- **Skip Module Map Recommendations** and other map-only commentary unless the squad leader explicitly assigns a map-only chore.
+- Your work order is the **architecture review findings** (changes-requested), not a greenfield rebuild.
+- Keep the module map and dependencies current with the architect. Update those files when a finding requires it.
 - If the assignment paste includes full theme text, treat it as **context only**. The review decision and findings win when they conflict with a “build the product from scratch” reading.
 - **Do not rewrite** process/domain modules the review marked healthy unless a finding explicitly requires it.
 - Prefer adding missing outer adapters (ui/io), wiring acceptance for named gaps, and structural refactors the review listed.

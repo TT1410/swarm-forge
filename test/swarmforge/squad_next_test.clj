@@ -1024,8 +1024,8 @@
           (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
           (is (str/includes? (:out next) "STORY: batch"))
           (is (str/includes? (:out next) "TEMPLATE: hardener"))
-          (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-batch wumpus hardener wumpus-hardener --auto-instructions --queue-spawn"))
-          (is (not (str/includes? (:out next) "squad_assign.sh create wumpus batch")))))
+          (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-batch none hardener"))
+          (is (not (str/includes? (:out next) "squad_assign.sh create none batch")))))
       (finally
         (fs/delete-tree root)))))
 
@@ -1049,21 +1049,11 @@
           (run {:dir root} (script "squad_packet.sh") "record" story "cleaner" (str story "-clean") "master" sha)
           (run {:dir root} (script "squad_packet.sh") "review" story "code" "accepted" (str story "-review") "master" sha)
           (run {:dir root} (script "squad_packet.sh") "approve" story "code-review" "approved")))
-      (let [first-next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out first-next) "NEXT_ACTION: record_batch_membership"))
-        (is (str/includes? (:out first-next) "STORY: alpha")))
-      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_batch_story.sh") "add" "alpha" "hardener" "wumpus-hardener" "code_reviewed" "alpha-review" "master" sha))
-      (let [second-next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out second-next) "NEXT_ACTION: record_batch_membership"))
-        (is (str/includes? (:out second-next) "STORY: beta"))
-        (is (not (str/includes? (:out second-next) "\nTEMPLATE: hardener"))))
-      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_batch_story.sh") "add" "beta" "hardener" "wumpus-hardener" "code_reviewed" "beta-review" "master" sha))
-      (let [third-next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out third-next) "NEXT_ACTION: create_assignment"))
-        (is (str/includes? (:out third-next) "STORY: batch"))
-        (is (str/includes? (:out third-next) "COMMAND: squad_assign.sh create-batch wumpus hardener wumpus-hardener --auto-instructions --queue-spawn")))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "TEMPLATE: hardener"))
+        (is (str/includes? out "create-batch none hardener"))
+        (is (str/includes? out "STORY: alpha"))
+        (is (str/includes? out "STORY: beta")))
       (finally
         (fs/delete-tree root)))))
 

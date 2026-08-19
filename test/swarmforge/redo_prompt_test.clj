@@ -55,3 +55,19 @@
     (is (re-find #"(?i)apply" p))
     (is (re-find #"(?i)recommend" p))
     (is (re-find #"(?i)harden" p))))
+
+(deftest implementer-does-not-wait-for-qa-procedure
+  (let [p (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))]
+    (is (re-find #"(?i)gherkin" p))
+    (is (not (re-find #"(?i)wait.*qa procedure" p)))
+    (is (not (str/includes? p "accepted Gherkin and QA procedure")))))
+
+(deftest architect-uses-whole-backlog-and-keeps-structure
+  (let [p (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))]
+    (is (re-find #"(?i)backlog" p))
+    (is (re-find #"(?i)completed stor" p))))
+
+(deftest si-keeps-structure-with-architect
+  (let [p (slurp (str (fs/path repo-root "swarmforge/role-templates/senior-implementer.prompt")))]
+    (is (re-find #"(?i)module map|dependenc" p))
+    (is (not (re-find #"(?i)skip module map" p)))))

@@ -407,7 +407,8 @@
 
 (declare agent-state transient-row? next-batch-id visible-handoff-agents
          capacity-counted-agent? ready-actions hardener-member-ready?
-         held-handoff-files same-theme-packets)
+         qa-member-ready? architecture-member-ready?
+         held-handoff-files)
 
 (defn agent-files [root agent]
   (let [agent-dir (fs/path root ".squad" "agents" agent)]
@@ -1300,14 +1301,6 @@
 	    :stage-order 110
     :candidate (fn [ctx packet]
                  (code-review-assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet))}
-   {:id :code-review-approval
-    :priority 30
-    :stage-order 120
-    :candidate (fn [ctx packet]
-                 (when (and (field-present? packet "cleaner_sha")
-                            (field-accepted? packet "code_review"))
-                   (approval-candidate (:root ctx) packet "code-review" "Approve_code_review"
-                                       "code-review-accepted" 30 120)))}
    {:id :hardener-assignment
     :priority 60
     :stage-order 130
@@ -1321,49 +1314,26 @@
                                     (if (field-present? packet "code_review_sha")
                                       "code_review"
                                       "cleaner"))))}
-   {:id :hardening-approval
-    :priority 30
-    :stage-order 140
-    :candidate (fn [ctx packet]
-                 (when (field-present? packet "hardener_sha")
-                   (approval-candidate (:root ctx) packet "hardening" "Approve_hardening"
-                                       "hardening-returned" 30 140)))}
    {:id :qa-assignment
     :priority 60
     :stage-order 150
     :candidate (fn [ctx packet]
-                 (when (and (approval-satisfied? (:root ctx) packet "hardening")
-                            (field-present? packet "hardener_sha")
+                 (when (and (qa-member-ready? (:root ctx) packet)
                             (not (field-present? packet "qa_batch")))
                    (batch-candidate (:root ctx) (:assignments ctx) packet "qa" "qa"
                                     "hardening_approved"
                                     "hardened story is ready for QA batch"
                                     60 145 "hardener")))}
-   {:id :qa-approval
-    :priority 30
-    :stage-order 160
-    :candidate (fn [ctx packet]
-                 (when (field-present? packet "qa_sha")
-                   (approval-candidate (:root ctx) packet "qa" "Approve_QA"
-                                       "qa-returned" 30 160)))}
    {:id :architect-assignment
     :priority 60
     :stage-order 170
     :candidate (fn [ctx packet]
-                 (when (and (approval-satisfied? (:root ctx) packet "qa")
-                            (field-present? packet "qa_sha")
+                 (when (and (architecture-member-ready? (:root ctx) packet)
                             (not (field-present? packet "architecture_batch")))
                    (batch-candidate (:root ctx) (:assignments ctx) packet "architecture" "architecture"
                                     "qa_approved"
                                     "QA-verified story is ready for architecture batch"
-                                    60 165 "qa")))}
-   {:id :architecture-approval
-    :priority 30
-    :stage-order 180
-    :candidate (fn [ctx packet]
-                 (when (field-accepted? packet "architecture_review")
-                   (approval-candidate (:root ctx) packet "architecture" "Approve_architecture"
-                                       "architecture-review-accepted" 30 180)))}])
+                                    60 165 "qa")))}])
 
 (defn story-candidates [root rows]
   (let [ctx {:root root
@@ -1378,9 +1348,6 @@
          (sort-by (juxt :theme-id :story-id :stage-order :priority :assignment-id))
          vec)))
 
-(defn same-theme-packets [all-packets theme-id]
-  (filter #(= theme-id (get % "theme_id")) all-packets))
-
 (defn hardener-member-ready? [root packet]
   (and (not (field-present? packet "hardener_sha"))
        (field-present? packet "code_review_sha")
@@ -1393,8 +1360,7 @@
       (hardener-member-ready? root packet)))
 
 (defn qa-member-ready? [root packet]
-  (and (approval-satisfied? root packet "hardening")
-       (field-present? packet "hardener_sha")
+  (and (field-present? packet "hardener_sha")
        (not (field-present? packet "qa_sha"))))
 
 (defn qa-stage-clear? [root packet]
@@ -1403,8 +1369,7 @@
       (qa-member-ready? root packet)))
 
 (defn architecture-member-ready? [root packet]
-  (and (approval-satisfied? root packet "qa")
-       (field-present? packet "qa_sha")
+  (and (field-present? packet "qa_sha")
        (not (field-present? packet "senior_implementer_sha"))
        (not (or (field-accepted? packet "architecture_review")
                 (field-changes-requested? packet "architecture_review")))))
@@ -1510,8 +1475,8 @@
         (recur (inc iteration))
         candidate))))
 
-(defn next-batch-id [root assignments theme-id requested-kind suffix]
-  (let [base (str theme-id "-" suffix)
+(defn next-batch-id [root assignments _theme-id requested-kind suffix]
+  (let [base suffix
         batches (batch-records root)
         batch-ids (set (map :batch-id batches))]
     (or (reusable-batch-id batches assignments requested-kind base)
@@ -1520,63 +1485,56 @@
 (def batch-action-rules
   [{:ready? :hardener-ready?
     :template "hardener"
-    :suffix "-hardener"
+    :suffix "hardener"
     :reason "hardener batch is ready"
     :stage-order 130}
    {:ready? :qa-ready?
     :template "qa"
-    :suffix "-qa"
+    :suffix "qa"
     :reason "QA batch is ready"
     :stage-order 150}
    {:ready? :senior-ready?
     :template "senior-implementer"
-    :suffix "-architecture-fix"
+    :suffix "architecture-fix"
     :reason "architecture critique needs senior implementation"
     :stage-order 166}
    {:ready? :architecture-ready?
     :template "architect"
-    :suffix "-architecture"
+    :suffix "architecture"
     :reason "architecture batch is ready after QA"
     :stage-order 170}])
 
-(defn batch-readiness [root theme-packets]
-  (let [theme-id (get (first theme-packets) "theme_id")
-        batches (batch-records root)]
-    {:hardener-ready? (and (seq theme-packets)
-                           (or (batch-id-needing-result theme-packets "hardener_batch" "hardener_sha")
-                               (when-not (any-unbatched-hardener-member-ready? root theme-packets)
-                                 (open-batch-with-members batches "hardener" (str theme-id "-hardener")))))
-     :qa-ready? (and (seq theme-packets)
-                     (or (batch-id-needing-result theme-packets "qa_batch" "qa_sha")
-                         (when-not (any-unbatched-qa-member-ready? root theme-packets)
-                           (open-batch-with-members batches "qa" (str theme-id "-qa")))))
-     :architecture-ready? (and (seq theme-packets)
-                               (or (architecture-batch-needing-review theme-packets)
-                                   (when-not (any-unbatched-architecture-member-ready? root theme-packets)
-                                     (open-batch-with-members batches "architecture" (str theme-id "-architecture")))))
-     :senior-ready? (any-architecture-needs-senior? theme-packets)}))
+(defn batch-readiness [root packets]
+  (let [batches (batch-records root)]
+    {:hardener-ready? (and (seq packets)
+                           (or (batch-id-needing-result packets "hardener_batch" "hardener_sha")
+                               (any-unbatched-hardener-member-ready? root packets)
+                               (open-batch-with-members batches "hardener" "hardener")))
+     :qa-ready? (and (seq packets)
+                     (or (batch-id-needing-result packets "qa_batch" "qa_sha")
+                         (any-unbatched-qa-member-ready? root packets)
+                         (open-batch-with-members batches "qa" "qa")))
+     :architecture-ready? (and (seq packets)
+                               (or (architecture-batch-needing-review packets)
+                                   (any-unbatched-architecture-member-ready? root packets)
+                                   (open-batch-with-members batches "architecture" "architecture")))
+     :senior-ready? (any-architecture-needs-senior? packets)}))
 
-(defn batch-candidate-for-rule [root assignments agents theme-id readiness
+(defn batch-candidate-for-rule [root assignments agents readiness
                                 {:keys [ready? template suffix reason stage-order]}]
   (when-let [ready-value (get readiness ready?)]
-    (let [assignment-base (if (string? ready-value)
-                            ready-value
-                            (str theme-id suffix))]
-      (batch-assignment-candidate root assignments agents theme-id
+    (let [assignment-base (if (string? ready-value) ready-value suffix)]
+      (batch-assignment-candidate root assignments agents "none"
                                   template assignment-base
                                   reason 60 stage-order))))
-
-(defn batch-candidate-for-theme [root assignments agents all-packets theme-id]
-  (let [readiness (batch-readiness root (vec (same-theme-packets all-packets theme-id)))]
-    (some #(batch-candidate-for-rule root assignments agents theme-id readiness %)
-          batch-action-rules)))
 
 (defn batch-candidates [root rows]
   (let [all-packets (packets root)
         assignments (assignment-records root)
         agents (agent-records root rows)
-        theme-ids (sort (set (keep #(get % "theme_id") all-packets)))]
-    (->> (keep #(batch-candidate-for-theme root assignments agents all-packets %) theme-ids)
+        readiness (batch-readiness root all-packets)]
+    (->> (keep #(batch-candidate-for-rule root assignments agents readiness %)
+               batch-action-rules)
          (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
          vec)))
 

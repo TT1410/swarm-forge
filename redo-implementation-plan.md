@@ -29,7 +29,7 @@ bb test
 bb crap
 ```
 
-`bb crap` runs `bb coverage` then scores `swarmforge/scripts`. Filter to the module you touched (`bb crap squad_next`). The cap still applies to every leftover function in that module. After Task 7, a full `bb crap` is a check that shipped scripts are already at 6 — not a new project.
+`bb crap` runs `bb coverage` then scores `swarmforge/scripts`. Filter to the module you touched (`bb crap squad_next`). The cap still applies to every leftover function in that module. After Task 8, a full `bb crap` is a check that shipped scripts are already at 6 — not a new project.
 
 **Out of scope:** Rewriting `squad_simulator.clj`. Project directories. Converting a mid-flight sprint swarm. Keeping story-pair implementer batches.
 
@@ -450,7 +450,7 @@ After analyst merge + plan file on disk (`.squad/stories/<id>/plan.md` **or** `s
         (fs/delete-tree root)))))
 ```
 
-If `approve-backlog!` is renamed to `start-backlog!`, update the test and keep the HTTP path `/api/backlog/:id/approve` as an alias for Start so the current dashboard button works until Task 7.
+If `approve-backlog!` is renamed to `start-backlog!`, update the test and keep the HTTP path `/api/backlog/:id/approve` as an alias for Start so the current dashboard button works until Task 8.
 
 - [ ] **Step 2: Run `bb test`. Confirm fail.**
 
@@ -887,7 +887,96 @@ EOF
 
 ---
 
-### Task 7: Dashboard (`redo-ui.md`)
+### Task 7: Later roles on ready stories (no theme); drop extra gates; prompt truth
+
+Start packets have no `theme_id`. Hardener / QA / architect / SI still spawn only through theme-keyed `batch-candidates`. Extra residual gates still auto-approve code-review, hardening, QA-result, and architecture. Three prompts still lie.
+
+**Files:**
+- Modify: `test/swarmforge/redo_next_test.clj`
+- Modify: `test/swarmforge/redo_prompt_test.clj`
+- Modify: `swarmforge/scripts/squad_next.clj` (`batch-candidates`, `next-batch-id`, `batch-readiness`, story-transition-table extra approvals)
+- Modify: `swarmforge/role-templates/implementer.prompt`
+- Modify: `swarmforge/role-templates/architect.prompt`
+- Modify: `swarmforge/role-templates/senior-implementer.prompt`
+- Invert: leftover tests that require theme-keyed later roles or extra user gates (`Approve_code_review`, `Approve_hardening`, `Approve_QA`, `Approve_architecture`)
+
+- [ ] **Step 1: Write the failing tests**
+
+```clojure
+(defn- themeless-cr-ready [story]
+  (str "story_id: " story "\n"
+       "story_path: stories/" story ".md\n"
+       "implementation_plan_approval: approved\n"
+       "gherkin_path: features/" story ".feature\n"
+       "gherkin_approval: approved\n"
+       "implementation_sha: a\ncleaner_sha: b\n"
+       "code_review: accepted\ncode_review_sha: c\n"))
+
+(deftest themeless-story-gets-hardener-after-cr
+  ;; Given a Start packet (no theme_id) with CR recorded
+  ;; When residual runs
+  ;; Then hardener — not wait
+  ...)
+
+(deftest themeless-ready-stories-share-one-hardener
+  ;; Given two themeless CR-ready stories
+  ;; When residual runs
+  ;; Then one hardener batch covers both
+  ...)
+
+(deftest themeless-architect-after-qa
+  ;; Given a themeless packet with qa_sha
+  ;; When residual runs
+  ;; Then architect
+  ...)
+
+(deftest themeless-si-after-architect-recs
+  ;; Given themeless architecture_review changes-requested
+  ;; When residual runs
+  ;; Then senior-implementer
+  ...)
+
+(deftest architect-accepted-no-recs-is-done
+  ;; Given architecture_review accepted, no recs
+  ;; When residual runs
+  ;; Then wait — not Approve_architecture, not SI
+  ...)
+
+(deftest extra-user-gates-are-gone
+  ;; Given CR accepted on a themeless packet
+  ;; When residual runs
+  ;; Then no Approve_code_review / Approve_hardening / Approve_QA / Approve_architecture
+  ...)
+```
+
+Prompt tests: implementer does not mention waiting on QA procedure; architect uses the whole backlog; SI keeps structure/deps current (does not tell SI to skip the map).
+
+- [ ] **Step 2: Run. Confirm fail** on Start-themeless hardener/architect/SI and extra-gate / prompt assertions.
+
+- [ ] **Step 3: Minimal implementation**
+
+1. **Later roles on ready stories, not theme.** `batch-candidates` uses every packet that is ready — including Start packets with no `theme_id`. Shared batch id per kind (`hardener`, `qa`, `architecture`, SI), not `theme-id-hardener`. SI has a real spawn path, not only the theme batch rule. Keep batching: every story that is ready when that hardener starts stays together.
+
+2. **Drop extra auto-approvals.** Delete `:code-review-approval`, `:hardening-approval`, `:qa-approval`, `:architecture-approval` from `story-transition-table`. Residual never emits those gates. Architect-accepted-with-no-recs is wait (done). Recs spawn SI, then wait.
+
+3. **Prompt truth.** Implementer: units + Gherkin; does not wait for QA procedure. Architect: uses the whole backlog and completed stories; keeps module map and dependencies current. SI: implements recs and keeps structure/deps current with the architect.
+
+- [ ] **Step 4: Invert old tests** that require theme-keyed later roles, `Approve_code_review` / hardening / QA-result / architecture, or SI skip-the-map.
+
+- [ ] **Step 5: `bb test` green. `bb crap` on touched modules: leftover functions CRAP ≤ 6.**
+
+- [ ] **Step 6: Commit**
+
+```bash
+git commit -m "$(cat <<'EOF'
+Later roles batch ready stories, including Start. No extra user gates.
+EOF
+)"
+```
+
+---
+
+### Task 8: Dashboard (`redo-ui.md`)
 
 **Files:**
 - Create: `test/swarmforge/redo_ui_test.clj`
@@ -967,27 +1056,27 @@ EOF
 | 1–2 SL merges worker SHA; no merger; no dry-run; no merge_blocked | 1 |
 | 3 Stories are E2E use cases | 3, 6 (analyst prompt) |
 | 4 Module impl order does not matter | 2 |
-| 5 No sprints, no project, no theme | 2, 3, 7 |
+| 5 No sprints, no project, no theme | 2, 3, 7, 8 |
 | 6 Simplify workflow | all |
 | 7 Analyst → plan, user approves | 3, 6 |
 | 8 Gherkin/QA no review; user approves | 4 |
-| 9 Implementer units + Gherkin | 5 |
+| 9 Implementer units + Gherkin | 5, 7 |
 | 10 Cleaner: property tests + clean | 5, 6 |
 | 11 CR recs only | 5, 6 |
-| 12 Hardener applies recs then hardens | 5, 6 |
-| 13–15 QA, architect recs, SI; module map is arch+SI | 5, 6 |
-| 16 Story complete; no final bless | 5, 7 |
-| 17 Backlog; Start; reject returns | 3, 7 |
-| Hardener/QA/arch/SI batches of ready stories | 5 |
+| 12 Hardener applies recs then hardens | 5, 6, 7 |
+| 13–15 QA, architect recs, SI; module map is arch+SI | 5, 6, 7 |
+| 16 Story complete; no final bless | 5, 7, 8 |
+| 17 Backlog; Start; reject returns | 3, 8 |
+| Hardener/QA/arch/SI batches of ready stories | 5, 7 |
 
 | redo-ui.md | Task |
 |------------|------|
-| Drop project / sprint / Projects rail | 7 |
-| Keep backlog deck, Add Story, WIF, TS | 7 |
-| Columns + pills | 7 |
-| Attention View document | 7 |
-| Add vs Start | 3, 7 |
-| Work Queue story · role | 7 |
+| Drop project / sprint / Projects rail | 8 |
+| Keep backlog deck, Add Story, WIF, TS | 8 |
+| Columns + pills | 8 |
+| Attention View document | 8 |
+| Add vs Start | 3, 8 |
+| Work Queue story · role | 8 |
 
 ---
 
