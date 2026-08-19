@@ -177,7 +177,12 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
         </button>
         <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add Story</button>
       </div>
-      <div class="columns" id="columns"></div>
+      <div class="columns" id="columns">
+        <div class="col"><h3>Specifying</h3><div class="col-body"></div></div>
+        <div class="col"><h3>Coding</h3><div class="col-body"></div></div>
+        <div class="col"><h3>Finalizing</h3><div class="col-body"></div></div>
+        <div class="col"><h3>Done</h3><div class="col-body"></div></div>
+      </div>
     </main>
     <div class="splitter" id="splitter" title="Drag to resize" role="separator" aria-orientation="vertical"></div>
     <aside class="rail">
@@ -273,7 +278,7 @@ function makeDraggable(win, bar) {
     bar.setPointerCapture(e.pointerId);
   });
   bar.addEventListener('pointermove', e => { if(!drag)return; win.style.left=Math.max(0,e.clientX-ox)+'px'; win.style.top=Math.max(0,e.clientY-oy)+'px'; });
-  bar.addEventListener('pointerup', => { drag=false; });
+  bar.addEventListener('pointerup', () => { drag=false; });
 }
 function closeWindow(id) { const w=windows.get(id); if(!w)return; w.el.remove(); windows.delete(id); }
 function openFloat({id,title,bodyHtml,onMount,left,top}) {
@@ -481,8 +486,6 @@ function bindBacklogDeck(openBl) {
   const hide=()=>{hideT=setTimeout(()=>{menu.classList.remove('open'); menu.hidden=true;},180);};
   deck.onclick=e=>{e.stopPropagation(); if(menu.classList.contains('open')) hide(); else show();};
   menu.onmouseenter=()=>clearTimeout(hideT); menu.onmouseleave=hide;
-  const add=document.getElementById('btn-add-item');
-  if(add) add.onclick=()=>openBacklogEditor(null);
 }
 
 function renderWork(data) {
@@ -589,7 +592,14 @@ function openBacklogEditor(item) {
       </div>`,
     onMount(el){
       el.querySelector('[data-be=cancel]').onclick=()=>closeWindow(id);
-      el.querySelector('[data-be=add]').onclick=async()=>{
+      const addBtn=el.querySelector('[data-be=add]');
+      el.querySelector('#be-title').addEventListener('keydown',e=>{
+        if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); addBtn.click(); }
+      });
+      el.querySelector('#be-body').addEventListener('keydown',e=>{
+        if(e.key==='Enter'&&!e.shiftKey){ e.preventDefault(); addBtn.click(); }
+      });
+      addBtn.onclick=async()=>{
         const title=el.querySelector('#be-title').value.trim();
         const body=el.querySelector('#be-body').value;
         if(!title){alert('Title required');return;}
@@ -687,6 +697,7 @@ async function refresh() {
   }
 }
 
+document.getElementById('btn-add-item').onclick=()=>openBacklogEditor(null);
 document.getElementById('btn-open-sl').onclick=()=>openAgentWindow('/agent/squad-leader','squad-sl');
 document.getElementById('btn-open-ts').onclick=()=>openAgentWindow('/agent/troubleshooter','squad-ts');
 document.getElementById('btn-open-ts-2').onclick=()=>openAgentWindow('/agent/troubleshooter','squad-ts');

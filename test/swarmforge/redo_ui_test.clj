@@ -1,5 +1,6 @@
 (ns swarmforge.redo-ui-test
   (:require [babashka.fs :as fs]
+            [clojure.java.shell :as sh]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [squadd.web :as web]
@@ -83,3 +84,36 @@
               [])]
     (is (some #(= "implementer" (get % "role")) rows))
     (is (not (some #(= "merger" (get % "role")) rows)))))
+
+(defn- dashboard-script []
+  (or (second (re-find #"(?s)<script>(.*)</script>" html)) ""))
+
+(deftest dashboard-script-is-valid-javascript
+  ;; Given the cockpit page script
+  ;; Then it parses — a syntax error would kill Add Story, TS Enter, and swimlanes
+  (let [script (dashboard-script)
+        tmp (fs/create-temp-file {:prefix "squad-dashboard." :suffix ".js"})]
+    (try
+      (spit (str tmp) script)
+      (let [checked (sh/sh "node" "--check" (str tmp))]
+        (is (zero? (:exit checked)) (:err checked)))
+      (finally
+        (fs/delete-if-exists tmp)))))
+
+(deftest add-story-is-wired-at-page-load
+  ;; Given the cockpit HTML
+  ;; Then Add Story is bound at load, not only after renderBoard
+  (is (re-find #"getElementById\('btn-add-item'\)\.onclick" html)))
+
+(deftest board-html-has-four-swimlanes
+  ;; Given the cockpit HTML before JS runs
+  ;; Then the four board lanes are already in the markup
+  (doseq [lane ["Specifying" "Coding" "Finalizing" "Done"]]
+    (is (re-find (re-pattern (str "<h3>" lane "</h3>")) html))))
+
+(deftest ts-enter-sends-without-shift
+  ;; Given the Troubleshooter composer
+  ;; Then Enter sends and Shift+Enter stays a newline
+  (is (re-find #"sl-message'\)\.addEventListener\('keydown'" html))
+  (is (re-find #"e\.key==='Enter'&&!e\.shiftKey" html))
+  (is (str/includes? html "sendTsChat()")))
