@@ -148,12 +148,8 @@
 (defn packet-file [root story-id]
   (fs/path root ".squad" "stories" story-id "packet"))
 
-(defn theme-status-file [root theme-id]
-  (fs/path root ".squad" "themes" theme-id "status"))
-
 (defn target-exists? [root target-kind target-id]
   (case target-kind
-    "theme" (fs/exists? (theme-status-file root target-id))
     "story" (fs/exists? (packet-file root target-id))
     false))
 
@@ -162,8 +158,8 @@
 
 (defn command-for [target-kind target-id gate detail]
   (case target-kind
-    "theme" [(str (fs/path script-dir "squad_theme.sh")) "approve" target-id gate detail]
-    "story" [(str (fs/path script-dir "squad_packet.sh")) "approve" target-id (packet-gate gate) detail]))
+    "story" [(str (fs/path script-dir "squad_packet.sh")) "approve" target-id (packet-gate gate) detail]
+    []))
 
 (defn ensure-target-exists! [root target-kind target-id]
   (when-not (target-exists? root target-kind target-id)

@@ -60,7 +60,7 @@
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_next.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_packet.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_tool.sh")))
-        (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_theme.sh")))
+        (is (not (fs/exists? (fs/path worktree "swarmforge/scripts/squad_theme.sh"))))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squad_event.sh")))
         (is (fs/exists? (fs/path worktree "swarmforge/scripts/squadd.sh")))
         (is (fs/exists? (fs/path worktree ".swarmforge/handoffs/inbox/new")))
@@ -231,8 +231,6 @@
       (write-file (fs/path root "instructions.md")
                   "Implement cave topology.\n")
       (run {:dir root} (script "swarmforge.clj") "--test-parse" (str root))
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"

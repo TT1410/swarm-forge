@@ -26,9 +26,6 @@
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
       (write-file (fs/path root "rejection.md") "Merge conflict; park for operator.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave" "stories/cave.md")
       (prepare-implementation-packet! root "wumpus" "cave")
       (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
            "cave-impl" "instructions.md")
@@ -57,11 +54,8 @@
       (write-file (fs/path root "theme.md") "Theme.\n")
       (write-file (fs/path root "module-map.md") minimal-module-map)
       (write-file (fs/path root "stories/cave.md") "Story cave.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave" "stories/cave.md")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "cave" "cave-story" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "create" "cave" "cave-story" "master" sha)
         (run {:dir root} (script "squad_approval.sh") "request"
              "story__cave" "story" "cave" "story" "Approve story" "please review")
         (let [reject (run {:dir root} (script "squad_approval.sh") "reject"
@@ -92,9 +86,6 @@
       (write-file (fs/path root "module-map.md") minimal-module-map)
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave" "stories/cave.md")
       (prepare-implementation-packet! root "wumpus" "cave")
       (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
            "cave-impl" "instructions.md")
@@ -216,36 +207,6 @@
         (is (= 0 (:exit result)))
         (is (not (str/includes? (slurp (str (fs/path root ".swarmforge/roles.tsv")))
                                 "implementer-001"))))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest theme-story-gets-incremental-story-number
-  ;; Given stories registered on a theme
-  ;; When packets are created
-  ;; Then each story has a stable story_number in ref and packet
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "theme.md") "Theme.\n")
-      (write-file (fs/path root "module-map.md") minimal-module-map)
-      (write-file (fs/path root "stories/alpha.md") "Alpha.\n")
-      (write-file (fs/path root "stories/beta.md") "Beta.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
-      (let [a (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
-            b (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "beta" "stories/beta.md")
-            sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (is (str/includes? (:out a) "STORY_NUMBER: 1"))
-        (is (str/includes? (:out b) "STORY_NUMBER: 2"))
-        (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/stories/alpha.ref")))
-                           "story_number: 1"))
-        (let [packet (run {:dir root} (script "squad_packet.sh") "create"
-                          "wumpus" "alpha" "alpha-story" "master" sha)]
-          (is (str/includes? (:out packet) "STORY_NUMBER: 1"))
-          (is (str/includes? (slurp (str (fs/path root ".squad/stories/alpha/packet")))
-                             "story_number: 1"))))
       (finally
         (fs/delete-tree root)))))
 

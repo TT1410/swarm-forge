@@ -51,10 +51,6 @@
                   "Reject because the branch exceeded the story boundary.\n")
       (write-file (fs/path root "replacement-instructions.md")
                   "Reimplement only cave topology.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
       (prepare-implementation-packet! root "wumpus" "cave-topology")
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
@@ -78,15 +74,14 @@
         (is (str/includes? (:out status) "STATE: created"))
         (is (str/includes? (slurp (str assignment)) "assignment_id: wumpus-cave-impl"))
         (is (str/includes? (slurp (str assignment)) "Story: cave topology and setup."))
-        (is (str/includes? (slurp (str assignment)) "## Theme Module Map"))
-        (is (str/includes? (slurp (str assignment)) "Use Cases (Business / Process Rules)"))
+        (is (str/includes? (slurp (str assignment)) "No theme. Work this story only."))
+        (is (not (str/includes? (slurp (str assignment)) "## Theme Module Map")))
         (is (str/includes? (slurp (str assignment)) "Write unit tests first"))
         (is (str/includes? (slurp (str assignment)) "swarm_handoff.sh"))
         (is (str/includes? (slurp (str draft)) "type: git_handoff"))
         (is (str/includes? (slurp (str draft)) "to: squad-leader"))
         (is (str/includes? (slurp (str draft)) "task: wumpus-cave-impl"))
-        (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
-                           "\tassignment_created\twumpus-cave-impl\timplementer\tcave-topology"))
+        (is (not (fs/exists? (fs/path root ".squad/themes/wumpus/events.log"))))
         (write-file (fs/path root "anonymous-result.handoff")
                     (str "id: 1\n"
                          "to: squad-leader\n"
@@ -168,10 +163,7 @@
               replacement-status (run {:dir root}
                                       (script "squad_assign.sh")
                                       "status"
-                                      "wumpus-cave-impl-2")
-              report (run {:dir root}
-                          (script "squad_report.sh")
-                          "wumpus")]
+                                      "wumpus-cave-impl-2")]
           (is (str/includes? (:out result) "STATE: result_received"))
           (is (str/includes? (:out result) (str "COMMIT: " commit)))
           (is (str/includes? (:out result-status) "STATE: result_received"))
@@ -188,13 +180,6 @@
           (is (str/includes? (:out replace) "SQUAD_ASSIGNMENT: wumpus-cave-impl-2"))
           (is (str/includes? (:out replace) "REPLACES: wumpus-cave-impl"))
           (is (str/includes? (:out replacement-status) "STATE: created"))
-          (is (str/includes? (:out report) "# Squad Report: wumpus"))
-          (is (str/includes? (:out report) "- Stories: cave-topology"))
-          (is (str/includes? (:out report) "acceptance-cave-topology: user approved cave topology acceptance spec"))
-          (is (str/includes? (:out report) "wumpus-cave-impl [implementer] story=cave-topology state=superseded"))
-          (is (str/includes? (:out report) "replacement=wumpus-cave-impl-2"))
-          (is (str/includes? (:out report) "wumpus-cave-impl-2 [implementer] story=cave-topology state=created"))
-          (is (str/includes? (:out report) "replaces=wumpus-cave-impl"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result.handoff")))
                              "from: implementer-001"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl/result")))
@@ -214,17 +199,7 @@
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl-2/replaces")))
                              "replaces: wumpus-cave-impl"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-impl-2/assignment.md")))
-                             "Reimplement only cave topology"))
-          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
-                             (str "\tassignment_result_received\twumpus-cave-impl\timplementer-001\t" commit "\tcave-topology")))
-          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
-                             (str "\tassignment_merge_ready\twumpus-cave-impl\t" commit "\tcave-topology")))
-          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
-                             "\tassignment_review_changes_requested\twumpus-cave-impl\tchanges-requested\tcave-topology"))
-          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
-                             "\tassignment_rejected\twumpus-cave-impl\tcave-topology"))
-          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
-                             "\tassignment_superseded\twumpus-cave-impl\twumpus-cave-impl-2\tcave-topology")))
+                             "Reimplement only cave topology")))
         (write-file (fs/path root "blocked.md")
                     "Blocked because the worker hit an invisible escalation prompt.\n")
         (let [block (run {:dir root}
@@ -238,9 +213,7 @@
                                   "wumpus-cave-impl-2")]
           (is (str/includes? (:out block) "STATE: blocked"))
           (is (str/includes? (:out blocked-status) "STATE: blocked"))
-          (is (str/includes? (:out blocked-status) "BLOCKER:"))
-          (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus/events.log")))
-                             "\tassignment_blocked\twumpus-cave-impl-2\tcave-topology")))
+          (is (str/includes? (:out blocked-status) "BLOCKER:")))
         (let [spawn (run {:dir root
                           :env {"SWARMFORGE_SQUAD_NO_LAUNCH" "1"}}
                          (script "squad_spawn.sh")
@@ -265,8 +238,6 @@
       (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/cave-topology.md") "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md") "Write Gherkin.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
                         "create"
@@ -301,8 +272,6 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Review the Gherkin.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -355,8 +324,6 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Implement cave topology.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (prepare-implementation-packet! root "wumpus" "cave-topology")
       (run {:dir root}
            (script "squad_assign.sh")
@@ -405,8 +372,6 @@
                   "Implement a faithful Hunt the Wumpus CLI.\n")
       (write-file (fs/path root "instructions.md")
                   "Break the approved theme into self-contained stories.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus-cli" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus-cli" "theme" "approved by user")
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
                         "create"
@@ -428,12 +393,11 @@
         (is (str/includes? (:out status) "STATE: created"))
         (is (str/includes? assignment "scope: theme"))
         (is (str/includes? assignment "## Theme"))
-        (is (str/includes? assignment "Implement a faithful Hunt the Wumpus CLI."))
+        (is (str/includes? assignment "No theme. Work this story only."))
         (is (not (str/includes? assignment "## Story")))
         (is (str/includes? assignment "Break the approved theme into self-contained stories."))
         (is (str/includes? metadata "scope: theme"))
-        (is (str/includes? (slurp (str (fs/path root ".squad/themes/wumpus-cli/events.log")))
-                           "\tassignment_created\twumpus-cli-analysis\tanalyst\ttheme")))
+        (is (not (fs/exists? (fs/path root ".squad/themes/wumpus-cli/events.log")))))
       (finally
         (fs/delete-tree root)))))
 
@@ -450,7 +414,6 @@
                   "Implement a faithful Hunt the Wumpus CLI.\n")
       (write-file (fs/path root "instructions.md")
                   "Harden all batch members.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus-cli" "theme.md")
       (run {:dir root} (script "squad_batch.sh") "create" "hardener" "wumpus-cli-hardener")
       (run {:dir root} (script "squad_batch.sh") "add" "wumpus-cli-hardener" "cave" "code_reviewed" "review-1" "master" "abcdef1234")
       (let [create (run {:dir root}
@@ -472,45 +435,6 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-theme-supports-bulk-and-approved-direct-stories
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "theme.md") "Build the CLI.\n")
-      (write-file (fs/path root "stories/one.md") "Story: one.\n")
-      (write-file (fs/path root "stories/two.md") "Story: two.\n")
-      (write-file (fs/path root "stories/direct.md") "Story: direct.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus-cli" "theme.md")
-      (run {:dir root}
-           (script "squad_theme.sh")
-           "stories"
-           "wumpus-cli"
-           "one:stories/one.md"
-           "two:stories/two.md")
-      (run {:dir root} "git" "add" "stories")
-      (run {:dir root} "git" "commit" "-q" "-m" "Add stories")
-      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))
-            approved (run {:dir root}
-                          (script "squad_theme.sh")
-                          "approved-story"
-                          "wumpus-cli"
-                          "direct"
-                          "stories/direct.md"
-                          "sl-direct-story"
-                          "master"
-                          sha
-                          "approved-by-user")
-            packet (slurp (str (fs/path root ".squad/stories/direct/packet")))]
-        (is (str/includes? (:out approved) "STATE: story_approved"))
-        (is (fs/regular-file? (fs/path root ".squad/themes/wumpus-cli/stories/one.ref")))
-        (is (fs/regular-file? (fs/path root ".squad/themes/wumpus-cli/stories/two.ref")))
-        (is (str/includes? packet "story_approval: approved"))
-        (is (str/includes? packet "story_assignment: sl-direct-story")))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest squad-approval-request-is-idempotent-by-semantic-gate-and-supports-bulk
   (let [root (tmp-dir)]
     (try
@@ -520,14 +444,11 @@
       (write-file (fs/path root "theme.md") "Build the CLI.\n")
       (write-file (fs/path root "stories/one.md") "Story: one.\n")
       (write-file (fs/path root "stories/two.md") "Story: two.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "one" "stories/one.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "two" "stories/two.md")
       (run {:dir root} "git" "add" "stories")
       (run {:dir root} "git" "commit" "-q" "-m" "Add stories")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "one" "analysis-one" "master" sha)
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "two" "analysis-two" "master" sha))
+        (run {:dir root} (script "squad_packet.sh") "create" "one" "analysis-one" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "create" "two" "analysis-two" "master" sha))
       (let [first-request (run {:dir root}
                                (script "squad_approval.sh")
                                "request"
@@ -589,8 +510,6 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write unit tests first, then production code.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [created (run {:dir root}
                          (script "squad_assign.sh")
                          "create"
@@ -628,8 +547,6 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Clean the implementation.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -663,8 +580,6 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write Gherkin.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -712,8 +627,6 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write Gherkin.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -774,7 +687,6 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "instructions.md")
                   "Write stories.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -821,9 +733,6 @@
                   "Write unit tests first, then production code.\n")
       (write-file (fs/path root ".squad/reviews/wumpus-cave-accepted-review.md")
                   "Review: accepted.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
       (prepare-implementation-packet! root "wumpus" "cave-topology")
       (run {:dir root}
            (script "squad_assign.sh")
@@ -871,8 +780,6 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Split the theme into self-contained stories.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -910,9 +817,6 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "instructions.md")
                   "Write unit tests first, then production code.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "acceptance-cave-topology" "user approved cave topology acceptance spec")
       (prepare-implementation-packet! root "wumpus" "cave-topology")
       (run {:dir root}
            (script "squad_assign.sh")
@@ -969,8 +873,6 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "review-instructions.md")
                   "Review the cave topology implementation.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -1015,8 +917,6 @@
                   "Story: cave topology and setup.\n")
       (write-file (fs/path root "review-instructions.md")
                   "Review the cave topology implementation.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
@@ -1065,8 +965,6 @@
       (write-file (fs/path root "theme.md") "Theme.\n")
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave" "stories/cave.md")
       (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
            "cave-impl" "instructions.md")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
@@ -1121,8 +1019,6 @@
       (write-file (fs/path root "theme.md") "Theme.\n")
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave" "stories/cave.md")
       (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
            "cave-impl" "instructions.md")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
@@ -1155,8 +1051,6 @@
       (write-file (fs/path root "theme.md") "Theme.\n")
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave" "stories/cave.md")
       (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
            "cave-impl" "instructions.md")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))

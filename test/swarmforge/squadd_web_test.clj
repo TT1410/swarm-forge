@@ -518,16 +518,12 @@
                   "Feature: Cave topology\n")
       (write-file (fs/path root "qa/cave-topology.md")
                   "# QA Procedure\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root} "git" "add" "stories" "features" "qa")
       (run {:dir root} "git" "commit" "-q" "-m" "Prepare story for dashboard")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (run {:dir root}
              (script "squad_packet.sh")
              "create"
-             "wumpus"
              "cave-topology"
              "wumpus-analysis"
 	             "swarmforge-analyst-001"
@@ -648,9 +644,8 @@
 	          (is (str/includes? page "/agent/troubleshooter"))
 	          (is (str/includes? page "/agent/squad-leader"))
 	          (is (str/includes? page "teardownSwarm()"))
-	          (is (str/includes? theme-page "faithful Hunt the Wumpus"))
-	          (is (str/includes? theme-page "Module Map"))
-	          (is (str/includes? theme-page "Use Cases (Business / Process Rules)"))
+	          (is (str/includes? theme-page "Project package: wumpus"))
+	          (is (not (str/includes? theme-page "faithful Hunt the Wumpus")))
 	          (is (str/includes? story-page "cave topology and setup"))
 	          (is (str/includes? gherkin-page "Feature: Cave topology"))
 	          (is (str/includes? qa-page "QA Procedure"))
@@ -690,23 +685,18 @@
       (fs/create-dirs (fs/path root ".swarmforge/daemon"))
       (write-file (fs/path root ".swarmforge/roles.tsv")
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "theme.md")
-                  "Implement a faithful Hunt the Wumpus.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
+      (write-file (fs/path root "stories/cave.md") "Cave.\n")
+      (write-file (fs/path root ".squad/stories/cave/packet")
+                  "story_id: cave\nstory_path: stories/cave.md\n")
       (run {:dir root}
            (script "squad_approval.sh")
            "request"
-           "theme__wumpus"
-           "theme"
-           "wumpus"
-           "theme"
-           "Approve theme"
-           "theme is ready")
-      (run {:dir root}
-           (script "squad_approval.sh")
-           "approve"
-           "theme__wumpus"
-           "approved by test")
+           "implementation-plan__cave"
+           "story"
+           "cave"
+           "implementation-plan"
+           "Approve plan"
+           "plan is ready")
       (run {:dir root :ok? false}
            "sh" "-c"
            (str "SWARMFORGE_SQUADD_SKIP_TMUX=1 SWARMFORGE_SQUADD_WEB_PORT=0 bb "
@@ -717,8 +707,6 @@
 	              page (slurp base-url)
 	              state (slurp (str base-url "api/state"))]
 	          (is (not (str/includes? page "Approval History")))
-	          (is (not (str/includes? state "\"approved\"")))
-	          (is (not (str/includes? state "\"approval_id\":\"theme__wumpus\"")))
 	          (is (not (str/includes? state "\"resolution_detail\":\"approved by test\"")))))
       (finally
         (run {:dir root :ok? false} (script "stop_squadd.clj") (str root))

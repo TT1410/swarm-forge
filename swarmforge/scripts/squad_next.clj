@@ -499,57 +499,6 @@
 (defn approval-id [gate story-id]
   (str gate "__" story-id))
 
-(defn theme-dirs [root]
-  (let [dir (fs/path root ".squad" "themes")]
-    (if (fs/exists? dir)
-      (->> (fs/list-dir dir)
-           (filter fs/directory?)
-           (sort-by fs/file-name)
-           vec)
-      [])))
-
-(defn theme-approved? [theme-dir gate]
-  (let [file (fs/path theme-dir "approvals.tsv")]
-    (and (fs/exists? file)
-         (some (fn [line]
-                 (let [[_ recorded-gate] (str/split line #"\t" 3)]
-                   (= gate recorded-gate)))
-               (str/split-lines (slurp (str file)))))))
-
-(defn theme-module-map-path [theme-dir]
-  (fs/path theme-dir "module-map.md"))
-
-(defn theme-module-map-present? [theme-dir]
-  (fs/regular-file? (theme-module-map-path theme-dir)))
-
-(defn theme-lifecycle
-  "Open (default) or finalized. Stored in lifecycle file or status."
-  [theme-dir]
-  (let [life (fs/path theme-dir "lifecycle")
-        status (fs/path theme-dir "status")]
-    (or (when (fs/regular-file? life)
-          (get (file-map life) "lifecycle"))
-        (when (fs/regular-file? status)
-          (or (get (file-map status) "lifecycle")
-              (when (= "finalized" (get (file-map status) "state"))
-                "finalized")))
-        "open")))
-
-(defn theme-finalized? [theme-dir]
-  (= "finalized" (theme-lifecycle theme-dir)))
-
-(defn theme-records [root]
-  (->> (theme-dirs root)
-       (map (fn [dir]
-              (let [theme-id (fs/file-name dir)]
-                {:theme-id theme-id
-                 :theme-dir dir
-                 :module-map-present? (theme-module-map-present? dir)
-                 :approved-theme? (theme-approved? dir "theme")
-                 :lifecycle (theme-lifecycle dir)
-                 :finalized? (theme-finalized? dir)})))
-       vec))
-
 (defn approval-candidate [root packet gate title reason priority stage-order]
   (let [story-id (get packet "story_id" (get packet "_story_id"))
         field (str (gate-key gate) "_approval")
@@ -1164,41 +1113,28 @@
                [(get packet "story_id" (get packet "_story_id")) packet]))
         packets))
 
-(defn requirement-satisfied? [root packet themes requirement]
+(defn requirement-satisfied? [root packet requirement]
   (if (str/blank? requirement)
     true
     (let [[kind gate] (str/split requirement #":" 2)]
       (and (= "approval" kind)
            (some? gate)
-           (if packet
-             (approval-satisfied? root packet gate)
-             (boolean
-              (some #(and (= gate "theme")
-                          (= (:theme-id %) (get (meta themes) :theme-id))
-                          (:approved-theme? %))
-                    themes)))))))
+           (boolean packet)
+           (approval-satisfied? root packet gate)))))
 
 (defn assignment-file-ok? [assignment-file]
   (and (not (str/blank? assignment-file))
        (fs/regular-file? (fs/path assignment-file))))
 
-(defn theme-requirement-satisfied? [themes theme-id requires]
-  (and (= requires "approval:theme")
-       (some #(and (= theme-id (:theme-id %))
-                   (:approved-theme? %))
-             themes)))
-
-(defn ready-assignment-requirement-ok? [root packet themes story-id theme-id requires]
+(defn ready-assignment-requirement-ok? [root packet requires]
   (or (str/blank? requires)
-      (if (= story-id "theme")
-        (theme-requirement-satisfied? themes theme-id requires)
-        (requirement-satisfied? root packet themes requires))))
+      (requirement-satisfied? root packet requires)))
 
-(defn generic-ready-assignment? [root packet themes agents
-                                 {:keys [assignment-id template story-id assignment-file state requires theme-id]}]
+(defn generic-ready-assignment? [root packet agents
+                                 {:keys [assignment-id template assignment-file state requires]}]
   (and (assignment-created? state)
        (assignment-file-ok? assignment-file)
-       (ready-assignment-requirement-ok? root packet themes story-id theme-id requires)
+       (ready-assignment-requirement-ok? root packet requires)
        (not (active-assignment? agents assignment-id))
        (not (pending-spawn-for-assignment? root assignment-id))
        (spawn-capacity? root agents template)))
@@ -1217,11 +1153,10 @@
 (defn generic-ready-assignment-candidates [root rows]
   (let [assignments (assignment-records root)
         agents (agent-records root rows)
-        packet-map (packet-by-story (packets root))
-        themes (theme-records root)]
+        packet-map (packet-by-story (packets root))]
     (->> (for [assignment assignments
                :let [packet (get packet-map (:story-id assignment))]
-               :when (generic-ready-assignment? root packet themes agents assignment)]
+               :when (generic-ready-assignment? root packet agents assignment)]
            (generic-ready-candidate assignment))
          (sort-by (juxt :priority :theme-id :story-id :created-at :assignment-id))
          vec)))
@@ -1779,9 +1714,7 @@
         already-merged?
         {:action "finish_in_process_handoff"
          :reason "assignment already merged; complete the claimed handoff"
-         ;; Resync status via merge-ready, then finish. Daemon has no SWARMFORGE_ROLE.
-         :command (str "squad_assign.sh merge-ready " assignment-id
-                       " && SWARMFORGE_ROLE=squad-leader done_with_current.sh "
+         :command (str "SWARMFORGE_ROLE=squad-leader done_with_current.sh "
                        (pr-str (str file)))}
 
         ;; Status can lag merge file when result was re-recorded after merge-ready.

@@ -10,12 +10,8 @@
   (write-file (fs/path root "theme.md") "Theme.\n")
   (write-file (fs/path root "module-map.md") minimal-module-map)
   (write-file (fs/path root "stories/cave.md") "Story cave.\n")
-  (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-  (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
-  (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave" "stories/cave.md")
   (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-    (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "cave" "cave-story" "master" sha)
-    (run {:dir root} (script "squad_packet.sh") "approve" "cave" "story" "approved")
+    (run {:dir root} (script "squad_packet.sh") "create" "cave" "cave-story" "master" sha)
     sha))
 
 (deftest resolve-rejection-clears-blocker-and-reopens-gate

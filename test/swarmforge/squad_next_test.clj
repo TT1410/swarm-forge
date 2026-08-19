@@ -44,29 +44,10 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (let [needs-map (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out needs-map) "NEXT_ACTION: wait"))
         (is (not (str/includes? (:out needs-map) "write_theme_module_map"))))
       (write-file (fs/path root "module-map.md") minimal-module-map)
-      (run {:dir root} (script "squad_theme.sh") "module-map" "wumpus" "module-map.md")
-      (run {:dir root}
-           (script "squad_approval.sh")
-           "request"
-           "theme__wumpus"
-           "theme"
-           "wumpus"
-           "theme"
-           "Approve theme and module map"
-           "theme and module map ready")
-      (write-file (fs/path root ".swarmforge/daemon/squad-web-url")
-                  "http://127.0.0.1:8765/\n")
-      (let [approval (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out approval) "NEXT_ACTION: request_user_approval"))
-        (is (str/includes? (:out approval) "APPROVAL: theme__wumpus"))
-        (is (str/includes? (:out approval) "DASHBOARD_URL: http://127.0.0.1:8765/"))
-        (is (str/includes? (:out approval) "WEB_APPROVAL_PATH: http://127.0.0.1:8765/api/approvals/theme__wumpus/approve"))
-        (is (str/includes? (:out approval) "COMMAND_ON_APPROVAL: squad_approval.sh approve theme__wumpus approved-by-user")))
       (fs/delete-tree (fs/path root ".squad/approvals"))
       (write-file (fs/path root ".swarmforge/squad/spawn.lock/owner")
                   "pid: 999999999\n")
@@ -234,8 +215,6 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root "theme.md")
                   "Implement a faithful Hunt the Wumpus.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "theme" "approved")
       (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
                   (str "assignment_id: wumpus-analysis\n"
                        "theme_id: wumpus\n"
@@ -269,7 +248,6 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
       (write-file (fs/path root "stories/beta.md") "Story: beta.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} "git" "add" "stories")
       (run {:dir root} "git" "commit" "-q" "-m" "Add analyst stories")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
@@ -312,18 +290,14 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/alpha.md")
                   "Story: alpha supplied directly to the squad leader.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "theme" "approved")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
-      (run {:dir root} "git" "add" "stories" ".squad")
+      (run {:dir root} "git" "add" "stories")
       (run {:dir root} "git" "commit" "-q" "-m" "Register direct story reference")
       (let [register (run {:dir root} (script "squad_next.sh"))]
         (is (not (str/includes? (:out register) "register_story_packet")))
         (is (not (str/includes? (:out register) "squad_packet.sh create wumpus")))
         (is (not (str/includes? (:out register) "TEMPLATE: gherkin-writer"))))
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "squad-leader" "master" sha)
-        (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved-by-user"))
+        (run {:dir root} (script "squad_packet.sh") "create" "alpha" "squad-leader" "master" sha))
       (let [next (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out next) "TEMPLATE: analyst"))
@@ -342,13 +316,10 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
       (write-file (fs/path root "qa/alpha.md") "# QA alpha\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
       (run {:dir root} "git" "add" "stories" "qa")
       (run {:dir root} "git" "commit" "-q" "-m" "Add QA procedure")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "wumpus-analysis" "master" sha)
-        (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved")
+        (run {:dir root} (script "squad_packet.sh") "create" "alpha" "wumpus-analysis" "master" sha)
         (write-file (fs/path root ".squad/assignments/alpha-qa-procedure/metadata")
                     (str "assignment_id: alpha-qa-procedure\n"
                          "theme_id: wumpus\n"
@@ -571,14 +542,11 @@
                   "Story: alpha.\n")
       (write-file (fs/path root "stories/beta.md")
                   "Story: beta.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "beta" "stories/beta.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
       (run {:dir root} "git" "add" "stories")
       (run {:dir root} "git" "commit" "-q" "-m" "Prepare alpha and beta stories")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "beta" "analysis-beta" "master" sha)
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "analysis-alpha" "master" sha))
+        (run {:dir root} (script "squad_packet.sh") "create" "beta" "analysis-beta" "master" sha)
+        (run {:dir root} (script "squad_packet.sh") "create" "alpha" "analysis-alpha" "master" sha))
       (let [first (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out first) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out first) "STORY: alpha"))
@@ -589,7 +557,8 @@
         (is (str/includes? (:out create-assignment) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out create-assignment) "STORY: alpha"))
         (is (str/includes? (:out create-assignment) "TEMPLATE: gherkin-writer"))
-        (is (str/includes? (:out create-assignment) "COMMAND: squad_assign.sh create wumpus alpha gherkin-writer alpha-gherkin --auto-instructions --queue-spawn")))
+        (is (re-find #"COMMAND: squad_assign.sh create (none|wumpus) alpha gherkin-writer alpha-gherkin --auto-instructions --queue-spawn"
+                     (:out create-assignment))))
       (write-file (fs/path root "instructions.md")
                   "Write Gherkin.\n")
       (write-file (fs/path root ".squad/assignments/alpha-gherkin/metadata")
@@ -628,13 +597,10 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/alpha.md")
                   "Story: alpha.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
       (run {:dir root} "git" "add" "stories")
       (run {:dir root} "git" "commit" "-q" "-m" "Prepare alpha story")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "analysis-alpha" "master" sha))
-      (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved")
+        (run {:dir root} (script "squad_packet.sh") "create" "alpha" "analysis-alpha" "master" sha))
       (mark-implementation-plan-approved! root "alpha")
       (doseq [[assignment-id template agent-id] [["alpha-gherkin" "gherkin-writer" "gherkin-writer-001"]
                                                  ["alpha-qa-procedure" "qa-procedure-writer" "qa-procedure-writer-001"]]]
@@ -711,8 +677,6 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/cave-topology.md") "Story: cave topology and setup.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
       (let [sha (prepare-implementation-packet! root "wumpus" "cave-topology")]
         (run {:dir root} (script "squad_packet.sh") "approve" "cave-topology" "implementation" "approved")
@@ -1011,8 +975,6 @@
                   "approval_required code_review false\n")
       (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/cave-topology.md") "Story: cave topology and setup.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [sha (prepare-implementation-packet! root "wumpus" "cave-topology")]
         (run {:dir root} (script "squad_packet.sh") "approve" "cave-topology" "implementation" "approved")
         (run {:dir root} (script "squad_packet.sh") "record" "cave-topology" "implementation" "impl-1" "master" sha)
@@ -1040,9 +1002,7 @@
       (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
       (doseq [story ["alpha" "beta"]]
         (write-file (fs/path root "stories" (str story ".md")) (str "Story: " story ".\n")))
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (doseq [story ["alpha" "beta"]]
-        (run {:dir root} (script "squad_theme.sh") "story" "wumpus" story (str "stories/" story ".md"))
         (let [sha (prepare-implementation-packet! root "wumpus" story)]
           (run {:dir root} (script "squad_packet.sh") "approve" story "implementation" "approved")
           (run {:dir root} (script "squad_packet.sh") "record" story "implementation" (str story "-impl") "master" sha)
@@ -1090,8 +1050,6 @@
                   "{:handoff-targets [\"squad-leader\"]}\n")
       (write-file (fs/path root "theme.md") "Theme\n")
       (write-file (fs/path root "stories/alpha.md") "Story alpha\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
       (run {:dir root} (script "squad_batch.sh") "create" "hardener" "wumpus-hardener")
       (run {:dir root} (script "squad_batch.sh") "add" "wumpus-hardener" "alpha"
            "code_reviewed" "alpha-review" "master" "abcdef1111")
@@ -1280,14 +1238,10 @@
                     (str template " prompt\n")))
       (write-file (fs/path root "theme.md") "Theme.\n")
       (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "approve" "wumpus" "theme" "approved")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
       (run {:dir root} "git" "add" "stories")
       (run {:dir root} "git" "commit" "-q" "-m" "story")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "squad-leader" "master" sha)
-        (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved-by-user"))
+        (run {:dir root} (script "squad_packet.sh") "create" "alpha" "squad-leader" "master" sha))
       (mark-implementation-plan-approved! root "alpha")
       (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
         (is (str/includes? applied "APPLIED_TRANSITION: create_assignment")
@@ -1667,9 +1621,7 @@
       (write-file (fs/path root "swarmforge/squad.conf")
                   "approval_required finalize true\n")
       (write-file (fs/path root "theme.md") "Hello theme.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "hello" "theme.md")
       (write-file (fs/path root "stories/alpha.md") "Story alpha.\n")
-      (run {:dir root} (script "squad_theme.sh") "story" "hello" "alpha" "stories/alpha.md")
       (write-file (fs/path root ".squad/stories/alpha/packet")
                   (str "story_id: alpha\n"
                        "theme_id: hello\n"
@@ -1682,19 +1634,11 @@
             out)
         (is (not (str/includes? out "squad_theme.sh finalize"))
             out))
-      (run {:dir root} (script "squad_theme.sh") "finalize" "hello" "ship-it")
-      (let [status (:out (run {:dir root} (script "squad_theme.sh") "status" "hello"))]
-        (is (str/includes? status "LIFECYCLE: finalized")))
       (let [after (:out (run {:dir root} (script "squad_next.sh") "--residual-only"))]
         (is (not (str/includes? after "FINALIZED_THEME: hello"))
             after)
         (is (not (str/includes? after "squad_theme.sh finalize"))
             after))
-      (write-file (fs/path root "stories/beta.md") "Story beta.\n")
-      (run {:dir root} (script "squad_theme.sh") "story" "hello" "beta" "stories/beta.md")
-      (let [status (:out (run {:dir root} (script "squad_theme.sh") "status" "hello"))]
-        (is (str/includes? status "LIFECYCLE: open")
-            "new story re-opens finalized theme"))
       (finally
         (fs/delete-tree root)))))
 

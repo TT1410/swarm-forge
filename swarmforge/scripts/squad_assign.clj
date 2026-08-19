@@ -86,11 +86,6 @@
                 (subs line (count prefix))))
             (str/split-lines (slurp (str file)))))))
 
-(defn referenced-project-file [root ref-file]
-  (when (fs/exists? ref-file)
-    (when-let [relative (read-value ref-file "path")]
-      (fs/path root relative))))
-
 (defn story-packet-file [root story-id]
   (fs/path root ".squad" "stories" story-id "packet"))
 
@@ -174,9 +169,6 @@
   (or (valid-review-decisions decision)
       (exit! 2 "Review decision must be accepted or changes-requested.")))
 
-(defn theme-dir [root theme-id]
-  (fs/path root ".squad" "themes" theme-id))
-
 (defn assignment-dir [root assignment-id]
   (fs/path root ".squad" "assignments" assignment-id))
 
@@ -245,18 +237,6 @@
         {:content (slurp (str file))
          :source (str file)
          :durable? (boolean (durable-review-file? root file))})))
-
-(defn assignment-theme-event! [root dir state assignment-id & fields]
-  (let [metadata (fs/path dir "metadata")
-        theme-id (read-value metadata "theme_id")
-        story-id (read-value metadata "story_id")]
-    (when theme-id
-      (append-line! (fs/path root ".squad" "themes" theme-id "events.log")
-                    (str/join "\t" (concat [(timestamp)
-                                             (str "assignment_" state)
-                                             assignment-id]
-                                            fields
-                                            [(or story-id "unknown")]))))))
 
 (defn handoff-body [file]
   (let [[_ body] (str/split (slurp (str file)) #"\n\n" 2)]
@@ -378,11 +358,9 @@
 (defn first-existing-file [files]
   (first (filter fs/regular-file? files)))
 
-(defn assignment-story-file [root theme story-id skip-story?]
+(defn assignment-story-file [root story-id skip-story?]
   (when-not skip-story?
-    (or (referenced-project-file root (fs/path theme "stories" (str story-id ".ref")))
-        (first-existing-file [(fs/path theme "stories" (str story-id ".md"))
-                              (fs/path root "stories" (str story-id ".md"))]))))
+    (first-existing-file [(fs/path root "stories" (str story-id ".md"))])))
 
 (defn assignment-scope [{:keys [template story-id scope]}]
   (cond
@@ -399,12 +377,10 @@
 
 (defn assignment-create-context [{:keys [theme-id story-id template assignment-id instructions-file requirement scope queue-spawn?]}]
   (let [root (fs/absolutize (project-root))
-        theme (theme-dir root theme-id)
         resolved-scope (assignment-scope {:template template :story-id story-id :scope scope})
         scope-flags (assignment-scope-flags resolved-scope)
         auto-instructions? (auto-instructions? instructions-file)]
     {:root root
-     :theme theme
      :theme-id theme-id
      :story-id story-id
      :template template
@@ -414,10 +390,8 @@
      :theme-scoped? (:theme-scoped? scope-flags)
      :batch-scoped? (:batch-scoped? scope-flags)
      :scope resolved-scope
-     :theme-file (fs/path theme "theme.md")
-     :module-map-file (fs/path theme "module-map.md")
      :story-file (when (story-file-required? resolved-scope)
-                   (assignment-story-file root theme story-id false))
+                   (assignment-story-file root story-id false))
      :template-file (fs/path root "swarmforge" "role-templates" (str template ".prompt"))
      :instructions (when-not auto-instructions?
                      (source-file! instructions-file))
@@ -440,16 +414,11 @@
     (exit! 2
            (str "Story packet " story-id " belongs to a different theme."))))
 
-(defn ensure-theme-file! [theme-id theme-file]
-  (when-not (themeless-theme? theme-id)
-    (ensure-file! "Theme file not found" theme-file)))
-
 (defn ensure-story-file! [theme-scoped? batch-scoped? story-file]
   (when-not (or theme-scoped? batch-scoped?)
     (ensure-file! "Story file not found" story-file)))
 
-(defn ensure-create-context! [{:keys [theme-id theme-file theme-scoped? batch-scoped? story-file template-file dir] :as context}]
-  (ensure-theme-file! theme-id theme-file)
+(defn ensure-create-context! [{:keys [theme-scoped? batch-scoped? story-file template-file dir] :as context}]
   (ensure-story-file! theme-scoped? batch-scoped? story-file)
   (ensure-file! "Role template not found" template-file)
   (ensure-packet-theme! context)
@@ -473,9 +442,10 @@
     (slurp (str (:instructions context)))))
 
 (defn module-map-text-for [context]
-  (when (and (include-module-map? (:template context))
-             (fs/regular-file? (:module-map-file context)))
-    (slurp (str (:module-map-file context)))))
+  (when-let [module-map-file (:module-map-file context)]
+    (when (and (include-module-map? (:template context))
+               (fs/regular-file? module-map-file))
+      (slurp (str module-map-file)))))
 
 (defn strip-module-map-recommendations
   "Map commentary is not senior-implementer work."
@@ -497,9 +467,10 @@
       (str "Source: " hit "\n\n" (strip-module-map-recommendations (slurp (str hit)))))))
 
 (defn assignment-text [context]
-  (let [base {:theme-text (if (fs/regular-file? (:theme-file context))
-                            (slurp (str (:theme-file context)))
-                            "No theme. Work this story only.\n")
+  (let [base {:theme-text (let [theme-file (:theme-file context)]
+                            (if (and theme-file (fs/regular-file? theme-file))
+                              (slurp (str theme-file))
+                              "No theme. Work this story only.\n"))
               :module-map-text (module-map-text-for context)
               :story-text (when-let [story-file (:story-file context)]
                             (slurp (str story-file)))
@@ -557,7 +528,7 @@
        "detail: " template " for " story-id "\n"
        "updated_at: " now "\n"))
 
-(defn write-assignment-records! [{:keys [dir theme assignment-id template story-id now] :as context} text]
+(defn write-assignment-records! [{:keys [dir assignment-id template story-id now] :as context} text]
   (fs/create-dirs dir)
   (let [assignment-file (fs/path dir "assignment.md")
         context (assoc context :assignment-file assignment-file)]
@@ -566,10 +537,6 @@
                    (result-handoff-template assignment-id template))
     (write-atomic! (fs/path dir "metadata") (assignment-metadata-text context))
     (write-atomic! (fs/path dir "status") (assignment-status-text context))
-    (fs/create-dirs (fs/path theme "assignments"))
-    (write-atomic! (fs/path theme "assignments" (str assignment-id ".md")) text)
-    (append-line! (fs/path theme "events.log")
-                  (str now "\tassignment_created\t" assignment-id "\t" template "\t" story-id))
     assignment-file))
 
 (defn print-create-result! [{:keys [assignment-id theme-id story-id template requirement]} assignment-file]
@@ -904,9 +871,7 @@
                           (str "review_decision: " decision "\n"))
                         "received_at: " now "\n"))
     (write-result-record! dir assignment-id from commit now)
-    (when-not (= "unknown" theme-id)
-      (assignment-theme-event! root dir "result_received" assignment-id from commit))
-      (print-result-recorded! assignment-id from commit body))))
+    (print-result-recorded! assignment-id from commit body))))
 
 (defn merge-head-exists? [root]
   (fs/exists? (fs/path root ".git" "MERGE_HEAD")))
@@ -944,13 +909,7 @@
                       "detail: " detail "\n"
                       "updated_at: " now "\n"))
   (append-line! (fs/path dir "events.log")
-                (str now "\t" state "\t" commit "\t" detail))
-  (let [metadata (fs/path dir "metadata")
-        theme-id (read-value metadata "theme_id")
-        story-id (read-value metadata "story_id")]
-    (when theme-id
-      (append-line! (fs/path root ".squad" "themes" theme-id "events.log")
-                    (str now "\tassignment_" state "\t" assignment-id "\t" commit "\t" (or story-id "unknown"))))))
+                (str now "\t" state "\t" commit "\t" detail)))
 
 (defn valid-result-commit? [commit]
   (and commit (re-matches #"[0-9a-fA-F]{10}" commit)))
@@ -1202,7 +1161,6 @@
                         "updated_at: " now "\n"))
     (append-line! (fs/path dir "events.log")
                   (str now "\t" state "\t" decision))
-    (assignment-theme-event! root dir state assignment-id decision)
     (println "SQUAD_ASSIGNMENT:" assignment-id)
     (println "STATE:" state)
     (println "DECISION:" decision)
@@ -1229,7 +1187,6 @@
                         "updated_at: " now "\n"))
     (append-line! (fs/path dir "events.log")
                   (str now "\tblocked\t" (fs/path dir "blocker.md")))
-    (assignment-theme-event! root dir "blocked" assignment-id)
     (println "SQUAD_ASSIGNMENT:" assignment-id)
     (println "STATE: blocked")
     (println "BLOCKER:" (str (fs/path dir "blocker.md")))))
@@ -1380,7 +1337,6 @@
                         "updated_at: " now "\n"))
     (append-line! (fs/path dir "events.log")
                   (str now "\trejected\t" (fs/path dir "rejection.md")))
-    (assignment-theme-event! root dir "rejected" assignment-id)
     (println "SQUAD_ASSIGNMENT:" assignment-id)
     (println "STATE: rejected")
     (println "REJECTION:" (str (fs/path dir "rejection.md")))
@@ -1432,7 +1388,6 @@
                           "updated_at: " now "\n"))
       (append-line! (fs/path old-dir "events.log")
                     (str now "\tsuperseded\t" new-assignment-id))
-      (assignment-theme-event! root old-dir "superseded" old-assignment-id new-assignment-id)
       (println "REPLACES:" old-assignment-id)
       (when old-batch-id
         (println "BATCH_ID:" old-batch-id))

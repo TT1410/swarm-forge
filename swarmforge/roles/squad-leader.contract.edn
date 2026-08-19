@@ -8,8 +8,7 @@
           "approval-records"
           "review-dispositions"
           "batch-manifests"
-          "status-reports"
-          "theme-module-maps"]
+          "status-reports"]
  :forbidden-writes ["stories"
                     "gherkin"
                     "qa-procedures"
@@ -21,9 +20,6 @@
                     "qa-scripts"
                     "architecture-critiques"
                     "cleanup-changes"]
- :requires-theme-negotiation-before-analyst true
- :theme-module-map-before-theme-approval true
- :theme-approval-before-analyst true
  :story-packet-source-of-truth true
  :implementation-readiness-source "squad_next.sh --residual-only"
  :concurrent-action-source "squad_next.sh --residual-only"

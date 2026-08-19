@@ -258,9 +258,9 @@
     (is (true? (:persistent c)))
     (is (true? (:may-talk-to-user c)))
     (is (true? (:may-spawn c)))
-    (is (true? (:requires-theme-negotiation-before-analyst c)))
-    (is (true? (:theme-module-map-before-theme-approval c)))
-    (is (true? (:theme-approval-before-analyst c)))
+    (is (not (contains? c :requires-theme-negotiation-before-analyst)))
+    (is (not (contains? c :theme-module-map-before-theme-approval)))
+    (is (not (contains? c :theme-approval-before-analyst)))
     (is (true? (:story-packet-source-of-truth c)))
     (is (= "squad_next.sh --residual-only" (:implementation-readiness-source c)))
     (is (= "squad_next.sh --residual-only" (:concurrent-action-source c)))
@@ -272,7 +272,7 @@
     (is (= ["hardener" "qa" "architect" "senior-implementer"] (:singleton-roles c)))
     (is (some #{"stories"} (:forbidden-writes c)))
     (is (some #{"production-code"} (:forbidden-writes c)))
-    (is (some #{"theme-module-maps"} (:writes c)))))
+    (is (not (some #{"theme-module-maps"} (:writes c))))))
 
 (deftest analyst-implementer-architect-prompts-reference-module-map
   (let [analyst (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))

@@ -138,7 +138,7 @@
                     "detail: test\n"
                     "updated_at: " updated-at "\n"))))
 
-(defn prepare-implementation-packet! [root theme-id story-id]
+(defn prepare-implementation-packet! [root _theme-id story-id]
   (write-file (fs/path root "features" (str story-id ".feature"))
               (str "Feature: " story-id "\n"))
   (write-file (fs/path root "qa" (str story-id ".md"))
@@ -149,7 +149,6 @@
     (run {:dir root}
          (script "squad_packet.sh")
          "create"
-         theme-id
          story-id
          (str story-id "-analysis")
          "master"
@@ -162,12 +161,6 @@
          "user approved plan")
     (run {:dir root}
          (script "squad_packet.sh")
-         "approve"
-         story-id
-         "story"
-         "user approved story")
-    (run {:dir root}
-         (script "squad_packet.sh")
          "attach"
          story-id
          "gherkin"
@@ -175,15 +168,6 @@
          "swarmforge-gherkin-writer-001"
          sha
          (str "features/" story-id ".feature"))
-    (run {:dir root}
-         (script "squad_packet.sh")
-         "review"
-         story-id
-         "gherkin"
-         "accepted"
-         (str story-id "-gherkin-review")
-         "swarmforge-gherkin-reviewer-001"
-         sha)
     (run {:dir root}
          (script "squad_packet.sh")
          "approve"
@@ -199,15 +183,6 @@
          "swarmforge-qa-procedure-writer-001"
          sha
          (str "qa/" story-id ".md"))
-    (run {:dir root}
-         (script "squad_packet.sh")
-         "review"
-         story-id
-         "qa-procedure"
-         "accepted"
-         (str story-id "-qa-procedure-review")
-         "swarmforge-qa-procedure-reviewer-001"
-         sha)
     (run {:dir root}
          (script "squad_packet.sh")
          "approve"

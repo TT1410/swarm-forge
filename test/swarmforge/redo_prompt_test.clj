@@ -1,5 +1,6 @@
 (ns swarmforge.redo-prompt-test
   (:require [babashka.fs :as fs]
+            [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [swarmforge.test-support :refer :all]))
@@ -71,3 +72,12 @@
   (let [p (slurp (str (fs/path repo-root "swarmforge/role-templates/senior-implementer.prompt")))]
     (is (re-find #"(?i)module map|dependenc" p))
     (is (not (re-find #"(?i)skip module map" p)))))
+
+(deftest sl-contract-has-no-theme-ceremony
+  ;; Given the squad-leader contract
+  ;; Then it does not encode theme negotiation or theme-module-maps writes
+  (let [c (edn/read-string (slurp (str (fs/path repo-root "swarmforge/roles/squad-leader.contract.edn"))))]
+    (is (not (contains? c :requires-theme-negotiation-before-analyst)))
+    (is (not (contains? c :theme-module-map-before-theme-approval)))
+    (is (not (contains? c :theme-approval-before-analyst)))
+    (is (not (some #{"theme-module-maps"} (:writes c))))))

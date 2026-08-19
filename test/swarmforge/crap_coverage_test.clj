@@ -25,7 +25,6 @@
             [squad-spawn-request :as spawn-request]
             [squad-state :as state]
             [squad-status :as status]
-            [squad-theme :as theme]
             [squad-tool :as tool]
             [squadd :as squadd]
             [squadd.web :as squadd-web]
@@ -254,22 +253,21 @@
 
 (deftest squad-packet-create-covers-success-and-guards
   (let [root (tmp-dir)]
-    (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
-    (write-file (fs/path root ".squad/themes/wumpus/stories/cave.ref")
-                "path: stories/cave.md\n")
+    (write-file (fs/path root "stories/cave.md") "Cave.\n")
     (with-redefs [packet-tool/project-root (constantly root)
                   packet-tool/timestamp (constantly "2026-08-04T00:00:00Z")
                   packet-tool/exit! (fn [status & lines]
                                       (throw (exit-exception status lines)))]
-      (packet-tool/create-packet! "wumpus" "cave" "analysis-001" "branch-1" "abcdef1234")
+      (packet-tool/create-packet! "cave" "analysis-001" "branch-1" "abcdef1234")
       (let [packet-text (slurp (str (fs/path root ".squad/stories/cave/packet")))
             events (slurp (str (fs/path root ".squad/stories/cave/events.log")))]
         (is (str/includes? packet-text "story_path: stories/cave.md"))
         (is (str/includes? packet-text "story_iterations: analysis-001=recorded"))
+        (is (not (str/includes? packet-text "theme_id:")))
         (is (str/includes? events "story_recorded")))
-      (is (= 2 (exit-status #(packet-tool/create-packet! "bad/id" "cave2" "analysis" "branch" "abcdef1234"))))
-      (is (= 1 (exit-status #(packet-tool/create-packet! "missing" "cave2" "analysis" "branch" "abcdef1234"))))
-      (is (= 2 (exit-status #(packet-tool/create-packet! "wumpus" "cave" "analysis" "branch" "abcdef1234")))))))
+      (is (= 2 (exit-status #(packet-tool/create-packet! "bad/id" "analysis" "branch" "abcdef1234"))))
+      (is (= 1 (exit-status #(packet-tool/create-packet! "cave2" "analysis" "branch" "abcdef1234"))))
+      (is (= 2 (exit-status #(packet-tool/create-packet! "cave" "analysis" "branch" "abcdef1234")))))))
 
 (deftest squad-assign-parses-requirements-and-renders-assignments
   (with-redefs [assign/exit! (fn [status & lines]
@@ -379,31 +377,11 @@
 
 (deftest theme-and-approval-helper-branches
   (let [root (tmp-dir)]
-    (write-file (fs/path root ".squad/themes/wumpus/status")
-                "theme_id: wumpus\nstate: theme_created\ndetail: created\nupdated_at: now\n")
-    (write-file (fs/path root ".squad/themes/wumpus/stories/cave.ref") "path: stories/cave.md\n")
-    (write-file (fs/path root ".squad/themes/wumpus/acceptance/cave.ref") "path: features/cave.feature\n")
-    (write-file (fs/path root ".squad/themes/wumpus/approvals.tsv") "now\tstories\tok\n")
-    (with-redefs [theme/project-root (constantly root)
-                  theme/exit! (fn [status & lines]
-                                (throw (exit-exception status lines)))]
-      (let [out (with-out-str (theme/print-status! "wumpus"))]
-        (is (str/includes? out "STATE: theme_created"))
-        (is (str/includes? out "STORIES: cave"))
-        (is (str/includes? out "ACCEPTANCE: cave"))
-        (is (str/includes? out "MODULE_MAP: missing"))
-        (is (str/includes? out "APPROVALS: 1")))
-      (is (= 1 (exit-status #(theme/print-status! "missing"))))
-      (is (= 2 (exit-status #(theme/relative-project-artifact! root (fs/path root "stories/cave.md")))))
-      (is (= 2 (exit-status #(theme/relative-project-artifact! root (fs/path "/tmp/outside.feature")))))))
-  (let [root (tmp-dir)]
-    (write-file (fs/path root ".squad/themes/wumpus/status") "state: theme_created\n")
     (write-file (fs/path root ".squad/stories/cave/packet") "story_id: cave\n")
-    (is (approval/target-exists? root "theme" "wumpus"))
+    (is (false? (approval/target-exists? root "theme" "wumpus")))
     (is (approval/target-exists? root "story" "cave"))
     (is (false? (approval/target-exists? root "batch" "x")))
-    (is (str/ends-with? (first (approval/command-for "theme" "wumpus" "theme" "ok"))
-                        "squad_theme.sh"))
+    (is (empty? (approval/command-for "theme" "wumpus" "theme" "ok")))
     (is (= "qa-procedure" (nth (approval/command-for "story" "cave" "qa_procedure" "ok") 3)))))
 
 (deftest squadd-web-approval-and-role-reconciliation-branches
@@ -1108,8 +1086,8 @@
     (write-file (fs/path root ".squad/batches/theme-hardener/metadata") "kind: hardener\n")
     (is (= "hardener" (next/next-batch-id root [] "theme" "hardener" "hardener")))
     (is (= "qa" (next/next-batch-id root [] "theme" "qa" "qa")))
-    (is (true? (next/requirement-satisfied? root {"story_approval" "approved"} [] "approval:story")))
-    (is (false? (next/requirement-satisfied? root nil [] "bogus:story")))))
+    (is (true? (next/requirement-satisfied? root {"story_approval" "approved"} "approval:story")))
+    (is (false? (next/requirement-satisfied? root nil "bogus:story")))))
 
 (deftest squadd-helper-branches
   (let [root (tmp-dir)
@@ -1611,9 +1589,6 @@
     (is (= "review_accepted" (assign/review-state! "accepted")))
     (is (= "review_changes_requested" (assign/review-state! "changes-requested")))
     (write-file (fs/path dir "metadata") "theme_id: theme-a\nstory_id: story-1\n")
-    (assign/assignment-theme-event! root dir "result_received" "a1" "agent" "abc123")
-    (is (str/includes? (slurp (str (fs/path root ".squad" "themes" "theme-a" "events.log")))
-                       "assignment_result_received"))
     (write-file handoff-file "type: git_handoff\nfrom: implementer-001\nto: squad-leader\ntask: a1\ncommit: abcdef1234\nassignment: a1\nagent: implementer-001\ntemplate: implementer\nartifacts: none\n\nbody\n")
     (is (= "abcdef1234" (assign/handoff-commit handoff-file)))
     (is (= {:from "implementer-001"

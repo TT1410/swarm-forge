@@ -11,10 +11,10 @@
 
 (def usage-text
   (str "Usage:\n"
-       "  squad_packet.sh create <theme-id> <story-id> <story-assignment-id> <branch> <sha>\n"
+       "  squad_packet.sh create <story-id> <story-assignment-id> <branch> <sha>\n"
        "  squad_packet.sh attach <story-id> <gherkin|qa-procedure|implementation-plan> <assignment-id> <branch> <sha> <artifact-file>\n"
-       "  squad_packet.sh review <story-id> <gherkin|qa-procedure|code|architecture> <accepted|changes-requested> <assignment-id> <branch> <sha>\n"
-       "  squad_packet.sh approve <story-id> <implementation-plan|gherkin|qa-procedure|implementation|code-review|hardening|qa|architecture|final> <detail...>\n"
+       "  squad_packet.sh review <story-id> <code|architecture> <accepted|changes-requested> <assignment-id> <branch> <sha>\n"
+       "  squad_packet.sh approve <story-id> <implementation-plan|gherkin|qa-procedure|implementation|code-review|hardening|qa|architecture> <detail...>\n"
        "  squad_packet.sh record <story-id> <implementation|cleaner|hardener|qa|architecture|senior-implementer> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh batch <story-id> <hardener|qa|architecture> <batch-id> <stage> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh status <story-id>\n"
@@ -22,11 +22,11 @@
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
 (def artifact-kinds #{"gherkin" "qa-procedure" "implementation-plan"})
-(def review-kinds #{"gherkin" "qa-procedure" "code" "architecture"})
+(def review-kinds #{"code" "architecture"})
 (def result-kinds #{"implementation" "cleaner" "hardener" "qa" "architecture" "senior-implementer"})
 (def batch-kinds #{"hardener" "qa" "architecture"})
-(def approval-gates #{"story" "implementation-plan" "gherkin" "qa-procedure" "implementation"
-                      "code-review" "hardening" "qa" "architecture" "final"})
+(def approval-gates #{"implementation-plan" "gherkin" "qa-procedure" "implementation"
+                      "code-review" "hardening" "qa" "architecture"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -66,17 +66,6 @@
   (fs/create-dirs (fs/parent file))
   (spit (str file) (str line "\n") :append true))
 
-(defn read-value [file field]
-  (when (fs/exists? file)
-    (let [prefix (str field ": ")]
-      (some (fn [line]
-              (when (str/starts-with? line prefix)
-                (subs line (count prefix))))
-            (str/split-lines (slurp (str file)))))))
-
-(defn theme-dir [root theme-id]
-  (fs/path root ".squad" "themes" theme-id))
-
 (defn story-dir [root story-id]
   (fs/path root ".squad" "stories" story-id))
 
@@ -104,11 +93,6 @@
     (let [relative (str/replace (str (.relativize root-path file-path)) "\\" "/")]
       (when-not (some #(str/starts-with? relative %) allowed-prefixes)
         (exit! 2 message))
-      relative)))
-
-(defn referenced-project-file [root ref-file]
-  (when (fs/exists? ref-file)
-    (when-let [relative (read-value ref-file "path")]
       relative)))
 
 (defn packet-map [root story-id]
@@ -213,68 +197,39 @@
   (append-line! (fs/path (story-dir root story-id) "events.log")
                 (str/join "\t" (concat [(timestamp) state] fields))))
 
-(defn themeless-theme? [theme-id]
-  (or (str/blank? theme-id) (= "none" theme-id)))
-
-(defn themed-story-source [root theme-id story-id]
-  (let [theme (theme-dir root theme-id)
-        story-ref (fs/path theme "stories" (str story-id ".ref"))
-        story-path (referenced-project-file root story-ref)]
-    (when-not (fs/directory? theme)
-      (exit! 1 (str "Unknown theme: " theme-id)))
-    (when-not story-path
-      (exit! 1 (str "Story reference not found: " story-id)))
-    {:story-path story-path
-     :story-number (read-value story-ref "story_number")
-     :theme-id theme-id}))
-
-(defn themeless-story-source [root story-id]
+(defn story-source-for-create [root story-id]
   (let [rel (str "stories/" story-id ".md")]
     (when-not (fs/regular-file? (fs/path root rel))
       (exit! 1 (str "Story file not found: " rel)))
-    {:story-path rel
-     :story-number nil
-     :theme-id "none"}))
+    {:story-path rel}))
 
-(defn story-source-for-create [root theme-id story-id]
-  (if (themeless-theme? theme-id)
-    (themeless-story-source root story-id)
-    (themed-story-source root theme-id story-id)))
-
-(defn print-created-packet! [root story-id packet story-path story-number]
+(defn print-created-packet! [root story-id packet story-path]
   (println "SQUAD_PACKET:" story-id)
-  (when-not (str/blank? story-number)
-    (println "STORY_NUMBER:" story-number))
   (println "STATE:" (get packet "state"))
   (println "STORY:" story-path)
   (println "PACKET:" (str (packet-file root story-id))))
 
-(defn create-packet! [theme-id story-id assignment-id branch sha]
-  (doseq [[kind value] (cond-> [["Story id" story-id]
-                                ["Assignment id" assignment-id]
-                                ["Branch" branch]]
-                         (not (themeless-theme? theme-id))
-                         (conj ["Theme id" theme-id]))]
+(defn create-packet! [story-id assignment-id branch sha]
+  (doseq [[kind value] [["Story id" story-id]
+                        ["Assignment id" assignment-id]
+                        ["Branch" branch]]]
     (validate-id! kind value))
   (validate-sha! sha)
   (let [root (fs/absolutize (project-root))
-        source (story-source-for-create root theme-id story-id)
+        source (story-source-for-create root story-id)
         dir (story-dir root story-id)]
     (when (fs/exists? (packet-file root story-id))
       (exit! 2 (str "Story packet already exists: " story-id)))
     (fs/create-dirs dir)
-    (let [base (cond-> {"story_id" story-id
-                        "theme_id" (:theme-id source)
-                        "story_path" (:story-path source)
-                        "story_assignment" assignment-id
-                        "story_branch" branch
-                        "story_sha" sha}
-                 (not (str/blank? (:story-number source)))
-                 (assoc "story_number" (:story-number source)))
+    (let [base {"story_id" story-id
+                "story_path" (:story-path source)
+                "story_assignment" assignment-id
+                "story_branch" branch
+                "story_sha" sha}
           packet (write-packet! root story-id
                                 (append-iteration base "story" assignment-id "recorded"))]
       (event! root story-id "story_recorded" assignment-id branch sha)
-      (print-created-packet! root story-id packet (:story-path source) (:story-number source)))))
+      (print-created-packet! root story-id packet (:story-path source)))))
 
 (def artifact-path-rules
   {"gherkin" {:prefixes ["features/"]
@@ -340,7 +295,7 @@
 
 (defn review-artifact! [story-id kind decision assignment-id branch sha]
   (when-not (contains? review-kinds kind)
-    (exit! 2 "Review kind must be gherkin, qa-procedure, code, or architecture."))
+    (exit! 2 "Review kind must be code or architecture."))
   (when-not (#{"accepted" "changes-requested"} decision)
     (exit! 2 "Review decision must be accepted or changes-requested."))
   (doseq [[label value] [["Story id" story-id]
@@ -370,7 +325,7 @@
 
 (defn approve! [story-id gate detail-parts]
   (when-not (contains? approval-gates gate)
-    (exit! 2 "Approval gate must be story, implementation-plan, gherkin, qa-procedure, implementation, code-review, hardening, qa, architecture, or final."))
+    (exit! 2 "Approval gate must be implementation-plan, gherkin, qa-procedure, implementation, code-review, hardening, qa, or architecture."))
   (validate-id! "Story id" story-id)
   (let [root (fs/absolutize (project-root))
         _ (ensure-packet! root story-id)
@@ -548,7 +503,7 @@
     (exit! 1 usage-text)))
 
 (def packet-commands
-  {"create" (fn [args] (exact-count! args 6) (apply create-packet! (rest args)))
+  {"create" (fn [args] (exact-count! args 5) (apply create-packet! (rest args)))
    "attach" (fn [args] (exact-count! args 7) (apply attach-artifact! (rest args)))
    "review" (fn [args] (exact-count! args 7) (apply review-artifact! (rest args)))
    "approve" (fn [args] (minimum-count! args 4) (approve! (second args) (nth args 2) (drop 3 args)))

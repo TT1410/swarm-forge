@@ -755,3 +755,106 @@
         (is (not (str/includes? out "approve cave-graph architecture"))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest packet-create-is-story-id-only
+  ;; Given a story file and no theme records
+  ;; When packet create is invoked with story-id only
+  ;; Then a packet exists and usage does not take a theme-id
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms.\n")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))
+            usage (:err (run {:dir root :ok? false} (script "squad_packet.sh")))
+            created (run {:dir root :ok? false} (script "squad_packet.sh")
+                         "create" "cave-graph" "cave-graph-start" "master" sha)
+            packet-file (fs/path root ".squad/stories/cave-graph/packet")]
+        (is (str/includes? usage "create <story-id>"))
+        (is (not (str/includes? usage "create <theme-id>")))
+        (is (zero? (:exit created)))
+        (is (str/includes? (:out created) "SQUAD_PACKET: cave-graph"))
+        (is (fs/regular-file? packet-file))
+        (when (fs/regular-file? packet-file)
+          (let [packet (slurp (str packet-file))]
+            (is (str/includes? packet "story_id: cave-graph"))
+            (is (not (str/includes? packet "theme_id:"))))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest already-merged-handoff-finishes-without-merge-ready
+  ;; Given an in-process git handoff whose assignment is already merged
+  ;; When residual runs
+  ;; Then it finishes the handoff without a merge-ready resync
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root
+                       "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "impl-001\timpl-001\t" root "/.worktrees/impl-001"
+                       "\tswarmforge-impl-001\tImplementer 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  "assignment_id: cave-impl\nstory_id: cave-graph\ntemplate: implementer\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  "state: merged\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/accepted-merge")
+                  "state: merged\ncommit: abcdef1234\nmerge_commit: abcdef1234\n")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_from_impl-001.handoff")
+                  (str "type: git_handoff\nto: squad-leader\nfrom: impl-001\n"
+                       "task: cave-impl\ncommit: abcdef1234\nassignment: cave-impl\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh") "--residual-only"))]
+        (is (str/includes? out "finish_in_process_handoff"))
+        (is (not (str/includes? out "merge-ready")))
+        (is (str/includes? out "done_with_current.sh")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest theme-cli-is-gone
+  ;; Given the shipped scripts
+  ;; Then there is no theme CLI
+  (is (not (fs/exists? (fs/path repo-root "swarmforge/scripts/squad_theme.sh"))))
+  (is (not (fs/exists? (fs/path repo-root "swarmforge/scripts/squad_theme.clj")))))
+
+(deftest packet-review-is-code-and-architecture-only
+  ;; Given a story packet
+  ;; When review is attempted for leftover gherkin or qa-procedure kinds
+  ;; Then those kinds are rejected
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  "story_id: cave-graph\nstory_path: stories/cave-graph.md\n")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))
+            gherkin (run {:dir root :ok? false} (script "squad_packet.sh")
+                         "review" "cave-graph" "gherkin" "accepted" "g-1" "master" sha)
+            qa (run {:dir root :ok? false} (script "squad_packet.sh")
+                    "review" "cave-graph" "qa-procedure" "accepted" "q-1" "master" sha)]
+        (is (= 2 (:exit gherkin)))
+        (is (= 2 (:exit qa)))
+        (is (not (str/includes? (:err gherkin) "gherkin"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest packet-approve-drops-story-and-final
+  ;; Given a story packet
+  ;; When leftover story or final approval is attempted
+  ;; Then those gates are rejected
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  "story_id: cave-graph\nstory_path: stories/cave-graph.md\n")
+      (let [story (run {:dir root :ok? false} (script "squad_packet.sh")
+                       "approve" "cave-graph" "story" "approved")
+            final (run {:dir root :ok? false} (script "squad_packet.sh")
+                       "approve" "cave-graph" "final" "ship-it")]
+        (is (= 2 (:exit story)))
+        (is (= 2 (:exit final))))
+      (finally
+        (fs/delete-tree root)))))

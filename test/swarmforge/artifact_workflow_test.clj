@@ -5,116 +5,6 @@
             [clojure.test :refer [deftest is testing]]
             [swarmforge.test-support :refer :all]))
 
-(deftest squad-theme-records-theme-stories-and-approval-gates
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "theme.md")
-                  "Implement a faithful Hunt the Wumpus.\n")
-      (write-file (fs/path root "module-map.md") minimal-module-map)
-      (write-file (fs/path root "stories/cave-topology.md")
-                  "Story: cave topology and setup.\n")
-      (write-file (fs/path root "features/cave-topology.feature")
-                  (str "Feature: Cave topology\n\n"
-                       "  Scenario: The cave has twenty rooms\n"
-                       "    Then the cave contains 20 rooms\n"))
-      (write-file (fs/path root "qa/cave-topology.md")
-                  "QA procedure: verify cave topology through the user interface.\n")
-      (let [create (run {:dir root}
-                        (script "squad_theme.sh")
-                        "create"
-                        "wumpus"
-                        "theme.md")
-            module-map (run {:dir root}
-                            (script "squad_theme.sh")
-                            "module-map"
-                            "wumpus"
-                            "module-map.md")
-            story (run {:dir root}
-                       (script "squad_theme.sh")
-                       "story"
-                       "wumpus"
-                       "cave-topology"
-                       "stories/cave-topology.md")
-            acceptance (run {:dir root}
-                            (script "squad_theme.sh")
-                            "acceptance"
-                            "wumpus"
-                            "cave-topology"
-                            "features/cave-topology.feature")
-            qa-procedure (run {:dir root}
-                              (script "squad_theme.sh")
-                              "acceptance"
-                              "wumpus"
-                              "cave-topology-qa"
-                              "qa/cave-topology.md")
-            approve-stories (run {:dir root}
-                                  (script "squad_theme.sh")
-                                  "approve"
-                                  "wumpus"
-                                  "stories"
-                                  "user approved story split")
-            approve-acceptance (run {:dir root}
-                                     (script "squad_theme.sh")
-                                     "approve"
-                                     "wumpus"
-                                     "acceptance"
-                                     "user approved acceptance spec")
-            status (run {:dir root}
-                        (script "squad_theme.sh")
-                        "status"
-                        "wumpus")
-            theme-dir (fs/path root ".squad/themes/wumpus")]
-        (is (str/includes? (:out create) "STATE: theme_created"))
-        (is (str/includes? (:out module-map) "STATE: module_map_recorded"))
-        (is (str/includes? (:out module-map) "MODULE_MAP:"))
-        (is (str/includes? (:out status) "MODULE_MAP: present"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "module-map.md")))
-                           "Use Cases (Business / Process Rules)"))
-        (is (str/includes? (:out story) "STORY: cave-topology"))
-        (is (str/includes? (:out story) "STORY_NUMBER: 1"))
-        (is (str/includes? (:out story) "PATH: stories/cave-topology.md"))
-        (is (str/includes? (:out acceptance) "ACCEPTANCE: cave-topology"))
-        (is (str/includes? (:out acceptance) "PATH: features/cave-topology.feature"))
-        (is (str/includes? (:out acceptance) "STATE: acceptance_added"))
-        (is (str/includes? (:out qa-procedure) "ACCEPTANCE: cave-topology-qa"))
-        (is (str/includes? (:out qa-procedure) "PATH: qa/cave-topology.md"))
-        (is (str/includes? (:out approve-stories) "STATE: approved_stories"))
-        (is (str/includes? (:out approve-acceptance) "STATE: approved_acceptance"))
-        (is (str/includes? (:out status) "THEME: wumpus"))
-        (is (str/includes? (:out status) "STATE: approved_acceptance"))
-        (is (str/includes? (:out status) "STORIES: cave-topology"))
-        (is (str/includes? (:out status) "ACCEPTANCE: cave-topology,cave-topology-qa"))
-        (is (str/includes? (:out status) "APPROVALS: 2"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "theme.md")))
-                           "faithful Hunt the Wumpus"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "stories/cave-topology.ref")))
-                           "path: stories/cave-topology.md"))
-        (is (str/includes? (slurp (str (fs/path root "stories/cave-topology.md")))
-                           "cave topology"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "acceptance/cave-topology.ref")))
-                           "path: features/cave-topology.feature"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "acceptance/cave-topology-qa.ref")))
-                           "path: qa/cave-topology.md"))
-        (is (str/includes? (slurp (str (fs/path root "features/cave-topology.feature")))
-                           "Feature: Cave topology"))
-        (is (str/includes? (slurp (str (fs/path root "qa/cave-topology.md")))
-                           "QA procedure"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "approvals.tsv")))
-                           "\tstories\tuser approved story split"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
-                           "\tapproved_acceptance\tuser approved acceptance spec"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
-                           "\tstory_added\tcave-topology\t1\tstories/cave-topology.md"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
-                           "\tacceptance_added\tcave-topology\tfeatures/cave-topology.feature"))
-        (is (str/includes? (slurp (str (fs/path theme-dir "events.log")))
-                           "\tacceptance_added\tcave-topology-qa\tqa/cave-topology.md")))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest squad-batch-tracks-story-to-batch-accounting
   (let [root (tmp-dir)]
     (try
@@ -215,8 +105,6 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/cave-topology.md")
                   "Story: cave topology and setup.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (write-file (fs/path root "features/cave-topology.feature")
                   "Feature: cave topology\n")
       (write-file (fs/path root "qa/cave-topology.md")
@@ -227,17 +115,10 @@
             create (run {:dir root}
                         (script "squad_packet.sh")
                         "create"
-                        "wumpus"
                         "cave-topology"
                         "wumpus-analysis"
                         "swarmforge-analyst-001"
                         sha)
-            story-approved (run {:dir root}
-                                (script "squad_packet.sh")
-                                "approve"
-                                "cave-topology"
-                                "story"
-                                "user approved story")
             plan-approved (run {:dir root}
                                (script "squad_packet.sh")
                                "approve"
@@ -253,15 +134,6 @@
                          "swarmforge-gherkin-writer-001"
                          sha
                          "features/cave-topology.feature")
-            gherkin-review (run {:dir root}
-                                (script "squad_packet.sh")
-                                "review"
-                                "cave-topology"
-                                "gherkin"
-                                "accepted"
-                                "wumpus-cave-gherkin-review"
-                                "swarmforge-gherkin-reviewer-001"
-                                sha)
             gherkin-approval (run {:dir root}
                                   (script "squad_packet.sh")
                                   "approve"
@@ -277,15 +149,6 @@
                               "swarmforge-qa-procedure-writer-001"
                               sha
                               "qa/cave-topology.md")
-            qa-review (run {:dir root}
-                           (script "squad_packet.sh")
-                           "review"
-                           "cave-topology"
-                           "qa-procedure"
-                           "accepted"
-                           "wumpus-cave-qa-procedure-review"
-                           "swarmforge-qa-procedure-reviewer-001"
-                           sha)
             qa-approval (run {:dir root}
                              (script "squad_packet.sh")
                              "approve"
@@ -302,33 +165,24 @@
             approved (run {:dir root} (script "squad_packet.sh") "status" "cave-topology")
             packet (slurp (str (fs/path root ".squad/stories/cave-topology/packet")))]
         (is (str/includes? (:out create) "STATE: story_recorded"))
-        (is (str/includes? (:out story-approved) "STATE: story_approved"))
         (is (str/includes? (:out plan-approved) "APPROVAL: implementation-plan"))
         (is (str/includes? (:out gherkin) "PATH: features/cave-topology.feature"))
-        (is (str/includes? (:out gherkin-review) "DECISION: accepted"))
         (is (str/includes? (:out gherkin-approval) "APPROVAL: gherkin"))
         (is (str/includes? (:out qa-procedure) "PATH: qa/cave-topology.md"))
-        (is (str/includes? (:out qa-review) "DECISION: accepted"))
         (is (str/includes? (:out qa-approval) "APPROVAL: qa-procedure"))
         (is (str/includes? (:out ready) "STATE: implementation_approval_ready"))
         (is (str/includes? (:out implementation-approval) "STATE: implementation_approved"))
-        (is (str/includes? (:out approved) "GHERKIN_REVIEW: accepted"))
         (is (str/includes? (:out approved) "FINAL_STATE: implementation_approved"))
         (is (str/includes? (:out approved) "GHERKIN_ASSIGNMENT_STATE: complete"))
-        (is (str/includes? (:out approved) "GHERKIN_REVIEW_STATE: accepted"))
         (is (str/includes? (:out approved) "GHERKIN_APPROVAL: approved"))
         (is (str/includes? (:out approved) "QA_PROCEDURE_ASSIGNMENT_STATE: complete"))
-        (is (str/includes? (:out approved) "QA_PROCEDURE_REVIEW_STATE: accepted"))
-        (is (str/includes? (:out approved) "QA_PROCEDURE_REVIEW: accepted"))
         (is (str/includes? (:out approved) "QA_PROCEDURE_APPROVAL: approved"))
         (is (str/includes? packet "gherkin_path: features/cave-topology.feature"))
         (is (str/includes? packet "qa_procedure_path: qa/cave-topology.md"))
         (is (str/includes? packet "final_state: implementation_approved"))
         (is (str/includes? packet "story_iterations: wumpus-analysis=recorded"))
         (is (str/includes? packet "gherkin_iterations: wumpus-cave-gherkin=attached"))
-        (is (str/includes? packet "gherkin_review_iterations: wumpus-cave-gherkin-review=accepted"))
         (is (str/includes? packet "qa_procedure_iterations: wumpus-cave-qa-procedure=attached"))
-        (is (str/includes? packet "qa_procedure_review_iterations: wumpus-cave-qa-procedure-review=accepted"))
         (is (str/includes? packet "implementation_approval: approved")))
       (finally
         (fs/delete-tree root)))))
@@ -347,15 +201,12 @@
                   "Feature: cave topology\n")
       (write-file (fs/path root "features/cave-topology-v2.feature")
                   "Feature: cave topology revised\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root} "git" "add" "stories" "features")
       (run {:dir root} "git" "commit" "-q" "-m" "Prepare revised gherkin artifacts")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (run {:dir root}
              (script "squad_packet.sh")
              "create"
-             "wumpus"
              "cave-topology"
              "wumpus-analysis"
              "swarmforge-analyst-001"
@@ -371,15 +222,6 @@
              "features/cave-topology.feature")
         (run {:dir root}
              (script "squad_packet.sh")
-             "review"
-             "cave-topology"
-             "gherkin"
-             "changes-requested"
-             "wumpus-cave-gherkin-review"
-             "swarmforge-gherkin-reviewer-001"
-             sha)
-        (run {:dir root}
-             (script "squad_packet.sh")
              "attach"
              "cave-topology"
              "gherkin"
@@ -389,9 +231,7 @@
              "features/cave-topology-v2.feature")
         (let [packet (slurp (str (fs/path root ".squad/stories/cave-topology/packet")))]
           (is (str/includes? packet "gherkin_path: features/cave-topology-v2.feature"))
-          (is (str/includes? packet "gherkin_iterations: wumpus-cave-gherkin=attached,wumpus-cave-gherkin-r2=attached"))
-          (is (str/includes? packet "gherkin_review_iterations: wumpus-cave-gherkin-review=changes-requested"))
-          (is (str/includes? packet "gherkin_review_state: pending"))))
+          (is (str/includes? packet "gherkin_iterations: wumpus-cave-gherkin=attached,wumpus-cave-gherkin-r2=attached"))))
 
       (finally
         (fs/delete-tree root)))))
@@ -406,15 +246,12 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/cave-topology.md")
                   "Story: cave topology and setup.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (run {:dir root} "git" "add" "stories")
       (run {:dir root} "git" "commit" "-q" "-m" "Prepare story artifact")
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (run {:dir root}
              (script "squad_packet.sh")
              "create"
-             "wumpus"
              "cave-topology"
              "wumpus-analysis"
              "swarmforge-analyst-001"
@@ -444,42 +281,43 @@
       (let [request (run {:dir root}
                          (script "squad_approval.sh")
                          "request"
-                         "story__cave-topology"
+                         "implementation-plan__cave-topology"
                          "story"
                          "cave-topology"
-                         "story"
-                         "Approve story"
-                         "story is ready")
+                         "implementation-plan"
+                         "Approve plan"
+                         "plan is ready")
             duplicate-request (run {:dir root}
                                    (script "squad_approval.sh")
                                    "request"
-                                   "approve-cave-story"
+                                   "approve-cave-plan"
                                    "story"
                                    "cave-topology"
-                                   "story"
-                                   "Approve story again"
+                                   "implementation-plan"
+                                   "Approve plan again"
                                    "alternate id should be ignored")
             approve (run {:dir root}
                          (script "squad_approval.sh")
                          "approve"
-                         "story__cave-topology"
+                         "implementation-plan__cave-topology"
                          "approved by test")
             status (run {:dir root}
                         (script "squad_approval.sh")
                         "status"
-                        "story__cave-topology")
+                        "implementation-plan__cave-topology")
             packet-status (run {:dir root}
                         (script "squad_packet.sh")
                         "status"
                         "cave-topology")]
         (is (str/includes? (:out request) "STATE: pending"))
-        (is (str/includes? (:out duplicate-request) "SQUAD_APPROVAL: story__cave-topology"))
-        (is (not (fs/exists? (fs/path root ".squad/approvals/pending/approve-cave-story.approval"))))
-        (is (fs/exists? (fs/path root ".squad/approvals/approved/story__cave-topology.approval")))
-        (is (not (fs/exists? (fs/path root ".squad/approvals/pending/story__cave-topology.approval"))))
+        (is (str/includes? (:out duplicate-request) "SQUAD_APPROVAL: implementation-plan__cave-topology"))
+        (is (not (fs/exists? (fs/path root ".squad/approvals/pending/approve-cave-plan.approval"))))
+        (is (fs/exists? (fs/path root ".squad/approvals/approved/implementation-plan__cave-topology.approval")))
+        (is (not (fs/exists? (fs/path root ".squad/approvals/pending/implementation-plan__cave-topology.approval"))))
         (is (str/includes? (:out approve) "STATE: approved"))
         (is (str/includes? (:out status) "STATE: approved"))
-        (is (str/includes? (:out packet-status) "STORY_APPROVAL: approved")))
+        (is (str/includes? (slurp (str (fs/path root ".squad/stories/cave-topology/packet")))
+                           "implementation_plan_approval: approved")))
       (let [request (run {:dir root}
                          (script "squad_approval.sh")
                          "request"
@@ -510,8 +348,6 @@
                   "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/cave-topology.md")
                   "Story: cave topology and setup.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [sha (prepare-implementation-packet! root "wumpus" "cave-topology")
             implemented (run {:dir root}
                              (script "squad_packet.sh")
@@ -562,8 +398,6 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/cave-topology.md") "Story: cave topology and setup.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [sha (prepare-implementation-packet! root "wumpus" "cave-topology")
             fix-sha (do
                       (write-file (fs/path root "src/fix.clj") "(ns fix)\n")
@@ -592,8 +426,6 @@
                   (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
       (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
       (write-file (fs/path root "stories/cave-topology.md") "Story: cave topology and setup.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
       (let [sha (prepare-implementation-packet! root "wumpus" "cave-topology")]
         (run {:dir root} (script "squad_batch.sh") "create" "hardener" "hardener-old")
         (run {:dir root} (script "squad_batch.sh") "add" "hardener-old" "cave-topology" "code_reviewed" "review-old" "master" sha)
