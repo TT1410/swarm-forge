@@ -1359,7 +1359,7 @@
                   stop-squadd/delete-branch! (fn [_ role] (swap! killed conj ["branch" role]))]
       (stop-squadd/cleanup-transient-git! root)
       (is (some #(= ["branch" "agent-001"] %) @killed))
-      (is (not (some #(= ["branch" "agent-002"] %) @killed))))))
+      (is (some #(= ["branch" "agent-002"] %) @killed)))))
 
 (deftest window-watchdog-helper-branches
   (let [root (tmp-dir)
@@ -1484,8 +1484,9 @@
       (is (= [3 "SQUAD_SPAWN_TEMPLATE_CAPACITY_FULL" "TEMPLATE: implementer" "ACTIVE_TEMPLATE_TRANSIENTS: 1" "MAX_TEMPLATE_TRANSIENTS: 1"]
              (spawn/template-limit-error root rows "implementer")))
       (is (= "capacity-full" (squadd/spawn-capacity-blocker root "implementer")))
-      (is (nil? (spawn/capacity-error root rows "merger")))
-      (is (nil? (squadd/spawn-capacity-blocker root "merger"))))
+      (is (= [3 "SQUAD_SPAWN_CAPACITY_FULL" "ACTIVE_TRANSIENTS: 1" "MAX_TRANSIENTS: 1"]
+             (spawn/capacity-error root rows "merger")))
+      (is (= "capacity-full" (squadd/spawn-capacity-blocker root "merger"))))
     (with-redefs [spawn/exit! (fn [status & lines] (throw (exit-exception status lines)))]
       (is (= 2 (exit-status #(spawn/ensure-agent-available! [["agent-001"]] "agent-001" (fs/path root "missing") (fs/path root "missing-agent")))))
       (fs/create-dirs (fs/path root "exists-worktree"))

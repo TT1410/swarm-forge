@@ -201,10 +201,8 @@
                    (contains? (visible-handoff-agents root) role))))))
 
 (defn capacity-counted-role? [root socket role role-data]
-  "True when the role consumes max_transient_agents. Merger is singleton-gated
-  via max_active_template and does not consume the general budget."
-  (and (template-active-role? root socket role role-data)
-       (not= "merger" (role-template root role))))
+  "True when the role consumes max_transient_agents."
+  (template-active-role? root socket role role-data))
 
 (defn active-transient-role-count [root]
   (count
@@ -260,16 +258,11 @@
     (str "group-capacity-full:" group)))
 
 (defn spawn-capacity-blocker [root template]
-  (cond
-    (and (not= "merger" template) (total-capacity-full? root))
-    "capacity-full"
-
-    (template-capacity-full? root template)
-    (str "template-capacity-full:" template)
-
-    :else
-    (some #(group-capacity-blocker root %)
-          (cfg/squad-template-group-limits root template))))
+  (or (when (total-capacity-full? root) "capacity-full")
+      (when (template-capacity-full? root template)
+        (str "template-capacity-full:" template))
+      (some #(group-capacity-blocker root %)
+            (cfg/squad-template-group-limits root template))))
 
 (defn reconcile-roles! [root]
   (let [roles (load-roles root)

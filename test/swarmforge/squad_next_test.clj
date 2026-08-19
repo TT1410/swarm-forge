@@ -259,7 +259,7 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-next-registers-merged-analyst-story-artifacts
+(deftest leftover-theme-analyst-does-not-register-stories
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -293,21 +293,16 @@
                          "commit: " sha "\n"
                          "merge_commit: " sha "\n")))
       (let [register (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out register) "NEXT_ACTION: register_story_artifact"))
-        (is (str/includes? (:out register) "STORY: alpha"))
-        (is (str/includes? (:out register) "COMMAND: squad_theme.sh story wumpus alpha stories/alpha.md && squad_packet.sh create wumpus alpha wumpus-analysis master"))
-        (is (str/includes? (:out register) "CONCURRENT_ACTIONS: 2"))
-        (is (str/includes? (:out register) "CONCURRENT_STORY: alpha"))
-        (is (str/includes? (:out register) "CONCURRENT_STORY: beta")))
+        (is (not (str/includes? (:out register) "register_story_artifact")))
+        (is (not (str/includes? (:out register) "squad_theme.sh story")))
+        (is (not (str/includes? (:out register) "squad_packet.sh create wumpus"))))
       (let [applied (run {:dir root} (script "squad_next.sh") "--apply-mechanical")]
-        (is (str/includes? (:out applied) "APPLIED_TRANSITION: register_story_artifact story=alpha assignment=wumpus-analysis batch=none exit=0"))
-        (is (str/includes? (:out applied) "APPLIED_TRANSITION: register_story_artifact story=beta assignment=wumpus-analysis batch=none exit=0"))
-        (is (str/includes? (:out applied) "TEMPLATE: analyst")
-            "registered stories need a per-story implementation plan"))
+        (is (not (str/includes? (:out applied) "register_story_artifact")))
+        (is (not (str/includes? (:out applied) "TEMPLATE: analyst"))))
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-next-registers-direct-theme-story-before-gherkin-work
+(deftest leftover-theme-story-ref-does-not-register-a-packet
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -323,9 +318,8 @@
       (run {:dir root} "git" "add" "stories" ".squad")
       (run {:dir root} "git" "commit" "-q" "-m" "Register direct story reference")
       (let [register (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out register) "NEXT_ACTION: register_story_packet"))
-        (is (str/includes? (:out register) "STORY: alpha"))
-        (is (str/includes? (:out register) "COMMAND: squad_packet.sh create wumpus alpha squad-leader master $(git rev-parse --short=10 HEAD) && squad_packet.sh approve alpha story approved-by-user"))
+        (is (not (str/includes? (:out register) "register_story_packet")))
+        (is (not (str/includes? (:out register) "squad_packet.sh create wumpus")))
         (is (not (str/includes? (:out register) "TEMPLATE: gherkin-writer"))))
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "squad-leader" "master" sha)
@@ -1325,40 +1319,6 @@
             "spawn requests queued via --queue-spawn"))
       (finally
         (fs/delete-tree root)))))
-(deftest apply-mechanical-creates-approval-request-then-waits-for-user
-  ;; Given registered stories with plans on disk
-  ;; When apply-mechanical runs
-  ;; Then create_approval_request for implementation-plan is applied
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "theme.md") "Theme.\n")
-      (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
-      (write-file (fs/path root "stories/beta.md") "Story: beta.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} "git" "add" "stories")
-      (run {:dir root} "git" "commit" "-q" "-m" "stories")
-      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
-                    (str "assignment_id: wumpus-analysis\ntheme_id: wumpus\nstory_id: theme\n"
-                         "template: analyst\nassignment_file: " root "/a.md\n"))
-        (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
-                    "assignment_id: wumpus-analysis\nstate: merged\n")
-        (write-file (fs/path root ".squad/assignments/wumpus-analysis/result-manifest")
-                    (str "assignment_id: wumpus-analysis\nagent: analyst-001\ntemplate: analyst\n"
-                         "commit: " sha "\nartifacts: stories/beta.md,stories/alpha.md\n"))
-        (write-file (fs/path root ".squad/assignments/wumpus-analysis/accepted-merge")
-                    (str "assignment_id: wumpus-analysis\nstate: merged\ncommit: " sha
-                         "\nmerge_commit: " sha "\n")))
-      (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
-        (is (str/includes? applied "APPLIED_TRANSITION: register_story_artifact"))
-        (is (str/includes? applied "TEMPLATE: analyst")
-            "registered stories need a per-story implementation plan"))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest apply-mechanical-records-in-process-git-handoff-result
   ;; Given a claimed git handoff for an in_progress assignment
   ;; When apply-mechanical runs
@@ -1705,10 +1665,10 @@
         (fs/delete-tree root)))))
 
 
-(deftest theme-finalize-and-reopen
-  ;; Given a theme with all stories final-approved
+(deftest leftover-theme-slice-does-not-finalize
+  ;; Given leftover theme records whose stories look complete
   ;; When squad_next runs
-  ;; Then finalize approval is requested; after finalize residual idles with  reason
+  ;; Then it does not request theme finalize. Theme CLI finalize/reopen stays a fixture.
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -1728,20 +1688,18 @@
                        "final_approval: approved\n"
                        "story_approval: approved\n"))
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? out "create_approval_request")
+        (is (not (str/includes? out "project-slice-ready-to-finalize"))
             out)
-        (is (str/includes? out "finalize")
-            out)
-        (is (str/includes? out "project-slice-ready-to-finalize")))
+        (is (not (str/includes? out "squad_theme.sh finalize"))
+            out))
       (run {:dir root} (script "squad_theme.sh") "finalize" "hello" "ship-it")
       (let [status (:out (run {:dir root} (script "squad_theme.sh") "status" "hello"))]
         (is (str/includes? status "LIFECYCLE: finalized")))
-      (let [wait (:out (run {:dir root} (script "squad_next.sh") "--residual-only"))]
-        (is (str/includes? wait "NEXT_ACTION: wait")
-            wait)
-        (is (str/includes? wait "finalized")
-            wait)
-        (is (str/includes? wait "FINALIZED_THEME: hello")))
+      (let [after (:out (run {:dir root} (script "squad_next.sh") "--residual-only"))]
+        (is (not (str/includes? after "FINALIZED_THEME: hello"))
+            after)
+        (is (not (str/includes? after "squad_theme.sh finalize"))
+            after))
       (write-file (fs/path root "stories/beta.md") "Story beta.\n")
       (run {:dir root} (script "squad_theme.sh") "story" "hello" "beta" "stories/beta.md")
       (let [status (:out (run {:dir root} (script "squad_theme.sh") "status" "hello"))]

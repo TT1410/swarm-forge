@@ -384,3 +384,97 @@
            (get ((ns-resolve state 'derived-stage-fields)
                  packet "implementation_approval_ready")
                 "implementation_assignment_state")))))
+
+(deftest theme-analyst-does-not-register-stories
+  ;; Given a leftover theme-scoped analyst assignment that is merged
+  ;; When residual runs
+  ;; Then it does not register theme stories or create themed packets
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/alpha.md") "Story alpha.\n")
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/metadata")
+                  (str "assignment_id: wumpus-analysis\n"
+                       "theme_id: wumpus\n"
+                       "story_id: theme\n"
+                       "template: analyst\n"))
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
+                  "state: merged\n")
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/result-manifest")
+                  "commit: abcdef1234\nartifacts: stories/alpha.md\n")
+      (write-file (fs/path root ".squad/assignments/wumpus-analysis/accepted-merge")
+                  "state: merged\ncommit: abcdef1234\nmerge_commit: abcdef1234\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "register_story_artifact")))
+        (is (not (str/includes? out "squad_theme.sh story")))
+        (is (not (str/includes? out "squad_packet.sh create wumpus"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest theme-refs-do-not-register-story-packets
+  ;; Given a leftover theme story .ref and no packet
+  ;; When residual runs
+  ;; Then it does not create a themed packet or auto-approve the story gate
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/themes/wumpus/stories/alpha.ref")
+                  "path: stories/alpha.md\n")
+      (write-file (fs/path root "stories/alpha.md") "Story alpha.\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "register_story_packet")))
+        (is (not (str/includes? out "squad_packet.sh create wumpus")))
+        (is (not (str/includes? out "approve alpha story"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest theme-slice-does-not-finalize
+  ;; Given leftover theme records whose stories look complete
+  ;; When residual runs
+  ;; Then it does not request theme finalize
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/themes/wumpus/status") "state: approved\n")
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str "story_id: alpha\ntheme_id: wumpus\n"
+                       "qa_sha: abcdef1234\n"
+                       "architecture_review: accepted\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "finalize")))
+        (is (not (str/includes? out "squad_theme.sh finalize"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest leftover-merge-blocked-handoff-is-not-live-recovery
+  ;; Given an in-process handoff whose assignment is leftover merge_blocked
+  ;; When residual runs
+  ;; Then it does not spawn a merger or treat merge_blocked as a recovery machine
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root
+                       "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                       "impl-001\timpl-001\t" root "/.worktrees/impl-001"
+                       "\tswarmforge-impl-001\tImplementer 001\tcodex\ttask\n"))
+      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
+                  "assignment_id: cave-impl\nstory_id: cave-graph\ntemplate: implementer\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/status")
+                  "state: merge_blocked\n")
+      (write-file (fs/path root ".squad/assignments/cave-impl/merge")
+                  "state: merge_blocked\n")
+      (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_from_impl-001.handoff")
+                  (str "type: git_handoff\nto: squad-leader\nfrom: impl-001\n"
+                       "task: cave-impl\ncommit: abcdef1234\nassignment: cave-impl\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "TEMPLATE: merger")))
+        (is (not (str/includes? out "create-merger")))
+        (is (not (str/includes? out "accept-merge")))
+        (is (not (str/includes? out "accept_merge"))))
+      (finally
+        (fs/delete-tree root)))))

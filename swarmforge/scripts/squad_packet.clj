@@ -213,44 +213,68 @@
   (append-line! (fs/path (story-dir root story-id) "events.log")
                 (str/join "\t" (concat [(timestamp) state] fields))))
 
-(defn create-packet! [theme-id story-id assignment-id branch sha]
-  (doseq [[kind value] [["Theme id" theme-id]
-                        ["Story id" story-id]
-                        ["Assignment id" assignment-id]
-                        ["Branch" branch]]]
-    (validate-id! kind value))
-  (validate-sha! sha)
-  (let [root (fs/absolutize (project-root))
-        theme (theme-dir root theme-id)
+(defn themeless-theme? [theme-id]
+  (or (str/blank? theme-id) (= "none" theme-id)))
+
+(defn themed-story-source [root theme-id story-id]
+  (let [theme (theme-dir root theme-id)
         story-ref (fs/path theme "stories" (str story-id ".ref"))
-        story-path (referenced-project-file root story-ref)
-        story-number (read-value story-ref "story_number")
-        dir (story-dir root story-id)]
+        story-path (referenced-project-file root story-ref)]
     (when-not (fs/directory? theme)
       (exit! 1 (str "Unknown theme: " theme-id)))
     (when-not story-path
       (exit! 1 (str "Story reference not found: " story-id)))
+    {:story-path story-path
+     :story-number (read-value story-ref "story_number")
+     :theme-id theme-id}))
+
+(defn themeless-story-source [root story-id]
+  (let [rel (str "stories/" story-id ".md")]
+    (when-not (fs/regular-file? (fs/path root rel))
+      (exit! 1 (str "Story file not found: " rel)))
+    {:story-path rel
+     :story-number nil
+     :theme-id "none"}))
+
+(defn story-source-for-create [root theme-id story-id]
+  (if (themeless-theme? theme-id)
+    (themeless-story-source root story-id)
+    (themed-story-source root theme-id story-id)))
+
+(defn print-created-packet! [root story-id packet story-path story-number]
+  (println "SQUAD_PACKET:" story-id)
+  (when-not (str/blank? story-number)
+    (println "STORY_NUMBER:" story-number))
+  (println "STATE:" (get packet "state"))
+  (println "STORY:" story-path)
+  (println "PACKET:" (str (packet-file root story-id))))
+
+(defn create-packet! [theme-id story-id assignment-id branch sha]
+  (doseq [[kind value] (cond-> [["Story id" story-id]
+                                ["Assignment id" assignment-id]
+                                ["Branch" branch]]
+                         (not (themeless-theme? theme-id))
+                         (conj ["Theme id" theme-id]))]
+    (validate-id! kind value))
+  (validate-sha! sha)
+  (let [root (fs/absolutize (project-root))
+        source (story-source-for-create root theme-id story-id)
+        dir (story-dir root story-id)]
     (when (fs/exists? (packet-file root story-id))
       (exit! 2 (str "Story packet already exists: " story-id)))
     (fs/create-dirs dir)
-    (let [base {"story_id" story-id
-                "theme_id" theme-id
-                "story_path" story-path
-                "story_assignment" assignment-id
-                "story_branch" branch
-                "story_sha" sha}
-          base (if (str/blank? story-number)
-                 base
-                 (assoc base "story_number" story-number))
+    (let [base (cond-> {"story_id" story-id
+                        "theme_id" (:theme-id source)
+                        "story_path" (:story-path source)
+                        "story_assignment" assignment-id
+                        "story_branch" branch
+                        "story_sha" sha}
+                 (not (str/blank? (:story-number source)))
+                 (assoc "story_number" (:story-number source)))
           packet (write-packet! root story-id
                                 (append-iteration base "story" assignment-id "recorded"))]
       (event! root story-id "story_recorded" assignment-id branch sha)
-      (println "SQUAD_PACKET:" story-id)
-      (when-not (str/blank? story-number)
-        (println "STORY_NUMBER:" story-number))
-      (println "STATE:" (get packet "state"))
-      (println "STORY:" story-path)
-      (println "PACKET:" (str (packet-file root story-id))))))
+      (print-created-packet! root story-id packet (:story-path source) (:story-number source)))))
 
 (def artifact-path-rules
   {"gherkin" {:prefixes ["features/"]

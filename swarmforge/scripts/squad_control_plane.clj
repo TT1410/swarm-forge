@@ -58,8 +58,6 @@
    :incomplete-checker 27
    :architecture-gate-approval 28
    :user-approval 30
-   :theme-finalize 40
-   :merger 50
    :spawn-worker 60})
 
 (defn ready-priority-of
@@ -88,8 +86,6 @@
     :complete_batch
     :record_batch_membership
     :record_review_result
-    :register_story_artifact
-    :register_story_packet
     :attach_story_artifact
     :declare_merge_blocker
     :claim_handoff

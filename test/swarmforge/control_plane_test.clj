@@ -40,8 +40,6 @@
   (is (< (plane/ready-priority-of :bookkeeping-register)
          (plane/ready-priority-of :user-approval)))
   (is (< (plane/ready-priority-of :user-approval)
-         (plane/ready-priority-of :theme-finalize)))
-  (is (< (plane/ready-priority-of :theme-finalize)
          (plane/ready-priority-of :spawn-worker)))
   (is (= 60 (plane/ready-priority-of :spawn-worker)))
   (is (= 30 (plane/ready-priority-of :user-approval))))

@@ -186,8 +186,8 @@
       (is (str/includes? (slurp (str (fs/path root ".squad/assignments/open-work/status")))
                          "state: cancelled"))
       (is (str/includes? (slurp (str (fs/path root ".squad/assignments/merge-hold/status")))
-                         "state: merge_blocked")
-          "merge_blocked preserved for recovery")
+                         "state: cancelled")
+          "leftover merge_blocked is cancelled, not held for recovery")
       (is (str/includes? (slurp (str (fs/path root ".squad/agents/impl-001/status")))
                          "state: retired"))
       (is (not (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_test.handoff"))))
@@ -195,10 +195,10 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest retire-refuses-unresolved-handoff-assignment
-  ;; Given an agent whose assignment is still merge_blocked
+(deftest leftover-merge-blocked-does-not-block-retire
+  ;; Given leftover merge_blocked on an assignment
   ;; When squad_retire runs
-  ;; Then retirement is refused
+  ;; Then retirement succeeds — merge_blocked is not a live recovery hold
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -212,11 +212,10 @@
                   "state: handoff_sent\ndetail: done\nupdated_at: 2026-08-10T00:00:00Z\n")
       (write-file (fs/path root ".squad/assignments/still-open/status")
                   "assignment_id: still-open\nstate: merge_blocked\n")
-      (let [result (run {:dir root :ok? false} (script "squad_retire.sh") "implementer-001")]
-        (is (= 2 (:exit result)))
-        (is (str/includes? (:err result) "not terminal"))
-        (is (str/includes? (slurp (str (fs/path root ".swarmforge/roles.tsv")))
-                           "implementer-001")))
+      (let [result (run {:dir root} (script "squad_retire.sh") "implementer-001")]
+        (is (= 0 (:exit result)))
+        (is (not (str/includes? (slurp (str (fs/path root ".swarmforge/roles.tsv")))
+                                "implementer-001"))))
       (finally
         (fs/delete-tree root)))))
 

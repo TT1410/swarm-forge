@@ -35,7 +35,7 @@
 
 (def web-terminal-assignment-states
   "Assignments in these states are finished for dashboard purposes and hidden
-  from the default active list. Everything else (including merge_blocked) stays visible."
+  from the default active list. Leftover merge_blocked stays visible as a stall."
   #{"merged" "rejected" "superseded" "cancelled" "abandoned" "replacement_created"
     "retired" "review_accepted" "review_changes_requested"})
 
@@ -639,41 +639,16 @@
   (or (pos? (pending-dashboard-request-count root))
       (troubleshooter-agent-working? root)))
 
-(defn merge-error-snippet [root assignment-id]
-  (let [file (fs/path root ".squad" "assignments" assignment-id "merge-error")]
-    (when (fs/regular-file? file)
-      (->> (str/split-lines (slurp (str file)))
-           (remove str/blank?)
-           (take 2)
-           (str/join " | ")
-           not-empty))))
-
-(defn assignment-by-id [assignments]
-  (into {} (map (fn [a] [(get a "assignment_id") a]) assignments)))
-
-(defn recoverable-merge-block?
-  "Merge_blocked is auto-recovered by merger path — not a TS stall."
-  [assignment]
-  (= "merge_blocked" (get assignment "state")))
-
-(defn assignment-stall-item [root assignment]
-  "Only stalls that need TS/operator intervention.
-  Recoverable merge_blocked is excluded (merger pipeline handles it)."
+(defn assignment-stall-item [assignment]
+  "Stalls that need TS/operator intervention. Leftover merge_blocked is a stall."
   (let [state (get assignment "state")
         id (get assignment "assignment_id")
         detail (str/trim (or (get assignment "detail") ""))]
-    (cond
-      ;; Do not Attention-stall auto-recoverable merges
-      (recoverable-merge-block? assignment)
-      nil
-
-      (= "blocked" state)
+    (when (contains? #{"blocked" "merge_blocked"} state)
       {"kind" "assignment"
        "id" id
        "state" state
-       "reason" (or (not-empty detail) "assignment blocked")}
-
-      :else nil)))
+       "reason" (or (not-empty detail) "assignment blocked")})))
 
 (defn agent-stall-item [agent]
   (let [state (get agent "state")
@@ -686,36 +661,32 @@
        "reason" (or (not-empty detail) (str "agent " state))})))
 
 (defn held-handoff-stall-items
-  "Held handoffs for recoverable merge_blocked tasks are not stalls."
-  [root assignments]
-  (let [by-id (assignment-by-id assignments)
-        dir (fs/path root ".swarmforge" "handoffs" "inbox" "held")]
+  [root]
+  (let [dir (fs/path root ".swarmforge" "handoffs" "inbox" "held")]
     (if (fs/directory? dir)
       (->> (fs/list-dir dir)
            (filter #(and (fs/regular-file? %)
                          (str/ends-with? (fs/file-name %) ".handoff")))
-           (keep (fn [file]
-                   (let [m (parse-kv-file file)
-                         from (get m "from" "unknown")
-                         task (get m "task" (get m "assignment" ""))
-                         a (get by-id task)]
-                     (when-not (and a (recoverable-merge-block? a))
-                       {"kind" "held_handoff"
-                        "id" (fs/file-name file)
-                        "state" "held"
-                        "reason" (str "held handoff from " from
-                                      (when-not (str/blank? task)
-                                        (str " task=" task)))}))))
+           (map (fn [file]
+                  (let [m (parse-kv-file file)
+                        from (get m "from" "unknown")
+                        task (get m "task" (get m "assignment" ""))]
+                    {"kind" "held_handoff"
+                     "id" (fs/file-name file)
+                     "state" "held"
+                     "reason" (str "held handoff from " from
+                                   (when-not (str/blank? task)
+                                     (str " task=" task)))})))
            vec)
       [])))
 
 (defn stall-report
-  "Operator-facing stalls = needs TS/operator, not auto-merger recovery."
+  "Operator-facing stalls that need TS or the operator."
   [root assignments agents]
   (let [items (vec
-               (concat (keep #(assignment-stall-item root %) assignments)
+               (concat (keep assignment-stall-item assignments)
                        (keep agent-stall-item agents)
-                       (held-handoff-stall-items root assignments)))
+                       (held-handoff-stall-items root)))
         summary (if (seq items)
                   (str (count items) " stalled — "
                        (->> items
@@ -803,8 +774,7 @@
    "hardener" 70
    "qa" 80
    "architect" 90
-   "senior-implementer" 100
-   "merger" 110})
+   "senior-implementer" 100})
 
 (def wif-assignment-state-rank
   "Later assignment lifecycle ranks higher. Prevents created above in_progress
@@ -852,25 +822,15 @@
   [stories assignments]
   (let [coding-impl-states #{"created" "starting" "in_progress" "running"
                              "handoff_ready" "handoff_sent" "merge_ready"
-                             "merge_blocked" "merging"}
+                             "merging"}
         active-impl (set (for [a assignments
                                :when (and (= "implementer" (get a "template" ""))
                                           (contains? coding-impl-states (get a "state" "")))]
-                           (get a "story_id")))
-        merge-blocked (into {}
-                            (for [a assignments
-                                  :when (= "merge_blocked" (get a "state"))]
-                              [(get a "story_id")
-                               (or (not-empty (get a "detail"))
-                                   "dry-run or accept-merge failed")]))]
+                           (get a "story_id")))]
     (mapv (fn [s]
             (let [id (get s "story_id")
                   st (get s "state")]
               (cond
-                (get merge-blocked id)
-                (assoc s "hold" true
-                       "hold_reason" (str "Merge blocked: " (get merge-blocked id)))
-
                 (and (= "implementation_approved" st)
                      (not (contains? active-impl id)))
                 (assoc s "hold" true

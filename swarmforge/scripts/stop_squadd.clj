@@ -85,16 +85,6 @@
      :worktree worktree
      :session session}))
 
-(defn assignment-id [project-root role]
-  (read-value (fs/path project-root ".squad" "agents" role "metadata") "task_id"))
-
-(defn assignment-merge-blocked? [project-root assignment]
-  (and (not (str/blank? assignment))
-       (or (= "merge_blocked"
-              (read-value (fs/path project-root ".squad" "assignments" assignment "status") "state"))
-           (= "merge_blocked"
-              (read-value (fs/path project-root ".squad" "assignments" assignment "merge") "state")))))
-
 (defn managed-worktree? [project-root role worktree]
   (and (not (str/blank? worktree))
        (= (str (fs/absolutize (fs/path project-root ".worktrees" role)))
@@ -115,9 +105,7 @@
   (git! project-root "branch" "-D" (str "swarmforge-" role)))
 
 (defn cleanup-transient-git! [project-root]
-  (doseq [{:keys [role worktree]} (transient-roles project-root)
-          :let [assignment (assignment-id project-root role)]
-          :when (not (assignment-merge-blocked? project-root assignment))]
+  (doseq [{:keys [role worktree]} (transient-roles project-root)]
     (remove-worktree! project-root role worktree)
     (delete-branch! project-root role)))
 
@@ -205,49 +193,22 @@
   (distinct (concat (registered-managed-worktrees project-root)
                     (filesystem-managed-worktrees project-root))))
 
-(defn agent-worktree [project-root agent-id]
-  (or (not-empty (read-value (fs/path project-root ".squad" "agents" agent-id "metadata")
-                             "worktree"))
-      (str (fs/path project-root ".worktrees" agent-id))))
-
-(defn merge-blocked-worktree-paths
-  "Discover merge_blocked recovery worktrees from agent metadata + assignment
-  status so paths survive after roles.tsv is reduced to squad-leader."
+(defn cleanup-managed-worktrees!
+  "Remove every managed worktree. Leftover merge_blocked is not a recovery hold."
   [project-root]
-  (set
-   (for [agent-id (agent-ids-on-disk project-root)
-         :when (not (#{"squad-leader" "troubleshooter"} agent-id))
-         :let [assignment (assignment-id project-root agent-id)
-               worktree (agent-worktree project-root agent-id)]
-         :when (and (assignment-merge-blocked? project-root assignment)
-                    (not (str/blank? worktree)))]
-     (str (fs/absolutize worktree)))))
-
-(defn cleanup-non-merge-blocked-worktrees!
-  "Remove managed worktrees except those held for merge_blocked recovery."
-  [project-root]
-  (let [preserve (merge-blocked-worktree-paths project-root)
-        paths (distinct (concat (registered-managed-worktrees project-root)
-                                (filesystem-managed-worktrees project-root)))]
-    (doseq [path paths
-            :when (not (contains? preserve (str (fs/absolutize path))))]
-      (force-remove-worktree-path! project-root path))
-    (git! project-root "worktree" "prune")
-    (doseq [path (sort preserve)]
-      (println "PRESERVED_FOR_RECOVERY:" path
-               "reason=merge_blocked"))
-    preserve))
+  (doseq [path (distinct (concat (registered-managed-worktrees project-root)
+                                 (filesystem-managed-worktrees project-root)))]
+    (force-remove-worktree-path! project-root path))
+  (git! project-root "worktree" "prune")
+  #{})
 
 (defn report-remaining-worktrees! [project-root]
-  (let [preserve (merge-blocked-worktree-paths project-root)]
-    (doseq [path (remaining-managed-worktrees project-root)]
-      (if (contains? preserve (str (fs/absolutize path)))
-        (println "PRESERVED_FOR_RECOVERY:" path "reason=merge_blocked")
-        (println "PRESERVED_WORKTREE:" path "reason=cleanup_residue")))))
+  (doseq [path (remaining-managed-worktrees project-root)]
+    (println "PRESERVED_WORKTREE:" path "reason=cleanup_residue")))
 
 (def open-assignment-states-to-cancel
   #{"created" "assignment_created" "in_progress" "handoff_sent"
-    "result_received" "merge_ready"})
+    "result_received" "merge_ready" "merge_blocked"})
 
 (defn assignment-ids-on-disk [project-root]
   (let [dir (fs/path project-root ".squad" "assignments")]
@@ -261,8 +222,7 @@
 
 (defn cancel-open-assignments!
   "Mark non-terminal open assignments cancelled so a restart does not treat dead
-  agent bindings as active work. Preserves merge_blocked (recovery) and already
-  terminal states."
+  agent bindings as active work. Leftover merge_blocked is cancelled too."
   [project-root]
   (let [now (timestamp)]
     (doseq [assignment-id (assignment-ids-on-disk project-root)
@@ -302,14 +262,13 @@
 
 (defn full-teardown-reconcile!
   "After processes are dead: retire agents, cancel open assignments, drain live
-  handoffs, remove worktrees that are not held for merge_blocked recovery, prune,
-  reduce roles to squad-leader, and report intentionally preserved vs residual
-  worktrees."
+  handoffs, remove managed worktrees, prune, reduce roles to squad-leader, and
+  report any leftover worktrees."
   [project-root]
   (retire-all-agents! project-root "swarm terminated by cleanup")
   (cancel-open-assignments! project-root)
   (drain-inbox-handoffs! project-root)
-  (cleanup-non-merge-blocked-worktrees! project-root)
+  (cleanup-managed-worktrees! project-root)
   (keep-only-squad-leader-roles! project-root)
   (report-remaining-worktrees! project-root))
 

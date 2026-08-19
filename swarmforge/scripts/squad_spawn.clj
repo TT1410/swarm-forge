@@ -137,10 +137,8 @@
                    (contains? (visible-handoff-agents root) role))))))
 
 (defn capacity-counted-row? [root socket row]
-  "True when the role consumes max_transient_agents. Merger is singleton-gated
-  via max_active_template and does not consume the general budget."
-  (and (template-active-row? root socket row)
-       (not= "merger" (role-template root (first row)))))
+  "True when the role consumes max_transient_agents."
+  (template-active-row? root socket row))
 
 (defn active-transient-count [root rows]
   (count
@@ -447,8 +445,7 @@
        (str "MAX_TRANSIENTS: " limit)])))
 
 (defn capacity-error [root rows template]
-  (or (when-not (= "merger" template)
-        (global-capacity-error root rows))
+  (or (global-capacity-error root rows)
       (template-capacity-error root rows template)))
 
 (defn agent-status-state [root agent-id]

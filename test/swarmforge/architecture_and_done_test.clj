@@ -3,7 +3,6 @@
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
-            [squad-next :as next]
             [squadd.web :as web]
             [swarmforge.test-support :refer :all]))
 
@@ -104,42 +103,6 @@
   (is (= "finalizing" (web/board-column "code_review_approved")))
   (is (= "finalizing" (web/board-column "hardening_approved")))
   (is (= "finalizing" (web/board-column "qa_returned"))))
-
-(deftest project-not-done-until-architecture-closes
-  ;; Given all stories QAd but architecture still open
-  ;; Then the project slice is not complete
-  (let [root (tmp-dir)]
-    (try
-      (write-file (fs/path root ".squad/stories/alpha/packet") (qa-complete-packet "alpha"))
-      (write-file (fs/path root ".squad/stories/beta/packet") (qa-complete-packet "beta"))
-      (is (false? (next/theme-slice-complete? root "wumpus"))
-          "QA alone does not finish the project")
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest project-done-after-architect-accept-or-senior-impl
-  (let [root (tmp-dir)]
-    (try
-      (write-file (fs/path root ".squad/stories/alpha/packet")
-                  (str (qa-complete-packet "alpha")
-                       "architecture_review: accepted\n"))
-      (write-file (fs/path root ".squad/stories/beta/packet")
-                  (str (qa-complete-packet "beta")
-                       "architecture_review: accepted\n"))
-      (is (true? (next/theme-slice-complete? root "wumpus"))
-          "Architect accept closes the project")
-      (write-file (fs/path root ".squad/stories/alpha/packet")
-                  (str (qa-complete-packet "alpha")
-                       "architecture_review: changes-requested\n"
-                       "senior_implementer_sha: 7931912abc\n"))
-      (write-file (fs/path root ".squad/stories/beta/packet")
-                  (str (qa-complete-packet "beta")
-                       "architecture_review: changes-requested\n"
-                       "senior_implementer_sha: 7931912abc\n"))
-      (is (true? (next/theme-slice-complete? root "wumpus"))
-          "Senior-impl stamp closes the project")
-      (finally
-        (fs/delete-tree root)))))
 
 (deftest architect-prompt-marks-module-map-as-commentary
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))]

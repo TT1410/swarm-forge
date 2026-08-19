@@ -208,7 +208,8 @@
 
 (def resolved-handoff-assignment-states
   #{"merged" "rejected" "blocked" "replacement_created" "superseded"
-    "review_accepted" "review_changes_requested" "cancelled" "abandoned"})
+    "review_accepted" "review_changes_requested" "cancelled" "abandoned"
+    "merge_blocked"})
 
 (defn agent-task-id [root agent-id]
   (read-value (fs/path root ".squad" "agents" agent-id "metadata") "task_id"))
@@ -218,9 +219,8 @@
       "unknown"))
 
 (defn handoff-resolved-for-retire? [root assignment-id]
-  "merge_blocked holds the worktree for merger recovery until the assignment is
-  actually merged (or otherwise terminal). A downstream merger result alone is
-  not enough to free the agent."
+  "Leftover merge_blocked is terminal. A live assignment must be merged,
+  rejected, blocked, or otherwise closed before retire."
   (if-not (and assignment-id
                (not= "unknown" assignment-id)
                (fs/directory? (fs/path root ".squad" "assignments" assignment-id)))

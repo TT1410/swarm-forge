@@ -39,9 +39,8 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest stall-report-surfaces-ts-needed-not-recoverable-merge
-  ;;  + Failed agents and non-merge held handoffs stall;
-  ;; recoverable merge_blocked does not.
+(deftest stall-report-surfaces-ts-needed-including-leftover-merge-blocked
+  ;; Failed agents, held handoffs, and leftover merge_blocked all stall.
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
@@ -62,8 +61,8 @@
         (is (true? (get report "stalled")))
         (is (>= (get report "count") 2))
         (is (str/includes? (get report "summary") "stalled"))
-        (is (not (some #(= "cave-impl" (get % "id")) (get report "items")))
-            "recoverable merge_blocked is not a stall")
+        (is (some #(= "cave-impl" (get % "id")) (get report "items"))
+            "leftover merge_blocked is a stall")
         (is (some #(and (= "agent" (get % "kind"))
                         (= "implementer-001" (get % "id")))
                   (get report "items")))
@@ -123,8 +122,8 @@
   (is (> (web/pipeline-rank "senior-implementer")
          (web/pipeline-rank "implementer"))))
 
-(deftest merge-blocked-is-not-attention-stall
-  ;; Recoverable merge_blocked + related held handoff are not stalls
+(deftest leftover-merge-blocked-is-an-attention-stall
+  ;; Leftover merge_blocked and its held handoff are stalls; there is no merger recovery.
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad" "assignments" "story-impl" "metadata")
@@ -143,10 +142,11 @@
       (let [as (web/assignment-state root)
             report (web/stall-report root as [])
             kinds (set (map #(get % "kind") (get report "items")))]
-        (is (not (some #(= "merge_blocked" (get % "state")) (get report "items"))))
+        (is (some #(= "merge_blocked" (get % "state")) (get report "items")))
         (is (true? (get report "stalled")))
         (is (contains? kinds "assignment"))
         (is (some #(= "story-other" (get % "id")) (get report "items")))
+        (is (some #(= "story-impl" (get % "id")) (get report "items")))
         (is (some #(= "held_handoff" (get % "kind")) (get report "items"))))
       (finally
         (fs/delete-tree root)))))

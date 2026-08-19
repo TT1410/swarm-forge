@@ -363,37 +363,6 @@
 (defn assignment-by-id [assignments assignment-id]
   (some #(when (= assignment-id (:assignment-id %)) %) assignments))
 
-(defn theme-story-ref-exists? [root theme-id story-id]
-  (fs/regular-file? (fs/path root ".squad" "themes" theme-id "stories" (str story-id ".ref"))))
-
-(defn story-packet-exists? [root story-id]
-  (fs/regular-file? (fs/path root ".squad" "stories" story-id "packet")))
-
-(defn theme-story-ref-files [root]
-  (let [themes-dir (fs/path root ".squad" "themes")]
-    (if (fs/directory? themes-dir)
-      (->> (fs/list-dir themes-dir)
-           (filter fs/directory?)
-           (mapcat (fn [theme-dir]
-                     (let [stories-dir (fs/path theme-dir "stories")]
-                       (if (fs/directory? stories-dir)
-                         (fs/list-dir stories-dir)
-                         []))))
-           (filter fs/regular-file?)
-           (filter #(str/ends-with? (fs/file-name %) ".ref"))
-           (sort-by str)
-           vec)
-      [])))
-
-(defn theme-story-ref-record [file]
-  (let [record (file-map file)
-        story-id (or (get record "story_id")
-                     (str/replace (fs/file-name file) #"\.ref$" ""))
-        theme-id (fs/file-name (fs/parent (fs/parent file)))]
-    {:theme-id theme-id
-     :story-id story-id
-     :path (get record "path")}))
-
 (def terminal-assignment-states
   #{"merged" "rejected" "blocked" "replacement_created" "superseded" "retired"
     "review_accepted" "review_changes_requested"})
@@ -584,80 +553,6 @@
                  :approved-theme? (theme-approved? dir "theme")
                  :lifecycle (theme-lifecycle dir)
                  :finalized? (theme-finalized? dir)})))
-       vec))
-
-(defn packet-story-done?
-  "Legacy per-story final gate. Story cards use QA."
-  [packet]
-  (or (= "final_approved" (get packet "state"))
-      (= "final_approved" (get packet "final_state"))
-      (field-approved? packet "final_approval")))
-
-(defn packet-architecture-closed?
-  "Project architecture pass is satisfied for this story."
-  [packet]
-  (or (field-accepted? packet "architecture_review")
-      (and (field-changes-requested? packet "architecture_review")
-           (field-present? packet "senior_implementer_sha"))))
-
-(defn theme-packets [root theme-id]
-  (filterv #(= theme-id (get % "theme_id")) (packets root)))
-
-(defn theme-slice-complete?
-  "Project is done when every story has QAd and architecture is closed.
-  final_approved packets still count as complete for older slices."
-  [root theme-id]
-  (let [ps (theme-packets root theme-id)]
-    (and (seq ps)
-         (every? (fn [packet]
-                   (or (packet-story-done? packet)
-                       (and (field-present? packet "qa_sha")
-                            (packet-architecture-closed? packet))))
-                 ps))))
-
-(defn theme-has-open-assignment?
-  [root theme-id]
-  (boolean
-   (some (fn [a]
-           (and (= theme-id (:theme-id a))
-                (not (contains? #{"merged" "rejected" "blocked" "cancelled" "abandoned"
-                                  "replacement_created" "superseded"}
-                                (:state a)))))
-         (assignment-records root))))
-
-(defn theme-finalize-candidate
-  "When slice is done and theme not finalized, request finalize approval."
-  [root theme]
-  (when (and (not (:finalized? theme))
-             (theme-slice-complete? root (:theme-id theme))
-             (not (theme-has-open-assignment? root (:theme-id theme)))
-             (not (approval-record-exists-for? root "theme" (:theme-id theme) "finalize")))
-    (let [theme-id (:theme-id theme)
-          approval-id (str "finalize__" theme-id)]
-      (if (cfg/squad-approval-required? root "finalize")
-        {:priority (plane/ready-priority-of :theme-finalize)
-         :stage-order 1
-         :next-action "create_approval_request"
-         :theme-id theme-id
-         :story-id "theme"
-         :gate "finalize"
-         :reason "theme slice complete; user finalize/ship approval"
-         :command (str "squad_approval.sh request " approval-id
-                       " theme " theme-id
-                       " finalize Approve_project_finalize "
-                       "project-slice-ready-to-finalize")}
-        {:priority (plane/ready-priority-of :theme-finalize)
-         :stage-order 1
-         :next-action "record_auto_approval"
-         :theme-id theme-id
-         :story-id "theme"
-         :gate "finalize"
-         :reason "finalize approval not required by configuration"
-         :command (str "squad_theme.sh finalize " theme-id " auto-approved-by-config")}))))
-
-(defn theme-finalize-candidates [root]
-  (->> (theme-records root)
-       (keep #(theme-finalize-candidate root %))
        vec))
 
 (defn approval-candidate [root packet gate title reason priority stage-order]
@@ -868,62 +763,6 @@
         (assignment-spawn-candidate assignment theme-id "batch" template reason priority stage-order))
       (batch-assignment-create-candidate theme-id template assignment-id reason priority stage-order nil))))
 
-(defn analyst-story-registration-candidate [root assignment path]
-  (let [story-id (artifact-story-id path)
-        theme-id (:theme-id assignment)
-        sha (artifact-sha assignment)
-        ref-exists? (theme-story-ref-exists? root theme-id story-id)
-        packet-exists? (story-packet-exists? root story-id)]
-    (when (and (= "merged" (:state assignment))
-               (= "analyst" (:template assignment))
-               (= "theme" (:story-id assignment))
-               (not (str/blank? sha))
-               (or (not ref-exists?)
-                   (not packet-exists?)))
-      {:priority 25
-       :stage-order 1
-       :next-action "register_story_artifact"
-       :theme-id theme-id
-       :story-id story-id
-       :assignment-id (:assignment-id assignment)
-       :reason "merged analyst story artifact must be registered before story workflow can continue"
-       :command (str (when-not ref-exists?
-                       (str "squad_theme.sh story " theme-id " " story-id " " path
-                            " && "))
-                     (when-not packet-exists?
-                       (str "squad_packet.sh create " theme-id " " story-id " "
-                            (:assignment-id assignment) " master " sha)))})))
-
-(defn analyst-story-registration-candidates [root assignments]
-  (->> (for [assignment assignments
-             path (artifact-paths assignment "stories/" ".md")
-             :let [candidate (analyst-story-registration-candidate root assignment path)]
-             :when candidate]
-         candidate)
-       (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
-       vec))
-
-(defn direct-story-packet-candidate [root {:keys [theme-id story-id]}]
-  (when (and (not (str/blank? theme-id))
-             (not (str/blank? story-id))
-             (not (story-packet-exists? root story-id)))
-    {:priority 26
-     :stage-order 1
-     :next-action "register_story_packet"
-     :theme-id theme-id
-     :story-id story-id
-     :assignment-id "squad-leader"
-     :reason "direct squad-leader story must be registered as an approved story before downstream workflow can continue"
-     :command (str "squad_packet.sh create " theme-id " " story-id
-                   " squad-leader master $(git rev-parse --short=10 HEAD)"
-                   " && squad_packet.sh approve " story-id " story approved-by-user")}))
-
-(defn direct-story-packet-candidates [root]
-  (->> (theme-story-ref-files root)
-       (map theme-story-ref-record)
-       (keep #(direct-story-packet-candidate root %))
-       (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
-       vec))
 
 (def artifact-assignment-rules
   {"analyst" {:kind "implementation-plan"
@@ -1359,9 +1198,7 @@
 (defn packet-repair-candidates [root]
   (let [assignments (assignment-records root)
         packets (packets root)]
-    (vec (concat (analyst-story-registration-candidates root assignments)
-                 (direct-story-packet-candidates root)
-                 (artifact-attachment-candidates root assignments packets)
+    (vec (concat (artifact-attachment-candidates root assignments packets)
                  (direct-result-record-candidates assignments packets)
                  (batch-result-record-candidates root assignments packets)
                  (batch-complete-candidates root assignments packets)
@@ -1597,19 +1434,14 @@
   (let [ctx {:root root
              :rows rows
              :assignments (assignment-records root)
-             :agents (agent-records root rows)}
-        finalized (->> (theme-records root)
-                       (filter :finalized?)
-                       (map :theme-id)
-                       set)]
+             :agents (agent-records root rows)}]
     (->> (for [packet (packets root)
-               :when (not (contains? finalized (get packet "theme_id")))
                transition story-transition-table
                :let [candidate ((:candidate transition) ctx packet)]
                :when candidate]
            candidate)
-	         (sort-by (juxt :theme-id :story-id :stage-order :priority :assignment-id))
-	         vec)))
+         (sort-by (juxt :theme-id :story-id :stage-order :priority :assignment-id))
+         vec)))
 
 (defn same-theme-packets [all-packets theme-id]
   (filter #(= theme-id (get % "theme_id")) all-packets))
@@ -1922,9 +1754,7 @@
 
 ;; Bookkeeping-only actions: safe to apply all ready instances without capacity scheduling.
 (def bookkeeping-actions
-  #{"register_story_artifact"
-    "register_story_packet"
-    "attach_story_artifact"
+  #{"attach_story_artifact"
     "record_merged_result"
     "record_merged_batch_result"
     "complete_batch"
@@ -2113,12 +1943,6 @@
          root assignment-id
          "merge readiness already recorded; accept merge before handoff completion")
 
-        (and (= "result_received" state)
-             (= "merge_blocked" merge-state))
-        (accept-merge-handoff-step
-         root assignment-id
-         "prior merge failed; squad leader retries accept-merge")
-
         :else
         (case state
           ("created" "assignment_created" "in_progress" "handoff_sent" "unknown")
@@ -2135,11 +1959,6 @@
           (accept-merge-handoff-step
            root assignment-id
            "merge-ready result must be accepted before handoff completion")
-
-          "merge_blocked"
-          (accept-merge-handoff-step
-           root assignment-id
-           "prior merge failed; squad leader retries accept-merge")
 
           nil)))))
 
@@ -2355,32 +2174,14 @@
          (filter active-agent?)
          vec)))
 
-(defn finalized-theme-ids [root]
-  (->> (theme-records root)
-       (filter :finalized?)
-       (map :theme-id)
-       sort
-       vec))
-
 (defn print-wait-action!
   ([active] (print-wait-action! nil active))
   ([root active]
-   (let [root (or root (fs/absolutize (project-root)))
-         finalized (try (finalized-theme-ids root) (catch Exception _ []))
-         reason (cond
-                  (seq active)
+   (let [reason (if (seq active)
                   "active agents are still working or awaiting handoff delivery"
-                  (seq finalized)
-                  (str "theme(s) finalized (" (str/join ", " finalized)
-                       "); no open product work — idle until reopen or new stories")
-                  :else
                   "no handoffs, pending approvals, active transient agents, or stale locks")]
      (println "NEXT_ACTION: wait")
      (println "REASON:" reason)
-     (when (seq finalized)
-       (println "THEME_LIFECYCLE: finalized")
-       (doseq [id finalized]
-         (println "FINALIZED_THEME:" id)))
      (doseq [{:keys [agent task-id state quiet-for activity-source]} active]
        (println "ACTIVE:" agent task-id state
                 (str "quiet_for=" (or quiet-for "unknown"))
@@ -2393,8 +2194,7 @@
            (concat (packet-repair-candidates root)
                    (story-candidates root rows)
                    (batch-candidates root rows)
-                   (generic-ready-assignment-candidates root rows)
-                   (theme-finalize-candidates root))))
+                   (generic-ready-assignment-candidates root rows))))
 
 (defn rows-without-agents [rows agents]
   (remove #(contains? agents (first %)) rows))
@@ -2435,8 +2235,7 @@
    (concat
     (when (and story-id
                (not= "batch" story-id)
-               (contains? #{"register_story_packet"
-                            "attach_story_artifact"
+               (contains? #{"attach_story_artifact"
                             "record_merged_result"
                             "record_merged_batch_result"
                             "record_review_result"
