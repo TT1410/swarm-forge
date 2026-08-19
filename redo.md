@@ -69,7 +69,7 @@ This is already on this SHA: `.squad/backlog`, deck button with count, Add vs st
 
 This tree has a lot of leftover machinery. Redo is not another overlay.
 
-**Delete with each task.** When a path dies, delete its functions, templates, config lines, and tests in that same commit. No empty stubs. No `theme-candidates` that always returns `[]`.
+**Delete with each task.** When a path dies, delete its functions, templates, config lines, and tests in that same commit. No empty stubs. No `theme-candidates` or `merger-candidates` that always returns `[]`. If a helper is only called by a deleted path, delete the helper too.
 
 Dead with the matching task: merger, dry-run, `merge_blocked`, **`squad_theme.sh` / `squad_theme.clj`**, `.squad/themes/`, theme create/map/approve/finalize, implementation-order gate, B96 implementer pairs, Gherkin/QA reviewers, final bless, hardcoded singleton set.
 

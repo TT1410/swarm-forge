@@ -160,25 +160,11 @@
   (or (read-value (fs/path root ".squad" "agents" role "metadata") "task_id")
       (read-value (fs/path root ".squad" "agents" role "metadata") "task-id")))
 
-(defn merger-holds-capacity-slot?
-  "B73/B27: handoff_sent merger whose assignment is merge_blocked does not fill
-  the singleton (parity with squadd / squad_next)."
-  [root role]
-  (let [state (read-value (fs/path root ".squad" "agents" role "status") "state")
-        task-id (role-task-id root role)
-        assignment-state (when-not (str/blank? task-id)
-                           (read-value (fs/path root ".squad" "assignments" task-id "status")
-                                       "state"))]
-    (not (and (= "handoff_sent" state)
-              (= "merge_blocked" assignment-state)))))
-
 (defn counts-toward-template-cap?
   [root socket row template]
   (let [role (first row)]
     (and (template-active-row? root socket row)
-         (= template (role-template root role))
-         (or (not= "merger" template)
-             (merger-holds-capacity-slot? root role)))))
+         (= template (role-template root role)))))
 
 (defn leader-agent [rows]
   (some (fn [row]

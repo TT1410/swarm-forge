@@ -178,6 +178,14 @@
                     (squad-config-long root "recovery_retry_seconds" squad-default-recovery-retry-seconds))
     (squad-config-long root "recovery_retry_seconds" squad-default-recovery-retry-seconds)))
 
+(defn singleton-templates
+  "Templates with max_active_template 1 in squad.conf. Empty if unconfigured."
+  [root]
+  (->> (squad-config-entries root "max_active_template")
+       (keep (fn [[template limit]]
+               (when (= "1" limit) template)))
+       set))
+
 (defn squad-template-limit [root template]
   (some (fn [[configured-template limit]]
           (when (and (= configured-template template)

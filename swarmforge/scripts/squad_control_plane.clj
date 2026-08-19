@@ -94,23 +94,18 @@
     :register_story_packet
     :attach_story_artifact
     :declare_merge_blocker
-    :merge_ready
-    :accept_merge
     :claim_handoff
     :process_handoff
     :finish_held_handoff
     :finish_in_process_handoff
     :clear_stale_lock
-    :park_merge_blocked
-    :hold_merge_blocked
-    :record_assignment_result
-    :check_merge_readiness})
+    :record_assignment_result})
 
 (def sl-residual-ops
   "Ops Squad Leader residual may surface as COMMAND (judgment / product / recovery).
-  Main-git accept-merge and merge-ready are intentionally absent (daemon-only)."
+  SL merges the handed SHA (six-pack target)."
   #{:wait
-    :wait_for_daemon_main_git
+    :accept_merge
     :wait_for_spawn
     :request_user_approval
     :answer_dashboard_request
@@ -166,12 +161,6 @@
   (filterv (fn [c]
              (op-allowed? authority (actions/op-of c)))
            candidates))
-
-(defn daemon-only-main-git-op?
-  "Ops that residual must never hand to SL as a live COMMAND."
-  [op]
-  (contains? #{:accept_merge :check_merge_readiness :merge_ready}
-             (keyword (actions/normalize-op op))))
 
 ;;; ---------------------------------------------------------------------------
 ;;; B18 — Plan view (planner output shape)

@@ -123,36 +123,6 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b94-pauses-product-accept-merge-while-depth-2-merger-open
-  ;; Given: a depth-2 merger is in flight and another product assignment is merge_ready
-  ;; When: squad_next / apply-mechanical runs
-  ;; Then: the product is not accept-merged; residual waits for merge recovery
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-roles! root)
-      (write-file (fs/path root "swarmforge/squad.conf") "max_merger_depth 2\n")
-      (write-assignment! root "cave-impl-merge-merge"
-                         {:story "cave" :template "merger" :state "in_progress"
-                          :merge-for "cave-impl-merge"})
-      (write-assignment! root "htw-move-player"
-                         {:story "move-player" :template "implementer"
-                          :state "merge_ready" :merge-file-state "merge_ready"})
-      (write-in-process-handoff! root "htw-move-player" "implementer-001")
-      (let [inspection (:out (run {:dir root} (script "squad_next.sh")))
-            applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
-            product-status (slurp (str (fs/path root ".squad/assignments/htw-move-player/status")))]
-        (is (str/includes? inspection "wait_for_merge_recovery")
-            "B94: residual names the depth-2 pause")
-        (is (not (str/includes? inspection "COMMAND: squad_assign.sh accept-merge htw-move-player"))
-            "B94: product accept-merge is not the live command")
-        (is (not (str/includes? applied "accept_merge assignment=htw-move-player"))
-            "B94: daemon must not accept-merge product while depth-2 is open")
-        (is (str/includes? product-status "state: merge_ready")
-            "product stays merge_ready until recovery finishes"))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest b94-still-accepts-the-open-depth-2-merger
   ;; Given: the open depth-2 merger itself is merge_ready
   ;; When: squad_next inspects

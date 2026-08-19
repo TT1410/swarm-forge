@@ -18,8 +18,7 @@
    "hardener"
    "qa"
    "architect"
-   "senior-implementer"
-   "merger"])
+   "senior-implementer"])
 
 (defn contract-path [template]
   (fs/path repo-root "swarmforge" "role-templates" (str template ".contract.edn")))
@@ -82,9 +81,8 @@
     (doseq [review-role ["gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"]]
       (is (= ["reviews/"] (:artifact-roots (by-role review-role))) review-role))
     (is (= ["src/" "test/" "features/" "qa/" "acceptance/" "bb/"] (:artifact-roots (by-role "implementer"))))
-    (is (= ["src/" "test/" "features/" "qa/" ".squad/"] (:artifact-roots (by-role "merger"))))
     (is (= "squad_next.sh" (:workflow-readiness-source (by-role "implementer"))))
-    (doseq [singleton-role ["hardener" "qa" "architect" "merger"]]
+    (doseq [singleton-role ["hardener" "qa" "architect"]]
       (is (true? (:singleton (by-role singleton-role))) singleton-role))
     (is (= "hardener" (:batch-kind (by-role "hardener"))))
     (is (= "qa" (:batch-kind (by-role "qa"))))
@@ -291,7 +289,7 @@
     (is (str/includes? prompt "Theme Module Map"))
     (is (str/includes? prompt "squad_theme.sh module-map"))
     (is (str/includes? prompt "theme-module-map.md"))
-    (is (= ["hardener" "qa" "architect" "merger"] (:singleton-roles c)))
+    (is (= ["hardener" "qa" "architect" "senior-implementer"] (:singleton-roles c)))
     (is (some #{"stories"} (:forbidden-writes c)))
     (is (some #{"production-code"} (:forbidden-writes c)))
     (is (some #{"theme-module-maps"} (:writes c)))))

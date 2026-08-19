@@ -229,25 +229,11 @@
   (or (read-value (fs/path root ".squad" "agents" role "metadata") "task_id")
       (read-value (fs/path root ".squad" "agents" role "metadata") "task-id")))
 
-(defn merger-holds-capacity-slot?
-  "B73/B27: merger that is only handoff_sent while its assignment is merge_blocked
-  does not fill the singleton template cap (matches squad_next)."
-  [root role]
-  (let [state (read-value (fs/path root ".squad" "agents" role "status") "state")
-        task-id (role-task-id root role)
-        assignment-state (when-not (str/blank? task-id)
-                           (read-value (fs/path root ".squad" "assignments" task-id "status")
-                                       "state"))]
-    (not (and (= "handoff_sent" state)
-              (= "merge_blocked" assignment-state)))))
-
 (defn counts-toward-template-cap?
   "Whether an active role consumes max_active_template for this template."
   [root role template]
   (and (active-role? root role)
-       (= template (role-template root role))
-       (or (not= "merger" template)
-           (merger-holds-capacity-slot? root role))))
+       (= template (role-template root role))))
 
 (defn active-template-count [root template]
   (count

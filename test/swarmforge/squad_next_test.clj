@@ -186,11 +186,6 @@
         (is (str/includes? (:out record-result) "COMMAND: squad_assign.sh result wumpus-analysis ")))
       (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
                   "assignment_id: wumpus-analysis\nstate: result_received\n")
-      (let [merge-ready (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out merge-ready) "NEXT_ACTION: check_merge_readiness"))
-        (is (str/includes? (:out merge-ready) "COMMAND: squad_assign.sh merge-ready wumpus-analysis")))
-      (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
-                  "assignment_id: wumpus-analysis\nstate: merge_ready\n")
       (let [accept-merge (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out accept-merge) "NEXT_ACTION: accept_merge"))
         (is (str/includes? (:out accept-merge) "COMMAND: squad_assign.sh accept-merge wumpus-analysis")))
@@ -1033,143 +1028,6 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-next-routes-merge-blocked-assignment-to-merger
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
-                  (str "assignment_id: cave-impl\n"
-                       "theme_id: wumpus\n"
-                       "story_id: cave-topology\n"
-                       "template: implementer\n"
-                       "assignment_file: " root "/instructions.md\n"
-                       "created_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl/status")
-                  (str "assignment_id: cave-impl\n"
-                       "state: merge_blocked\n"
-                       "detail: dry-run merge failed\n"
-                       "updated_at: 2026-08-03T00:00:00Z\n"))
-      (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
-        (is (str/includes? (:out next) "TEMPLATE: merger"))
-        (is (str/includes? (:out next) "ASSIGNMENT: cave-impl-merge"))
-        (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-merger cave-impl cave-impl-merge --auto-instructions --queue-spawn"))
-        (is (str/includes? (:out next) "merge-blocked assignment needs merger")))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-stops-merger-chain-at-max-depth-with-blocker
-  ;; Given a merge-blocked lineage already at max_merger_depth
-  ;; When squad_next runs
-  ;; Then it declares a merge blocker instead of creating another -merge
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  "max_merger_depth 2\n")
-      (doseq [[id template merge-for]
-              [["cave-impl" "implementer" nil]
-               ["cave-impl-merge" "merger" "cave-impl"]
-               ["cave-impl-merge-merge" "merger" "cave-impl-merge"]]]
-        (write-file (fs/path root ".squad/assignments" id "metadata")
-                    (str "assignment_id: " id "\n"
-                         "theme_id: wumpus\n"
-                         "story_id: cave-topology\n"
-                         "template: " template "\n"
-                         (when merge-for (str "merge_for: " merge-for "\n"))
-                         "assignment_file: " root "/instructions.md\n"))
-        (write-file (fs/path root ".squad/assignments" id "status")
-                    (str "assignment_id: " id "\n"
-                         "state: merge_blocked\n"
-                         "detail: merge failed\n")))
-      (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "declare_merge_blocker"))
-        (is (str/includes? (:out next) "ASSIGNMENT: cave-impl-merge-merge"))
-        (is (str/includes? (:out next) "max_merger_depth"))
-        (is (not (str/includes? (:out next) "cave-impl-merge-merge-merge"))))
-      (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
-            status (slurp (str (fs/path root ".squad/assignments/cave-impl-merge-merge/status")))
-            blocker (slurp (str (fs/path root ".squad/assignments/cave-impl-merge-merge/blocker.md")))]
-        (is (str/includes? applied "declare_merge_blocker"))
-        (is (str/includes? status "state: blocked"))
-        (is (str/includes? blocker "max_merger_depth"))
-        (is (fs/exists? (fs/path root ".squad/assignments/cave-impl-merge-merge/blocker"))))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-allows-second-merger-below-max-depth
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  "max_merger_depth 2\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
-                  (str "assignment_id: cave-impl\ntheme_id: wumpus\nstory_id: cave-topology\n"
-                       "template: implementer\nassignment_file: " root "/i.md\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl/status")
-                  "state: merge_blocked\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge/metadata")
-                  (str "assignment_id: cave-impl-merge\ntheme_id: wumpus\nstory_id: cave-topology\n"
-                       "template: merger\nmerge_for: cave-impl\nassignment_file: " root "/m.md\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge/status")
-                  "state: merge_blocked\n")
-      (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "create-merger cave-impl-merge cave-impl-merge-merge"))
-        (is (not (str/includes? (:out next) "declare_merge_blocker"))))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-routes-merge-blocked-assignment-to-merger-when-capacity-full
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  "max_transient_agents 1\n")
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
-      (write-agent-status! root "implementer-001" "running")
-      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
-                  "template: implementer\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
-                  (str "assignment_id: cave-impl\n"
-                       "theme_id: wumpus\n"
-                       "story_id: cave-topology\n"
-                       "template: implementer\n"
-                       "assignment_file: " root "/instructions.md\n"
-                       "created_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl/status")
-                  (str "assignment_id: cave-impl\n"
-                       "state: merge_blocked\n"
-                       "detail: dry-run merge failed\n"
-                       "updated_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge/metadata")
-                  (str "assignment_id: cave-impl-merge\n"
-                       "theme_id: wumpus\n"
-                       "story_id: cave-topology\n"
-                       "template: merger\n"
-                       "assignment_file: " root "/merger-assignment.md\n"
-                       "created_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge/status")
-                  (str "assignment_id: cave-impl-merge\n"
-                       "state: created\n"
-                       "detail: merger for cave-topology\n"
-                       "updated_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root "merger-assignment.md")
-                  "Resolve the merge.\n")
-      (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "NEXT_ACTION: request_spawn"))
-        (is (str/includes? (:out next) "TEMPLATE: merger"))
-        (is (str/includes? (:out next) "COMMAND: squad_spawn_request.sh merger cave-impl-merge")))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest squad-next-does-not-retire-agent-while-its-handoff-is-merge-blocked
   (let [root (tmp-dir)]
     (try
@@ -1202,72 +1060,8 @@
                        "updated_at: 2026-08-03T00:00:00Z\n"))
       (let [next (run {:dir root} (script "squad_next.sh"))]
         (is (not (str/includes? (:out next) "NEXT_ACTION: retire_agent")))
-        (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
-        (is (str/includes? (:out next) "TEMPLATE: merger"))
-        (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-merger cave-impl cave-impl-merge --auto-instructions --queue-spawn")))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-does-not-retire-merge-blocked-source-when-only-merger-has-result
-  ;; Given source assignment still merge_blocked (worktree held for recovery)
-  ;; and a downstream merger has only recorded a result (not merged to main)
-  ;; When squad_next runs
-  ;; Then do not retire the source agent; keep driving merge recovery
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
-      (write-agent-status! root "implementer-001" "handoff_sent")
-      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
-                  "template: implementer\ntask_id: cave-impl\n")
-      (write-file (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_implementer-001_to_squad-leader.handoff")
-                  (str "type: git_handoff\n"
-                       "to: squad-leader\n"
-                       "from: implementer-001\n"
-                       "priority: 50\n"
-                       "task: cave-impl\n"
-                       "commit: abcdef1234\n\n"
-                       "implementation ready\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
-                  (str "assignment_id: cave-impl\n"
-                       "theme_id: wumpus\n"
-                       "story_id: cave-topology\n"
-                       "template: implementer\n"
-                       "assignment_file: " root "/instructions.md\n"
-                       "created_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl/status")
-                  (str "assignment_id: cave-impl\n"
-                       "state: merge_blocked\n"
-                       "detail: accepted merge failed\n"
-                       "updated_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge/metadata")
-                  (str "assignment_id: cave-impl-merge\n"
-                       "theme_id: wumpus\n"
-                       "story_id: cave-topology\n"
-                       "template: merger\n"
-                       "merge_for: cave-impl\n"
-                       "assignment_file: " root "/merger.md\n"
-                       "created_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge/status")
-                  (str "assignment_id: cave-impl-merge\n"
-                       "state: created\n"
-                       "detail: merger for cave-topology\n"
-                       "updated_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge/result")
-                  (str "assignment_id: cave-impl-merge\n"
-                       "state: result_received\n"
-                       "from: merger-001\n"
-                       "commit: abcdef1234\n"))
-      (write-file (fs/path root "merger.md") "Resolve the merge.\n")
-      (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (not (str/includes? (:out next) "NEXT_ACTION: retire_agent")))
-        (is (not (str/includes? (:out next) "NEXT_ACTION: recover_agent")))
-        (is (or (str/includes? (:out next) "TEMPLATE: merger")
-                (str/includes? (:out next) "create-merger")
-                (str/includes? (:out next) "request_spawn"))
-            "should continue merger recovery while source stays held"))
+        (is (not (str/includes? (:out next) "TEMPLATE: merger")))
+        (is (not (str/includes? (:out next) "create-merger"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -1308,55 +1102,6 @@
         (is (str/includes? (:out next) "NEXT_ACTION: retire_agent"))
         (is (str/includes? (:out next) "AGENT: implementer-001"))
         (is (str/includes? (:out next) "COMMAND: squad_retire.sh implementer-001")))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-does-not-recover-quiet-merge-blocked-agent-drives-merger
-  ;; Given a quiet handoff_sent implementer whose assignment is merge_blocked
-  ;; When recovery thresholds would otherwise fire
-  ;; Then residual is merger recovery, not recover_agent
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  "recovery_quiet_seconds 5\nrecovery_retry_seconds 5\n")
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "implementer-001\timplementer-001\t" root "/.worktrees/implementer-001\tswarmforge-implementer-001\tImplementer 001\tcodex\ttask\n"))
-      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
-                  "template: implementer\ntask_id: cave-impl\n")
-      (write-agent-status! root "implementer-001" "handoff_sent" "2026-08-03T00:00:00Z")
-      (write-file (fs/path root ".squad/agents/implementer-001/heartbeat")
-                  "updated_at: 2026-08-03T00:00:00Z\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
-                  (str "assignment_id: cave-impl\n"
-                       "theme_id: wumpus\n"
-                       "story_id: cave-topology\n"
-                       "template: implementer\n"
-                       "assignment_file: " root "/instructions.md\n"
-                       "created_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl/status")
-                  (str "assignment_id: cave-impl\n"
-                       "state: merge_blocked\n"
-                       "detail: dry-run merge failed\n"
-                       "updated_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".swarmforge/handoffs/inbox/completed/50_20260803T000000Z_000001_from_implementer-001_to_squad-leader.handoff")
-                  (str "type: git_handoff\n"
-                       "to: squad-leader\n"
-                       "from: implementer-001\n"
-                       "priority: 50\n"
-                       "task: cave-impl\n"
-                       "commit: abcdef1234\n\n"
-                       "implementation ready\n"))
-      (let [next (run {:dir root
-                       :env {"SWARMFORGE_NOW" "2026-08-03T00:10:00Z"}}
-                      (script "squad_next.sh"))]
-        (is (not (str/includes? (:out next) "NEXT_ACTION: recover_agent"))
-            "merge-held agents must not enter recover_agent loop")
-        (is (str/includes? (:out next) "TEMPLATE: merger"))
-        (is (or (str/includes? (:out next) "create-merger")
-                (str/includes? (:out next) "create_assignment")
-                (str/includes? (:out next) "request_spawn"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -1719,43 +1464,6 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-next-second-merger-when-first-is-only-handoff-sent-merge-blocked
-  ;; Given merger-001 handoff_sent with merge_blocked assignment (B27)
-  ;; And another product assignment is merge_blocked
-  ;; When residual runs
-  ;; Then a new merger can be created (slot not monopolized)
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "merger-001\tmerger-001\t" root "/.worktrees/merger-001\tswarmforge-merger-001\tMerger 001\tcodex\ttask\n"))
-      (write-file (fs/path root ".squad/agents/merger-001/metadata")
-                  "template: merger\ntask_id: cave-impl-merge\n")
-      (write-agent-status! root "merger-001" "handoff_sent")
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge/metadata")
-                  (str "assignment_id: cave-impl-merge\ntheme_id: wumpus\nstory_id: cave\n"
-                       "template: merger\nmerge_for: cave-impl\nassignment_file: m.md\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge/status")
-                  "state: merge_blocked\ndetail: dry-run failed\n")
-      (write-file (fs/path root ".squad/assignments/cleaner-impl/metadata")
-                  (str "assignment_id: cleaner-impl\ntheme_id: wumpus\nstory_id: cave\n"
-                       "template: cleaner\nassignment_file: c.md\n"))
-      (write-file (fs/path root ".squad/assignments/cleaner-impl/status")
-                  "state: merge_blocked\ndetail: dry-run failed\n")
-      (write-file (fs/path root "swarmforge/role-templates/merger.prompt") "Merge.\n")
-      (write-file (fs/path root "swarmforge/role-templates/merger.contract.edn")
-                  "{:handoff-targets [\"squad-leader\"]}\n")
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (or (str/includes? out "create-merger")
-                (str/includes? out "TEMPLATE: merger")
-                (str/includes? out "request_spawn"))
-            "handoff_sent merge_blocked merger must not block next merger")
-        (is (not (and (str/includes? out "NEXT_ACTION: wait")
-                      (not (str/includes? out "merger"))))))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest squad-next-projects-batch-result-even-when-assignment-not-yet-merged
   ;; Durable batch result alone is enough to project onto member packets
   (let [root (tmp-dir)]
@@ -1872,84 +1580,6 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest apply-mechanical-does-not-finish-merge-blocked-handoff
-  ;; Given an in-process git handoff whose assignment is merge_blocked
-  ;; When squad_next runs (with or without apply-mechanical)
-  ;; Then it must not recommend finish_in_process_handoff
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "code-reviewer-001\tcode-reviewer-001\t" root "/.worktrees/cr\tswarmforge-cr\tCR\tcodex\ttask\n"))
-      (write-agent-status! root "code-reviewer-001" "handoff_sent")
-      (write-file (fs/path root ".squad/agents/code-reviewer-001/metadata")
-                  "template: code-reviewer\ntask_id: alpha-code-review\n")
-      (write-file (fs/path root ".squad/assignments/alpha-code-review/metadata")
-                  (str "assignment_id: alpha-code-review\ntheme_id: wumpus\nstory_id: alpha\n"
-                       "template: code-reviewer\nassignment_file: " root "/i.md\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-code-review/status")
-                  "assignment_id: alpha-code-review\nstate: merge_blocked\n")
-      (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_from_code-reviewer-001_to_squad-leader.handoff")
-                  (str "type: git_handoff\nto: squad-leader\nfrom: code-reviewer-001\npriority: 50\n"
-                       "task: alpha-code-review\ncommit: abcdef1234\nassignment: alpha-code-review\n"
-                       "template: code-reviewer\nartifacts: .squad/reviews/alpha-code-review.md\n\n"))
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (not (str/includes? out "NEXT_ACTION: finish_in_process_handoff"))
-            "merge-blocked handoff must not be finished")
-        (is (or (str/includes? out "create_assignment")
-                (str/includes? out "request_spawn")
-                (str/includes? out "merge_blocked")
-                (str/includes? out "hold_merge_blocked")
-                (str/includes? out "merger")
-                (str/includes? out "park_merge_blocked"))
-            "should route merge recovery instead of completing the handoff"))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest apply-mechanical-parks-merge-blocked-in-process-so-new-handoffs-claim
-  ;; Given in_process is merge_blocked and new mail waits
-  ;; When apply-mechanical runs
-  ;; Then the blocked handoff is parked under held/ and new is claimed
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "qa-procedure-writer-001\tqa-procedure-writer-001\t" root "/.worktrees/q\tswarmforge-q\tQ\tcodex\ttask\n"))
-      (write-agent-status! root "qa-procedure-writer-001" "handoff_sent")
-      (write-file (fs/path root ".squad/agents/qa-procedure-writer-001/metadata")
-                  "template: qa-procedure-writer\ntask_id: blocked-qa\n")
-      (write-file (fs/path root ".squad/assignments/blocked-qa/metadata")
-                  (str "assignment_id: blocked-qa\ntheme_id: wumpus\nstory_id: s1\n"
-                       "template: qa-procedure-writer\nassignment_file: " root "/i.md\n"))
-      (write-file (fs/path root ".squad/assignments/blocked-qa/status")
-                  "assignment_id: blocked-qa\nstate: merge_blocked\n")
-      (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_blocked.handoff")
-                  (str "type: git_handoff\nto: squad-leader\nfrom: qa-procedure-writer-001\npriority: 50\n"
-                       "task: blocked-qa\ncommit: abcdef1234\nassignment: blocked-qa\n"
-                       "template: qa-procedure-writer\n\nmerge_and_process\n"))
-      (write-file (fs/path root ".swarmforge/handoffs/inbox/new/50_new.handoff")
-                  (str "type: git_handoff\nto: squad-leader\nfrom: qa-procedure-writer-001\npriority: 50\n"
-                       "task: other-qa\ncommit: abcdef9999\nassignment: other-qa\n"
-                       "template: qa-procedure-writer\n\nmerge_and_process\n"))
-      (write-file (fs/path root ".squad/assignments/other-qa/metadata")
-                  (str "assignment_id: other-qa\ntheme_id: wumpus\nstory_id: s2\n"
-                       "template: qa-procedure-writer\nassignment_file: " root "/j.md\n"))
-      (write-file (fs/path root ".squad/assignments/other-qa/status")
-                  "assignment_id: other-qa\nstate: in_progress\n")
-      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
-        (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/held/50_blocked.handoff"))
-            "merge_blocked handoff must leave in_process")
-        (is (not (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/in_process/50_blocked.handoff"))))
-        (is (or (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/in_process/50_new.handoff"))
-                (str/includes? out "process_handoff")
-                (str/includes? out "APPLIED_TRANSITION: process_handoff")
-                (str/includes? out "record_assignment_result"))
-            "new handoff should be claimable after park"))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest apply-mechanical-records-in-process-git-handoff-result
   ;; Given a claimed git handoff for an in_progress assignment
   ;; When apply-mechanical runs
@@ -1980,101 +1610,6 @@
           (is (fs/exists? (fs/path root ".squad/assignments/wumpus-analysis/result"))
               "result file written")
           (is (not (str/includes? applied "NEXT_ACTION: record_assignment_result")))))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-treats-merger-as-singleton-queue
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  (str "max_transient_agents 10\n"
-                       "max_active_template merger 1\n"
-                       "max_merger_depth 2\n"))
-      (write-file (fs/path root "swarmforge/role-templates/merger.prompt") "merge\n")
-      (doseq [[id story] [["story-a-impl" "story-a"] ["story-b-impl" "story-b"]]]
-        (write-file (fs/path root ".squad/assignments" id "metadata")
-                    (str "assignment_id: " id "\n"
-                         "theme_id: wumpus\n"
-                         "story_id: " story "\n"
-                         "template: implementer\n"
-                         "assignment_file: " root "/.squad/assignments/" id "/assignment.md\n"))
-        (write-file (fs/path root ".squad/assignments" id "status")
-                    (str "assignment_id: " id "\n"
-                         "state: merge_blocked\n"
-                         "detail: dry-run merge failed\n"
-                         "updated_at: now\n"))
-        (write-file (fs/path root ".squad/assignments" id "assignment.md")
-                    (str "# Assignment " id "\n")))
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? out "NEXT_ACTION: create_assignment"))
-        (is (str/includes? out "TEMPLATE: merger"))
-        (is (str/includes? out "CANDIDATES: 1")
-            "only one merger create while none are open"))
-      (write-file (fs/path root ".squad/assignments/story-a-impl-merge/metadata")
-                  (str "assignment_id: story-a-impl-merge\n"
-                       "theme_id: wumpus\n"
-                       "story_id: story-a\n"
-                       "template: merger\n"
-                       "merge_for: story-a-impl\n"
-                       "assignment_file: " root "/.squad/assignments/story-a-impl-merge/assignment.md\n"))
-      (write-file (fs/path root ".squad/assignments/story-a-impl-merge/status")
-                  (str "assignment_id: story-a-impl-merge\n"
-                       "state: created\n"
-                       "detail: merger for story-a-impl\n"
-                       "updated_at: now\n"))
-      (write-file (fs/path root ".squad/assignments/story-a-impl-merge/assignment.md")
-                  "# Merger\n")
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? out "NEXT_ACTION: request_spawn"))
-        (is (str/includes? out "TEMPLATE: merger"))
-        (is (str/includes? out "ASSIGNMENT: story-a-impl-merge"))
-        (is (str/includes? out "CONCURRENT_ACTIONS: 1")
-            "singleton schedules only one merger spawn")
-        (is (not (str/includes? out "create_assignment"))
-            "with an open merger, do not create a second for story-b"))
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "merger-001\tmerger-001\t" root "/.worktrees/merger-001\tswarmforge-merger-001\tMerger 001\tcodex\ttask\n"))
-      (write-agent-status! root "merger-001" "running")
-      (write-file (fs/path root ".squad/agents/merger-001/metadata")
-                  (str "agent_id: merger-001\n"
-                       "template: merger\n"
-                       "task_id: story-a-impl-merge\n"
-                       "session: swarmforge-merger-001\n"))
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (not (str/includes? out "create_assignment"))
-            "no further merger create while a merger agent is active")
-        (is (not (str/includes? out "request_spawn"))
-            "no further merger spawn while a merger agent is active"))
-      (finally
-        (fs/delete-tree root)))))
-(deftest squad-next-does-not-restart-merger-after-max-depth-blocker
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  "max_merger_depth 2\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
-                  (str "assignment_id: cave-impl\ntheme_id: wumpus\nstory_id: cave\n"
-                       "template: implementer\nassignment_file: x\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl/status")
-                  "state: merge_blocked\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/metadata")
-                  (str "assignment_id: cave-impl-merge-merge\ntheme_id: wumpus\nstory_id: cave\n"
-                       "template: merger\nmerge_for: cave-impl-merge\nassignment_file: y\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/status")
-                  "state: blocked\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/blocker")
-                  "kind: merge-limit\n")
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (not (str/includes? out "create-merger"))
-            "exhausted lineage must not create another merger")
-        (is (not (str/includes? out "TEMPLATE: merger"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -2160,10 +1695,10 @@
             residual (run {:dir root} (script "squad_next.sh") "--residual-only")]
         (is (str/includes? (:out inspection) "NEXT_ACTION: accept_merge")
             "plain inspection still shows the real merge command")
-        (is (str/includes? (:out residual) "NEXT_ACTION: wait_for_daemon_main_git"))
-        (is (str/includes? (:out residual) "DEFERRED_ACTION: accept_merge"))
-        (is (not (str/includes? (:out residual) "COMMAND: squad_assign.sh accept-merge"))
-            "SL residual must not hand accept-merge to the leader"))
+        (is (str/includes? (:out residual) "NEXT_ACTION: accept_merge"))
+        (is (str/includes? (:out residual) "COMMAND: squad_assign.sh accept-merge"))
+        (is (not (str/includes? (:out residual) "wait_for_daemon_main_git"))
+            "SL residual is the merge; daemon does not own it"))
       (finally
         (fs/delete-tree root)))))
 
@@ -2186,8 +1721,10 @@
       (write-file (fs/path root ".squad/assignments/wumpus-analysis/status")
                   "assignment_id: wumpus-analysis\nstate: result_received\n")
       (let [residual (run {:dir root} (script "squad_next.sh") "--residual-only")]
-        (is (str/includes? (:out residual) "NEXT_ACTION: wait_for_daemon_main_git"))
-        (is (str/includes? (:out residual) "DEFERRED_ACTION: check_merge_readiness")))
+        (is (str/includes? (:out residual) "NEXT_ACTION: accept_merge"))
+        (is (str/includes? (:out residual) "COMMAND: squad_assign.sh accept-merge"))
+        (is (not (str/includes? (:out residual) "wait_for_daemon_main_git")))
+        (is (not (str/includes? (:out residual) "check_merge_readiness"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -2351,42 +1888,6 @@
                 (str/includes? out "alpha-cleaner-r2")
                 (str/includes? out "implemented story needs cleaning"))
             "should progress toward a fresh cleaner cycle"))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest p0-held-handoff-finishes-after-assignment-merged
-  ;; Given held handoff for an assignment that later merged
-  ;; When apply-mechanical runs
-  ;; Then handoff moves to in_process and finish_held_handoff is applied
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
-                       "implementer-001\timplementer-001\t" root "/.worktrees/i\tswarmforge-i\tI\tcodex\ttask\n"))
-      (write-agent-status! root "implementer-001" "handoff_sent")
-      (write-file (fs/path root ".squad/agents/implementer-001/metadata")
-                  "template: implementer\ntask_id: alpha-implementation\n")
-      (write-file (fs/path root ".squad/assignments/alpha-implementation/metadata")
-                  (str "assignment_id: alpha-implementation\ntheme_id: wumpus\nstory_id: alpha\n"
-                       "template: implementer\nassignment_file: " root "/i.md\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-implementation/status")
-                  "assignment_id: alpha-implementation\nstate: merged\n")
-      (write-file (fs/path root ".squad/assignments/alpha-implementation/accepted-merge")
-                  (str "assignment_id: alpha-implementation\nstate: merged\n"
-                       "commit: abcdef1234\nmerge_commit: fedcba4321\n"))
-      (write-file (fs/path root ".swarmforge/handoffs/inbox/held/50_held.handoff")
-                  (str "type: git_handoff\nto: squad-leader\nfrom: implementer-001\npriority: 50\n"
-                       "task: alpha-implementation\ncommit: abcdef1234\nassignment: alpha-implementation\n"
-                       "agent: implementer-001\ntemplate: implementer\n\n"
-                       "merge_and_process implementer-001 abcdef1234\n"))
-      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
-        (is (or (str/includes? out "finish_held_handoff")
-                (str/includes? out "finish_in_process_handoff")
-                (not (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/held/50_held.handoff"))))
-            "held handoff for merged assignment must be finished")
-        (is (not (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/held/50_held.handoff")))
-            "held file must leave held tray"))
       (finally
         (fs/delete-tree root)))))
 

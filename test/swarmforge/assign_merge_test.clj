@@ -335,7 +335,6 @@
                                "merge-ready"
                                "wumpus-cave-gherkin-review")]
           (is (str/includes? (:out merge-ready) "STATE: merge_ready"))
-          (is (str/includes? (:out merge-ready) "dry-run merge passed"))
           (is (str/includes? (slurp (str (fs/path root ".squad/reviews/wumpus-cave-gherkin-review.md")))
                              "SL scratch note"))))
       (finally
@@ -858,178 +857,6 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-assign-create-merger-resolves-original-merge-block
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
-      (write-file (fs/path root "swarmforge/role-templates/merger.prompt")
-                  "merge\n")
-      (write-file (fs/path root "theme.md")
-                  "Implement a faithful Hunt the Wumpus.\n")
-      (write-file (fs/path root "stories/cave-topology.md")
-                  "Story: cave topology and setup.\n")
-      (write-file (fs/path root "instructions.md")
-                  "Resolve the blocked merge.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
-      (let [original "wumpus-cave-impl"
-            merger "wumpus-cave-impl-merge"
-            commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))
-            original-dir (fs/path root ".squad/assignments" original)
-            merger-dir (fs/path root ".squad/assignments" merger)]
-        (write-file (fs/path original-dir "metadata")
-                    (str "assignment_id: " original "\n"
-                         "theme_id: wumpus\n"
-                         "scope: story\n"
-                         "story_id: cave-topology\n"
-                         "template: implementer\n"
-                         "assignment_file: " root "/original-assignment.md\n"
-                         "created_at: 2026-08-03T00:00:00Z\n"))
-        (write-file (fs/path original-dir "status")
-                    (str "assignment_id: " original "\n"
-                         "state: merge_blocked\n"
-                         "detail: accepted merge failed\n"
-                         "updated_at: 2026-08-03T00:00:00Z\n"))
-        (write-file (fs/path original-dir "result")
-                    (str "assignment_id: " original "\n"
-                         "state: result_received\n"
-                         "from: implementer-001\n"
-                         "commit: " commit "\n"
-                         "updated_at: 2026-08-03T00:00:00Z\n"))
-        (write-file (fs/path original-dir "blocker")
-                    (str "assignment_id: " original "\n"
-                         "state: blocked\n"))
-        (write-file (fs/path original-dir "blocker.md")
-                    "Merge conflict.\n")
-        (let [create (run {:dir root}
-                          (script "squad_assign.sh")
-                          "create-merger"
-                          original
-                          merger
-                          "instructions.md")
-              assignment-text (slurp (str (fs/path merger-dir "assignment.md")))
-              metadata-text (slurp (str (fs/path merger-dir "metadata")))]
-          (is (str/includes? (:out create) "SQUAD_ASSIGNMENT: wumpus-cave-impl-merge"))
-          (is (str/includes? (:out create) "TEMPLATE: merger"))
-          (is (str/includes? assignment-text "## Merge Source"))
-          (is (str/includes? assignment-text "blocked_assignment_id: wumpus-cave-impl"))
-          (is (str/includes? metadata-text "merge_for: wumpus-cave-impl"))
-          (is (str/includes? metadata-text "conflicting_template: implementer"))
-          (is (str/includes? metadata-text "conflicting_agent: implementer-001"))
-          (is (str/includes? metadata-text (str "conflicting_commit: " commit))))
-        (write-file (fs/path root "merger-result.handoff")
-                    (result-handoff-text "merge-1" "merger-001" merger
-                                         "merger" commit
-                                         (str "resolved merge " commit)))
-        (run {:dir root} (script "squad_assign.sh") "result" merger "merger-result.handoff")
-        (run {:dir root} (script "squad_assign.sh") "merge-ready" merger)
-        (let [accepted (run {:dir root} (script "squad_assign.sh") "accept-merge" merger)
-              original-status (slurp (str (fs/path original-dir "status")))
-              original-accepted (slurp (str (fs/path original-dir "accepted-merge")))
-              original-merge (slurp (str (fs/path original-dir "merge")))]
-          (is (str/includes? (:out accepted) "STATE: merged"))
-          (is (str/includes? original-status "state: merged"))
-          (is (str/includes? original-status "resolved by merger assignment wumpus-cave-impl-merge"))
-          (is (str/includes? original-accepted "resolved_by: wumpus-cave-impl-merge"))
-          (is (str/includes? original-merge "state: merged"))
-          (is (not (fs/exists? (fs/path original-dir "blocker"))))
-          (is (not (fs/exists? (fs/path original-dir "blocker.md"))))))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-assign-nested-merger-resolves-full-merge-block-chain
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (fs/create-dirs (fs/path root "swarmforge/role-templates"))
-      (write-file (fs/path root "swarmforge/role-templates/merger.prompt")
-                  "merge\n")
-      (write-file (fs/path root "theme.md")
-                  "Implement a faithful Hunt the Wumpus.\n")
-      (write-file (fs/path root "stories/cave-topology.md")
-                  "Story: cave topology and setup.\n")
-      (write-file (fs/path root "instructions.md")
-                  "Resolve the blocked merge.\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
-      (let [original "wumpus-cave-impl"
-            first-merger "wumpus-cave-impl-merge"
-            second-merger "wumpus-cave-impl-merge-merge"
-            commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))
-            original-dir (fs/path root ".squad/assignments" original)
-            first-dir (fs/path root ".squad/assignments" first-merger)
-            second-dir (fs/path root ".squad/assignments" second-merger)]
-        (write-file (fs/path original-dir "metadata")
-                    (str "assignment_id: " original "\n"
-                         "theme_id: wumpus\n"
-                         "scope: story\n"
-                         "story_id: cave-topology\n"
-                         "template: implementer\n"
-                         "assignment_file: " root "/original-assignment.md\n"
-                         "created_at: 2026-08-03T00:00:00Z\n"))
-        (write-file (fs/path original-dir "status")
-                    (str "assignment_id: " original "\n"
-                         "state: merge_blocked\n"
-                         "detail: accepted merge failed\n"
-                         "updated_at: 2026-08-03T00:00:00Z\n"))
-        (write-file (fs/path original-dir "result")
-                    (str "assignment_id: " original "\n"
-                         "state: result_received\n"
-                         "from: implementer-001\n"
-                         "commit: " commit "\n"
-                         "updated_at: 2026-08-03T00:00:00Z\n"))
-        (write-file (fs/path original-dir "blocker.md") "Original merge conflict.\n")
-        (run {:dir root}
-             (script "squad_assign.sh")
-             "create-merger"
-             original
-             first-merger
-             "instructions.md")
-        (write-file (fs/path first-dir "status")
-                    (str "assignment_id: " first-merger "\n"
-                         "state: merge_blocked\n"
-                         "detail: merger merge failed\n"
-                         "updated_at: 2026-08-03T00:00:00Z\n"))
-        (write-file (fs/path first-dir "result")
-                    (str "assignment_id: " first-merger "\n"
-                         "state: result_received\n"
-                         "from: merger-001\n"
-                         "commit: " commit "\n"
-                         "updated_at: 2026-08-03T00:00:00Z\n"))
-        (write-file (fs/path first-dir "blocker.md") "Merger merge conflict.\n")
-        (run {:dir root}
-             (script "squad_assign.sh")
-             "create-merger"
-             first-merger
-             second-merger
-             "instructions.md")
-        (write-file (fs/path root "second-merger-result.handoff")
-                    (result-handoff-text "merge-2" "merger-002" second-merger
-                                         "merger" commit
-                                         (str "resolved nested merge " commit)))
-        (run {:dir root} (script "squad_assign.sh") "result" second-merger "second-merger-result.handoff")
-        (run {:dir root} (script "squad_assign.sh") "merge-ready" second-merger)
-        (run {:dir root} (script "squad_assign.sh") "accept-merge" second-merger)
-        (let [original-status (slurp (str (fs/path original-dir "status")))
-              first-status (slurp (str (fs/path first-dir "status")))
-              first-accepted (slurp (str (fs/path first-dir "accepted-merge")))
-              second-metadata (slurp (str (fs/path second-dir "metadata")))]
-          (is (str/includes? second-metadata (str "merge_for: " first-merger)))
-          (is (str/includes? original-status "state: merged"))
-          (is (str/includes? original-status (str "resolved by merger assignment " first-merger)))
-          (is (str/includes? first-status "state: merged"))
-          (is (str/includes? first-status (str "resolved by merger assignment " second-merger)))
-          (is (str/includes? first-accepted (str "resolved_by: " second-merger)))
-          (is (not (fs/exists? (fs/path original-dir "blocker.md"))))
-          (is (not (fs/exists? (fs/path first-dir "blocker.md"))))))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest squad-assign-accepts-merge-before-review
   (let [root (tmp-dir)]
     (try
@@ -1225,40 +1052,6 @@
         (fs/delete-tree root)))))
 
 
-(deftest squad-assign-refuses-create-merger-at-max-depth
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf") "max_merger_depth 2\n")
-      (write-file (fs/path root "swarmforge/role-templates/merger.prompt") "merge\n")
-      (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
-      (write-file (fs/path root ".squad/themes/wumpus/status") "state: theme_created\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/metadata")
-                  (str "assignment_id: cave-impl-merge-merge\n"
-                       "theme_id: wumpus\n"
-                       "story_id: cave\n"
-                       "template: merger\n"
-                       "merge_for: cave-impl-merge\n"
-                       "assignment_file: x\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/status")
-                  "state: merge_blocked\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/result")
-                  "from: merger-001\ncommit: abcdef1234\n")
-      (let [result (run {:dir root
-                         :ok? false}
-                        (script "squad_assign.sh")
-                        "create-merger"
-                        "cave-impl-merge-merge"
-                        "cave-impl-merge-merge-merge"
-                        "--auto-instructions")]
-        (is (= 2 (:exit result)))
-        (is (str/includes? (:err result) "max_merger_depth"))
-        (is (not (fs/exists? (fs/path root ".squad/assignments/cave-impl-merge-merge-merge")))))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest squad-assign-refuses-reject-at-max-depth-merge-blocked
   (let [root (tmp-dir)]
     (try
@@ -1283,43 +1076,6 @@
         (is (str/includes? (:err result) "block"))
         (is (str/includes? (slurp (str (fs/path root ".squad/assignments/cave-impl-merge-merge/status")))
                            "state: merge_blocked")))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-assign-refuses-create-merger-when-lineage-already-blocked-at-max-depth
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "swarmforge/squad.conf") "max_merger_depth 2\n")
-      (write-file (fs/path root "swarmforge/role-templates/merger.prompt") "merge\n")
-      (write-file (fs/path root ".squad/themes/wumpus/theme.md") "theme\n")
-      (write-file (fs/path root ".squad/themes/wumpus/status") "state: theme_created\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl/metadata")
-                  (str "assignment_id: cave-impl\ntheme_id: wumpus\nstory_id: cave\n"
-                       "template: implementer\nassignment_file: x\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl/status")
-                  "state: merge_blocked\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl/result")
-                  "from: implementer-001\ncommit: abcdef1234\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/metadata")
-                  (str "assignment_id: cave-impl-merge-merge\ntheme_id: wumpus\nstory_id: cave\n"
-                       "template: merger\nmerge_for: cave-impl-merge\n"))
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/status")
-                  "state: blocked\n")
-      (write-file (fs/path root ".squad/assignments/cave-impl-merge-merge/blocker")
-                  "state: blocked\n")
-      (let [result (run {:dir root
-                         :ok? false}
-                        (script "squad_assign.sh")
-                        "create-merger"
-                        "cave-impl"
-                        "cave-impl-merge"
-                        "--auto-instructions")]
-        (is (= 2 (:exit result)))
-        (is (str/includes? (:err result) "exhausted"))
-        (is (not (fs/exists? (fs/path root ".squad/assignments/cave-impl-merge")))))
       (finally
         (fs/delete-tree root)))))
 

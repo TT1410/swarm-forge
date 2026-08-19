@@ -16,6 +16,7 @@
             [swarmforge.issues-p3-test]
             [swarmforge.launcher-test]
             [swarmforge.recover-test]
+            [swarmforge.redo-next-test]
             [swarmforge.role-contract-test]
             [swarmforge.simulator-test]
             [swarmforge.spawn-test]
@@ -41,6 +42,7 @@
     swarmforge.issues-p3-test
     swarmforge.launcher-test
     swarmforge.recover-test
+    swarmforge.redo-next-test
     swarmforge.role-contract-test
     swarmforge.spawn-test
     swarmforge.squad-actions-test

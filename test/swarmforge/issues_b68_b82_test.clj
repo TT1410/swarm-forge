@@ -18,26 +18,6 @@
       "B68: product dashboard residual beats spawn wait")
   (is (not (plane/residual-class-before? :pending-spawn :dashboard-request))))
 
-(deftest b73-merger-handoff-merge-blocked-not-counted
-  (let [root (tmp-dir)]
-    (try
-      (write-file (fs/path root ".swarmforge" "roles.tsv")
-                  (str "merger-001\tmaster\t" root
-                       "\tswarmforge-merger-001\tMerger 001\tcodex\ttask\n"))
-      (write-file (fs/path root ".squad" "agents" "merger-001" "status")
-                  "state: handoff_sent\ndetail: done\n")
-      (write-file (fs/path root ".squad" "agents" "merger-001" "metadata")
-                  "template: merger\ntask_id: blocked-merge\n")
-      (write-file (fs/path root ".squad" "assignments" "blocked-merge" "status")
-                  "state: merge_blocked\ndetail: tracked checkout dirty\n")
-      (with-redefs [daemon/skip-tmux-env? (constantly true)
-                    daemon/active-state? (constantly true)]
-        (is (false? (daemon/merger-holds-capacity-slot? root "merger-001")))
-        (is (zero? (daemon/active-template-count root "merger"))
-            "B73: handoff_sent+merge_blocked merger free for spawn"))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest b75-dirt-detail-not-replayed
   (is (true? (assign/dirt-defer-detail? "tracked checkout dirty")))
   (is (false? (assign/dirt-defer-detail? "dry-run merge failed")))
@@ -120,14 +100,13 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest b85-analyst-is-singleton-template
-  (is (contains? next/singleton-templates "analyst")
-      "B85: analyst in singleton-templates")
+(deftest singleton-templates-come-from-config
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root "swarmforge" "squad.conf")
-                  "max_active_template analyst 1\nmax_active_template implementer 3\n")
-      (is (= 1 (cfg/squad-template-limit root "analyst"))
-          "B85: max_active_template analyst 1")
+                  "max_active_template hardener 1\nmax_active_template analyst 3\n")
+      (is (contains? (cfg/singleton-templates root) "hardener"))
+      (is (not (contains? (cfg/singleton-templates root) "analyst")))
+      (is (= 3 (cfg/squad-template-limit root "analyst")))
       (finally
         (fs/delete-tree root)))))

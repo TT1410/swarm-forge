@@ -4,8 +4,7 @@
   A transition is a pure description of before → after durable writes.
   apply-transition! is the single persistence entry for that change.
 
-  First vertical: accept-merge success records (status, accepted-merge, events,
-  optional original-assignment resolution)."
+  First vertical: accept-merge success records (status, accepted-merge, events)."
   (:require [babashka.fs :as fs]
             [squad-records :as rec]
             [clojure.string :as str]))
@@ -48,8 +47,7 @@
 (defn accept-merge-writes
   "Build write list for successful accept-merge on assignment-id.
   Does not run git — only durable record side effects after merge succeeded."
-  [root assignment-id {:keys [commit merge-commit detail now theme-id story-id
-                              original-id original-commit resolved-by]}]
+  [root assignment-id {:keys [commit merge-commit detail now theme-id story-id]}]
   (let [dir (assignment-dir root assignment-id)
         now (or now (timestamp))
         detail (or detail "merged")
@@ -78,42 +76,7 @@
       (conj {:type :event
              :path (fs/path root ".squad" "themes" theme-id "events.log")
              :line (str now "\tassignment_merged\t" assignment-id "\t" commit "\t"
-                        (or story-id "unknown"))})
-      original-id
-      (into (let [odir (assignment-dir root original-id)
-                  odetail (str "resolved by merger assignment "
-                               (or resolved-by assignment-id))]
-              [{:type :delete :path (fs/path odir "blocker")}
-               {:type :delete :path (fs/path odir "blocker.md")}
-               {:type :kv
-                :path (fs/path odir "accepted-merge")
-                :keys ["assignment_id" "state" "commit" "merge_commit" "resolved_by" "detail" "updated_at"]
-                :map {"assignment_id" original-id
-                      "state" "merged"
-                      "commit" (or original-commit commit)
-                      "merge_commit" merge-commit
-                      "resolved_by" (or resolved-by assignment-id)
-                      "detail" odetail
-                      "updated_at" now}}
-               {:type :kv
-                :path (fs/path odir "merge")
-                :keys ["assignment_id" "state" "commit" "detail" "updated_at"]
-                :map {"assignment_id" original-id
-                      "state" "merged"
-                      "commit" commit
-                      "detail" odetail
-                      "updated_at" now}}
-               {:type :kv
-                :path (fs/path odir "status")
-                :keys ["assignment_id" "state" "detail" "updated_at"]
-                :map {"assignment_id" original-id
-                      "state" "merged"
-                      "detail" odetail
-                      "updated_at" now}}
-               {:type :event
-                :path (fs/path odir "events.log")
-                :line (str now "\tmerged_by_merger\t"
-                           (or resolved-by assignment-id) "\t" merge-commit)}])))))
+                        (or story-id "unknown"))}))))
 
 (defn apply-transition!
   "B21: apply one named transition. Returns {:op :before :after :writes-count}.
@@ -121,7 +84,7 @@
   Currently supported:
   :accept-merge — durable records after git merge succeeded
     args: :assignment-id :commit :merge-commit :detail :now
-          :theme-id :story-id :original-id :original-commit :resolved-by"
+          :theme-id :story-id"
   [root op args]
   (let [op (keyword op)
         assignment-id (:assignment-id args)

@@ -14,7 +14,6 @@
   (str "Usage:\n"
        "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn] [--batch-stories id,id]\n"
        "  squad_assign.sh create-batch <theme-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
-       "  squad_assign.sh create-merger <blocked-assignment-id> <merger-assignment-id> <instructions-file|--auto-instructions> [--queue-spawn]\n"
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
        "  squad_assign.sh merge-ready <assignment-id>\n"
        "  squad_assign.sh review <assignment-id> <accepted|changes-requested> <review-file>\n"
@@ -160,15 +159,6 @@
             :assignment-id assignment-id
             :instructions-file instructions-file
             :scope "batch"}
-           (parse-create-options! option-tokens))))
-
-(defn parse-create-merger-args! [args]
-  (when-not (>= (count args) 4)
-    (exit! 1 usage-text))
-  (let [[_ blocked-assignment-id assignment-id instructions-file & option-tokens] args]
-    (merge {:blocked-assignment-id blocked-assignment-id
-            :assignment-id assignment-id
-            :instructions-file instructions-file}
            (parse-create-options! option-tokens))))
 
 (def valid-review-decisions
@@ -341,7 +331,7 @@
 (defn include-module-map? [template]
   (contains? module-map-templates template))
 
-(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text module-map-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence merge-text]}]
+(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text module-map-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
@@ -368,9 +358,6 @@
        (tool-lines "Optional Tools" optional-tools)
        (tool-startup-lines template required-tools)
        (tool-evidence-lines required-evidence)
-       (when merge-text
-         (str "## Merge Source\n\n"
-              merge-text "\n\n"))
        "## Leader Instructions\n\n"
        instructions-text "\n\n"
        "## Required Transient Protocol\n\n"
@@ -534,7 +521,7 @@
            "- Commit completed work on your transient branch.\n"
            "- Send the result to `squad-leader` with `swarm_handoff.sh`.\n")
       (render-assignment (merge context base)))))
-(defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now merge-for batch-id batch-stories conflicting-template conflicting-agent conflicting-commit]}]
+(defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now batch-id batch-stories]}]
   (str "assignment_id: " assignment-id "\n"
        "theme_id: " theme-id "\n"
        "scope: " scope "\n"
@@ -544,16 +531,8 @@
          (str "batch_stories: " batch-stories "\n"))
        (when requirement
          (str "requires: " (:text requirement) "\n"))
-       (when merge-for
-         (str "merge_for: " merge-for "\n"))
        (when (or batch-id (= "batch" story-id) (= "batch" scope))
          (str "batch_id: " (or batch-id assignment-id) "\n"))
-       (when conflicting-template
-         (str "conflicting_template: " conflicting-template "\n"))
-       (when conflicting-agent
-         (str "conflicting_agent: " conflicting-agent "\n"))
-       (when conflicting-commit
-         (str "conflicting_commit: " conflicting-commit "\n"))
        "assignment_file: " assignment-file "\n"
        "created_at: " now "\n"))
 
@@ -690,13 +669,6 @@
     (create-assignment! args)
     (close-batch-for-assignment! root (:assignment-id args))))
 
-(defn merge-source-text [{:keys [merge-for conflicting-template conflicting-agent conflicting-commit]}]
-  (str "blocked_assignment_id: " merge-for "\n"
-       "blocked_template: " (or conflicting-template "unknown") "\n"
-       "conflicting_agent: " (or conflicting-agent "unknown") "\n"
-       "conflicting_commit: " (or conflicting-commit "unknown") "\n"
-       "Merge this result commit into the squad leader's current integration state, resolve mechanical conflicts, run the relevant test suites, and hand back one unconflicted result commit.\n"))
-
 (defn merge-suffix-depth [assignment-id]
   (count (re-seq #"-merge" (str assignment-id))))
 
@@ -722,62 +694,6 @@
                       (>= (merge-suffix-depth id) max-depth)
                       (assignment-blocked-for-merge-limit? root id))))
              (filter fs/directory? (fs/list-dir assignments-dir)))))))
-
-(defn ensure-merger-create-allowed! [root blocked-assignment-id]
-  (let [max-depth (cfg/squad-max-merger-depth root)
-        depth (merge-suffix-depth blocked-assignment-id)
-        lineage-root (merge-lineage-root blocked-assignment-id)]
-    (when (>= depth max-depth)
-      (exit! 2
-             (str "Cannot create merger: assignment already at max_merger_depth (" max-depth "). "
-                  "Use squad_assign.sh block, not create-merger or reject/replace.")))
-    (when (lineage-max-depth-exhausted? root lineage-root max-depth)
-      (exit! 2
-             (str "Cannot create merger: merge lineage " lineage-root
-                  " already exhausted max_merger_depth (" max-depth "). "
-                  "Resolve the existing merge blocker; do not restart the chain.")))))
-
-(defn original-merge-context [root blocked-assignment-id]
-  (validate-id! "Blocked assignment id" blocked-assignment-id)
-  (let [dir (assignment-dir root blocked-assignment-id)
-        metadata (fs/path dir "metadata")
-        status (fs/path dir "status")
-        result (fs/path dir "result")]
-    (ensure-assignment-dir! dir blocked-assignment-id)
-    (when-not (= "merge_blocked" (read-value status "state"))
-      (exit! 2 (str "Assignment is not merge_blocked: " blocked-assignment-id)))
-    (ensure-merger-create-allowed! root blocked-assignment-id)
-    {:dir dir
-     :theme-id (read-value metadata "theme_id")
-     :story-id (read-value metadata "story_id")
-     :conflicting-template (read-value metadata "template")
-     :conflicting-agent (read-value result "from")
-     :conflicting-commit (read-value result "commit")}))
-
-(defn create-merger-assignment! [{:keys [blocked-assignment-id assignment-id instructions-file queue-spawn?]}]
-  (validate-id! "Merger assignment id" assignment-id)
-  (let [root (fs/absolutize (project-root))
-        original (original-merge-context root blocked-assignment-id)
-        context (assignment-create-context {:theme-id (:theme-id original)
-                                            :story-id (:story-id original)
-                                            :template "merger"
-                                            :assignment-id assignment-id
-                                            :instructions-file instructions-file
-                                            :queue-spawn? queue-spawn?})
-        context (merge context
-                       {:merge-for blocked-assignment-id
-                        :conflicting-template (:conflicting-template original)
-                        :conflicting-agent (:conflicting-agent original)
-                        :conflicting-commit (:conflicting-commit original)
-                        :merge-text (merge-source-text
-                                     {:merge-for blocked-assignment-id
-                                      :conflicting-template (:conflicting-template original)
-                                      :conflicting-agent (:conflicting-agent original)
-                                      :conflicting-commit (:conflicting-commit original)})})]
-    (ensure-create-context! context)
-    (let [assignment-file (write-assignment-records! context (assignment-text context))]
-      (print-create-result! context assignment-file)
-      (maybe-queue-spawn! context assignment-file))))
 
 (defn assignment-status-paths [dir]
   {:metadata (fs/path dir "metadata")
@@ -1015,28 +931,6 @@
   (not (str/blank?
         (str/trim (:out (sh-at root "git" "status" "--porcelain" "--untracked-files=no"))))))
 
-(defn remove-merge-check-worktree! [root worktree]
-  (when (fs/exists? worktree)
-    (let [removed (sh-at root "git" "worktree" "remove" "--force" (str worktree))]
-      (when-not (zero? (:exit removed))
-        (fs/delete-tree worktree)
-        (sh-at root "git" "worktree" "prune")))))
-
-(defn with-merge-check-worktree [root f]
-  (let [parent (fs/path root ".squad" "tmp" "merge-checks")
-        _ (fs/create-dirs parent)
-        worktree (fs/create-temp-dir {:dir parent :prefix "merge-ready-"})]
-    (fs/delete-tree worktree)
-    (try
-      (let [added (sh-at root "git" "worktree" "add" "--detach" (str worktree) "HEAD")]
-        (when-not (zero? (:exit added))
-          (exit! (:exit added)
-                 "Could not create isolated merge-check worktree."
-                 (:err added)))
-        (f worktree))
-      (finally
-        (remove-merge-check-worktree! root worktree)))))
-
 (defn write-merge-error! [dir phase result]
   (write-atomic! (fs/path dir "merge-error")
                  (str "phase: " phase "\n"
@@ -1202,46 +1096,20 @@
            (sleep-ms! delay-ms)
            (recur (inc attempt))))))))
 
-(defn dry-run-merge [root commit]
-  (with-merge-check-worktree
-    root
-    (fn [worktree]
-      (git-with-lock-retry
-       "dry-run-merge"
-       #(sh-at worktree "git" "merge" "--no-commit" "--no-ff" commit)))))
-
 (defn print-merge-ready! [assignment-id commit detail]
   (println "SQUAD_ASSIGNMENT:" assignment-id)
   (println "STATE: merge_ready")
   (println "COMMIT:" commit)
   (println "DETAIL:" detail))
 
-(defn print-merge-blocked-ready! [assignment-id commit]
-  (binding [*out* *err*]
-    (println "SQUAD_ASSIGNMENT:" assignment-id)
-    (println "STATE: merge_blocked")
-    (println "COMMIT:" commit)
-    (println "DETAIL: dry-run merge failed")))
-
 (defn mark-merge-ready-state! [root dir assignment-id commit now detail]
   (write-merge-state! root dir assignment-id "merge_ready" detail commit now)
   (print-merge-ready! assignment-id commit detail))
 
-(defn mark-merge-blocked-state! [root dir assignment-id commit now merge]
-  (write-merge-error! dir "merge-ready" merge)
-  (write-merge-state! root dir assignment-id "merge_blocked" "dry-run merge failed" commit now)
-  (print-merge-blocked-ready! assignment-id commit)
-  (System/exit 4))
-
-(defn mark-merge-result! [root dir assignment-id commit now merge]
-  (if (zero? (:exit merge))
-    (mark-merge-ready-state! root dir assignment-id commit now "dry-run merge passed")
-    (mark-merge-blocked-state! root dir assignment-id commit now merge)))
-
 (defn check-merge-ready! [root dir assignment-id commit now]
   (if (ancestor-commit? root commit)
     (mark-merge-ready-state! root dir assignment-id commit now "commit already reachable from HEAD")
-    (mark-merge-result! root dir assignment-id commit now (dry-run-merge root commit))))
+    (mark-merge-ready-state! root dir assignment-id commit now "ready to accept-merge")))
 
 (defn dirt-defer-detail? [detail]
   "B75: transient main dirt is not a durable merge evaluation."
@@ -1255,26 +1123,17 @@
         prior-commit (read-value merge-file "commit")
         prior-detail (read-value merge-file "detail")]
     (when (and (= commit prior-commit)
-               (contains? #{"merge_ready" "merge_blocked"} prior-state)
+               (= "merge_ready" prior-state)
                (not (dirt-defer-detail? prior-detail)))
       {:state prior-state
-       :detail (or prior-detail
-                   (if (= "merge_ready" prior-state)
-                     "dry-run merge passed"
-                     "dry-run merge failed"))})))
+       :detail (or prior-detail "ready to accept-merge")})))
 
 (defn replay-existing-merge-evaluation! [dir assignment-id commit {:keys [state detail]}]
-  "Replay prior merge evaluation and re-sync status so handoff FSM cannot stick
-  on result_received after status was overwritten (e.g. double result record)."
+  "Replay prior merge_ready so handoff FSM cannot stick on result_received."
   (let [now (timestamp)]
     (resync-status! dir assignment-id state detail now)
-    (if (= "merge_ready" state)
-      (do
-        (print-merge-ready! assignment-id commit detail)
-        nil)
-      (do
-        (print-merge-blocked-ready! assignment-id commit)
-        (System/exit 4)))))
+    (print-merge-ready! assignment-id commit detail)
+    nil))
 
 (defn print-already-merged! [assignment-id commit]
   (println "SQUAD_ASSIGNMENT:" assignment-id)
@@ -1391,42 +1250,6 @@
       :story-id story-id})
     head))
 
-(defn mark-original-resolved-by-merger! [root merger-dir merger-assignment-id merger-commit merge-commit now]
-  (let [metadata (fs/path merger-dir "metadata")
-        original-id (read-value metadata "merge_for")]
-    (when-not (str/blank? original-id)
-      (let [original-dir (assignment-dir root original-id)
-            original-metadata (fs/path original-dir "metadata")
-            original-commit (or (read-value metadata "conflicting_commit") merger-commit)
-            detail (str "resolved by merger assignment " merger-assignment-id)]
-        (ensure-assignment-dir! original-dir original-id)
-        (when (= "merger" (read-value original-metadata "template"))
-          (mark-original-resolved-by-merger! root original-dir original-id merger-commit merge-commit now))
-        (fs/delete-if-exists (fs/path original-dir "blocker"))
-        (fs/delete-if-exists (fs/path original-dir "blocker.md"))
-        (write-atomic! (fs/path original-dir "accepted-merge")
-                       (str "assignment_id: " original-id "\n"
-                            "state: merged\n"
-                            "commit: " original-commit "\n"
-                            "merge_commit: " merge-commit "\n"
-                            "resolved_by: " merger-assignment-id "\n"
-                            "detail: " detail "\n"
-                            "updated_at: " now "\n"))
-        (write-atomic! (fs/path original-dir "merge")
-                       (str "assignment_id: " original-id "\n"
-                            "state: merged\n"
-                            "commit: " merger-commit "\n"
-                            "detail: " detail "\n"
-                            "updated_at: " now "\n"))
-        (write-atomic! (fs/path original-dir "status")
-                       (str "assignment_id: " original-id "\n"
-                            "state: merged\n"
-                            "detail: " detail "\n"
-                            "updated_at: " now "\n"))
-        (append-line! (fs/path original-dir "events.log")
-                      (str now "\tmerged_by_merger\t" merger-assignment-id "\t" merge-commit))
-        (assignment-theme-event! root original-dir "merged" original-id merger-assignment-id merge-commit)))))
-
 (defn ensure-merge-ready! [merge-file]
   (when-not (= "merge_ready" (read-value merge-file "state"))
     (exit! 3 "Assignment is not merge_ready.")))
@@ -1520,7 +1343,6 @@
                 (clear-colliding-untracked-reviews! root commit)
                 (let [detail (merge-detail! root dir assignment-id commit now)
                       merge-commit (record-accepted-merge! root dir assignment-id commit detail now)]
-                  (mark-original-resolved-by-merger! root dir assignment-id commit merge-commit now)
                   (print-merge-accepted! assignment-id commit merge-commit detail))))
             (finally
               (abort-merge! root))))))))
@@ -1650,7 +1472,6 @@
 (def assignment-commands
   {"create" (fn [args] (create-assignment! (parse-create-args! args)))
    "create-batch" (fn [args] (create-batch-assignment! (parse-create-batch-args! args)))
-   "create-merger" (fn [args] (create-merger-assignment! (parse-create-merger-args! args)))
    "result" (fn [args] (run-counted-command! args 3 #(record-result! (second %) (nth % 2))))
    "merge-ready" (fn [args] (run-counted-command! args 2 #(mark-merge-ready! (second %))))
    "review" (fn [args] (run-counted-command! args 4 #(record-review! (second %) (nth % 2) (nth % 3))))

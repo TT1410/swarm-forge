@@ -46,15 +46,11 @@
   (is (= 60 (plane/ready-priority-of :spawn-worker)))
   (is (= 30 (plane/ready-priority-of :user-approval))))
 
-(deftest b16-daemon-owns-main-git-ops
-  (is (plane/op-allowed? :daemon :accept_merge))
-  (is (plane/op-allowed? :daemon :check_merge_readiness))
-  (is (plane/op-allowed? :daemon :merge_ready))
-  (is (not (plane/op-allowed? :sl-residual :accept_merge)))
+(deftest b16-sl-owns-accept-merge
+  (is (plane/op-allowed? :sl-residual :accept_merge))
+  (is (not (plane/op-allowed? :daemon :accept_merge)))
   (is (not (plane/op-allowed? :sl-residual :check_merge_readiness)))
-  (is (not (plane/op-allowed? :sl-residual :merge_ready)))
-  (is (plane/daemon-only-main-git-op? "accept_merge"))
-  (is (plane/daemon-only-main-git-op? :merge_ready)))
+  (is (not (plane/op-allowed? :daemon :merge_ready))))
 
 (deftest b16-sl-residual-may-repair-and-approve
   (is (plane/op-allowed? :sl-residual :repair_dead_agent))
@@ -68,7 +64,7 @@
                (actions/action :repair_dead_agent :command "y")
                (actions/action :wait :command "z")]
         filtered (plane/filter-allowed :sl-residual cands)]
-    (is (= ["repair_dead_agent" "wait"] (mapv actions/op-of filtered)))))
+    (is (= ["accept_merge" "repair_dead_agent" "wait"] (mapv actions/op-of filtered)))))
 
 (deftest b16-executor-refuses-disallowed-op
   (let [root (tmp-dir)]
@@ -76,7 +72,7 @@
       (is (thrown-with-msg? Exception #"may not execute"
                             (executor/apply-candidate!
                              root
-                             {:next-action "accept_merge"
+                             {:next-action "merge_ready"
                               :command "echo should-not-run"}
                              :sl-residual)))
       (finally

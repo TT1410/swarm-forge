@@ -18,11 +18,6 @@
 (def script-dir
   (fs/parent *file*))
 
-(def ^:dynamic *sl-facing-residual?*
-  "When true, main-git merge-ready/accept residual becomes wait_for_daemon_main_git
-  so the squad leader does not race squadd."
-  false)
-
 (defn exit! [status & lines]
   (binding [*out* *err*]
     (doseq [line lines]
@@ -507,49 +502,28 @@
 (defn active-template? [agents template]
   (boolean (some #(and (= template (:template %)) (active-agent? %)) agents)))
 
-;; B85: analyst singleton — one theme/story analysis writer at a time
-(def singleton-templates #{"analyst" "hardener" "qa" "architect" "merger"})
-
 (defn handoff-visible-agent? [root agent]
   (contains? (visible-handoff-agents root) agent))
 
 (defn capacity-counted-agent? [root agent]
-  "Agents that consume max_transient_agents slots. Merger is singleton-gated
-  separately and does not consume the general transient budget."
+  "Agents that consume max_transient_agents slots."
   (and (active-agent? agent)
-       (not= "merger" (:template agent))
        (not (and (= "handoff_sent" (:state agent))
                  (handoff-visible-agent? root (:agent agent))))))
 
-(defn merger-holds-capacity-slot?
-  "Merger agents that have only handed off while their assignment is merge_blocked
-  no longer monopolize the singleton merger slot (B27)."
-  [root agent]
-  (and (active-agent? agent)
-       (= "merger" (:template agent))
-       (not (and (= "handoff_sent" (:state agent))
-                 (= "merge_blocked"
-                    (get (file-map (fs/path root ".squad" "assignments" (:task-id agent) "status"))
-                         "state"))))))
-
 (defn capacity-active-template? [root agents template]
-  "True when a live agent already holds this template for capacity/singleton purposes.
-  Merger ignores handoff_sent agents whose assignment is merge_blocked so recovery
-  can start a second merger."
+  "True when a live agent already holds this template for capacity/singleton purposes."
   (boolean
    (some (fn [agent]
            (and (= template (:template agent))
-                (if (= "merger" template)
-                  (merger-holds-capacity-slot? root agent)
-                  (capacity-counted-agent? root agent))))
+                (capacity-counted-agent? root agent)))
          agents)))
 
 (defn spawn-capacity? [root agents template]
   (let [active (filter #(capacity-counted-agent? root %) agents)
         max-agents (cfg/squad-max-transient-agents root)]
-    (and (or (= "merger" template)
-             (< (count active) max-agents))
-         (or (not (contains? singleton-templates template))
+    (and (< (count active) max-agents)
+         (or (not (contains? (cfg/singleton-templates root) template))
              (not (capacity-active-template? root agents template))))))
 
 (defn approval-id [gate story-id]
@@ -2468,179 +2442,10 @@
          (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
          vec)))
 
-(defn existing-merger-assignment [assignments base]
-  (some (fn [assignment]
-          (when (and (= "merger" (:template assignment))
-                     (str/starts-with? (:assignment-id assignment) base))
-            assignment))
-        assignments))
-
-(defn merge-suffix-depth
-  "How many -merge segments are already in the assignment id lineage."
-  [assignment-id]
-  (count (re-seq #"-merge" (str assignment-id))))
-
-(defn merge-lineage-root
-  "Strip trailing -merge segments to get the product/rework assignment root."
-  [assignment-id]
-  (str/replace (str assignment-id) #"(?:-merge)+$" ""))
-
-(defn assignment-in-merge-lineage? [assignment-id lineage-root]
-  (or (= assignment-id lineage-root)
-      (str/starts-with? (str assignment-id) (str lineage-root "-merge"))))
-
-(defn assignment-has-blocker? [root assignment-id]
-  (or (= "blocked" (get (file-map (fs/path root ".squad" "assignments" assignment-id "status")) "state"))
-      (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "blocker"))
-      (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "blocker.md"))))
-
-(defn lineage-max-depth-exhausted?
-  "True when any assignment in this merge lineage is already at max_merger_depth
-  and terminal-blocked. Stops re-creating mergers after max-depth hard stop."
-  [root assignments lineage-root max-depth]
-  (boolean
-   (some (fn [{:keys [assignment-id state]}]
-           (and (assignment-in-merge-lineage? assignment-id lineage-root)
-                (>= (merge-suffix-depth assignment-id) max-depth)
-                (or (= "blocked" state)
-                    (assignment-has-blocker? root assignment-id))))
-         assignments)))
-
-(defn merger-spawn-candidate [root agents existing]
-  (when (and (assignment-created? (:state existing))
-             (not (active-assignment? agents (:assignment-id existing)))
-             (not (pending-spawn-for-assignment? root (:assignment-id existing))))
-    {:priority 50
-     :stage-order 5
-     :next-action "request_spawn"
-     :theme-id (:theme-id existing)
-     :story-id (:story-id existing)
-     :template "merger"
-     :assignment-id (:assignment-id existing)
-     :reason "merge-blocked assignment needs merger"
-     :command (str "squad_spawn_request.sh merger " (:assignment-id existing)
-                   " " (:assignment-file existing))}))
-
-(defn merger-create-candidate [theme-id blocked-assignment-id story-id merger-id]
-  {:priority 50
-   :stage-order 5
-   :next-action "create_assignment"
-   :theme-id theme-id
-   :story-id story-id
-   :template "merger"
-   :assignment-id merger-id
-   :reason "merge-blocked assignment needs merger"
-   :command (str "squad_assign.sh create-merger " blocked-assignment-id " "
-                 merger-id " --auto-instructions --queue-spawn")})
-
-(defn merger-limit-blocker-candidate [root {:keys [assignment-id theme-id story-id]} max-depth]
-  (let [reason-path (str ".squad/assignments/" assignment-id "/merge-limit.md")
-        reason (str "Merge recovery exceeded max_merger_depth (" max-depth "). "
-                    "Manual resolution required for assignment " assignment-id ". "
-                    "Do not reject/replace this lineage; resolve the blocker.\n")]
-    {:priority 40
-     :stage-order 5
-     :next-action "declare_merge_blocker"
-     :theme-id theme-id
-     :story-id story-id
-     :template "merger"
-     :assignment-id assignment-id
-     :reason (str "merge recovery exceeded max_merger_depth " max-depth)
-     :command (str "printf '%s' " (pr-str reason) " > " reason-path
-                   " && squad_assign.sh block " assignment-id " " reason-path)}))
-
-(defn merger-candidate [root assignments agents {:keys [assignment-id theme-id story-id] :as assignment}]
-  (let [depth (merge-suffix-depth assignment-id)
-        max-depth (cfg/squad-max-merger-depth root)
-        lineage-root (merge-lineage-root assignment-id)
-        exhausted? (lineage-max-depth-exhausted? root assignments lineage-root max-depth)]
-    (cond
-      ;; At or past max depth: only durable block — never create another -merge or rework.
-      (>= depth max-depth)
-      (when-not (assignment-has-blocker? root assignment-id)
-        (merger-limit-blocker-candidate root assignment max-depth))
-
-      ;; Lineage already hard-stopped at max depth: do not restart with a new merger.
-      exhausted?
-      nil
-
-      :else
-      (let [base (str assignment-id "-merge")
-            existing (existing-merger-assignment assignments base)]
-        (if existing
-          (when-not (active-assignment? agents (:assignment-id existing))
-            (merger-spawn-candidate root agents existing))
-          (merger-create-candidate theme-id assignment-id story-id
-                                   (next-id-with-base assignments base)))))))
-
-(def open-merger-states
-  #{"created" "assignment_created" "in_progress" "handoff_sent"
-    "result_received" "merge_ready" "merge_blocked"})
-
-(defn open-depth-2-merger-ids
-  "Unresolved merger assignments at max useful depth (*-merge-merge)."
-  [assignments]
-  (->> assignments
-       (filter #(and (= "merger" (:template %))
-                     (>= (merge-suffix-depth (:assignment-id %)) 2)
-                     (contains? open-merger-states (:state %))))
-       (map :assignment-id)
-       set))
-
-(defn pause-product-accept-merge?
-  "B94: while a depth-2 merger is unresolved, do not accept-merge other work onto main."
-  [assignments assignment-id]
-  (let [open-ids (open-depth-2-merger-ids assignments)]
-    (boolean (and (seq open-ids)
-                  (not (contains? open-ids assignment-id))))))
-
-(defn pause-product-accept-merge-at-root? [root assignment-id]
-  (pause-product-accept-merge? (assignment-records root) assignment-id))
-
-(defn accept-merge-handoff-step [root assignment-id reason]
-  (if (pause-product-accept-merge-at-root? root assignment-id)
-    {:action "wait_for_merge_recovery"
-     :reason (str "depth-2 merger is open; pause product accept-merge of " assignment-id)
-     :command "sleep 5 && squad_next.sh --residual-only"}
-    {:action "accept_merge"
-     :reason reason
-     :command (str "squad_assign.sh accept-merge " assignment-id)}))
-
-(defn open-merger-assignments [assignments]
-  (filter #(and (= "merger" (:template %))
-                (contains? open-merger-states (:state %)))
-          assignments))
-
-(defn merger-candidates [root rows]
-  "At most one open merger lineage at a time (singleton). Prefer progressing an
-  existing open merger (spawn or nested merge-merge); otherwise create for the
-  highest-priority merge_blocked product assignment.
-  A merger that is only handoff_sent with merge_blocked assignment does not block
-  creating the next merger (B27)."
-  (let [assignments (assignment-records root)
-        agents (agent-records root rows)
-        sort-key (juxt :priority :theme-id :story-id :stage-order :assignment-id)]
-    (if (capacity-active-template? root agents "merger")
-      []
-      (let [open (vec (open-merger-assignments assignments))]
-        (if (seq open)
-          (->> open
-               (keep (fn [assignment]
-                       (if (= "merge_blocked" (:state assignment))
-                         (merger-candidate root assignments agents assignment)
-                         (when (assignment-created? (:state assignment))
-                           (merger-spawn-candidate root agents assignment)))))
-               (remove nil?)
-               (sort-by sort-key)
-               (take 1)
-               vec)
-          (->> assignments
-               (filter #(= "merge_blocked" (:state %)))
-               (keep #(merger-candidate root assignments agents %))
-               (remove nil?)
-               (sort-by sort-key)
-               (take 1)
-               vec))))))
+(defn accept-merge-handoff-step [_root assignment-id reason]
+  {:action "accept_merge"
+   :reason reason
+   :command (str "squad_assign.sh accept-merge " assignment-id)})
 
 (def story-candidate-fields
   [["NEXT_ACTION" :next-action true]
@@ -2840,10 +2645,6 @@
                :assignment-id (handoff-task file)}))
        (remove #(= "unknown" (:agent %)))))
 
-(defn assignment-merge-blocked? [root assignment-id]
-  (= "merge_blocked"
-     (get (file-map (fs/path root ".squad" "assignments" assignment-id "status")) "state")))
-
 (defn assignment-result-recorded? [root assignment-id]
   (fs/regular-file? (fs/path root ".squad" "assignments" assignment-id "result")))
 
@@ -2912,9 +2713,9 @@
            :command (str "squad_assign.sh result " assignment-id " " file)}
 
           "result_received"
-          {:action "check_merge_readiness"
-           :reason "recorded result must be checked for merge readiness before handoff completion"
-           :command (str "squad_assign.sh merge-ready " assignment-id)}
+          (accept-merge-handoff-step
+           root assignment-id
+           "recorded result is merged by the squad leader")
 
           "merge_ready"
           (accept-merge-handoff-step
@@ -2924,46 +2725,21 @@
           ;; merge_blocked and other unresolved states: no handoff step here.
           nil)))))
 
-(defn in-process-merge-blocked? [root file]
-  (and file
-       (= "git_handoff" (handoff-type file))
-       (assignment-dir-exists? root (handoff-task file))
-       (assignment-merge-blocked? root (handoff-task file))))
-
 (defn in-process-needs-action?
-  "True when the in-process handoff still has a daemon/SL step other than
-  waiting on merge-block recovery (which is expressed via ready-actions)."
-  [{:keys [root in-process]}]
-  (when in-process
-    (boolean
-     (or (in-process-git-handoff-command root in-process)
-         (not (in-process-merge-blocked? root in-process))))))
-
-(defn print-daemon-owned-main-git-wait! [action assignment-id]
-  (println "NEXT_ACTION: wait_for_daemon_main_git")
-  (println "ASSIGNMENT:" (or assignment-id "unknown"))
-  (println "DEFERRED_ACTION:" action)
-  (println "REASON: main git merge-ready/accept is owned by squadd; wait for the next daemon poll")
-  (println "COMMAND: sleep 5 && squad_next.sh --residual-only"))
+  "True when an in-process handoff is claimed and must be advanced or finished."
+  [{:keys [in-process]}]
+  (boolean in-process))
 
 (defn print-in-process-handoff-action! [root file]
   (if-let [{:keys [action reason command]} (in-process-git-handoff-command root file)]
-    (if (and *sl-facing-residual?*
-             (plane/daemon-only-main-git-op? action))
-      (print-daemon-owned-main-git-wait! action (handoff-task file))
-      (print-handoff-action! action file reason command))
-    (if (in-process-merge-blocked? root file)
-      (print-handoff-action! "hold_merge_blocked_handoff"
-                             file
-                             "merge-blocked assignment must be resolved before handoff completion"
-                             (str "true  # hold in_process until merge recovery; do not run done_with_current.sh"))
-      (print-handoff-action! "finish_in_process_handoff"
-                             file
-                             "handoff is already claimed and must be completed before new mail"
-                             (str "SWARMFORGE_ROLE=squad-leader done_with_current.sh " file)))))
+    (print-handoff-action! action file reason command)
+    (print-handoff-action! "finish_in_process_handoff"
+                           file
+                           "handoff is already claimed and must be completed before new mail"
+                           (str "SWARMFORGE_ROLE=squad-leader done_with_current.sh " file))))
 
 (def daemon-handoff-step-actions
-  #{"record_assignment_result" "check_merge_readiness" "accept_merge"
+  #{"record_assignment_result"
     "finish_in_process_handoff"})
 
 (defn visible-handoff-agents [root]
@@ -3062,13 +2838,6 @@
    :threshold threshold
    :retry-threshold retry-threshold})
 
-(defn held-for-merge-recovery? [root assignment-id]
-  "True when the agent's assignment is merge_blocked: worktree is held for merger
-  recovery. Do not recover_agent — residual should drive merger instead."
-  (and assignment-id
-       (not= "unknown" assignment-id)
-       (assignment-merge-blocked? root assignment-id)))
-
 (defn terminal-assignment-states-for-repair []
   #{"merged" "rejected" "blocked" "replacement_created" "superseded"
     "review_accepted" "review_changes_requested" "cancelled" "abandoned"})
@@ -3101,14 +2870,12 @@
   "B38: quiet agent, session gone, open assignment → repair residual (not vague recover)."
   [root {:keys [agent task-id] :as record}]
   (and (active-agent? record)
-       (not (held-for-merge-recovery? root task-id))
        (assignment-open-for-repair? root task-id)
        (not (agent-session-live? root agent))))
 
 (defn recovery-candidate-for-agent [root now threshold retry-threshold
                                     {:keys [agent task-id state last-activity-at activity-source] :as record}]
-  (when (and (active-agent? record)
-             (not (held-for-merge-recovery? root task-id)))
+  (when (active-agent? record)
     (let [quiet-for (recovery-quiet-for last-activity-at now)]
       (when (recovery-agent-due? root now threshold retry-threshold agent quiet-for)
         (let [base (recovery-candidate-record threshold retry-threshold quiet-for record)
@@ -3268,7 +3035,6 @@
                    (story-candidates root rows)
                    (implementer-batch-candidates root rows)
                    (batch-candidates root rows)
-                   (merger-candidates root rows)
                    (generic-ready-assignment-candidates root rows)
                    (theme-finalize-candidates root))))
 
@@ -3279,16 +3045,12 @@
   (count (filter #(capacity-counted-agent? root %) agents)))
 
 (defn active-singleton-templates [root agents]
-  (->> singleton-templates
+  (->> (cfg/singleton-templates root)
        (filter #(capacity-active-template? root agents %))
        set))
 
 (defn spawn-action? [action]
   (= "request_spawn" (:next-action action)))
-
-(defn merger-spawn-action? [action]
-  (and (spawn-action? action)
-       (= "merger" (:template action))))
 
 (defn queues-spawn? [action]
   "True when applying this action will create a spawn request (capacity-relevant)."
@@ -3296,23 +3058,19 @@
       (and (= "create_assignment" (:next-action action))
            (str/includes? (str (:command action)) "--queue-spawn"))))
 
-(defn singleton-spawn-blocked? [active-singletons action]
-  (and (contains? singleton-templates (:template action))
+(defn singleton-spawn-blocked? [root active-singletons action]
+  (and (contains? (cfg/singleton-templates root) (:template action))
        (contains? active-singletons (:template action))))
 
-(defn spawn-fits? [used max-agents active-singletons action]
-  "Mergers skip the general transient budget but still honor singleton caps."
-  (and (not (singleton-spawn-blocked? active-singletons action))
-       (or (merger-spawn-action? action)
-           (< used max-agents))))
+(defn spawn-fits? [root used max-agents active-singletons action]
+  (and (not (singleton-spawn-blocked? root active-singletons action))
+       (< used max-agents)))
 
-(defn account-spawn [used active-singletons action]
+(defn account-spawn [root used active-singletons action]
   (let [singletons (cond-> active-singletons
-                     (contains? singleton-templates (:template action))
+                     (contains? (cfg/singleton-templates root) (:template action))
                      (conj (:template action)))]
-    (if (merger-spawn-action? action)
-      [used singletons]
-      [(inc used) singletons])))
+    [(inc used) singletons]))
 
 (defn action-dependency-keys [{:keys [next-action story-id assignment-id batch-id agent gate template batch-kind]}]
   (set
@@ -3355,10 +3113,10 @@
       (-> state
           (update :actions conj action)
           (account-dependencies action))
-      (let [{:keys [used max-agents active-singletons]} state]
-        (if-not (spawn-fits? used max-agents active-singletons action)
+      (let [{:keys [root used max-agents active-singletons]} state]
+        (if-not (spawn-fits? root used max-agents active-singletons action)
           state
-          (let [[used active-singletons] (account-spawn used active-singletons action)]
+          (let [[used active-singletons] (account-spawn root used active-singletons action)]
             (-> state
                 (assoc :used used :active-singletons active-singletons)
                 (update :actions conj action)
@@ -3369,7 +3127,8 @@
         adjusted-rows (rows-without-agents rows retired-agents)
         agents (agent-records root adjusted-rows)
         ;; Retirements share the registry lock — schedule at most one, then ready work.
-        initial {:used (capacity-used root agents)
+        initial {:root root
+                 :used (capacity-used root agents)
                  :max-agents (cfg/squad-max-transient-agents root)
                  :active-singletons (active-singleton-templates root agents)
                  :dependency-keys #{}
@@ -3495,98 +3254,6 @@
 (defn handoff-inbox-dir [root]
   (fs/path root ".swarmforge" "handoffs" "inbox"))
 
-(defn park-paused-product-accept-handoffs!
-  "B94: park product accept-merge handoffs while a depth-2 merger owns main."
-  [root]
-  (let [in-process-dir (fs/path (handoff-inbox-dir root) "in_process")
-        held-dir (fs/path (handoff-inbox-dir root) "held")
-        parked (atom [])]
-    (doseq [file (files-with-extension in-process-dir ".handoff")]
-      (when (= "wait_for_merge_recovery" (:action (in-process-git-handoff-command root file)))
-        (fs/create-dirs held-dir)
-        (let [dest (fs/path held-dir (fs/file-name file))]
-          (fs/move file dest {:replace-existing true})
-          (swap! parked conj
-                 {:next-action "park_paused_product_accept"
-                  :assignment-id (handoff-task dest)
-                  :exit 0
-                  :out ""
-                  :err ""
-                  :command (str "park " (fs/file-name dest))}))))
-    @parked))
-
-(defn restore-held-accept-handoffs-after-depth-2!
-  "After depth-2 recovery ends, return parked merge_ready product mail to in_process."
-  [root]
-  (when (empty? (open-depth-2-merger-ids (assignment-records root)))
-    (let [in-process-dir (fs/path (handoff-inbox-dir root) "in_process")
-          existing (first (files-with-extension in-process-dir ".handoff"))]
-      (when (nil? existing)
-        (some (fn [file]
-                (let [assignment-id (handoff-task file)
-                      state (assignment-status-state root assignment-id)
-                      merge-state (assignment-merge-file-state root assignment-id)]
-                  (when (or (= "merge_ready" state)
-                            (= "merge_ready" merge-state))
-                    (fs/create-dirs in-process-dir)
-                    (fs/move file (fs/path in-process-dir (fs/file-name file))
-                             {:replace-existing true})
-                    [{:next-action "restore_paused_product_accept"
-                      :assignment-id assignment-id
-                      :exit 0
-                      :out ""
-                      :err ""
-                      :command (str "restore " (fs/file-name file))}])))
-              (held-handoff-files root))))))
-
-(defn park-merge-blocked-in-process-handoffs!
-  "Free the single in_process slot: park merge_blocked handoffs under inbox/held/
-  so later workers' mail can be claimed. Merger residual still sees the assignment."
-  [root]
-  (let [in-process-dir (fs/path (handoff-inbox-dir root) "in_process")
-        held-dir (fs/path (handoff-inbox-dir root) "held")
-        parked (atom [])]
-    (doseq [file (files-with-extension in-process-dir ".handoff")]
-      (when (in-process-merge-blocked? root file)
-        (fs/create-dirs held-dir)
-        (let [dest (fs/path held-dir (fs/file-name file))]
-          (fs/move file dest {:replace-existing true})
-          (swap! parked conj
-                 {:next-action "park_merge_blocked_handoff"
-                  :assignment-id (handoff-task dest)
-                  :exit 0
-                  :out ""
-                  :err ""
-                  :command (str "park " (fs/file-name dest))}))))
-    @parked))
-
-(defn held-handoff-files [root]
-  (files-with-extension (fs/path (handoff-inbox-dir root) "held") ".handoff"))
-
-(defn apply-held-handoff-finish-step!
-  "When a parked merge_blocked assignment later merges, finish the held handoff.
-  done_with_current only accepts in_process paths — move held → in_process first
-  when the active tray is free (P0 B02)."
-  [root]
-  (let [in-process-dir (fs/path (handoff-inbox-dir root) "in_process")
-        existing (first (files-with-extension in-process-dir ".handoff"))]
-    (when (nil? existing)
-      (some (fn [file]
-              (let [assignment-id (handoff-task file)
-                    state (assignment-status-state root assignment-id)]
-                (when (or (= "merged" state)
-                          (assignment-accepted-merge? root assignment-id)
-                          (contains? resolved-handoff-assignment-states state))
-                  (fs/create-dirs in-process-dir)
-                  (let [dest (fs/path in-process-dir (fs/file-name file))]
-                    (fs/move file dest {:replace-existing true})
-                    [(apply-candidate! root
-                                       {:next-action "finish_held_handoff"
-                                        :assignment-id assignment-id
-                                        :command (str "SWARMFORGE_ROLE=squad-leader done_with_current.sh "
-                                                      (pr-str (str dest)))})]))))
-            (held-handoff-files root)))))
-
 (defn apply-in-process-handoff-step!
   "Apply at most one deterministic in-process handoff step."
   [root]
@@ -3599,8 +3266,7 @@
           [(apply-candidate! root {:next-action action
                                    :assignment-id (handoff-task file)
                                    :command command})])
-        (when (and (not (in-process-merge-blocked? root file))
-                   (in-process-needs-action? {:root root :in-process file}))
+        (when (in-process-needs-action? {:root root :in-process file})
           [(apply-candidate! root {:next-action "finish_in_process_handoff"
                                    :assignment-id (handoff-task file)
                                    :command (str "done_with_current.sh " file)})])))))
@@ -3628,24 +3294,14 @@
         retires (apply-retirement-actions! root (role-rows root))
         daemon-ready (apply-daemon-ready-actions! root)
         stale (or (apply-clear-stale-lock-step! root) [])
-        ;; Free in_process before claim so merge_blocked does not starve new mail.
-        parked (park-merge-blocked-in-process-handoffs! root)
-        paused (park-paused-product-accept-handoffs! root)
-        restored (or (restore-held-accept-handoffs-after-depth-2! root) [])
-        held-finish (or (apply-held-handoff-finish-step! root) [])
         claim (or (apply-process-new-handoff-step! root) [])
         handoff (or (apply-in-process-handoff-step! root) [])]
-    (into [] (concat bookkeeping retires daemon-ready stale parked paused restored
-                     held-finish claim handoff))))
-
-(defn print-sl-facing-residual! []
-  (binding [*sl-facing-residual?* true]
-    (print-selected-action! (next-action-context))))
+    (into [] (concat bookkeeping retires daemon-ready stale claim handoff))))
 
 (defn residual-only!
-  "Squad-leader residual: judgment/recovery only; never hand main-git accept to SL."
+  "Squad-leader residual, including merge of the handed SHA."
   []
-  (print-sl-facing-residual!))
+  (print-selected-action! (next-action-context)))
 
 (defn apply-mechanical-and-print-next! []
   (let [root (fs/absolutize (project-root))]
@@ -3655,15 +3311,15 @@
         (cond
           (zero? remaining)
           (do (print-applied-transitions! applied)
-              (print-sl-facing-residual!))
+              (print-selected-action! (next-action-context)))
 
           (empty? batch)
           (do (print-applied-transitions! applied)
-              (print-sl-facing-residual!))
+              (print-selected-action! (next-action-context)))
 
           (some #(and (contains? % :exit) (not (zero? (:exit %)))) batch)
           (do (print-applied-transitions! (into applied batch))
-              (print-sl-facing-residual!))
+              (print-selected-action! (next-action-context)))
 
           :else
           (recur (into applied batch) (dec remaining)))))))

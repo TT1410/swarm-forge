@@ -14,7 +14,11 @@
 
 **How to work:** TDD. Given/When/Then comments. Run the production script (`squad_next.sh`, `squad_assign.sh`, web helpers) — no no-op steps. See each new scenario fail before implementing. `bb test` green before every commit. One task at a time.
 
-**Delete with each task.** When a path dies, delete its functions, templates, config lines, and tests in that same commit. No empty stubs. Prefer deleting an old `deftest` over inverting it into “does not mention merger.” `squad_next.clj` should get shorter every task.
+**Delete with each task.** When a path dies, delete its functions, templates, config lines, and tests in that same commit. Prefer deleting an old `deftest` over inverting it into “does not mention merger.” `squad_next.clj` should get shorter every task.
+
+**No dead functions.** Do not leave `(defn foo [_ _] [])` or a helper that is only called by a deleted path. After the behavior change, grep the old name. If the only remaining refs are the `defn` and tests, delete both in this commit. A function that is never called from live residual/spawn/assign is dead even if tests still construct it.
+
+Examples of stubs that are **not** done: `merger-candidates` that always returns `[]`; `theme-candidates` that always returns `[]`; `daemon-only-main-git-op?` that always returns `false` if nothing should call it.
 
 **CRAP ≤ 6 on leftovers.** After each task, every **remaining** `defn` in the files that task touched has CRAP ≤ 6. Meet it by deleting doomed functions first; cover or split only what stays. Do not write tests whose only job is to paint coverage on merger/theme/order/reviewer code. Do not invent types to dodge a flat `cond`/`case`. This is **not** a whole-repo gate on day one (hundreds of today’s failures are on paths you will delete).
 
@@ -210,13 +214,31 @@ Expected: today’s residual is `create-merger` or `wait_for_daemon_main_git` / 
 
 - [ ] **Step 3: Minimal implementation**
 
-`merger-candidates` → `[]`. Drop merger from `ready-actions` and from `singleton-templates`.
-
 Handoff residual: SL merges the commit on the handoff (six-pack target). `--residual-only` must **not** rewrite that to `wait_for_daemon_main_git`.
 
 Stop calling `dry-run-merge` / daemon `merge-ready`. There is no `merge_blocked` state to enter.
 
-Leave `merger.prompt` on disk until Task 6.
+**Delete, do not stub**, every merger / dry-run / daemon-merge helper that nothing live calls. In `squad_next.clj` that includes (names as of this SHA):
+
+- `merger-candidates`, `merger-candidate`, `merger-create-candidate`, `merger-spawn-candidate`, `merger-limit-blocker-candidate`
+- `existing-merger-assignment`, `open-merger-assignments`
+- `pause-product-accept-merge?`, `pause-product-accept-merge-at-root?`
+- `merger-spawn-action?`, `merger-holds-capacity-slot?` (and the copies in `squadd.clj` / `squad_spawn.clj` if only merger uses them)
+- `lineage-max-depth-exhausted?` / `merge-lineage-root` / `assignment-in-merge-lineage?` **in next** if only the merger path used them
+- `park-paused-product-accept-handoffs!`, `restore-held-accept-handoffs-after-depth-2!`, `open-depth-2-merger-ids` if they exist only for B94 depth-2 pause
+- `print-daemon-owned-main-git-wait!` if residual no longer defers merge
+
+Drop merger from `ready-actions`. Singleton list comes from `squad.conf` (`max_active_template` 1), not a hardcoded set that still names `merger`.
+
+In `squad_assign.clj`: delete `dry-run-merge` and the `merge_blocked` dry-run writers if `check-merge-ready!` is no longer a live residual. Leave `create-merger` CLI only if something still invokes it; otherwise delete that command too. Leave `merger.prompt` on disk until Task 6 **only if** no code still dispatches the template.
+
+- [ ] **Step 3b: Grep**
+
+```bash
+rg -n "merger-candidates|create-merger|dry-run-merge|wait_for_daemon_main_git|pause-product-accept" swarmforge/scripts test
+```
+
+No live callers. Tests that only existed to lock those functions are deleted, not inverted into no-ops.
 
 - [ ] **Step 4: Invert old tests**
 
