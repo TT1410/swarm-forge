@@ -710,15 +710,14 @@
   No Ready column: implementation_approved is Coding; implementation_approval_ready is Specifying.
   code_review_approved is Finalizing."
   {"final_approved" "done"
-   ;; Story Done after QA; architecture/senior-impl are project-level
-   "architecture_approved" "done"
-   "architecture_reviewed" "done"
-   "architecture_revision_returned" "done"
-   "architecture_returned" "done"
-   "qa_approved" "done"
-   "final_approval_ready" "done"
    "senior_implementer_returned" "done"
-   ;; Finalizing: post-CR through QA result, before QA success
+   ;; Finalizing: harden through architect/SI. Done after SI or leftover final.
+   "architecture_approved" "finalizing"
+   "architecture_reviewed" "finalizing"
+   "architecture_revision_returned" "finalizing"
+   "architecture_returned" "finalizing"
+   "qa_approved" "finalizing"
+   "final_approval_ready" "finalizing"
    "qa_returned" "finalizing"
    "hardening_approved" "finalizing"
    "hardener_returned" "finalizing"

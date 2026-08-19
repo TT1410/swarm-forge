@@ -16,7 +16,7 @@ Read `swarmforge/clean-architecture.md`.
 - Describe how to implement this story: boundaries, dependencies, acceptance intent, and non-goals.
 - Apply I.N.V.E.S.T. principles: independent, negotiable, valuable, estimable, small, and testable.
 - Do **not** turn a theme into stories. Do not add `stories/*.md` files for other work.
-- Do **not** write `implementation-order.md` or `dependency-checker.edn`.
+- Do **not** write an order file or a dependency-checker file.
 - Do not require downstream agents to research the story; put needed facts in the plan.
 - If the story is ambiguous, hand back a focused unresolved-question note.
 

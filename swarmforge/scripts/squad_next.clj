@@ -392,12 +392,6 @@
                (= template (:template %)))
          assignments)))
 
-(defn assignment-count-for [assignments story-id template]
-  (count
-   (filter #(and (= story-id (:story-id %))
-                 (= template (:template %)))
-           assignments)))
-
 (defn assignment-exists? [assignments assignment-id]
   (boolean (some #(= assignment-id (:assignment-id %)) assignments)))
 
@@ -413,7 +407,7 @@
 
 (declare agent-state transient-row? next-batch-id visible-handoff-agents
          capacity-counted-agent? ready-actions hardener-member-ready?
-         held-handoff-files all-theme-stories-qa-complete? same-theme-packets)
+         held-handoff-files same-theme-packets)
 
 (defn agent-files [root agent]
   (let [agent-dir (fs/path root ".squad" "agents" agent)]
@@ -584,8 +578,7 @@
          :reason (str gate " approval is not required by configuration")
          :command (str "squad_packet.sh approve " story-id " " gate " auto-approved-by-config")}))))
 (declare assignment-create-candidate assignment-spawn-candidate spawnable-assignment?
-         stale-changes-requested?
-         architecture-gate-satisfied-for-final?)
+         stale-changes-requested?)
 
 
 (defn assignment-candidate [root assignments agents packet template assignment-suffix reason priority stage-order requirement]
@@ -597,46 +590,6 @@
       (when (spawnable-assignment? root agents template assignment)
         (assignment-spawn-candidate assignment theme-id story-id template reason priority stage-order))
       (assignment-create-candidate theme-id story-id template assignment-id reason priority stage-order requirement))))
-
-(defn implementer-rework-already-created?
-  "True when an implementer assignment exists beyond the packet's recorded
-  implementation_assignment — the one allowed rework for a current code_review
-  changes-requested cycle ( thrash stop)."
-  [assignments packet story-id]
-  (let [recorded (get packet "implementation_assignment")]
-    (boolean
-     (some (fn [a]
-             (and (= story-id (:story-id a))
-                  (= "implementer" (:template a))
-                  (not= recorded (:assignment-id a))))
-           assignments))))
-
-(defn implementer-rework-ready? [root packet]
-  (and (field-changes-requested? packet "code_review")
-       (not (stale-changes-requested? packet "code_review"))
-       (approval-satisfied? root packet "implementation-plan")
-       (approval-satisfied? root packet "gherkin")))
-
-(defn implementation-revision-action [root assignments agents packet reason priority stage-order]
-  (let [story-id (get packet "story_id" (get packet "_story_id"))]
-    (when (or (assignment-for assignments story-id "implementer")
-              (not (implementer-rework-already-created? assignments packet story-id)))
-      (assignment-candidate root assignments agents packet "implementer" "implementation"
-                            reason priority stage-order nil))))
-
-(defn implementation-revision-candidate
-  "At most one implementer rework while code_review is currently changes-requested.
-  After that rework merges and is re-recorded, clear-downstream drops CR and
-   sends the story to a new cleaner then hardener — not a second CR."
-  [root assignments agents packet reason priority stage-order]
-  (when (implementer-rework-ready? root packet)
-    (implementation-revision-action root assignments agents packet reason priority stage-order)))
-
-(defn cleaner-version-count [assignments packet story-id]
-  (let [n (assignment-count-for assignments story-id "cleaner")]
-    (if (and (zero? n) (field-present? packet "cleaner_sha"))
-      1
-      n)))
 
 (defn code-review-create-allowed?
   "At most one code-reviewer assignment and one recorded verdict per story."
@@ -1333,13 +1286,6 @@
                                          "implementer" "implementation"
                                          "story is approved for implementation" 60 90
                                          nil)))}
-   {:id :implementation-revision-assignment
-    :priority 60
-    :stage-order 95
-    :candidate (fn [ctx packet]
-                 (implementation-revision-candidate
-                  (:root ctx) (:assignments ctx) (:agents ctx) packet
-                  "code review requested implementation changes" 60 95))}
    {:id :cleaner-assignment
     :priority 60
     :stage-order 100
@@ -1404,11 +1350,7 @@
     :priority 60
     :stage-order 170
     :candidate (fn [ctx packet]
-                 (when (and (all-theme-stories-qa-complete?
-                             (:root ctx)
-                             (same-theme-packets (packets (:root ctx))
-                                                 (get packet "theme_id")))
-                            (approval-satisfied? (:root ctx) packet "qa")
+                 (when (and (approval-satisfied? (:root ctx) packet "qa")
                             (field-present? packet "qa_sha")
                             (not (field-present? packet "architecture_batch")))
                    (batch-candidate (:root ctx) (:assignments ctx) packet "architecture" "architecture"
@@ -1421,14 +1363,7 @@
     :candidate (fn [ctx packet]
                  (when (field-accepted? packet "architecture_review")
                    (approval-candidate (:root ctx) packet "architecture" "Approve_architecture"
-                                       "architecture-review-accepted" 30 180)))}
-   {:id :final-approval
-    :priority 30
-    :stage-order 190
-    :candidate (fn [ctx packet]
-                 (when (architecture-gate-satisfied-for-final? (:root ctx) packet)
-                   (approval-candidate (:root ctx) packet "final" "Approve_final"
-                                       "story-ready-for-final-acceptance" 30 190)))}])
+                                       "architecture-review-accepted" 30 180)))}])
 
 (defn story-candidates [root rows]
   (let [ctx {:root root
@@ -1446,35 +1381,11 @@
 (defn same-theme-packets [all-packets theme-id]
   (filter #(= theme-id (get % "theme_id")) all-packets))
 
-(defn packet-qa-complete? [root packet]
-  (and (approval-satisfied? root packet "qa")
-       (field-present? packet "qa_sha")))
-
-(defn all-theme-stories-qa-complete?
-  "Architecture / senior-impl wait until every project story has finished QA."
-  [root theme-packets]
-  (boolean
-   (and (seq theme-packets)
-        (every? #(packet-qa-complete? root %) theme-packets))))
-
-(defn code-review-iteration-changes-requested? [packet]
-  (str/includes? (str (get packet "code_review_iterations" "")) "changes-requested"))
-
-(defn post-rework-ready-for-hardener?
-  "After the single CR requested changes, a recorded rework cleaner
-  is enough to enter harden — no second CR accept required."
-  [packet]
-  (and (field-present? packet "cleaner_sha")
-       (not (field-accepted? packet "code_review"))
-       (not (field-changes-requested? packet "code_review"))
-       (code-review-iteration-changes-requested? packet)))
-
 (defn hardener-member-ready? [root packet]
-  (and (approval-satisfied? root packet "code-review")
-       (not (field-present? packet "hardener_sha"))
-       (or (and (field-accepted? packet "code_review")
-                (field-present? packet "code_review_sha"))
-           (post-rework-ready-for-hardener? packet))))
+  (and (not (field-present? packet "hardener_sha"))
+       (field-present? packet "code_review_sha")
+       (or (field-accepted? packet "code_review")
+           (field-changes-requested? packet "code_review"))))
 
 (defn hardener-stage-clear? [root packet]
   (or (field-present? packet "hardener_sha")
@@ -1525,26 +1436,6 @@
   (boolean (some #(and (field-changes-requested? % "architecture_review")
                        (not (field-present? % "senior_implementer_sha")))
                  packets)))
-
-(defn architecture-complete? [packet]
-  (or (field-accepted? packet "architecture_review")
-      (and (field-changes-requested? packet "architecture_review")
-           (field-present? packet "senior_implementer_sha"))))
-
-(defn architecture-gate-satisfied-for-final? [root packet]
-  (or (and (field-accepted? packet "architecture_review")
-           (approval-satisfied? root packet "architecture"))
-      (and (field-changes-requested? packet "architecture_review")
-           (field-present? packet "senior_implementer_sha"))))
-
-(defn any-hardener-member-ready? [root packets]
-  (boolean (some #(hardener-member-ready? root %) packets)))
-
-(defn any-qa-member-ready? [root packets]
-  (boolean (some #(qa-member-ready? root %) packets)))
-
-(defn any-architecture-member-ready? [root packets]
-  (boolean (some #(architecture-member-ready? root %) packets)))
 
 (defn unbatched-hardener-member-ready? [root packet]
   (and (hardener-member-ready? root packet)
@@ -1659,12 +1550,11 @@
                      (or (batch-id-needing-result theme-packets "qa_batch" "qa_sha")
                          (when-not (any-unbatched-qa-member-ready? root theme-packets)
                            (open-batch-with-members batches "qa" (str theme-id "-qa")))))
-     :architecture-ready? (and (all-theme-stories-qa-complete? root theme-packets)
+     :architecture-ready? (and (seq theme-packets)
                                (or (architecture-batch-needing-review theme-packets)
                                    (when-not (any-unbatched-architecture-member-ready? root theme-packets)
                                      (open-batch-with-members batches "architecture" (str theme-id "-architecture")))))
-     :senior-ready? (and (all-theme-stories-qa-complete? root theme-packets)
-                         (any-architecture-needs-senior? theme-packets))}))
+     :senior-ready? (any-architecture-needs-senior? theme-packets)}))
 
 (defn batch-candidate-for-rule [root assignments agents theme-id readiness
                                 {:keys [ready? template suffix reason stage-order]}]

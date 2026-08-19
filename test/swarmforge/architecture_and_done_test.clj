@@ -46,10 +46,10 @@
        "code_review: accepted\n"
        "code_review_sha: cccccccccc\n"))
 
-(deftest no-architect-until-every-story-has-qa
-  ;; Given two stories in one project and only one has finished QA
+(deftest architect-takes-ready-stories-without-waiting-for-siblings
+  ;; Given two stories and only one has finished QA
   ;; When residual runs
-  ;; Then no architect or senior-implementer is created
+  ;; Then architect may take the ready story; it does not wait for the sibling
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -58,14 +58,12 @@
                   (str implementer-gate-conf
                        "approval_required qa false\n"
                        "approval_required architecture false\n"))
-      (write-nontrivial-checker! root)
       (write-file (fs/path root ".squad/stories/alpha/packet") (qa-complete-packet "alpha"))
       (write-file (fs/path root ".squad/stories/beta/packet") (coding-packet "beta"))
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (not (str/includes? out "TEMPLATE: architect"))
-            "Do not start architecture on a partial QA set")
-        (is (not (str/includes? out "TEMPLATE: senior-implementer")))
-        (is (not (str/includes? out "BATCH_KIND: architecture"))))
+        (is (or (str/includes? out "TEMPLATE: architect")
+                (str/includes? out "architecture")))
+        (is (not (str/includes? out "TEMPLATE: senior-implementer"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -92,12 +90,12 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest story-board-done-after-qa
+(deftest story-board-done-after-si-or-architect-without-recs
   ;; Given packet states after QA
-  ;; Then the story card is Done; pre-QA late pipeline stays Finalizing
-  (is (= "done" (web/board-column "qa_approved")))
-  (is (= "done" (web/board-column "architecture_reviewed")))
-  (is (= "done" (web/board-column "architecture_approved")))
+  ;; Then QA/architect stay Finalizing; Done is SI returned or leftover final_approved
+  (is (= "finalizing" (web/board-column "qa_approved")))
+  (is (= "finalizing" (web/board-column "architecture_reviewed")))
+  (is (= "finalizing" (web/board-column "architecture_approved")))
   (is (= "done" (web/board-column "senior_implementer_returned")))
   (is (= "done" (web/board-column "final_approved")))
   (is (= "finalizing" (web/board-column "code_review_approved")))

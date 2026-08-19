@@ -700,7 +700,10 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest squad-next-routes-code-review-rejection-back-to-implementer
+(deftest squad-next-routes-code-review-recs-to-hardener
+  ;; Given CR recorded changes-requested
+  ;; When residual runs
+  ;; Then hardener applies the recs; no implementer rework
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -710,20 +713,17 @@
       (write-file (fs/path root "stories/cave-topology.md") "Story: cave topology and setup.\n")
       (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
       (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "cave-topology" "stories/cave-topology.md")
-      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md") "")
       (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
-      (write-nontrivial-checker! root)
       (let [sha (prepare-implementation-packet! root "wumpus" "cave-topology")]
         (run {:dir root} (script "squad_packet.sh") "approve" "cave-topology" "implementation" "approved")
         (run {:dir root} (script "squad_packet.sh") "record" "cave-topology" "implementation" "impl-1" "master" sha)
         (run {:dir root} (script "squad_packet.sh") "record" "cave-topology" "cleaner" "clean-1" "master" sha)
         (run {:dir root} (script "squad_packet.sh") "review" "cave-topology" "code" "changes-requested" "review-1" "master" sha)
         (let [next (run {:dir root} (script "squad_next.sh"))]
-          (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
-          (is (str/includes? (:out next) "TEMPLATE: implementer"))
-          (is (str/includes? (:out next) "code review requested implementation changes"))
-          (is (not (str/includes? (:out next) "TEMPLATE: hardener")))
-          (is (not (str/includes? (:out next) "TEMPLATE: code-reviewer")))))
+          (is (or (str/includes? (:out next) "TEMPLATE: hardener")
+                  (str/includes? (:out next) "hardener")))
+          (is (not (str/includes? (:out next) "TEMPLATE: implementer")))
+          (is (not (str/includes? (:out next) "code review requested implementation changes")))))
       (finally
         (fs/delete-tree root)))))
 

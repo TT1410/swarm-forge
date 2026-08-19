@@ -1865,19 +1865,4 @@
     (is (true? (assign/mismatched-packet-theme?
                 (fs/path root ".squad/stories/s1/packet") "other")))
     (is (false? (assign/mismatched-packet-theme?
-                 (fs/path root ".squad/stories/s1/packet") "wumpus")))
-    (is (false? (next/implementer-rework-ready? root {"story_id" "s1"})))
-    (is (true? (next/implementer-rework-ready?
-                root
-                {"code_review" "changes-requested"
-                 "implementation_plan_approval" "approved"
-                 "gherkin_approval" "approved"})))
-    (is (nil? (next/implementation-revision-candidate root [] [] {"story_id" "s1"} "r" 60 95)))
-    (is (= "implementer"
-           (:template (next/implementation-revision-candidate
-                       root [] []
-                       {"story_id" "s1"
-                        "code_review" "changes-requested"
-                        "implementation_plan_approval" "approved"
-                        "gherkin_approval" "approved"}
-                       "r" 60 95))))))
+                 (fs/path root ".squad/stories/s1/packet") "wumpus")))))

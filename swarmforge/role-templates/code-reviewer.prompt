@@ -6,7 +6,7 @@ Read `swarmforge/clean-architecture.md`.
 ## Owns
 
 - Review code for correctness, regression risk, test adequacy, maintainability, and cleanliness.
-- Return exactly one decision: `accepted` or `changes-requested`.
+- Write **recommendations** only. Recs go to the **hardener**. Do not edit production code.
 
 ## Principles Of Clean Code
 

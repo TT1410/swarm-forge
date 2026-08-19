@@ -50,54 +50,6 @@
                    "template: implementer\n\n"
                    "merge_and_process " from " abcdef1234\n")))
 
-(deftest one-code-review-then-hardener-after-rework-cleaner
-  ;; Given: first CR requested changes; implementer rework and cleaner-r2 are recorded
-  ;; When: squad_next runs
-  ;; Then: no code-review-r2; story is eligible for hardener
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-roles! root)
-      (write-file (fs/path root "swarmforge/squad.conf")
-                  (str implementer-gate-conf
-                       "approval_required code_review false\n"))
-      (write-nontrivial-checker! root)
-      (write-file (fs/path root ".squad/themes/wumpus/implementation-order.md") "alpha:\n")
-      (write-file (fs/path root ".squad/stories/alpha/packet")
-                  (str "story_id: alpha\n"
-                       "theme_id: wumpus\n"
-                       "story_approval: approved\n"
-                       "gherkin_approval: approved\n"
-                       "qa_procedure_approval: approved\n"
-                       "gherkin_review: accepted\n"
-                       "qa_procedure_review: accepted\n"
-                       "implementation_approval: approved\n"
-                       "implementation_assignment: alpha-implementation-r2\n"
-                       "implementation_sha: dddddddddd\n"
-                       "implementation_iterations: alpha-implementation=recorded,alpha-implementation-r2=recorded\n"
-                       "cleaner_assignment: alpha-cleaner-r2\n"
-                       "cleaner_sha: eeeeeeeeee\n"
-                       "cleaner_iterations: alpha-cleaner=recorded,alpha-cleaner-r2=recorded\n"
-                       "code_review_iterations: alpha-code-review=changes-requested\n"))
-      (doseq [[id template] [["alpha-implementation" "implementer"]
-                             ["alpha-implementation-r2" "implementer"]
-                             ["alpha-cleaner" "cleaner"]
-                             ["alpha-cleaner-r2" "cleaner"]
-                             ["alpha-code-review" "code-reviewer"]]]
-        (write-assignment! root id {:story "alpha" :template template :state "merged"
-                                    :merge-commit "eeeeeeeeee"}))
-      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (not (str/includes? out "alpha-code-review-r2"))
-            "Never emit a second code-reviewer")
-        (is (not (re-find #"TEMPLATE: code-reviewer" out))
-            "First CR verdict is final")
-        (is (or (str/includes? out "TEMPLATE: hardener")
-                (str/includes? out "record_batch_membership")
-                (str/includes? out "hardener"))
-            "After CR changes-requested + rework cleaner, hardener is next"))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest existing-code-review-assignment-blocks-second-create
   ;; Given: a story already has a code-reviewer assignment
   ;; When: a newer cleaner is recorded

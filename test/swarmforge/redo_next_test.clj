@@ -478,3 +478,151 @@
         (is (not (str/includes? out "accept_merge"))))
       (finally
         (fs/delete-tree root)))))
+
+(defn- spec-approved-packet [story]
+  (str "story_id: " story "\n"
+       "theme_id: swarm\n"
+       "implementation_plan_path: .squad/stories/" story "/plan.md\n"
+       "implementation_plan_approval: approved\n"
+       "gherkin_path: features/" story ".feature\n"
+       "gherkin_approval: approved\n"
+       "qa_procedure_path: qa/" story ".md\n"
+       "qa_procedure_approval: approved\n"))
+
+(deftest cleaner-after-implementer
+  ;; Given implementation_sha, no cleaner
+  ;; When residual runs
+  ;; Then cleaner — not code-reviewer
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (spec-approved-packet "cave-graph")
+                       "implementation_sha: abcdef1111\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "TEMPLATE: cleaner"))
+        (is (not (str/includes? out "TEMPLATE: code-reviewer"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest code-reviewer-after-cleaner
+  ;; Given implementation_sha and cleaner_sha
+  ;; When residual runs
+  ;; Then code-reviewer
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (spec-approved-packet "cave-graph")
+                       "implementation_sha: abcdef1111\n"
+                       "cleaner_sha: abcdef2222\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "TEMPLATE: code-reviewer")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest hardener-after-code-review
+  ;; Given CR recorded
+  ;; When residual runs
+  ;; Then hardener (may be a batch of ready stories)
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (spec-approved-packet "cave-graph")
+                       "implementation_sha: abcdef1111\n"
+                       "cleaner_sha: abcdef2222\n"
+                       "code_review: accepted\n"
+                       "code_review_sha: abcdef3333\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (or (str/includes? out "TEMPLATE: hardener")
+                (str/includes? out "hardener"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest code-review-recs-go-to-hardener-not-implementer
+  ;; Given CR recorded changes-requested
+  ;; When residual runs
+  ;; Then hardener applies the recs — not a new implementer
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (spec-approved-packet "cave-graph")
+                       "implementation_sha: abcdef1111\n"
+                       "cleaner_sha: abcdef2222\n"
+                       "code_review: changes-requested\n"
+                       "code_review_sha: abcdef3333\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (or (str/includes? out "TEMPLATE: hardener")
+                (str/includes? out "hardener")))
+        (is (not (str/includes? out "TEMPLATE: implementer")))
+        (is (not (str/includes? out "code review requested implementation changes"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest ready-stories-may-share-a-hardener-batch
+  ;; Given two stories both CR-complete
+  ;; When residual runs
+  ;; Then one hardener may cover both (batch stays)
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (doseq [story ["alpha" "beta"]]
+        (write-file (fs/path root ".squad/stories" story "packet")
+                    (str (spec-approved-packet story)
+                         "implementation_sha: a\ncleaner_sha: b\n"
+                         "code_review: accepted\ncode_review_sha: c\n")))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "hardener")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest architect-does-not-wait-for-unready-sibling
+  ;; Given one QA-complete story and a sibling still in coding
+  ;; When residual runs
+  ;; Then architect may take the ready story; it does not wait for the sibling
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/stories/alpha/packet")
+                  (str (spec-approved-packet "alpha")
+                       "implementation_sha: a\ncleaner_sha: b\n"
+                       "code_review: accepted\ncode_review_sha: c\n"
+                       "hardener_sha: d\nqa_sha: e\nqa_approval: approved\n"))
+      (write-file (fs/path root ".squad/stories/beta/packet")
+                  (str (spec-approved-packet "beta")
+                       "implementation_sha: a\ncleaner_sha: b\n"
+                       "code_review: accepted\ncode_review_sha: c\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (or (str/includes? out "TEMPLATE: architect")
+                (str/includes? out "architecture")))
+        (is (not (str/includes? out "TEMPLATE: senior-implementer"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest no-final-bless
+  ;; Given architect accepted with no recs (or SI merged)
+  ;; When residual runs
+  ;; Then story is done — not create_approval_request final
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (spec-approved-packet "cave-graph")
+                       "implementation_sha: a\ncleaner_sha: b\n"
+                       "code_review: accepted\nhardener_sha: c\nqa_sha: d\n"
+                       "architecture_review: accepted\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (not (str/includes? out "Approve_final")))
+        (is (not (str/includes? out "gate final")))
+        (is (not (str/includes? out "story-ready-for-final-acceptance"))))
+      (finally
+        (fs/delete-tree root)))))
