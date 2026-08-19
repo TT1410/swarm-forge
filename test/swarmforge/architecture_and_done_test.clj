@@ -98,7 +98,7 @@
   (is (= "finalizing" (web/board-column "architecture_approved")))
   (is (= "done" (web/board-column "senior_implementer_returned")))
   (is (= "done" (web/board-column "final_approved")))
-  (is (= "finalizing" (web/board-column "code_review_approved")))
+  (is (= "coding" (web/board-column "code_review_approved")))
   (is (= "finalizing" (web/board-column "hardening_approved")))
   (is (= "finalizing" (web/board-column "qa_returned"))))
 

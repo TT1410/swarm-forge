@@ -110,7 +110,7 @@
   (is (= "coding" (web/board-column "implemented")))
   (is (= "coding" (web/board-column "implementation_approved")))
   (is (= "coding" (web/board-column "code_reviewed")))
-  (is (= "finalizing" (web/board-column "code_review_approved")))
+  (is (= "coding" (web/board-column "code_review_approved")))
   (is (= "finalizing" (web/board-column "hardening_approved")))
   (is (= "finalizing" (web/board-column "qa_approved")))
   (is (= "finalizing" (web/board-column "architecture_reviewed")))
@@ -343,12 +343,10 @@
                        "reason: ready\n"))
       (let [pending (web/approval-state-for root "pending")
             by-id (into {} (map (juxt #(get % "approval_id") identity) pending))]
-        (is (= 3 (count pending)))
-        (is (= "/artifact/story/cave" (get-in by-id ["story__cave" "document_url"])))
-        (is (str/includes? (get-in by-id ["story__cave" "document_label"] "") "story"))
+        (is (= 1 (count pending)))
+        (is (nil? (get by-id "story__cave")))
+        (is (nil? (get by-id "order__wumpus")))
         (is (= "/artifact/gherkin/cave" (get-in by-id ["gherkin__cave" "document_url"])))
-        (is (= "/artifact/theme/wumpus#implementation-order"
-               (get-in by-id ["order__wumpus" "document_url"])))
         (doseq [a pending]
           (is (not (str/blank? (get a "document_url")))
               (str "approval missing document_url: " (get a "approval_id")))
@@ -366,8 +364,8 @@
   ;;  theme,  WIF agent,  therm,  buttons,  no Live agents,
   ;;  icons,  Specifying,  splitter,  chat stick
   (let [html web/dashboard-html]
-    (is (str/includes? html "View project"))
-    (is (str/includes? html "data-view-theme"))
+    (is (not (str/includes? html "View project")))
+    (is (not (str/includes? html "data-view-theme")))
     (is (str/includes? html "data-open-agent"))
     (is (str/includes? html "finalizing"))
     (is (str/includes? html "Finalizing"))
@@ -543,12 +541,12 @@
       (run {:dir root}
            (script "squad_approval.sh")
            "request"
-           "story__cave-topology"
+           "gherkin__cave-topology"
            "story"
            "cave-topology"
-           "story"
-           "Approve story"
-           "story is ready")
+           "gherkin"
+           "Approve Gherkin"
+           "gherkin is ready")
       (write-file (fs/path root ".squad/agents/active-001/metadata")
                   "agent_id: active-001\ntemplate: implementer\ntask_id: active-task\nsession: active-session\n")
       (write-file (fs/path root ".squad/agents/active-001/status")
@@ -611,7 +609,7 @@
 	              blocker-page (slurp (str base-url "artifact/blocker/newer-assignment"))
 	              agent-page (slurp (str base-url "agent/active-001"))
 	              pane-tail (slurp (str base-url "api/agents/active-001/pane"))
-	              approve (http-post (str base-url "api/approvals/story__cave-topology/approve"))
+	              approve (http-post (str base-url "api/approvals/gherkin__cave-topology/approve"))
 	              returns-before-message (Long/parseLong
 	                                      (str/trim
 	                                       (slurp (str (fs/path fake-state "returns")))))
@@ -620,10 +618,10 @@
 	                                     (str/trim
 	                                      (slurp (str (fs/path fake-state "returns")))))
 	              approved (slurp (str base-url "api/state"))]
-	          (is (str/includes? state "\"approval_id\":\"story__cave-topology\""))
+	          (is (str/includes? state "\"approval_id\":\"gherkin__cave-topology\""))
 	          (is (str/includes? state "\"story_id\":\"cave-topology\""))
 	          (is (str/includes? state "\"state\":\"implemented\""))
-	          (is (str/includes? state "\"stage_label\":\"implemented\""))
+	          (is (str/includes? state "\"stage_label\":\"implement\""))
 	          (is (not (str/includes? state "\"state\":\"specification_in_progress\"")))
 	          (is (str/includes? state "\"agent_id\":\"active-001\""))
 	          (is (not (str/includes? state "\"agent_id\":\"retired-001\"")))
@@ -643,7 +641,7 @@
 	          (is (str/includes? page "id=\"ts-busy\""))
 	          (is (str/includes? page "data.troubleshooter"))
 	          (is (str/includes? page "id=\"sl-message\""))
-	          (is (str/includes? page "Add New Item"))
+	          (is (str/includes? page "Add Story"))
 	          (is (str/includes? page "work_in_flight"))
 	          (is (str/includes? page "backlog"))
 	          (is (str/includes? page "/api/backlog"))
@@ -679,8 +677,8 @@
 	          ;; stream. This assertion only needs to prove the dashboard message
 	          ;; sent the required double-return wakeup.
 	          (is (<= 2 (- returns-after-message returns-before-message)))
-          (is (fs/exists? (fs/path root ".squad/approvals/approved/story__cave-topology.approval")))
-          (is (not (fs/exists? (fs/path root ".squad/approvals/pending/story__cave-topology.approval"))))))
+          (is (fs/exists? (fs/path root ".squad/approvals/approved/gherkin__cave-topology.approval")))
+          (is (not (fs/exists? (fs/path root ".squad/approvals/pending/gherkin__cave-topology.approval"))))))
       (finally
         (run {:dir root :ok? false} (script "stop_squadd.clj") (str root))
         (fs/delete-tree root)))))

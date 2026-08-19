@@ -63,10 +63,10 @@
       (is (= ["room-perception"] (get (first rows) "story_ids")))
       (is (true? (get (first rows) "is_batch"))))))
 
-(deftest stage-labels-written-approved-in-process
-  (is (= "written" (web/stage-label "story_recorded")))
-  (is (= "approved" (web/stage-label "story_approved")))
-  (is (= "in-process" (web/stage-label "specification_in_progress"))))
+(deftest stage-labels-are-short-pills
+  (is (= "plan" (web/stage-label "story_recorded")))
+  (is (= "plan" (web/stage-label "story_approved")))
+  (is (= "gherkin" (web/stage-label "specification_in_progress"))))
 
 (deftest qa-fail-subject-detection
   (with-redefs [packet/git-commit-subject

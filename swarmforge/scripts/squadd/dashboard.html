@@ -170,19 +170,17 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
     <main class="board">
       <div class="board-toolbar">
         <span>Board</span>
-        <span class="pill" id="theme-pill">project: —</span>
         <span class="spacer"></span>
         <button type="button" class="deck-btn" id="backlog-deck" title="Backlog">
           <span class="sheet"></span><span class="sheet"></span>
           <span class="sheet"><span class="count" id="backlog-count">0</span></span>
         </button>
-        <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add New Item</button>
+        <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add Story</button>
       </div>
       <div class="columns" id="columns"></div>
     </main>
     <div class="splitter" id="splitter" title="Drag to resize" role="separator" aria-orientation="vertical"></div>
     <aside class="rail">
-      <section class="shrink"><h2>Projects</h2><div class="scroll-body" id="themes"></div></section>
       <section class="work-sec"><h2>Work Queue</h2><div class="work-wrap" id="work"></div></section>
       <section class="ts">
         <div class="ts-head">
@@ -202,6 +200,9 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 <div class="backlog-menu-portal" id="backlog-menu" hidden></div>
 <div class="batch-menu-portal" id="batch-menu" hidden></div>
 <script>
+/* Combined cockpit. Pills: plan gherkin qa-proc implement clean review harden qa architect si done */
+const STAGE_PILLS=['plan','gherkin','qa-proc','implement','clean','review','harden','qa','architect','si','done'];
+void STAGE_PILLS;
 /* Combined cockpit — . Behavior: ui-design.md + dashboard-mockup.html */
 const esc = s => String(s??'').replace(/[&<>"']/g,c=>({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
 const age = iso => {
@@ -352,7 +353,10 @@ function renderAttention(data) {
   } else stallSec.style.display='none';
 
   const rows=[];
+  const operatorGates={ 'implementation-plan':1,'implementation_plan':1,gherkin:1,'qa-procedure':1,qa_procedure:1 };
   (data.approvals&&data.approvals.pending||[]).forEach(a=>{
+    const g=String(a.gate||'').toLowerCase().replace(/_/g,'-');
+    if(!operatorGates[g]) return;
     // Every approval always has a document popup link (server sets document_url).
     const docUrl=a.document_url||'';
     const docLabel=a.document_label||'View document';
@@ -469,7 +473,7 @@ function bindBacklogDeck(openBl) {
     menu.innerHTML=openBl.length?openBl.map(b=>`<button type="button" class="mi" data-edit-bl="${esc(b.id)}">
       <span class="t">${esc(b.title||b.id)}</span>
       <span class="d">created ${esc(fmt(b.created_at))} · modified ${esc(fmt(b.updated_at))}</span></button>`).join(''):
-      '<div style="padding:12px;color:#68726c;font-size:11px">Empty — Add New Item</div>';
+      '<div style="padding:12px;color:#68726c;font-size:11px">Empty — Add Story</div>';
   };
   const pos=()=>{const r=deck.getBoundingClientRect(); menu.style.left=Math.max(8, r.right-280)+'px'; menu.style.top=(r.bottom+6)+'px';};
   let hideT;
@@ -481,21 +485,9 @@ function bindBacklogDeck(openBl) {
   if(add) add.onclick=()=>openBacklogEditor(null);
 }
 
-function renderThemes(data) {
-  const tid=data.current_theme_id;
-  document.getElementById('theme-pill').textContent='project: '+(tid||'—');
-  // Always link to theme package when a current theme exists
-  document.getElementById('themes').innerHTML=tid?
-    `<div class="theme-card"><div class="name">${esc(tid)} <span class="pill pill-ok">active</span></div>
-     <div class="meta" style="font-size:10px;margin-top:4px">Package on disk</div>
-     <button type="button" class="btn btn-sm" style="margin-top:6px" data-view-theme="${esc(tid)}">View project</button></div>`:
-    '<div class="meta">No project</div>';
-  const btn=document.querySelector('[data-view-theme]');
-  if(btn) btn.onclick=()=>openAgentWindow('/artifact/theme/'+encodeURIComponent(btn.getAttribute('data-view-theme')),'squad-theme');
-}
 function renderWork(data) {
   // Server already sorts later pipeline higher
-  const rows=data.work_in_flight||data.assignments||[];
+  const rows=(data.work_in_flight||data.assignments||[]).filter(w=>(w.role||w.template)!=='merger');
   document.getElementById('work').innerHTML=`<table class="work"><colgroup>
     <col class="c-story"><col class="c-role"><col class="c-state"><col class="c-age"></colgroup>
     <thead><tr><th>Story</th><th>Role</th><th></th><th>Age</th></tr></thead>
@@ -588,12 +580,12 @@ function openBacklogEditor(item) {
     bodyHtml: `<label>Title</label><input type="text" id="be-title" value="${esc(item&&item.title||'')}">
       <label>Description</label><textarea id="be-body">${esc(item&&item.body||'')}</textarea>
       <div class="dates">${isNew?'Not saved yet.':`Created ${esc(fmt(item.created_at))} · Modified ${esc(fmt(item.updated_at))}`}</div>
-      <div class="note"><strong>Add</strong> → backlog only. <strong>Approve</strong> → pipeline; SL classifies project vs story.</div>
+      <div class="note"><strong>Add</strong> → backlog only. <strong>Start</strong> → board and analyst. No classify.</div>
       <div class="actions">
         <button type="button" class="btn" data-be="cancel">Cancel</button>
         ${!isNew?'<button type="button" class="btn btn-danger" data-be="delete">Delete</button>':''}
         <button type="button" class="btn" data-be="add">${isNew?'Add':'Save'}</button>
-        <button type="button" class="btn btn-approve" data-be="approve">Approve</button>
+        <button type="button" class="btn btn-approve" data-be="approve">Start</button>
       </div>`,
     onMount(el){
       el.querySelector('[data-be=cancel]').onclick=()=>closeWindow(id);
@@ -637,7 +629,7 @@ function openStoryDetail(s) {
     left: Math.max(40,innerWidth-460), top:100,
     bodyHtml:`<div style="font-weight:700;font-size:14px">${esc(label)}</div>
       <div class="dates">Updated ${esc(fmt(s.updated_at))} · ${esc(age(s.updated_at))}</div>
-      <p style="font-size:12px">Project <strong>${esc(s.theme_id||'—')}</strong> · ${esc(s.state||'')} · ${esc(boardColumn(s))}</p>
+      <p style="font-size:12px">${esc(s.state||'')} · ${esc(boardColumn(s))}</p>
       <div class="stat-grid">
         <div class="k">Gherkin</div><div class="v">${esc(s.gherkin_review_state||s.gherkin_review||'—')}</div>
         <div class="k">QA proc</div><div class="v">${esc(s.qa_procedure_review_state||'—')}</div>
@@ -687,7 +679,6 @@ async function refresh() {
     // data.stalls used by tests and Attention
     void data.stalls;
     renderBoard(data);
-    renderThemes(data);
     renderWork(data);
     renderSlTherm(data);
     renderChat(data);

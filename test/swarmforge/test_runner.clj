@@ -17,6 +17,7 @@
             [swarmforge.recover-test]
             [swarmforge.redo-next-test]
             [swarmforge.redo-prompt-test]
+            [swarmforge.redo-ui-test]
             [swarmforge.role-contract-test]
             [swarmforge.simulator-test]
             [swarmforge.spawn-test]
@@ -43,6 +44,7 @@
     swarmforge.recover-test
     swarmforge.redo-next-test
     swarmforge.redo-prompt-test
+    swarmforge.redo-ui-test
     swarmforge.role-contract-test
     swarmforge.spawn-test
     swarmforge.squad-actions-test

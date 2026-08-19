@@ -10,11 +10,10 @@
   (is (str/includes? web/dashboard-html "Work Queue"))
   (is (not (str/includes? web/dashboard-html "Work in flight"))))
 
-(deftest dashboard-says-project-not-theme
-  (is (str/includes? web/dashboard-html ">Projects<"))
-  (is (str/includes? web/dashboard-html "project: —"))
-  (is (not (str/includes? web/dashboard-html ">Themes<")))
-  (is (not (str/includes? web/dashboard-html "theme: —"))))
+(deftest dashboard-drops-project-rail
+  (is (not (str/includes? web/dashboard-html ">Projects<")))
+  (is (not (str/includes? web/dashboard-html "id=\"theme-pill\"")))
+  (is (not (str/includes? web/dashboard-html ">Themes<"))))
 
 (deftest theme-package-uses-project-copy
   (let [root (tmp-dir)]

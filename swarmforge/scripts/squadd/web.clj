@@ -290,25 +290,28 @@
 (defn map-with-id [id-key id file]
   (assoc (parse-kv-file file) id-key id))
 
+(declare stage-pill board-column)
+
 (def stage-labels
-  ;; Early Specifying pills are distinct (written / approved / in-process)
-  {"story_recorded" "written"
-   "story_approved" "approved"
-   "specification_in_progress" "in-process"
-   "implementation_approval_ready" "qa approved"
-   "implementation_approved" "qa approved"
-   "implemented" "implemented"
-   "cleaned" "cleaned"
-   "code_reviewed" "code reviewed"
-   "code_review_approved" "code reviewed"
-   "hardener_returned" "hardened"
-   "hardening_approved" "hardened"
-   "qa_returned" "hardened"
-   "qa_approved" "hardened"
-   "architecture_returned" "hardened"
-   "architecture_revision_returned" "hardened"
-   "architecture_reviewed" "architect approved"
-   "architecture_approved" "architect approved"
+  "Short board pills from packet state. Specifying uses path fields in stage-pill."
+  {"story_recorded" "plan"
+   "story_approved" "plan"
+   "specification_in_progress" "gherkin"
+   "implementation_approval_ready" "gherkin"
+   "implementation_approved" "implement"
+   "implemented" "implement"
+   "cleaned" "clean"
+   "code_reviewed" "review"
+   "code_review_approved" "review"
+   "hardener_returned" "harden"
+   "hardening_approved" "harden"
+   "qa_returned" "qa"
+   "qa_approved" "qa"
+   "architecture_returned" "architect"
+   "architecture_reviewed" "architect"
+   "architecture_approved" "architect"
+   "architecture_revision_returned" "si"
+   "senior_implementer_returned" "done"
    "final_approved" "done"})
 
 (defn stage-label [state]
@@ -349,7 +352,7 @@
     (merge packet
            (squad-state/derived-stage-fields packet state)
            {"state" state
-            "stage_label" (stage-label state)
+            "stage_label" (stage-pill packet state)
             "stage_detail" (stage-detail packet state)})))
 
 (defn story-number-sort-key [row]
@@ -477,9 +480,21 @@
   [approval]
   (merge approval (approval-document-ref approval)))
 
+(def operator-attention-gates
+  #{"implementation-plan" "gherkin" "qa-procedure"})
+
+(defn operator-attention-gate? [gate]
+  (contains? operator-attention-gates
+             (-> (or gate "")
+                 str/trim
+                 str/lower-case
+                 (str/replace "_" "-"))))
+
 (defn approval-state-for [root state]
   (->> (state-files (fs/path root ".squad" "approvals" state) ".approval")
-       (mapv (comp enrich-approval-document parse-kv-file))))
+       (map parse-kv-file)
+       (filter #(operator-attention-gate? (get % "gate")))
+       (mapv enrich-approval-document)))
 
 (defn batch-state [root]
   (let [dir (fs/path root ".squad" "batches")]
@@ -708,7 +723,7 @@
 (def board-column-by-state
   "Map packet state → board column.
   No Ready column: implementation_approved is Coding; implementation_approval_ready is Specifying.
-  code_review_approved is Finalizing."
+  code_review_approved is Coding."
   {"final_approved" "done"
    "senior_implementer_returned" "done"
    ;; Finalizing: harden through architect/SI. Done after SI or leftover final.
@@ -721,8 +736,8 @@
    "qa_returned" "finalizing"
    "hardening_approved" "finalizing"
    "hardener_returned" "finalizing"
-   "code_review_approved" "finalizing"
-   ;; Coding: approved to implement through code review result
+   "code_review_approved" "coding"
+   ;; Coding: implementer, cleaner, code reviewer
    "code_reviewed" "coding"
    "cleaned" "coding"
    "implemented" "coding"
@@ -738,6 +753,21 @@
 
 (defn board-column [state]
   (get board-column-by-state state "specifying"))
+
+(defn stage-pill [packet state]
+  (let [col (board-column state)]
+    (cond
+      (= col "done") "done"
+      (contains? #{"architecture_revision_returned" "senior_implementer_returned"} state) "si"
+      (str/starts-with? (str state) "architecture") "architect"
+      (contains? #{"qa_returned" "qa_approved"} state) "qa"
+      (contains? #{"hardener_returned" "hardening_approved"} state) "harden"
+      (contains? #{"code_reviewed" "code_review_approved"} state) "review"
+      (= state "cleaned") "clean"
+      (= col "coding") "implement"
+      (not (str/blank? (get packet "qa_procedure_path"))) "qa-proc"
+      (not (str/blank? (get packet "gherkin_path"))) "gherkin"
+      :else "plan")))
 
 (def pipeline-stage-rank
   "Higher = later progress. Used for WIP and in-column card sort."
@@ -1000,6 +1030,7 @@
   ([root assignments batches]
    (let [batch-by-id (into {} (map (fn [b] [(get b "batch_id") b]) batches))]
      (->> assignments
+          (remove #(= "merger" (get % "template")))
           (map (fn [a]
                  (let [id (get a "assignment_id" "")
                        story (get a "story_id" "")
@@ -1271,7 +1302,6 @@
   (let [assignments (assignment-state root)
         agents (agent-state root)
         sl-requests (dashreq/list-all-requests root)
-        theme-id (current-theme-id root)
         stalls (stall-report root assignments agents)
         stories (->> (story-state root)
                      (mapv story-board-row)
@@ -1308,10 +1338,9 @@
               "sl_activity" (sl-activity root)
               "troubleshooter" {"working" (troubleshooter-working? root)
                                 "session" (troubleshooter-session-name)}}
-        with-theme (cond-> base theme-id (assoc "current_theme_id" theme-id))
-        next-a (dashboard-next-action with-theme)
+        next-a (dashboard-next-action base)
         product (product-pending-label sl-requests)]
-    (cond-> (assoc with-theme
+    (cond-> (assoc base
                    "next_action" next-a
                    "residual" next-a)
       product (assoc "product_pending" product))))
