@@ -88,7 +88,6 @@
     :complete_batch
     :record_batch_membership
     :record_review_result
-    :record_post_revision_review_acceptance
     :register_story_artifact
     :register_story_packet
     :attach_story_artifact

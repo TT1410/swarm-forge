@@ -85,5 +85,4 @@
          {:header "acceptance_suite" :description "Full acceptance suite command and result"}
          {:header "unit_tests" :description "Unit test command and result"}
          {:header "crap" :description "CRAP tool summary after real coverage"}]}
-  "gherkin-writer" {:required-tools ["gherkin-parser" "ir-dry-checker"]}
-  "gherkin-reviewer" {:required-tools ["gherkin-parser" "ir-dry-checker"]}}}
+  "gherkin-writer" {:required-tools ["gherkin-parser" "ir-dry-checker"]}}}

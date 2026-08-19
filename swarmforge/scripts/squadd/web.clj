@@ -796,9 +796,7 @@
   "Later pipeline roles rank higher within WIF."
   {"analyst" 10
    "gherkin-writer" 20
-   "gherkin-reviewer" 25
    "qa-procedure-writer" 30
-   "qa-procedure-reviewer" 35
    "implementer" 50
    "cleaner" 55
    "code-reviewer" 60

@@ -27,3 +27,4 @@ Read and obey `swarmforge/role-templates/gherkin-writer.contract.edn`.
 - Commit only the assigned story's Gherkin feature files and concise notes.
 - Include useful parser and IR DRY evidence when available.
 - Hand the committed Gherkin back to `squad-leader`.
+- There is no Gherkin reviewer; the operator approves the feature file on the dashboard.

@@ -110,11 +110,8 @@
   (if (str/blank? value) fallback value))
 
 (defn implementation-ready? [packet]
-  (and (approved? packet "story_approval")
-       (approved? packet "gherkin_approval")
-       (approved? packet "qa_procedure_approval")
-       (current-accepted? packet "gherkin_review")
-       (current-accepted? packet "qa_procedure_review")))
+  (and (approved? packet "implementation_plan_approval")
+       (approved? packet "gherkin_approval")))
 
 (defn specification-in-progress? [packet]
   (and (approved? packet "story_approval")

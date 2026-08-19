@@ -12,7 +12,7 @@
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
 (def valid-decisions #{"accepted" "changes-requested"})
-(def reviewer-templates #{"gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"})
+(def reviewer-templates #{"code-reviewer" "architect"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]

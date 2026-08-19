@@ -76,10 +76,9 @@
   (let [cases [{"story_id" "s1"}
                {"story_id" "s1" "story_approval" "approved"}
                {"story_id" "s1" "story_approval" "approved" "gherkin_assignment" "a1"}
-               {"story_id" "s1" "story_approval" "approved"
-                "gherkin_approval" "approved" "qa_procedure_approval" "approved"
-                "gherkin_review" "accepted" "gherkin_review_target_sha" "g1" "gherkin_sha" "g1"
-                "qa_procedure_review" "accepted" "qa_procedure_review_target_sha" "q1" "qa_procedure_sha" "q1"}
+               {"story_id" "s1"
+                "implementation_plan_approval" "approved"
+                "gherkin_approval" "approved"}
                {"implementation_approval" "approved"}
                {"implementation_sha" "i1"}
                {"cleaner_sha" "c1"}
@@ -872,8 +871,8 @@
                      "qa_procedure_path: qa/s1.md\n"
                      "qa_procedure_sha: qsha\n"))
     (let [candidates (next/story-candidates root [])]
-      (is (= #{"gherkin-reviewer" "qa-procedure-reviewer"}
-             (set (map :template candidates)))))))
+      (is (= #{"create_approval_request"} (set (map :next-action candidates))))
+      (is (= #{"gherkin" "qa-procedure"} (set (map :gate candidates)))))))
 
 (deftest squad-next-selects-downstream-and-batch-candidates
   (let [root (tmp-dir)
@@ -882,6 +881,7 @@
                 (str "approval_required story false\n"
                      "approval_required gherkin false\n"
                      "approval_required qa_procedure false\n"
+                     "approval_required implementation-plan false\n"
                      "approval_required implementation false\n"
                      "approval_required implementation_order false\n"
                      "approval_required dependency_checker false\n"
@@ -896,6 +896,8 @@
     (write-file (fs/path story-dir "packet")
                 (str "theme_id: theme-a\n"
                      "story_id: s1\n"
+                     "implementation_plan_path: .squad/stories/s1/plan.md\n"
+                     "implementation_plan_approval: approved\n"
                      "story_approval: approved\n"
                      "gherkin_approval: approved\n"
                      "qa_procedure_approval: approved\n"
@@ -912,6 +914,8 @@
     (write-file (fs/path story-dir "packet")
                 (str "theme_id: theme-a\n"
                      "story_id: s1\n"
+                     "implementation_plan_path: .squad/stories/s1/plan.md\n"
+                     "implementation_plan_approval: approved\n"
                      "story_approval: approved\n"
                      "gherkin_approval: approved\n"
                      "qa_procedure_approval: approved\n"
@@ -929,6 +933,8 @@
     (write-file (fs/path story-dir "packet")
                 (str "theme_id: theme-a\n"
                      "story_id: s1\n"
+                     "implementation_plan_path: .squad/stories/s1/plan.md\n"
+                     "implementation_plan_approval: approved\n"
                      "story_approval: approved\n"
                      "gherkin_approval: approved\n"
                      "qa_procedure_approval: approved\n"
@@ -947,6 +953,8 @@
     (write-file (fs/path story-dir "packet")
                 (str "theme_id: theme-a\n"
                      "story_id: s1\n"
+                     "implementation_plan_path: .squad/stories/s1/plan.md\n"
+                     "implementation_plan_approval: approved\n"
                      "story_approval: approved\n"
                      "gherkin_approval: approved\n"
                      "qa_procedure_approval: approved\n"
@@ -977,6 +985,8 @@
     (write-file (fs/path story-dir "packet")
                 (str "theme_id: theme-a\n"
                      "story_id: s1\n"
+                     "implementation_plan_path: .squad/stories/s1/plan.md\n"
+                     "implementation_plan_approval: approved\n"
                      "story_approval: approved\n"
                      "gherkin_approval: approved\n"
                      "qa_procedure_approval: approved\n"
@@ -1499,10 +1509,10 @@
       (is (= root (config/git-common-project-root)))
       (is (= root (config/git-project-root))))
     (write-file (fs/path root "swarmforge" "squad.conf")
-                (str "max_active_group reviewers 2 gherkin-reviewer qa-procedure-reviewer\n"
-                     "max_active_group broken no gherkin-reviewer\n"))
-    (is (= [{:group "reviewers" :limit 2 :templates #{"gherkin-reviewer" "qa-procedure-reviewer"}}]
-           (config/squad-template-group-limits root "gherkin-reviewer")))
+                (str "max_active_group reviewers 2 code-reviewer architect\n"
+                     "max_active_group broken no code-reviewer\n"))
+    (is (= [{:group "reviewers" :limit 2 :templates #{"code-reviewer" "architect"}}]
+           (config/squad-template-group-limits root "code-reviewer")))
     (write-file (fs/path theme-dir "status") "state: approved\ndetail: ready\nupdated_at: now\n")
     (write-file (fs/path theme-dir "stories" "story-1.md") "story\n")
     (write-file (fs/path theme-dir "acceptance" "story-1.md") "gherkin\n")
@@ -1854,4 +1864,19 @@
     (is (true? (assign/mismatched-packet-theme?
                 (fs/path root ".squad/stories/s1/packet") "other")))
     (is (false? (assign/mismatched-packet-theme?
-                 (fs/path root ".squad/stories/s1/packet") "wumpus")))))
+                 (fs/path root ".squad/stories/s1/packet") "wumpus")))
+    (is (false? (next/implementer-rework-ready? root {"story_id" "s1"})))
+    (is (true? (next/implementer-rework-ready?
+                root
+                {"code_review" "changes-requested"
+                 "implementation_plan_approval" "approved"
+                 "gherkin_approval" "approved"})))
+    (is (nil? (next/implementation-revision-candidate root [] [] {"story_id" "s1"} "r" 60 95)))
+    (is (= "implementer"
+           (:template (next/implementation-revision-candidate
+                       root [] []
+                       {"story_id" "s1"
+                        "code_review" "changes-requested"
+                        "implementation_plan_approval" "approved"
+                        "gherkin_approval" "approved"}
+                       "r" 60 95))))))

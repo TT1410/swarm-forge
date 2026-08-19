@@ -10,8 +10,6 @@
   ["analyst"
    "gherkin-writer"
    "qa-procedure-writer"
-   "gherkin-reviewer"
-   "qa-procedure-reviewer"
    "implementer"
    "cleaner"
    "code-reviewer"
@@ -77,9 +75,9 @@
     (is (not (some #{"dependency-checker.edn"} (:allowed-root-files (by-role "analyst")))))
     (is (= ["features/"] (:artifact-roots (by-role "gherkin-writer"))))
     (is (= ["qa/"] (:artifact-roots (by-role "qa-procedure-writer"))))
-    (doseq [artifact-role ["gherkin-writer" "qa-procedure-writer" "gherkin-reviewer" "qa-procedure-reviewer"]]
+    (doseq [artifact-role ["gherkin-writer" "qa-procedure-writer"]]
       (is (false? (:may-run-broad-tests (by-role artifact-role))) artifact-role))
-    (doseq [review-role ["gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"]]
+    (doseq [review-role ["code-reviewer" "architect"]]
       (is (= ["reviews/"] (:artifact-roots (by-role review-role))) review-role))
     (is (= ["src/" "test/" "features/" "qa/" "acceptance/" "bb/"] (:artifact-roots (by-role "implementer"))))
     (is (= "squad_next.sh" (:workflow-readiness-source (by-role "implementer"))))
@@ -100,7 +98,6 @@
     (is (= ["dependency-checker"] (:required-tool-ids (by-role "senior-implementer"))))
     (is (= ["crap4clj" "dry4clj"] (:required-tool-ids (by-role "qa"))))
     (is (= ["gherkin-parser" "ir-dry-checker"] (:required-tool-ids (by-role "gherkin-writer"))))
-    (is (= ["gherkin-parser" "ir-dry-checker"] (:required-tool-ids (by-role "gherkin-reviewer"))))
     (is (= #{"dependency-checker"} (required-tool-names "implementer")))
     (is (= #{"crap4clj" "dry4clj" "dependency-checker"} (required-tool-names "cleaner")))
     (is (= #{"clj-mutate" "crap4clj" "dry4clj" "gherkin-parser" "gherkin-mutator" "dependency-checker"}
@@ -109,8 +106,7 @@
     (is (= #{"dependency-checker"} (required-tool-names "code-reviewer")))
     (is (= #{"dependency-checker"} (required-tool-names "senior-implementer")))
     (is (= #{"crap4clj" "dry4clj"} (required-tool-names "qa")))
-    (is (= #{"gherkin-parser" "ir-dry-checker"} (required-tool-names "gherkin-writer")))
-    (is (= #{"gherkin-parser" "ir-dry-checker"} (required-tool-names "gherkin-reviewer")))))
+    (is (= #{"gherkin-parser" "ir-dry-checker"} (required-tool-names "gherkin-writer")))))
 
 (deftest squad-role-prompts-include-valid-helper-examples
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/worker-common.prompt")))]
@@ -131,7 +127,7 @@
     (is (str/includes? gherkin "Acceptance Pipeline Specification"))))
 
 (deftest squad-reviewer-prompts-use-deterministic-review-helper
-  (doseq [template ["gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"]]
+  (doseq [template ["code-reviewer" "architect"]]
     (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
       (is (str/includes? prompt "squad_review.sh <assignment-id> <accepted|changes-requested> <review-file>")
           template))))

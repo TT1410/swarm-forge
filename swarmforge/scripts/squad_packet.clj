@@ -279,15 +279,9 @@
   [(str prefix "_approval")
    (str prefix "_approval_detail")])
 
-(defn preserve-one-cycle-review? [packet prefix]
-  (and (contains? #{"gherkin" "qa_procedure"} prefix)
-       (= "changes-requested" (get packet (str prefix "_review")))
-       (squad-state/review-current? packet (str prefix "_review"))))
-
 (defn packet-with-artifact [packet prefix relative assignment-id branch sha]
   (let [reset-fields (concat (artifact-approval-fields prefix)
-                             (when-not (preserve-one-cycle-review? packet prefix)
-                               (artifact-review-fields prefix)))]
+                             (artifact-review-fields prefix))]
     (append-iteration
      (assoc (apply dissoc packet reset-fields)
             (str prefix "_path") relative

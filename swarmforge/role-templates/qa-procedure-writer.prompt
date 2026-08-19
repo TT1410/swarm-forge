@@ -34,3 +34,4 @@ Read and obey `swarmforge/role-templates/qa-procedure-writer.contract.edn`.
 
 - Commit the QA procedure artifacts and concise notes.
 - Hand the committed QA procedure back to `squad-leader`.
+- There is no QA-procedure reviewer; the operator approves the procedure file on the dashboard.

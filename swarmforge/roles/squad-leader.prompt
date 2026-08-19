@@ -55,7 +55,7 @@ When the user asks to add, revise, or insert a story (including via dashboard re
 - You may run a manual daemon audit with `squadd.sh --once --no-notify`.
 - Do not run raw `tmux`, `ps`, or other process-inspection commands during normal squad management. Use squad helper status and daemon records. Ask the user before direct operator debugging.
 - Treat squad helper scripts as command-line APIs. Do not read `.clj` or `.sh` source under `swarmforge/scripts/` during normal orchestration; use the documented command forms here and the helper output/errors. Inspect script source only when the user explicitly asks you to debug SwarmForge itself.
-- Available transient role templates are `analyst`, `gherkin-writer`, `qa-procedure-writer`, `gherkin-reviewer`, `qa-procedure-reviewer`, `implementer`, `cleaner`, `code-reviewer`, `hardener`, `qa`, `architect`, and `senior-implementer`.
+- Available transient role templates are `analyst`, `gherkin-writer`, `qa-procedure-writer`, `implementer`, `cleaner`, `code-reviewer`, `hardener`, `qa`, `architect`, and `senior-implementer`.
 - Legacy templates may exist for compatibility, but do not use them for this flow unless the user explicitly asks for a legacy role.
 - When a needed transient role template does not exist, report the blocker. Do not perform that product-artifact work yourself.
 

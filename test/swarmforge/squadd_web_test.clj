@@ -156,15 +156,15 @@
   (let [root (tmp-dir)]
     (try
       (write-file (fs/path root ".squad" "assignments" "a-created" "metadata")
-                  "assignment_id: a-created\ntemplate: gherkin-reviewer\nstory_id: story-a\n")
+                  "assignment_id: a-created\ntemplate: cleaner\nstory_id: story-a\n")
       (write-file (fs/path root ".squad" "assignments" "a-created" "status")
                   "state: created\ndetail: new\nupdated_at: 2026-08-17T16:00:00Z\n")
       (write-file (fs/path root ".squad" "assignments" "b-progress" "metadata")
-                  "assignment_id: b-progress\ntemplate: gherkin-reviewer\nstory_id: story-b\nagent_id: gr-1\n")
+                  "assignment_id: b-progress\ntemplate: cleaner\nstory_id: story-b\nagent_id: gr-1\n")
       (write-file (fs/path root ".squad" "assignments" "b-progress" "status")
                   "state: in_progress\ndetail: working\nupdated_at: 2026-08-17T15:00:00Z\n")
       (write-file (fs/path root ".squad" "assignments" "c-writer" "metadata")
-                  "assignment_id: c-writer\ntemplate: gherkin-writer\nstory_id: story-c\n")
+                  "assignment_id: c-writer\ntemplate: implementer\nstory_id: story-c\n")
       (write-file (fs/path root ".squad" "assignments" "c-writer" "status")
                   "state: in_progress\ndetail: writing\nupdated_at: 2026-08-17T15:30:00Z\n")
       (let [rows (web/work-in-flight-rows (web/assignment-state root) [])

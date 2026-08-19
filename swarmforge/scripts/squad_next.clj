@@ -716,49 +716,26 @@
                   (not= recorded (:assignment-id a))))
            assignments))))
 
+(defn implementer-rework-ready? [root packet]
+  (and (field-changes-requested? packet "code_review")
+       (not (stale-changes-requested? packet "code_review"))
+       (approval-satisfied? root packet "implementation-plan")
+       (approval-satisfied? root packet "gherkin")))
+
+(defn implementation-revision-action [root assignments agents packet reason priority stage-order]
+  (let [story-id (get packet "story_id" (get packet "_story_id"))]
+    (when (or (assignment-for assignments story-id "implementer")
+              (not (implementer-rework-already-created? assignments packet story-id)))
+      (assignment-candidate root assignments agents packet "implementer" "implementation"
+                            reason priority stage-order nil))))
+
 (defn implementation-revision-candidate
   "At most one implementer rework while code_review is currently changes-requested.
   After that rework merges and is re-recorded, clear-downstream drops CR and
    sends the story to a new cleaner then hardener — not a second CR."
   [root assignments agents packet reason priority stage-order]
-  (let [story-id (get packet "story_id" (get packet "_story_id"))
-        theme-id (get packet "theme_id")]
-    (when (and (field-changes-requested? packet "code_review")
-               (not (stale-changes-requested? packet "code_review"))
-               (approval-satisfied? root packet "story")
-               (approval-satisfied? root packet "gherkin")
-               (approval-satisfied? root packet "qa-procedure")
-               (approval-satisfied? root packet "implementation"))
-      (if-let [assignment (assignment-for assignments theme-id story-id "implementer")]
-        (when (spawnable-assignment? root agents "implementer" assignment)
-          (assignment-spawn-candidate assignment theme-id story-id "implementer" reason priority stage-order))
-        (when-not (implementer-rework-already-created? assignments packet story-id)
-          (assignment-create-candidate theme-id story-id "implementer"
-                                       (next-assignment-id assignments story-id "implementation")
-                                       reason priority stage-order nil))))))
-
-(defn one-cycle-revision-candidate [root assignments agents packet template assignment-suffix review-field reason priority stage-order]
-  (let [story-id (get packet "story_id" (get packet "_story_id"))]
-    (when (and (field-changes-requested? packet review-field)
-               (not (stale-changes-requested? packet review-field))
-               (not (active-or-created-assignment-for? assignments story-id (str (str/replace review-field #"_" "-") "er"))))
-      (if-let [assignment (assignment-for assignments (get packet "theme_id") story-id template)]
-        (when (spawnable-assignment? root agents template assignment)
-          (assignment-spawn-candidate assignment (get packet "theme_id") story-id template reason priority stage-order))
-        (when (<= (assignment-count-for assignments story-id template) 1)
-          (assignment-create-candidate (get packet "theme_id") story-id template
-                                       (next-assignment-id assignments story-id assignment-suffix)
-                                       reason priority stage-order nil))))))
-
-(defn one-cycle-review-candidate [root assignments agents packet template assignment-suffix review-field reason priority stage-order]
-  (let [story-id (get packet "story_id" (get packet "_story_id"))]
-    (if-let [assignment (assignment-for assignments (get packet "theme_id") story-id template)]
-      (when (spawnable-assignment? root agents template assignment)
-        (assignment-spawn-candidate assignment (get packet "theme_id") story-id template reason priority stage-order))
-      (when-not (assignment-ever-for? assignments story-id template)
-        (assignment-create-candidate (get packet "theme_id") story-id template
-                                     (next-assignment-id assignments story-id assignment-suffix)
-                                     reason priority stage-order nil)))))
+  (when (implementer-rework-ready? root packet)
+    (implementation-revision-action root assignments agents packet reason priority stage-order)))
 
 (defn cleaner-version-count [assignments packet story-id]
   (let [n (assignment-count-for assignments story-id "cleaner")]
@@ -1035,9 +1012,7 @@
    "senior-implementer" "senior-implementer"})
 
 (def review-assignment-rules
-  {"gherkin-reviewer" "gherkin"
-   "qa-procedure-reviewer" "qa-procedure"
-   "code-reviewer" "code"
+  {"code-reviewer" "code"
    "architect" "architecture"})
 
 (defn packet-result-missing? [packet kind]
@@ -1377,40 +1352,9 @@
          (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
          vec)))
 
-(def one-cycle-review-kinds
-  {"gherkin" "gherkin_review"
-   "qa-procedure" "qa_procedure_review"})
-
 (defn stale-changes-requested? [packet review-field]
   (and (= "changes-requested" (get packet review-field))
        (not (squad-state/review-current? packet review-field))))
-
-(defn post-revision-acceptance-candidate [packet kind review-field]
-  (let [story-id (get packet "story_id" (get packet "_story_id"))
-        kind-key (gate-key kind)
-        assignment (get packet (str kind-key "_assignment"))
-        sha (get packet (str kind-key "_sha"))]
-    (when (and (stale-changes-requested? packet review-field)
-               (not (str/blank? assignment))
-               (not (str/blank? sha)))
-      {:priority 25
-       :stage-order 6
-       :next-action "record_post_revision_review_acceptance"
-       :theme-id (get packet "theme_id")
-       :story-id story-id
-       :assignment-id assignment
-       :reason (str kind " revision after changes-requested completes the one-review cycle")
-       :command (str "squad_packet.sh review " story-id " " kind " accepted "
-                     assignment " master " sha)})))
-
-(defn post-revision-acceptance-candidates [packets]
-  (->> (for [packet packets
-             [kind review-field] one-cycle-review-kinds
-             :let [candidate (post-revision-acceptance-candidate packet kind review-field)]
-             :when candidate]
-         candidate)
-       (sort-by (juxt :priority :theme-id :story-id :stage-order :assignment-id))
-       vec))
 
 (defn packet-repair-candidates [root]
   (let [assignments (assignment-records root)
@@ -1421,8 +1365,7 @@
                  (direct-result-record-candidates assignments packets)
                  (batch-result-record-candidates root assignments packets)
                  (batch-complete-candidates root assignments packets)
-                 (review-record-candidates root assignments packets)
-                 (post-revision-acceptance-candidates packets)))))
+                 (review-record-candidates root assignments packets)))))
 
 (defn packet-by-story [packets]
   (into {}
@@ -1519,13 +1462,6 @@
                    (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
                                          "gherkin-writer" "gherkin"
                                          "approved story needs Gherkin" 60 20 nil)))}
-   {:id :gherkin-revision-assignment
-    :priority 60
-    :stage-order 21
-    :candidate (fn [ctx packet]
-                 (one-cycle-revision-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                               "gherkin-writer" "gherkin" "gherkin_review"
-                                               "Gherkin review requested changes" 60 21))}
    {:id :qa-procedure-assignment
     :priority 60
     :stage-order 30
@@ -1536,67 +1472,25 @@
                    (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
                                          "qa-procedure-writer" "qa-procedure"
                                          "approved story needs QA procedure" 60 30 nil)))}
-   {:id :qa-procedure-revision-assignment
-    :priority 60
-    :stage-order 31
-    :candidate (fn [ctx packet]
-                 (one-cycle-revision-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                               "qa-procedure-writer" "qa-procedure" "qa_procedure_review"
-                                               "QA procedure review requested changes" 60 31))}
-   {:id :gherkin-review-assignment
-    :priority 60
-    :stage-order 40
-    :candidate (fn [ctx packet]
-                 (when (and (field-present? packet "gherkin_path")
-                            (not (field-accepted? packet "gherkin_review"))
-                            (or (not (field-changes-requested? packet "gherkin_review"))
-                                (active-or-created-assignment-for? (:assignments ctx)
-                                                                   (get packet "story_id" (get packet "_story_id"))
-                                                                   "gherkin-reviewer")))
-                   (one-cycle-review-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                               "gherkin-reviewer" "gherkin-review" "gherkin_review"
-                                               "Gherkin artifact needs review" 60 40)))}
-   {:id :qa-procedure-review-assignment
-    :priority 60
-    :stage-order 50
-    :candidate (fn [ctx packet]
-                 (when (and (field-present? packet "qa_procedure_path")
-                            (not (field-accepted? packet "qa_procedure_review"))
-                            (or (not (field-changes-requested? packet "qa_procedure_review"))
-                                (active-or-created-assignment-for? (:assignments ctx)
-                                                                   (get packet "story_id" (get packet "_story_id"))
-                                                                   "qa-procedure-reviewer")))
-                   (one-cycle-review-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                               "qa-procedure-reviewer" "qa-procedure-review" "qa_procedure_review"
-                                               "QA procedure artifact needs review" 60 50)))}
    {:id :gherkin-approval
     :priority 30
     :stage-order 60
     :candidate (fn [ctx packet]
-                 (when (field-accepted? packet "gherkin_review")
-                   (approval-candidate (:root ctx) packet "gherkin" "Approve_Gherkin" "gherkin-review-accepted" 30 60)))}
+                 (when (field-present? packet "gherkin_path")
+                   (approval-candidate (:root ctx) packet "gherkin" "Approve_Gherkin" "gherkin-written" 30 60)))}
    {:id :qa-procedure-approval
     :priority 30
     :stage-order 70
     :candidate (fn [ctx packet]
-                 (when (field-accepted? packet "qa_procedure_review")
-                   (approval-candidate (:root ctx) packet "qa-procedure" "Approve_QA_procedure" "qa-procedure-review-accepted" 30 70)))}
-   {:id :implementation-approval
-    :priority 30
-    :stage-order 80
-    :candidate (fn [ctx packet]
-                 (when (and (approval-satisfied? (:root ctx) packet "story")
-                            (approval-satisfied? (:root ctx) packet "gherkin")
-                            (approval-satisfied? (:root ctx) packet "qa-procedure")
-                            (field-accepted? packet "gherkin_review")
-                            (field-accepted? packet "qa_procedure_review"))
-                   (approval-candidate (:root ctx) packet "implementation" "Approve_implementation" "story-ready-for-implementation" 30 80)))}
+                 (when (field-present? packet "qa_procedure_path")
+                   (approval-candidate (:root ctx) packet "qa-procedure" "Approve_QA_procedure" "qa-procedure-written" 30 70)))}
    {:id :implementation-assignment
     :priority 60
     :stage-order 90
     :candidate (fn [ctx packet]
-                 (when (and (approval-satisfied? (:root ctx) packet "implementation")
-                            (squad-state/implementation-ready? packet)
+                 (when (and (approval-satisfied? (:root ctx) packet "implementation-plan")
+                            (approval-satisfied? (:root ctx) packet "gherkin")
+                            (field-present? packet "gherkin_path")
                             (not (field-present? packet "implementation_sha")))
                    (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
                                          "implementer" "implementation"
@@ -2035,7 +1929,6 @@
     "record_merged_batch_result"
     "complete_batch"
     "record_review_result"
-    "record_post_revision_review_acceptance"
     "record_auto_approval"
     "record_batch_membership"
     "declare_merge_blocker"})
@@ -2547,7 +2440,6 @@
                             "record_merged_result"
                             "record_merged_batch_result"
                             "record_review_result"
-                            "record_post_revision_review_acceptance"
                             "record_auto_approval"
                             "record_batch_membership"
                             "create_approval_request"} next-action))

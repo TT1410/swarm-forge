@@ -238,6 +238,12 @@
                                 "cave-topology"
                                 "story"
                                 "user approved story")
+            plan-approved (run {:dir root}
+                               (script "squad_packet.sh")
+                               "approve"
+                               "cave-topology"
+                               "implementation-plan"
+                               "user approved plan")
             gherkin (run {:dir root}
                          (script "squad_packet.sh")
                          "attach"
@@ -297,6 +303,7 @@
             packet (slurp (str (fs/path root ".squad/stories/cave-topology/packet")))]
         (is (str/includes? (:out create) "STATE: story_recorded"))
         (is (str/includes? (:out story-approved) "STATE: story_approved"))
+        (is (str/includes? (:out plan-approved) "APPROVAL: implementation-plan"))
         (is (str/includes? (:out gherkin) "PATH: features/cave-topology.feature"))
         (is (str/includes? (:out gherkin-review) "DECISION: accepted"))
         (is (str/includes? (:out gherkin-approval) "APPROVAL: gherkin"))
@@ -384,7 +391,8 @@
           (is (str/includes? packet "gherkin_path: features/cave-topology-v2.feature"))
           (is (str/includes? packet "gherkin_iterations: wumpus-cave-gherkin=attached,wumpus-cave-gherkin-r2=attached"))
           (is (str/includes? packet "gherkin_review_iterations: wumpus-cave-gherkin-review=changes-requested"))
-          (is (str/includes? packet "gherkin_review_state: changes-requested"))))
+          (is (str/includes? packet "gherkin_review_state: pending"))))
+
       (finally
         (fs/delete-tree root)))))
 

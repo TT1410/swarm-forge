@@ -166,9 +166,7 @@
    "changes-requested" "review_changes_requested"})
 
 (def reviewer-templates
-  #{"gherkin-reviewer"
-    "qa-procedure-reviewer"
-    "code-reviewer"
+  #{"code-reviewer"
     "architect"})
 
 (defn reviewer-template? [template]

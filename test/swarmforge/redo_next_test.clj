@@ -103,14 +103,10 @@
         (write-file (fs/path root ".squad/stories" story "packet")
                     (str "story_id: " story "\n"
                          "theme_id: swarm\n"
-                         "story_approval: approved\n"
+                         "implementation_plan_path: .squad/stories/" story "/plan.md\n"
+                         "implementation_plan_approval: approved\n"
                          "gherkin_path: features/" story ".feature\n"
-                         "gherkin_approval: approved\n"
-                         "gherkin_review: accepted\n"
-                         "qa_procedure_path: qa/" story ".md\n"
-                         "qa_procedure_approval: approved\n"
-                         "qa_procedure_review: accepted\n"
-                         "implementation_approval: approved\n"))
+                         "gherkin_approval: approved\n"))
         (write-file (fs/path root "stories" (str story ".md")) (str "Story " story ".\n")))
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
         (is (str/includes? out "TEMPLATE: implementer"))
@@ -274,5 +270,87 @@
         (let [item ((ns-resolve web 'get-backlog) root id)]
           (is (= "open" (get item "status")))
           (is (= story-id (get item "story_id")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(defn- plan-approved-packet [story]
+  (str "story_id: " story "\n"
+       "implementation_plan_path: .squad/stories/" story "/plan.md\n"
+       "implementation_plan_approval: approved\n"))
+
+(deftest gherkin-writer-after-plan-approval
+  ;; Given implementation-plan approved
+  ;; When residual runs
+  ;; Then create_assignment gherkin-writer — not gherkin-reviewer
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (plan-approved-packet "cave-graph"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "TEMPLATE: gherkin-writer"))
+        (is (not (str/includes? out "gherkin-reviewer"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest gherkin-merge-requests-user-approval-not-reviewer
+  ;; Given gherkin_path recorded
+  ;; When residual runs
+  ;; Then create_approval_request gherkin — not gherkin-reviewer
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (plan-approved-packet "cave-graph")
+                       "gherkin_path: features/cave-graph.feature\n"
+                       "gherkin_sha: abcdef1234\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "NEXT_ACTION: create_approval_request"))
+        (is (str/includes? out "gherkin"))
+        (is (not (str/includes? out "TEMPLATE: gherkin-reviewer"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest qa-writer-then-user-approval-not-reviewer
+  ;; Given a QA procedure on disk after the plan and Gherkin
+  ;; When residual runs
+  ;; Then create_approval_request qa-procedure — not qa-procedure-reviewer
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (plan-approved-packet "cave-graph")
+                       "gherkin_path: features/cave-graph.feature\n"
+                       "gherkin_approval: approved\n"
+                       "qa_procedure_path: qa/cave-graph.md\n"
+                       "qa_procedure_sha: abcdef1234\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "NEXT_ACTION: create_approval_request"))
+        (is (or (str/includes? out "qa-procedure")
+                (str/includes? out "qa_procedure")))
+        (is (not (str/includes? out "qa-procedure-reviewer"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest implementer-after-plan-and-gherkin-not-waiting-for-qa-procedure
+  ;; Given plan and Gherkin user-approved, no QA procedure
+  ;; When residual runs
+  ;; Then create_assignment implementer
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "swarmforge/squad.conf") implementer-gate-conf)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms and tunnels.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str (plan-approved-packet "cave-graph")
+                       "gherkin_path: features/cave-graph.feature\n"
+                       "gherkin_approval: approved\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "TEMPLATE: implementer"))
+        (is (not (str/includes? out "qa-procedure-reviewer"))))
       (finally
         (fs/delete-tree root)))))

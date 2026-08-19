@@ -6,7 +6,7 @@
             [swarmforge.test-support :refer :all]))
 
 (defn review-template? [template]
-  (#{"gherkin-reviewer" "qa-procedure-reviewer" "code-reviewer" "architect"} template))
+  (#{"code-reviewer" "architect"} template))
 
 (defn result-handoff-text
   ([id from task template commit body]

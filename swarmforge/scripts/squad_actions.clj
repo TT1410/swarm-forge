@@ -33,7 +33,6 @@
    "complete_batch" :daemon
    "record_batch_membership" :daemon
    "record_review_result" :daemon
-   "record_post_revision_review_acceptance" :daemon
    "register_story_artifact" :daemon
    "register_story_packet" :daemon
    "attach_story_artifact" :daemon

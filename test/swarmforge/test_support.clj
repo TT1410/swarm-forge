@@ -74,8 +74,9 @@
   (write-file (fs/path root "dependency-checker.edn") minimal-dependency-checker))
 
 (def implementer-gate-conf
-  "Disable order/checker user approval in fixture tests that only exercise implementer FSM."
+  "Disable order/checker/plan user approval in fixture tests that only exercise implementer FSM."
   (str "max_transient_agents 10\n"
+       "approval_required implementation-plan false\n"
        "approval_required implementation false\n"
        "approval_required implementation_order false\n"
        "approval_required dependency_checker false\n"))
@@ -153,6 +154,12 @@
          (str story-id "-analysis")
          "master"
          sha)
+    (run {:dir root}
+         (script "squad_packet.sh")
+         "approve"
+         story-id
+         "implementation-plan"
+         "user approved plan")
     (run {:dir root}
          (script "squad_packet.sh")
          "approve"

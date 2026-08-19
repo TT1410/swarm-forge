@@ -430,9 +430,7 @@
             packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
         (is (str/includes? applied "attach_story_artifact"))
         (is (str/includes? packet "gherkin_assignment: alpha-gherkin-r2"))
-        (is (str/includes? packet "gherkin_sha: abcdef2222"))
-        (is (str/includes? packet "gherkin_review: accepted")
-            "one-review-cycle acceptance should follow same-path r2 attach"))
+        (is (str/includes? packet "gherkin_sha: abcdef2222")))
       (finally
         (fs/delete-tree root)))))
 
@@ -452,20 +450,15 @@
       (write-file (fs/path root ".squad/stories/alpha/packet")
                   (str "story_id: alpha\n"
                        "theme_id: wumpus\n"
-                       "story_approval: approved\n"
+                       "implementation_plan_path: .squad/stories/alpha/plan.md\n"
+                       "implementation_plan_approval: approved\n"
                        "gherkin_path: features/alpha.feature\n"
                        "gherkin_assignment: alpha-gherkin\n"
                        "gherkin_sha: abcdef1111\n"
-                       "gherkin_review: accepted\n"
-                       "gherkin_review_target_sha: abcdef1111\n"
                        "gherkin_approval: approved\n"
                        "qa_procedure_path: qa/alpha.md\n"
-                       "qa_procedure_assignment: alpha-qa\n"
-                       "qa_procedure_sha: abcdef1111\n"
-                       "qa_procedure_review: accepted\n"
-                       "qa_procedure_review_target_sha: abcdef1111\n"
-                       "qa_procedure_approval: approved\n"
-                       "implementation_approval: approved\n"))
+                       "qa_procedure_approval: approved\n"))
+
       (let [next (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out next) "TEMPLATE: implementer"))
@@ -509,8 +502,7 @@
             attach-count (count (re-seq #"APPLIED_TRANSITION: attach_story_artifact" out))]
         (is (<= attach-count 2) "must not thrash attaches between original and r2")
         (is (str/includes? packet "gherkin_assignment: alpha-gherkin-r2"))
-        (is (str/includes? packet "gherkin_sha: abcdef2222"))
-        (is (str/includes? packet "gherkin_review: accepted")))
+        (is (str/includes? packet "gherkin_sha: abcdef2222")))
       (finally
         (fs/delete-tree root)))))
 
@@ -573,165 +565,6 @@
         (is (str/includes? packet "implementation_sha: abcdef1234")))
       (finally
         (fs/delete-tree root)))))
-(deftest squad-next-records-merged-review-result-from-durable-review
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root ".squad/stories/alpha/packet")
-                  (str "story_id: alpha\n"
-                       "theme_id: wumpus\n"
-                       "gherkin_path: features/alpha.feature\n"
-                       "gherkin_assignment: alpha-gherkin\n"
-                       "gherkin_sha: 1111111111\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/metadata")
-                  (str "assignment_id: alpha-gherkin-review\n"
-                       "theme_id: wumpus\n"
-                       "story_id: alpha\n"
-                       "template: gherkin-reviewer\n"
-                       "assignment_file: " root "/instructions.md\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/status")
-                  "assignment_id: alpha-gherkin-review\nstate: merged\n")
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/accepted-merge")
-                  (str "assignment_id: alpha-gherkin-review\n"
-                       "state: merged\n"
-                       "commit: 2222222222\n"
-                       "merge_commit: abcdef1234\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/review.md")
-                  "## Recommendation\n\nAccept.\n")
-      (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "NEXT_ACTION: record_review_result"))
-        (is (str/includes? (:out next) "COMMAND: squad_packet.sh review alpha gherkin accepted alpha-gherkin-review master abcdef1234")))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-auto-accepts-revised-gherkin-after-one-review-cycle
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root ".squad/stories/alpha/packet")
-                  (str "story_id: alpha\n"
-                       "theme_id: wumpus\n"
-                       "gherkin_path: features/alpha.feature\n"
-                       "gherkin_assignment: alpha-gherkin-r2\n"
-                       "gherkin_sha: 2222222222\n"
-                       "gherkin_review: changes-requested\n"
-                       "gherkin_review_assignment: alpha-gherkin-review\n"
-                       "gherkin_review_sha: 1111111111\n"
-                       "gherkin_review_target_sha: 1111111111\n"))
-      (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "NEXT_ACTION: record_post_revision_review_acceptance"))
-        (is (str/includes? (:out next) "COMMAND: squad_packet.sh review alpha gherkin accepted alpha-gherkin-r2 master 2222222222"))
-        (is (not (str/includes? (:out next) "\nTEMPLATE: gherkin-reviewer"))))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-does-not-replay-stale-review-after-post-revision-acceptance
-  ;; Given an r2 artifact with stale changes-requested and the original merged review
-  ;; When mechanical repair runs
-  ;; Then one-cycle acceptance wins and the old changes-requested is not re-applied
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root ".squad/stories/alpha/packet")
-                  (str "story_id: alpha\n"
-                       "theme_id: wumpus\n"
-                       "gherkin_path: features/alpha.feature\n"
-                       "gherkin_assignment: alpha-gherkin-r2\n"
-                       "gherkin_sha: 2222222222\n"
-                       "gherkin_review: changes-requested\n"
-                       "gherkin_review_assignment: alpha-gherkin-review\n"
-                       "gherkin_review_sha: 1111111111\n"
-                       "gherkin_review_target_sha: 1111111111\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/metadata")
-                  (str "assignment_id: alpha-gherkin-review\n"
-                       "theme_id: wumpus\n"
-                       "story_id: alpha\n"
-                       "template: gherkin-reviewer\n"
-                       "assignment_file: " root "/review.md\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/status")
-                  "assignment_id: alpha-gherkin-review\nstate: merged\n")
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/accepted-merge")
-                  (str "assignment_id: alpha-gherkin-review\n"
-                       "state: merged\n"
-                       "commit: 1111111111\n"
-                       "merge_commit: abcdef1111\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/review.md")
-                  "changes-requested\n")
-      (let [out (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))
-            packet (slurp (str (fs/path root ".squad/stories/alpha/packet")))]
-        (is (str/includes? out "record_post_revision_review_acceptance"))
-        (is (not (str/includes? out "APPLIED_TRANSITION: record_review_result story=alpha assignment=alpha-gherkin-review"))
-            "stale original review must not be re-recorded against the revised sha")
-        (is (str/includes? packet "gherkin_review: accepted"))
-        (is (str/includes? packet "gherkin_review_target_sha: 2222222222"))
-        (is (not (str/includes? packet "gherkin_review: changes-requested"))))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-auto-accepts-after-revised-artifact-is-attached
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
-      (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
-      (write-file (fs/path root "features/alpha.feature") "Feature: alpha\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
-      (run {:dir root} "git" "add" "stories" "features")
-      (run {:dir root} "git" "commit" "-q" "-m" "Prepare alpha")
-      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "analysis-alpha" "master" sha)
-        (run {:dir root} (script "squad_packet.sh") "attach" "alpha" "gherkin" "alpha-gherkin" "master" sha "features/alpha.feature")
-        (run {:dir root} (script "squad_packet.sh") "review" "alpha" "gherkin" "changes-requested" "alpha-gherkin-review" "master" sha))
-      (write-file (fs/path root "features/alpha.feature") "Feature: alpha revised\n")
-      (run {:dir root} "git" "add" "features/alpha.feature")
-      (run {:dir root} "git" "commit" "-q" "-m" "Revise alpha gherkin")
-      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_packet.sh") "attach" "alpha" "gherkin" "alpha-gherkin-r2" "master" sha "features/alpha.feature")
-        (let [next (run {:dir root} (script "squad_next.sh"))]
-          (is (str/includes? (:out next) "NEXT_ACTION: record_post_revision_review_acceptance"))
-          (is (str/includes? (:out next) "COMMAND: squad_packet.sh review alpha gherkin accepted alpha-gherkin-r2 master"))))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-does-not-create-second-reviewer-when-review-history-exists
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root ".squad/stories/alpha/packet")
-                  (str "story_id: alpha\n"
-                       "theme_id: wumpus\n"
-                       "gherkin_path: features/alpha.feature\n"
-                       "gherkin_assignment: alpha-gherkin\n"
-                       "gherkin_sha: 1111111111\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/metadata")
-                  (str "assignment_id: alpha-gherkin-review\n"
-                       "theme_id: wumpus\n"
-                       "story_id: alpha\n"
-                       "template: gherkin-reviewer\n"
-                       "assignment_file: " root "/instructions.md\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/status")
-                  "assignment_id: alpha-gherkin-review\nstate: merged\n")
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/accepted-merge")
-                  "assignment_id: alpha-gherkin-review\nstate: merged\ncommit: 2222222222\nmerge_commit: abcdef1234\n")
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review/review.md")
-                  "accepted\n")
-      (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "NEXT_ACTION: record_review_result"))
-        (is (not (str/includes? (:out next) "alpha-gherkin-review-r2"))))
-      (finally
-        (fs/delete-tree root)))))
-
 (deftest squad-next-selects-deterministic-story-candidates
   (let [root (tmp-dir)]
     (try
@@ -782,46 +615,6 @@
         (is (str/includes? (:out spawn) "STORY: alpha"))
         (is (str/includes? (:out spawn) "ASSIGNMENT: alpha-gherkin"))
         (is (str/includes? (:out spawn) "COMMAND: squad_spawn_request.sh gherkin-writer alpha-gherkin")))
-      (finally
-        (fs/delete-tree root)))))
-
-(deftest squad-next-spawns-existing-rereview-before-requesting-another-revision
-  (let [root (tmp-dir)]
-    (try
-      (init-repo! root)
-      (write-file (fs/path root ".swarmforge/roles.tsv")
-                  (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
-      (write-file (fs/path root "theme.md") "Implement a faithful Hunt the Wumpus.\n")
-      (write-file (fs/path root "stories/alpha.md") "Story: alpha.\n")
-      (write-file (fs/path root "features/alpha.feature") "Feature: alpha\n")
-      (write-file (fs/path root "qa/alpha.md") "# QA: alpha\n")
-      (run {:dir root} (script "squad_theme.sh") "create" "wumpus" "theme.md")
-      (run {:dir root} (script "squad_theme.sh") "story" "wumpus" "alpha" "stories/alpha.md")
-      (run {:dir root} "git" "add" "stories" "features" "qa")
-      (run {:dir root} "git" "commit" "-q" "-m" "Prepare alpha artifacts")
-      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
-        (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "analysis-alpha" "master" sha)
-        (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved")
-        (run {:dir root} (script "squad_packet.sh") "attach" "alpha" "gherkin" "alpha-gherkin-r2" "master" sha "features/alpha.feature")
-        (run {:dir root} (script "squad_packet.sh") "attach" "alpha" "qa-procedure" "alpha-qa-procedure" "master" sha "qa/alpha.md")
-        (run {:dir root} (script "squad_packet.sh") "review" "alpha" "gherkin" "changes-requested" "alpha-gherkin-review" "master" sha))
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review-r2/metadata")
-                  (str "assignment_id: alpha-gherkin-review-r2\n"
-                       "theme_id: wumpus\n"
-                       "story_id: alpha\n"
-                       "template: gherkin-reviewer\n"
-                       "assignment_file: " root "/instructions.md\n"
-                       "created_at: 2026-08-03T00:00:00Z\n"))
-      (write-file (fs/path root ".squad/assignments/alpha-gherkin-review-r2/status")
-                  (str "assignment_id: alpha-gherkin-review-r2\n"
-                       "state: created\n"
-                       "detail: gherkin-reviewer for alpha\n"
-                       "updated_at: 2026-08-03T00:00:00Z\n"))
-      (let [next (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out next) "NEXT_ACTION: request_spawn"))
-        (is (str/includes? (:out next) "TEMPLATE: gherkin-reviewer"))
-        (is (str/includes? (:out next) "ASSIGNMENT: alpha-gherkin-review-r2"))
-        (is (not (str/includes? (:out next) "TEMPLATE: gherkin-writer"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -1616,11 +1409,11 @@
         (write-file (fs/path root ".squad/stories" story "packet")
                     (str "story_id: " story "\n"
                          "theme_id: wumpus\n"
-                         "story_approval: approved\n"
+                         "implementation_plan_path: .squad/stories/" story "/plan.md\n"
+                         "implementation_plan_approval: approved\n"
+                         "gherkin_path: features/" story ".feature\n"
                          "gherkin_approval: approved\n"
                          "qa_procedure_approval: approved\n"
-                         "gherkin_review: accepted\n"
-                         "qa_procedure_review: accepted\n"
                          "implementation_approval: approved\n")))
       (let [next (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out next) "implementer"))
@@ -1878,11 +1671,11 @@
         (write-file (fs/path root ".squad/stories" story "packet")
                     (str "story_id: " story "\n"
                          "theme_id: wumpus\n"
-                         "story_approval: approved\n"
+                         "implementation_plan_path: .squad/stories/" story "/plan.md\n"
+                         "implementation_plan_approval: approved\n"
+                         "gherkin_path: features/" story ".feature\n"
                          "gherkin_approval: approved\n"
                          "qa_procedure_approval: approved\n"
-                         "gherkin_review: accepted\n"
-                         "qa_procedure_review: accepted\n"
                          "implementation_approval: approved\n")))
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
         (is (not (str/includes? out "record_implementation_order")))
