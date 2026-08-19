@@ -12,20 +12,20 @@
 (def usage-text
   (str "Usage:\n"
        "  squad_packet.sh create <theme-id> <story-id> <story-assignment-id> <branch> <sha>\n"
-       "  squad_packet.sh attach <story-id> <gherkin|qa-procedure> <assignment-id> <branch> <sha> <artifact-file>\n"
+       "  squad_packet.sh attach <story-id> <gherkin|qa-procedure|implementation-plan> <assignment-id> <branch> <sha> <artifact-file>\n"
        "  squad_packet.sh review <story-id> <gherkin|qa-procedure|code|architecture> <accepted|changes-requested> <assignment-id> <branch> <sha>\n"
-       "  squad_packet.sh approve <story-id> <story|gherkin|qa-procedure|implementation|code-review|hardening|qa|architecture|final> <detail...>\n"
+       "  squad_packet.sh approve <story-id> <implementation-plan|gherkin|qa-procedure|implementation|code-review|hardening|qa|architecture|final> <detail...>\n"
        "  squad_packet.sh record <story-id> <implementation|cleaner|hardener|qa|architecture|senior-implementer> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh batch <story-id> <hardener|qa|architecture> <batch-id> <stage> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh status <story-id>\n"
        "  squad_packet.sh validate <story-id>"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
-(def artifact-kinds #{"gherkin" "qa-procedure"})
+(def artifact-kinds #{"gherkin" "qa-procedure" "implementation-plan"})
 (def review-kinds #{"gherkin" "qa-procedure" "code" "architecture"})
 (def result-kinds #{"implementation" "cleaner" "hardener" "qa" "architecture" "senior-implementer"})
 (def batch-kinds #{"hardener" "qa" "architecture"})
-(def approval-gates #{"story" "gherkin" "qa-procedure" "implementation"
+(def approval-gates #{"story" "implementation-plan" "gherkin" "qa-procedure" "implementation"
                       "code-review" "hardening" "qa" "architecture" "final"})
 
 (defn exit! [status & lines]
@@ -256,11 +256,13 @@
   {"gherkin" {:prefixes ["features/"]
               :message "Gherkin artifacts must live under features/."}
    "qa-procedure" {:prefixes ["qa/"]
-                   :message "QA procedure artifacts must live under qa/."}})
+                   :message "QA procedure artifacts must live under qa/."}
+   "implementation-plan" {:prefixes [".squad/stories/" "stories/"]
+                          :message "Implementation plans must live under .squad/stories/ or stories/."}})
 
 (defn validate-artifact-kind! [kind]
   (when-not (contains? artifact-kinds kind)
-    (exit! 2 "Artifact kind must be gherkin or qa-procedure.")))
+    (exit! 2 "Artifact kind must be gherkin, qa-procedure, or implementation-plan.")))
 
 (defn relative-artifact-file! [root kind file]
   (let [{:keys [prefixes message]} (artifact-path-rules kind)]
@@ -350,7 +352,7 @@
 
 (defn approve! [story-id gate detail-parts]
   (when-not (contains? approval-gates gate)
-    (exit! 2 "Approval gate must be story, gherkin, qa-procedure, implementation, code-review, hardening, qa, architecture, or final."))
+    (exit! 2 "Approval gate must be story, implementation-plan, gherkin, qa-procedure, implementation, code-review, hardening, qa, architecture, or final."))
   (validate-id! "Story id" story-id)
   (let [root (fs/absolutize (project-root))
         _ (ensure-packet! root story-id)

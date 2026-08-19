@@ -4,10 +4,10 @@
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
- :writes ["stories" "dependency-checker" "implementation-order"]
- :artifact-roots ["stories/"]
- :allowed-root-files ["dependency-checker.edn" "implementation-order.md"]
+ :writes ["plan"]
+ :artifact-roots [".squad/stories/" "stories/"]
+ :allowed-root-files []
  :forbidden-artifact-roots ["features/" "qa/" "src/" "test/" "reviews/"]
  :self-contained-output true
- :requires-dependency-checker true
- :requires-implementation-order true}
+ :requires-dependency-checker false
+ :requires-implementation-order false}

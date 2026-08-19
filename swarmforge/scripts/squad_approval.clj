@@ -20,7 +20,8 @@
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
 (def valid-target-kinds #{"theme" "story"})
-(def valid-gates #{"theme" "story" "gherkin" "qa_procedure" "qa-procedure" "implementation"
+(def valid-gates #{"theme" "story" "implementation-plan" "implementation_plan"
+                   "gherkin" "qa_procedure" "qa-procedure" "implementation"
                    "code_review" "code-review" "hardening" "qa" "architecture" "final"
                    "implementation-order" "implementation_order"
                    "dependency-checker" "dependency_checker"
@@ -52,7 +53,7 @@
 (defn validate-gate! [gate]
   (validate-id! "Approval gate" gate)
   (when-not (contains? valid-gates gate)
-    (exit! 2 (str "Approval gate must be theme, story, gherkin, qa-procedure, implementation, "
+    (exit! 2 (str "Approval gate must be theme, story, implementation-plan, gherkin, qa-procedure, implementation, "
                   "code-review, hardening, qa, architecture, final, implementation-order, "
                   "dependency-checker, or finalize."))))
 
@@ -316,6 +317,63 @@
   (fs/delete-if-exists (blocker-file root blocker-id))
   (fs/delete-if-exists (blocker-md-file root blocker-id)))
 
+(defn spec-gate? [gate]
+  (contains? #{"story" "implementation-plan" "implementation_plan"
+               "gherkin" "qa-procedure" "qa_procedure"} gate))
+
+(defn backlog-item-files [root]
+  (let [dir (fs/path root ".squad" "backlog")]
+    (if (fs/directory? dir)
+      (filterv #(and (fs/regular-file? %)
+                     (str/ends-with? (str (fs/file-name %)) ".item"))
+               (fs/list-dir dir))
+      [])))
+
+(defn backlog-file-for-story [root story-id]
+  (first (filter #(= story-id (read-value % "story_id"))
+                 (backlog-item-files root))))
+
+(defn reopen-backlog-item! [file]
+  (let [now (timestamp)
+        updated (-> (slurp (str file))
+                    (str/replace-first #"(?m)^status: .*$" "status: open")
+                    (str/replace-first #"(?m)^updated_at: .*$" (str "updated_at: " now)))]
+    (write-atomic! file updated)
+    (or (read-value file "id") (str (fs/file-name file)))))
+
+(defn rejected-story-body [root story-id reason]
+  (let [story-path (or (read-value (fs/path root ".squad" "stories" story-id "packet")
+                                   "story_path")
+                       (str "stories/" story-id ".md"))]
+    (if (fs/regular-file? (fs/path root story-path))
+      (slurp (str (fs/path root story-path)))
+      (str "Rejected story " story-id " — restore text and re-approve.\nReason: " reason "\n"))))
+
+(defn write-rejected-backlog-item! [root story-id reason now]
+  (let [body (rejected-story-body root story-id reason)
+        bl-dir (fs/path root ".squad" "backlog")
+        bl-id (str "bl-reject-" story-id)]
+    (fs/create-dirs bl-dir)
+    (spit (str (fs/path bl-dir (str bl-id ".item")))
+          (str "id: " bl-id "\n"
+               "title: " story-id " (rejected story)\n"
+               "status: open\n"
+               "created_at: " now "\n"
+               "updated_at: " now "\n"
+               "source_story: " story-id "\n"
+               "rejection_reason: " reason "\n"
+               "body: |\n"
+               (->> (str/split-lines body)
+                    (map #(str "  " %))
+                    (str/join "\n"))
+               "\n"))
+    bl-id))
+
+(defn return-story-to-backlog! [root story-id reason now]
+  (if-let [file (backlog-file-for-story root story-id)]
+    (println "BACKLOG:" (reopen-backlog-item! file))
+    (println "BACKLOG:" (write-rejected-backlog-item! root story-id reason now))))
+
 (defn reject! [approval-id reason-parts]
   (validate-id! "Approval id" approval-id)
   (let [root (fs/absolutize (project-root))
@@ -332,32 +390,8 @@
       (write-approval-blocker! root approval-id approval reason now)
       (when (= "story" target-kind)
         (update-story-packet-on-approval-reject! root target-id gate reason)
-        ;; Rejected story returns to backlog for edit + re-approve
-        (when (= "story" gate)
-          (let [story-path (or (read-value (fs/path root ".squad" "stories" target-id "packet")
-                                           "story_path")
-                               (str "stories/" target-id ".md"))
-                body (if (fs/regular-file? (fs/path root story-path))
-                       (slurp (str (fs/path root story-path)))
-                       (str "Rejected story " target-id " — restore text and re-approve.\nReason: " reason "\n"))
-                bl-dir (fs/path root ".squad" "backlog")
-                bl-id (str "bl-reject-" target-id)
-                now-ts now]
-            (fs/create-dirs bl-dir)
-            (spit (str (fs/path bl-dir (str bl-id ".item")))
-                  (str "id: " bl-id "\n"
-                       "title: " target-id " (rejected story)\n"
-                       "status: open\n"
-                       "created_at: " now-ts "\n"
-                       "updated_at: " now-ts "\n"
-                       "source_story: " target-id "\n"
-                       "rejection_reason: " reason "\n"
-                       "body: |\n"
-                       (->> (str/split-lines body)
-                            (map #(str "  " %))
-                            (str/join "\n"))
-                       "\n"))
-            (println "BACKLOG:" bl-id))))
+        (when (spec-gate? gate)
+          (return-story-to-backlog! root target-id reason now)))
       (println "SQUAD_APPROVAL:" approval-id)
       (println "STATE: rejected")
       (println "TARGET:" (or target-id "unknown"))

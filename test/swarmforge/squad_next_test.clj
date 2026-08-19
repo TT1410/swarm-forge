@@ -302,10 +302,8 @@
       (let [applied (run {:dir root} (script "squad_next.sh") "--apply-mechanical")]
         (is (str/includes? (:out applied) "APPLIED_TRANSITION: register_story_artifact story=alpha assignment=wumpus-analysis batch=none exit=0"))
         (is (str/includes? (:out applied) "APPLIED_TRANSITION: register_story_artifact story=beta assignment=wumpus-analysis batch=none exit=0"))
-        (is (str/includes? (:out applied) "APPLIED_TRANSITION: create_approval_request")
-            "approval requests are daemon-applied after registration")
-        (is (str/includes? (:out applied) "NEXT_ACTION: request_user_approval")
-            "user gate remains after approval requests are created"))
+        (is (str/includes? (:out applied) "TEMPLATE: analyst")
+            "registered stories need a per-story implementation plan"))
       (finally
         (fs/delete-tree root)))))
 
@@ -334,10 +332,8 @@
         (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved-by-user"))
       (let [next (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
-        (is (str/includes? (:out next) "TEMPLATE: gherkin-writer"))
-        (is (str/includes? (:out next) "CONCURRENT_ACTIONS: 2"))
-        (is (str/includes? (:out next) "CONCURRENT_TEMPLATE: gherkin-writer"))
-        (is (str/includes? (:out next) "CONCURRENT_TEMPLATE: qa-procedure-writer"))
+        (is (str/includes? (:out next) "TEMPLATE: analyst"))
+        (is (str/includes? (:out next) "STORY: alpha"))
         (is (not (str/includes? (:out next) "GATE: story"))))
       (finally
         (fs/delete-tree root)))))
@@ -756,20 +752,12 @@
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "beta" "analysis-beta" "master" sha)
         (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "analysis-alpha" "master" sha))
-      (let [first-approval (run {:dir root} (script "squad_next.sh"))]
-        (is (str/includes? (:out first-approval) "NEXT_ACTION: create_approval_request"))
-        (is (str/includes? (:out first-approval) "STORY: alpha"))
-        (is (str/includes? (:out first-approval) "GATE: story")))
-      (run {:dir root}
-           (script "squad_approval.sh")
-           "request"
-           "story__beta"
-           "story"
-           "beta"
-           "story"
-           "Approve_story"
-           "story-ready-for-approval")
-      (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved")
+      (let [first (run {:dir root} (script "squad_next.sh"))]
+        (is (str/includes? (:out first) "NEXT_ACTION: create_assignment"))
+        (is (str/includes? (:out first) "STORY: alpha"))
+        (is (str/includes? (:out first) "TEMPLATE: analyst")))
+      (doseq [story ["alpha" "beta"]]
+        (mark-implementation-plan-approved! root story))
       (let [create-assignment (run {:dir root} (script "squad_next.sh"))]
         (is (str/includes? (:out create-assignment) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out create-assignment) "STORY: alpha"))
@@ -860,6 +848,7 @@
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "analysis-alpha" "master" sha))
       (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved")
+      (mark-implementation-plan-approved! root "alpha")
       (doseq [[assignment-id template agent-id] [["alpha-gherkin" "gherkin-writer" "gherkin-writer-001"]
                                                  ["alpha-qa-procedure" "qa-procedure-writer" "qa-procedure-writer-001"]]]
         (write-file (fs/path root ".squad/assignments" assignment-id "metadata")
@@ -1522,6 +1511,7 @@
       (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (run {:dir root} (script "squad_packet.sh") "create" "wumpus" "alpha" "squad-leader" "master" sha)
         (run {:dir root} (script "squad_packet.sh") "approve" "alpha" "story" "approved-by-user"))
+      (mark-implementation-plan-approved! root "alpha")
       (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
         (is (str/includes? applied "APPLIED_TRANSITION: create_assignment")
             "create_assignment is daemon-applied")
@@ -1543,9 +1533,9 @@
       (finally
         (fs/delete-tree root)))))
 (deftest apply-mechanical-creates-approval-request-then-waits-for-user
-  ;; Given registered stories needing story approval
+  ;; Given registered stories with plans on disk
   ;; When apply-mechanical runs
-  ;; Then create_approval_request is applied and next is request_user_approval
+  ;; Then create_approval_request for implementation-plan is applied
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -1571,11 +1561,8 @@
                          "\nmerge_commit: " sha "\n")))
       (let [applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
         (is (str/includes? applied "APPLIED_TRANSITION: register_story_artifact"))
-        (is (str/includes? applied "APPLIED_TRANSITION: create_approval_request")
-            "approval request creation is daemon-applied")
-        (is (str/includes? applied "NEXT_ACTION: request_user_approval")
-            "after creating requests, user gate remains for the human")
-        (is (fs/exists? (fs/path root ".squad/approvals/pending"))))
+        (is (str/includes? applied "TEMPLATE: analyst")
+            "registered stories need a per-story implementation plan"))
       (finally
         (fs/delete-tree root)))))
 

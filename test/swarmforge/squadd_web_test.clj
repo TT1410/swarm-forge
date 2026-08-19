@@ -80,7 +80,7 @@
   (is (str/includes? web/dashboard-html "r.progress")))
 
 (deftest backlog-crud-and-approve-for-analysis
-  ;; Durable backlog under .squad/backlog; approve creates SL-owned request
+  ;; Durable backlog under .squad/backlog; Start writes the story file, no classify request
   (let [root (tmp-dir)]
     (try
       (let [created (web/create-backlog! root {:title "Fog cues" :body "Stronger adjacency hints."})]
@@ -89,20 +89,18 @@
         (is (seq (get-in created [:item "created_at"])))
         (let [id (get-in created [:item "id"])
               listed (web/list-backlog root)
-              approved (web/approve-backlog! root id)]
+              approved (web/approve-backlog! root id)
+              story-id (get-in approved [:item "story_id"])]
           (is (= 1 (count listed)))
           (is (true? (:ok approved)))
-          (is (= "dispatched" (get-in approved [:item "status"])))
-          (is (= "squad-leader" (get-in approved [:request "owner"])))
-          (is (str/includes? (get-in approved [:request "body"] "") "Fog cues"))
-          (is (str/includes? (get-in approved [:request "body"] "") "NEW THEME"))
-          ;; Full product body survives durable re-read
-          (let [req-id (get-in approved [:request "id"])
-                on-disk (dashreq/file-map
-                         (fs/path root ".swarmforge/dashboard/requests/pending"
-                                  (str req-id ".request")))]
-            (is (str/includes? (get on-disk "body" "") "Stronger adjacency hints."))
-            (is (str/includes? (get on-disk "body" "") "Title = Fog cues")))))
+          (is (= "started" (get-in approved [:item "status"])))
+          (is (nil? (:request approved)))
+          (is (not (str/includes? (str (get-in approved [:request "body"])) "NEW THEME")))
+          (is (seq story-id))
+          (let [story-file (fs/path root "stories" (str story-id ".md"))]
+            (is (fs/regular-file? story-file))
+            (is (str/includes? (slurp (str story-file)) "Fog cues"))
+            (is (str/includes? (slurp (str story-file)) "Stronger adjacency hints.")))))
       (finally
         (fs/delete-tree root)))))
 

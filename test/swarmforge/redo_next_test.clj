@@ -118,3 +118,161 @@
         (is (not (str/includes? out "record_implementation_order"))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest backlog-add-does-not-start-analyst
+  ;; Given an open backlog item
+  ;; When residual runs
+  ;; Then wait — no analyst
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (require 'squadd.web)
+      ((resolve 'squadd.web/create-backlog!) root {:title "Cave graph" :body "Rooms and tunnels."})
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "NEXT_ACTION: wait"))
+        (is (not (str/includes? out "TEMPLATE: analyst"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest start-backlog-creates-analyst-for-that-story
+  ;; Given a backlog item
+  ;; When the operator starts it
+  ;; Then a story packet exists and residual is create_assignment analyst for that story
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (require 'squadd.web)
+      (let [web (find-ns 'squadd.web)
+            created ((ns-resolve web 'create-backlog!) root {:title "Cave graph" :body "Rooms and tunnels."})
+            id (get-in created [:item "id"])
+            started ((ns-resolve web 'approve-backlog!) root id)
+            story-id (or (get-in started [:item "story_id"]) "cave-graph")
+            out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (fs/regular-file? (fs/path root "stories" (str story-id ".md"))))
+        (is (fs/regular-file? (fs/path root ".squad/stories" story-id "packet")))
+        (is (not (str/includes? (slurp (str (fs/path root ".squad/stories" story-id "packet")))
+                                "theme_id:")))
+        (is (str/includes? out "TEMPLATE: analyst"))
+        (is (str/includes? out story-id))
+        (is (not (str/includes? out "NEW THEME")))
+        (is (not (str/includes? (get-in started [:request "body"] "") "classify"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest analyst-plan-requests-implementation-plan-approval
+  ;; Given a started story whose analyst assignment is merged with a plan file
+  ;; When residual runs
+  ;; Then create_approval_request gate implementation-plan
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms and tunnels.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/plan.md")
+                  "# Implementation plan\n\n1. Graph.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  (str "story_id: cave-graph\n"
+                       "theme_id: swarm\n"
+                       "implementation_plan_path: .squad/stories/cave-graph/plan.md\n"
+                       "implementation_plan_sha: abcdef1234\n"))
+      (write-file (fs/path root ".squad/assignments/cave-graph-analysis/metadata")
+                  (str "assignment_id: cave-graph-analysis\n"
+                       "theme_id: swarm\n"
+                       "story_id: cave-graph\n"
+                       "template: analyst\n"))
+      (write-file (fs/path root ".squad/assignments/cave-graph-analysis/status")
+                  "state: merged\n")
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "NEXT_ACTION: create_approval_request"))
+        (is (str/includes? out "implementation-plan")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest analyst-merge-attaches-implementation-plan
+  ;; Given a merged analyst whose artifact is the story plan
+  ;; When residual runs
+  ;; Then attach_story_artifact records the plan on the packet
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms and tunnels.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/plan.md")
+                  "# Implementation plan\n\n1. Graph.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  "story_id: cave-graph\n")
+      (write-file (fs/path root ".squad/assignments/cave-graph-analysis/metadata")
+                  (str "assignment_id: cave-graph-analysis\n"
+                       "story_id: cave-graph\n"
+                       "template: analyst\n"
+                       "assignment_file: " root "/plan-instructions.md\n"))
+      (write-file (fs/path root ".squad/assignments/cave-graph-analysis/status")
+                  "state: merged\n")
+      (write-file (fs/path root ".squad/assignments/cave-graph-analysis/result-manifest")
+                  (str "assignment_id: cave-graph-analysis\n"
+                       "agent: analyst-001\n"
+                       "template: analyst\n"
+                       "commit: abcdef1234\n"
+                       "artifacts: .squad/stories/cave-graph/plan.md\n"))
+      (write-file (fs/path root ".squad/assignments/cave-graph-analysis/accepted-merge")
+                  (str "assignment_id: cave-graph-analysis\n"
+                       "state: merged\n"
+                       "commit: abcdef1234\n"
+                       "merge_commit: abcdef1234\n"))
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "NEXT_ACTION: attach_story_artifact"))
+        (is (str/includes? out "implementation-plan")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest start-backlog-apply-creates-analyst-assignment
+  ;; Given a started story
+  ;; When mechanical apply runs
+  ;; Then the analyst assignment for that story is created
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt")
+                  (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt"))))
+      (write-file (fs/path root "swarmforge/role-templates/analyst.contract.edn")
+                  (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.contract.edn"))))
+      (require 'squadd.web)
+      (let [web (find-ns 'squadd.web)
+            created ((ns-resolve web 'create-backlog!) root {:title "Cave graph" :body "Rooms."})
+            started ((ns-resolve web 'approve-backlog!) root (get-in created [:item "id"]))
+            story-id (get-in started [:item "story_id"])
+            applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
+        (is (str/includes? applied "APPLIED_TRANSITION: create_assignment"))
+        (is (str/includes? applied "exit=0"))
+        (is (fs/directory? (fs/path root ".squad/assignments" (str story-id "-analysis")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest rejected-implementation-plan-reopens-backlog
+  ;; Given a started story with a pending implementation-plan approval
+  ;; When the operator rejects the plan
+  ;; Then the original backlog item is open again
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (require 'squadd.web)
+      (let [web (find-ns 'squadd.web)
+            created ((ns-resolve web 'create-backlog!) root {:title "Cave graph" :body "Rooms."})
+            id (get-in created [:item "id"])
+            started ((ns-resolve web 'approve-backlog!) root id)
+            story-id (get-in started [:item "story_id"])]
+        (run {:dir root} (script "squad_approval.sh") "request"
+             (str "implementation-plan__" story-id)
+             "story" story-id "implementation-plan"
+             "Approve_implementation_plan" "plan-ready")
+        (run {:dir root} (script "squad_approval.sh") "reject"
+             (str "implementation-plan__" story-id) "wrong shape")
+        (let [item ((ns-resolve web 'get-backlog) root id)]
+          (is (= "open" (get item "status")))
+          (is (= story-id (get item "story_id")))))
+      (finally
+        (fs/delete-tree root)))))

@@ -843,7 +843,7 @@
         story-dir (fs/path root ".squad/stories/s1")]
     (write-file (fs/path root ".swarmforge/roles.tsv") "squad-leader\tmaster\t/tmp\ts\tw\tcodex\ttask\n")
     (write-file (fs/path root "swarmforge/squad.conf")
-                (str "approval_required story true\n"
+                (str "approval_required implementation-plan true\n"
                      "approval_required gherkin true\n"
                      "approval_required qa_procedure true\n"
                      "approval_required implementation true\n"))
@@ -851,19 +851,22 @@
                 (str "theme_id: theme-a\n"
                      "story_id: s1\n"))
     (let [candidate (first (next/story-candidates root []))]
-      (is (= "create_approval_request" (:next-action candidate)))
-      (is (= "story" (:gate candidate))))
+      (is (= "create_assignment" (:next-action candidate)))
+      (is (= "analyst" (:template candidate))))
     (write-file (fs/path story-dir "packet")
                 (str "theme_id: theme-a\n"
                      "story_id: s1\n"
-                     "story_approval: approved\n"))
+                     "implementation_plan_path: .squad/stories/s1/plan.md\n"
+                     "implementation_plan_sha: abcdef1234\n"
+                     "implementation_plan_approval: approved\n"))
     (let [candidates (next/story-candidates root [])]
       (is (= #{"gherkin-writer" "qa-procedure-writer"}
              (set (map :template candidates)))))
     (write-file (fs/path story-dir "packet")
                 (str "theme_id: theme-a\n"
                      "story_id: s1\n"
-                     "story_approval: approved\n"
+                     "implementation_plan_path: .squad/stories/s1/plan.md\n"
+                     "implementation_plan_approval: approved\n"
                      "gherkin_path: features/s1.feature\n"
                      "gherkin_sha: gsha\n"
                      "qa_procedure_path: qa/s1.md\n"
@@ -1823,3 +1826,32 @@
           "vanished file must not throw")
       (finally
         (fs/delete-tree dir)))))
+
+(deftest start-story-helpers-cover-slug-and-plan-gates
+  (let [root (tmp-dir)]
+    (is (= "cave-graph" (squadd-web/story-slug "Cave graph")))
+    (is (= "story" (squadd-web/story-slug "!!!")))
+    (write-file (fs/path root "stories/cave-graph.md") "taken\n")
+    (is (true? (squadd-web/story-id-taken? root "cave-graph")))
+    (is (= "cave-graph-2" (squadd-web/unused-story-id root "cave-graph")))
+    (is (= "none" (next/assignment-theme-id nil)))
+    (is (= "wumpus" (next/assignment-theme-id "wumpus")))
+    (is (true? (next/awaiting-implementation-plan? {"story_id" "s1"})))
+    (is (false? (next/awaiting-implementation-plan? {"gherkin_path" "features/s1.feature"})))
+    (is (true? (assign/themeless-theme? "none")))
+    (is (false? (assign/themeless-theme? "wumpus")))
+    (is (true? (approval/spec-gate? "implementation-plan")))
+    (is (false? (approval/spec-gate? "hardening")))
+    (write-file (fs/path root ".squad/backlog/bl-1.item")
+                "id: bl-1\nstory_id: cave-graph\nstatus: started\n")
+    (is (= "bl-1.item" (fs/file-name (approval/backlog-file-for-story root "cave-graph"))))
+    (is (nil? (approval/backlog-file-for-story root "missing")))
+    (is (str/includes? (approval/rejected-story-body root "missing" "nope") "Rejected story"))
+    (write-file (fs/path root "stories/s1.md") "body\n")
+    (is (str/includes? (approval/rejected-story-body root "s1" "nope") "body"))
+    (is (nil? (assign/first-existing-file [(fs/path root "nope.md")])))
+    (write-file (fs/path root ".squad/stories/s1/packet") "theme_id: wumpus\n")
+    (is (true? (assign/mismatched-packet-theme?
+                (fs/path root ".squad/stories/s1/packet") "other")))
+    (is (false? (assign/mismatched-packet-theme?
+                 (fs/path root ".squad/stories/s1/packet") "wumpus")))))

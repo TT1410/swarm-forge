@@ -6,6 +6,7 @@
             [swarmforge.handoff-lib-test]
             [swarmforge.launcher-test]
             [swarmforge.recover-test]
+            [swarmforge.redo-next-test]
             [swarmforge.role-contract-test]
             [swarmforge.spawn-test]
             [swarmforge.squad-next-test]
@@ -21,6 +22,7 @@
     swarmforge.handoff-lib-test
     swarmforge.launcher-test
     swarmforge.recover-test
+    swarmforge.redo-next-test
     swarmforge.role-contract-test
     swarmforge.spawn-test
     swarmforge.squad-next-test

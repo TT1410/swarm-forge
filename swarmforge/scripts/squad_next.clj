@@ -287,6 +287,12 @@
 (defn field-present? [packet field]
   (not (str/blank? (get packet field))))
 
+(defn awaiting-implementation-plan? [packet]
+  (and (not (field-present? packet "implementation_plan_path"))
+       (not (field-present? packet "implementation_plan_sha"))
+       (not (field-present? packet "gherkin_path"))
+       (not (field-present? packet "implementation_sha"))))
+
 (defn approval-satisfied? [root packet gate]
   (or (field-approved? packet (str (gate-key gate) "_approval"))
       (not (cfg/squad-approval-required? root gate))))
@@ -783,21 +789,25 @@
                                        (next-assignment-id assignments story-id "code-review")
                                        "cleaned story needs code review" 60 110 nil))))))
 
+(defn assignment-theme-id [theme-id]
+  (if (str/blank? theme-id) "none" theme-id))
+
 (defn assignment-create-candidate [theme-id story-id template assignment-id reason priority stage-order requirement]
-  {:priority priority
-   :stage-order stage-order
-   :next-action "create_assignment"
-   :theme-id theme-id
-   :story-id story-id
-   :template template
-   :assignment-id assignment-id
-   :reason reason
-   :command (str "squad_assign.sh create " theme-id " " story-id " " template " "
-                 assignment-id " --auto-instructions"
-                 (when requirement
-                   (str " --requires approval:" requirement))
-                 (when-not requirement
-                   " --queue-spawn"))})
+  (let [theme-id (assignment-theme-id theme-id)]
+    {:priority priority
+     :stage-order stage-order
+     :next-action "create_assignment"
+     :theme-id theme-id
+     :story-id story-id
+     :template template
+     :assignment-id assignment-id
+     :reason reason
+     :command (str "squad_assign.sh create " theme-id " " story-id " " template " "
+                   assignment-id " --auto-instructions"
+                   (when requirement
+                     (str " --requires approval:" requirement))
+                   (when-not requirement
+                     " --queue-spawn"))}))
 
 (defn batch-assignment-create-candidate [theme-id template assignment-id reason priority stage-order requirement]
   {:priority priority
@@ -939,7 +949,11 @@
        vec))
 
 (def artifact-assignment-rules
-  {"gherkin-writer" {:kind "gherkin"
+  {"analyst" {:kind "implementation-plan"
+              :prefix ".squad/stories/"
+              :suffix "plan.md"
+              :packet-path-field "implementation_plan_path"}
+   "gherkin-writer" {:kind "gherkin"
                      :prefix "features/"
                      :suffix ".feature"
                      :packet-path-field "gherkin_path"}
@@ -1479,20 +1493,32 @@
          vec)))
 
 (def story-transition-table
-  [{:id :story-approval
-    :priority 30
-    :stage-order 10
+  [{:id :analyst-plan-assignment
+    :priority 60
+    :stage-order 5
     :candidate (fn [ctx packet]
-                 (approval-candidate (:root ctx) packet "story" "Approve_story" "story-ready-for-approval" 30 10))}
+                 (when (awaiting-implementation-plan? packet)
+                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
+                                         "analyst" "analysis"
+                                         "started story needs an implementation plan" 60 5 nil)))}
+   {:id :implementation-plan-approval
+    :priority 30
+    :stage-order 8
+    :candidate (fn [ctx packet]
+                 (when (field-present? packet "implementation_plan_path")
+                   (approval-candidate (:root ctx) packet "implementation-plan"
+                                       "Approve_implementation_plan"
+                                       "implementation-plan-ready" 30 8)))}
    {:id :gherkin-assignment
     :priority 60
     :stage-order 20
     :candidate (fn [ctx packet]
-                 (when (approval-satisfied? (:root ctx) packet "story")
-                   (when-not (field-present? packet "gherkin_path")
-                     (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                           "gherkin-writer" "gherkin"
-                                           "approved story needs Gherkin" 60 20 nil))))}
+                 (when (and (field-present? packet "implementation_plan_path")
+                            (approval-satisfied? (:root ctx) packet "implementation-plan")
+                            (not (field-present? packet "gherkin_path")))
+                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
+                                         "gherkin-writer" "gherkin"
+                                         "approved story needs Gherkin" 60 20 nil)))}
    {:id :gherkin-revision-assignment
     :priority 60
     :stage-order 21
@@ -1504,11 +1530,12 @@
     :priority 60
     :stage-order 30
     :candidate (fn [ctx packet]
-                 (when (approval-satisfied? (:root ctx) packet "story")
-                   (when-not (field-present? packet "qa_procedure_path")
-                     (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
-                                           "qa-procedure-writer" "qa-procedure"
-                                           "approved story needs QA procedure" 60 30 nil))))}
+                 (when (and (field-present? packet "implementation_plan_path")
+                            (approval-satisfied? (:root ctx) packet "implementation-plan")
+                            (not (field-present? packet "qa_procedure_path")))
+                   (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
+                                         "qa-procedure-writer" "qa-procedure"
+                                         "approved story needs QA procedure" 60 30 nil)))}
    {:id :qa-procedure-revision-assignment
     :priority 60
     :stage-order 31

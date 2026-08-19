@@ -1246,36 +1246,60 @@
         {:ok true})
     {:ok false :error "not found" :status 404}))
 
-(defn approve-backlog!
-  "Mark item dispatched and open a product request owned by squad-leader.
-  SL decides theme vs story (ui-design.md).
-  Do not embed bare `key: value` header-shaped lines in the body text;
-  free-text labels keep the full product description through  re-parse."
+(defn story-slug
+  "Filesystem-safe story id from a title."
+  [title]
+  (let [slug (-> (str title)
+                 str/lower-case
+                 (str/replace #"[^a-z0-9]+" "-")
+                 (str/replace #"^-+|-+$" ""))]
+    (if (str/blank? slug) "story" slug)))
+
+(defn story-id-taken? [root story-id]
+  (or (fs/regular-file? (fs/path root "stories" (str story-id ".md")))
+      (fs/regular-file? (fs/path root ".squad" "stories" story-id "packet"))))
+
+(defn unused-story-id [root base]
+  (loop [n 1]
+    (let [id (if (= 1 n) base (str base "-" n))]
+      (if (story-id-taken? root id)
+        (recur (inc n))
+        id))))
+
+(defn write-started-story! [root story-id title body]
+  (let [rel (str "stories/" story-id ".md")
+        story-file (fs/path root rel)
+        packet-file (fs/path root ".squad" "stories" story-id "packet")]
+    (when-not (fs/regular-file? story-file)
+      (write-atomic! story-file (str "# " title "\n\n" body "\n")))
+    (when-not (fs/regular-file? packet-file)
+      (write-atomic! packet-file
+                     (str "story_id: " story-id "\n"
+                          "story_path: " rel "\n")))
+    story-id))
+
+(defn start-backlog!
+  "Start a backlog item as a story: write stories/<id>.md and a themeless packet.
+  HTTP `/api/backlog/:id/approve` stays as the Start alias until the dashboard rename."
   [root id]
   (if-let [item (get-backlog root id)]
     (let [title (get item "title" id)
-          body (get item "body" "")
-          msg (str "PRODUCT BACKLOG APPROVED FOR ANALYSIS\n"
-                   "Backlog id = " id "\n"
-                   "Title = " title "\n\n"
-                   body "\n\n"
-                   "Operator approved this backlog item for analysis.\n"
-                   "Squad Leader: classify as a NEW THEME or a STORY on an existing theme, "
-                   "then drive analyst/theme workflow. Do not ask the operator to re-classify.")
-          created (dashreq/create-request root {:kind "request"
-                                                :body msg
-                                                :owner dashreq/product-owner})]
-      (if-not (:ok created)
-        {:ok false :error (:error created) :status 400}
-        (let [req-id (get-in created [:request "id"])
-              updated (assoc item
-                             "status" "dispatched"
-                             "request_id" req-id
-                             "updated_at" (now))]
-          (write-backlog-item! root updated)
-          (log! root "backlog-approved" id req-id)
-          {:ok true :item updated :request (:request created)})))
+          story-id (or (not-empty (get item "story_id"))
+                       (unused-story-id root (story-slug title)))]
+      (write-started-story! root story-id title (get item "body" ""))
+      (let [updated (assoc item
+                           "status" "started"
+                           "story_id" story-id
+                           "updated_at" (now))]
+        (write-backlog-item! root updated)
+        (log! root "backlog-started" id story-id)
+        {:ok true :item updated}))
     {:ok false :error "not found" :status 404}))
+
+(defn approve-backlog!
+  "Start alias so existing dashboard and tests keep calling approve-backlog!."
+  [root id]
+  (start-backlog! root id))
 
 (defn extract-json-field [body key]
   (or (when-let [m (re-find (re-pattern (str "(?s)\"" key "\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"")) body)]

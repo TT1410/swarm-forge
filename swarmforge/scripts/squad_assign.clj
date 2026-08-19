@@ -369,16 +369,24 @@
        (result-handoff-template assignment-id template)
        "```\n"))
 
+(defn themeless-theme? [theme-id]
+  (or (str/blank? theme-id) (= "none" theme-id)))
+
 (defn validate-create-ids! [theme-id story-id assignment-id]
-  (doseq [[kind value] [["Theme id" theme-id]
-                        ["Story id" story-id]
+  (when-not (themeless-theme? theme-id)
+    (validate-id! "Theme id" theme-id))
+  (doseq [[kind value] [["Story id" story-id]
                         ["Assignment id" assignment-id]]]
     (validate-id! kind value)))
+
+(defn first-existing-file [files]
+  (first (filter fs/regular-file? files)))
 
 (defn assignment-story-file [root theme story-id skip-story?]
   (when-not skip-story?
     (or (referenced-project-file root (fs/path theme "stories" (str story-id ".ref")))
-        (fs/path theme "stories" (str story-id ".md")))))
+        (first-existing-file [(fs/path theme "stories" (str story-id ".md"))
+                              (fs/path root "stories" (str story-id ".md"))]))))
 
 (defn assignment-scope [{:keys [template story-id scope]}]
   (cond
@@ -424,16 +432,30 @@
      :packet (optional-story-packet root story-id)
      :now (timestamp)}))
 
+(defn packet-theme-id [packet]
+  (when packet (read-value packet "theme_id")))
+
+(defn mismatched-packet-theme? [packet theme-id]
+  (let [packet-theme (packet-theme-id packet)]
+    (and (not (str/blank? packet-theme))
+         (not= theme-id packet-theme))))
+
 (defn ensure-packet-theme! [{:keys [packet theme-id story-id]}]
-  (when (and packet
-             (not= theme-id (read-value packet "theme_id")))
+  (when (mismatched-packet-theme? packet theme-id)
     (exit! 2
            (str "Story packet " story-id " belongs to a different theme."))))
 
-(defn ensure-create-context! [{:keys [theme-file theme-scoped? batch-scoped? story-file template-file dir] :as context}]
-  (ensure-file! "Theme file not found" theme-file)
+(defn ensure-theme-file! [theme-id theme-file]
+  (when-not (themeless-theme? theme-id)
+    (ensure-file! "Theme file not found" theme-file)))
+
+(defn ensure-story-file! [theme-scoped? batch-scoped? story-file]
   (when-not (or theme-scoped? batch-scoped?)
-    (ensure-file! "Story file not found" story-file))
+    (ensure-file! "Story file not found" story-file)))
+
+(defn ensure-create-context! [{:keys [theme-id theme-file theme-scoped? batch-scoped? story-file template-file dir] :as context}]
+  (ensure-theme-file! theme-id theme-file)
+  (ensure-story-file! theme-scoped? batch-scoped? story-file)
   (ensure-file! "Role template not found" template-file)
   (ensure-packet-theme! context)
   (when (fs/exists? dir)
@@ -482,7 +504,9 @@
       (str "Source: " hit "\n\n" (strip-module-map-recommendations (slurp (str hit)))))))
 
 (defn assignment-text [context]
-  (let [base {:theme-text (slurp (str (:theme-file context)))
+  (let [base {:theme-text (if (fs/regular-file? (:theme-file context))
+                            (slurp (str (:theme-file context)))
+                            "No theme. Work this story only.\n")
               :module-map-text (module-map-text-for context)
               :story-text (when-let [story-file (:story-file context)]
                             (slurp (str story-file)))

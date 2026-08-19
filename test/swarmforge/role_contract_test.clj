@@ -70,10 +70,11 @@
 
 (deftest squad-role-contracts-separate-artifact-ownership
   (let [by-role (into {} (map (juxt :role identity) (contracts)))]
-    (is (= ["stories/"] (:artifact-roots (by-role "analyst"))))
-    (is (true? (:requires-dependency-checker (by-role "analyst"))))
-    (is (some #{"dependency-checker"} (:writes (by-role "analyst"))))
-    (is (some #{"dependency-checker.edn"} (:allowed-root-files (by-role "analyst"))))
+    (is (= [".squad/stories/" "stories/"] (:artifact-roots (by-role "analyst"))))
+    (is (false? (:requires-dependency-checker (by-role "analyst"))))
+    (is (some #{"plan"} (:writes (by-role "analyst"))))
+    (is (not (some #{"dependency-checker"} (:writes (by-role "analyst")))))
+    (is (not (some #{"dependency-checker.edn"} (:allowed-root-files (by-role "analyst")))))
     (is (= ["features/"] (:artifact-roots (by-role "gherkin-writer"))))
     (is (= ["qa/"] (:artifact-roots (by-role "qa-procedure-writer"))))
     (doseq [artifact-role ["gherkin-writer" "qa-procedure-writer" "gherkin-reviewer" "qa-procedure-reviewer"]]
@@ -141,33 +142,19 @@
     (doseq [word ["independent" "negotiable" "valuable" "estimable" "small" "testable"]]
       (is (str/includes? prompt word)))))
 
-(deftest analyst-must-author-dependency-checker-config
-  ;; Given analysis is the place Clean Architecture components are cut into stories
+(deftest analyst-writes-a-per-story-implementation-plan
+  ;; Given Start has already created the story
   ;; When the analyst role is specified
-  ;; Then dependency-checker.edn is required product policy at handoff
+  ;; Then the handoff artifact is a plan for that story, not theme order/checker
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))
-        template (slurp (str (fs/path repo-root "swarmforge/templates/dependency-checker.edn")))
         c (contract "analyst")]
+    (is (str/includes? prompt ".squad/stories/<id>/plan.md"))
+    (is (str/includes? prompt "Do not invent sibling stories"))
+    (is (str/includes? prompt "implementation-order.md"))
     (is (str/includes? prompt "dependency-checker.edn"))
-    (is (str/includes? prompt ":allowed-dependencies"))
-    (is (str/includes? prompt "Analysis is incomplete without this file"))
-    (is (str/includes? template ":allowed-dependencies"))
-    (is (true? (:requires-dependency-checker c)))))
-
-(deftest analyst-must-author-implementation-order
-  ;; Given analysis cuts stories that may have implementer dependencies
-  ;; When the analyst role is specified
-  ;; Then implementation-order.md is always required (edges or comment-only)
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))
-        template (slurp (str (fs/path repo-root "swarmforge/templates/theme-implementation-order.md")))
-        c (contract "analyst")]
-    (is (str/includes? prompt "Always** commit root **`implementation-order.md`")
-        "order is always required, not only when deps exist")
-    (is (str/includes? prompt "comment header")
-        "single-story / no-gate themes still get an explicit file")
-    (is (str/includes? template "always** commits this file"))
-    (is (true? (:requires-implementation-order c)))
-    (is (some #{"implementation-order"} (:writes c)))))
+    (is (false? (:requires-dependency-checker c)))
+    (is (false? (:requires-implementation-order c)))
+    (is (not (some #{"implementation-order"} (:writes c))))))
 
 (deftest squad-architect-prompt-frames-principles-as-review-advice
   (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))]
@@ -299,8 +286,8 @@
         implementer (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))
         architect (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))
         outline (slurp (str (fs/path repo-root "swarmforge/templates/theme-module-map.md")))]
-    (is (str/includes? analyst "Theme Module Map"))
-    (is (str/includes? analyst "Separate **process**, **UI**, and **IO**"))
+    (is (str/includes? analyst ".squad/stories/<id>/plan.md"))
+    (is (str/includes? analyst "Clean Architecture"))
     (is (str/includes? analyst "implementation-order"))
     (is (str/includes? analyst "dependency-checker.edn"))
     (is (str/includes? outline "**analyst** authors"))

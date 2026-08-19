@@ -80,6 +80,15 @@
        "approval_required implementation_order false\n"
        "approval_required dependency_checker false\n"))
 
+(defn mark-implementation-plan-approved!
+  "Skip the analyst/plan gate so later-stage fixtures can start at Gherkin."
+  [root story-id]
+  (spit (str (fs/path root ".squad/stories" story-id "packet"))
+        (str "implementation_plan_path: .squad/stories/" story-id "/plan.md\n"
+             "implementation_plan_sha: abcdef1234\n"
+             "implementation_plan_approval: approved\n")
+        :append true))
+
 (defn wait-for-file [path timeout-ms]
   (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
     (loop []

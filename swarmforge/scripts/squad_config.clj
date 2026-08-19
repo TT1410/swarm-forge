@@ -7,8 +7,10 @@
 (def squad-default-recovery-quiet-seconds 300)
 (def squad-default-recovery-retry-seconds 60)
 (def squad-default-approval-required
-  {"theme" true
-   "story" true
+  {"theme" false
+   "story" false
+   "implementation-plan" true
+   "implementation_plan" true
    "gherkin" true
    "qa_procedure" true
    "qa-procedure" true
@@ -19,15 +21,13 @@
    "qa" false
    "architecture" false
    "final" false
-   ;; Non-empty order and non-trivial checker require user approval by default
-   "implementation_order" true
-   "implementation-order" true
-   "dependency_checker" true
-   "dependency-checker" true
-   ;; Theme slice finalize/ship requires user approval by default
-   "finalize" true
-   "theme_finalize" true
-   "theme-finalize" true})
+   "implementation_order" false
+   "implementation-order" false
+   "dependency_checker" false
+   "dependency-checker" false
+   "finalize" false
+   "theme_finalize" false
+   "theme-finalize" false})
 
 (defn squad-env-long [name default-value]
   (if-let [value (System/getenv name)]
