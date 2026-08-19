@@ -77,4 +77,6 @@ A story packet has no `theme_id`. `squad_packet.sh create` takes a story id, not
 
 `squad_next.clj` should shrink. New behavior lives in `redo_*_test.clj`; old tests that encoded the dead path are deleted, not inverted into no-ops.
 
+After each task: leftover functions in touched files have CRAP ≤ 6 (`bb crap`). Delete first; do not paint coverage on doomed code.
+
 UI: `redo-ui.md`.

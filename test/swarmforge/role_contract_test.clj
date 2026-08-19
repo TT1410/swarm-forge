@@ -318,6 +318,30 @@
     (is (str/includes? outline "## IO (Interface Adapters / Drivers)"))
     (is (str/includes? outline "Tooling Layout"))))
 
+(deftest root-bb-edn-has-coverage-task
+  ;; Given the SwarmForge repo itself
+  ;; When operators run verification
+  ;; Then `bb coverage` exists and drives Cloverage into target/coverage/lcov.info
+  (let [bb (slurp (str (fs/path repo-root "bb.edn")))
+        task (slurp (str (fs/path repo-root "bb/tasks/coverage.clj")))]
+    (is (str/includes? bb "coverage"))
+    (is (str/includes? bb "bb/tasks/coverage.clj"))
+    (is (str/includes? task "clj"))
+    (is (str/includes? task "-M:cov"))
+    (is (str/includes? task "target/coverage/lcov.info"))))
+
+(deftest root-bb-edn-has-crap-task
+  ;; Given the latest crap4clj
+  ;; When operators run CRAP here
+  ;; Then `bb crap` uses that lib, this repo's source root, and `bb coverage`
+  (let [bb (slurp (str (fs/path repo-root "bb.edn")))]
+    (is (str/includes? bb "crap4clj"))
+    (is (str/includes? bb "e6e0312"))
+    (is (str/includes? bb "--coverage-command"))
+    (is (str/includes? bb "bb coverage"))
+    (is (str/includes? bb "--source-root"))
+    (is (str/includes? bb "swarmforge/scripts"))))
+
 (deftest product-tooling-templates-keep-bb-edn-thin
   (let [bb (slurp (str (fs/path repo-root "swarmforge/templates/product-bb.edn")))
         deps (slurp (str (fs/path repo-root "swarmforge/templates/product-deps.edn")))

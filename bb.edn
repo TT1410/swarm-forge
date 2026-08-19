@@ -1,5 +1,8 @@
 ;; Thin runner: paths/deps live in deps.edn (local/root).
-{:deps {swarmforge/root {:local/root "."}}
+{:deps {swarmforge/root {:local/root "."}
+        io.github.unclebob/crap4clj
+        {:git/url "https://github.com/unclebob/crap4clj"
+         :git/sha "e6e0312fb9fe25cb8bdc55557d60c0e1c0568fb9"}}
  :tasks
  {test {:doc "Run helper tests except simulator tests"
         :task (do
@@ -8,4 +11,12 @@
   simulation-test {:doc "Run simulator tests"
                    :task (do
                            (require 'swarmforge.test-runner)
-                           ((resolve 'swarmforge.test-runner/run-simulation!)))}}}
+                           ((resolve 'swarmforge.test-runner/run-simulation!)))}
+  coverage {:doc "Generate target/coverage/lcov.info for CRAP and mutation tools"
+            :task (load-file "bb/tasks/coverage.clj")}
+  crap {:doc "CRAP report; runs bb coverage unless --use-existing-coverage"
+        :requires ([crap4clj.core :as core])
+        :task (apply core/-main
+                     (concat ["--source-root" "swarmforge/scripts"
+                              "--coverage-command" "bb coverage"]
+                             *command-line-args*))}}}

@@ -6,7 +6,7 @@
 
 **Architecture:** Keep packets, `squad_next` residuals vs mechanical apply, squadd spawn/retire, dashboard cockpit, Troubleshooter chat, and `.squad/backlog`. A packet does not need a theme. SL is the handoff target and merges the SHA (six-pack style). Daemon does not merge. Hardener/QA/architect/SI may batch several ready stories. Module map and dependencies are architect + SI ongoing work.
 
-**Tech Stack:** Babashka Clojure (`swarmforge/scripts/*.clj`), `bb test` via `swarmforge.test-runner/run-non-simulation!`, dashboard `squadd/web.clj` + `squadd/dashboard.html`.
+**Tech Stack:** Babashka Clojure (`swarmforge/scripts/*.clj`), `bb test` via `swarmforge.test-runner/run-non-simulation!`, `bb coverage` / `bb crap` (crap4clj `e6e0312`), dashboard `squadd/web.clj` + `squadd/dashboard.html`.
 
 **Specs:** `redo.md`, `redo-ui.md`. Do not contradict them.
 
@@ -15,6 +15,17 @@
 **How to work:** TDD. Given/When/Then comments. Run the production script (`squad_next.sh`, `squad_assign.sh`, web helpers) — no no-op steps. See each new scenario fail before implementing. `bb test` green before every commit. One task at a time.
 
 **Delete with each task.** When a path dies, delete its functions, templates, config lines, and tests in that same commit. No empty stubs. Prefer deleting an old `deftest` over inverting it into “does not mention merger.” `squad_next.clj` should get shorter every task.
+
+**CRAP ≤ 6 on leftovers.** After each task, every **remaining** `defn` in the files that task touched has CRAP ≤ 6. Meet it by deleting doomed functions first; cover or split only what stays. Do not write tests whose only job is to paint coverage on merger/theme/order/reviewer code. Do not invent types to dodge a flat `cond`/`case`. This is **not** a whole-repo gate on day one (hundreds of today’s failures are on paths you will delete).
+
+Before each task commit:
+
+```bash
+bb test
+bb crap
+```
+
+`bb crap` runs `bb coverage` then scores `swarmforge/scripts`. Filter to the module you touched (`bb crap squad_next`). The cap still applies to every leftover function in that module. After Task 7, a full `bb crap` is a check that shipped scripts are already at 6 — not a new project.
 
 **Out of scope:** Rewriting `squad_simulator.clj`. B89 project directories. Converting a mid-flight sprint swarm. Keeping B96 story-pair implementer batches.
 
@@ -211,7 +222,7 @@ Leave `merger.prompt` on disk until Task 6.
 
 Delete or invert every test that requires merger, dry-run, `merge_blocked`, depth-2 pause (B94), merger stamps (B99), or “residual defers accept-merge to daemon.” Those last two (`residual-only-defers-accept-merge-to-daemon`, `residual-only-defers-merge-ready-to-daemon`) **invert**: SL residual is the merge.
 
-- [ ] **Step 5: Run `bb test`. Confirm green.**
+- [ ] **Step 5: Run `bb test`. Then `bb crap` (or `bb crap squad_next` / `squad_assign`). Confirm green and leftover functions in touched files have CRAP ≤ 6.**
 
 - [ ] **Step 6: Commit**
 
@@ -308,7 +319,7 @@ Expected: `empty-swarm-waits` is already close to true on a bare repo; `squad-ne
 | `b13-hollow-or-missing-checker-is-incomplete-analysis-residual` | delete or invert (analyst no longer must emit checker) |
 | `issues_b96_test.clj` entire file | invert: two ready stories are **not** one `--batch-stories` assignment; `derive-implementer-batches` may stay as dead code or be deleted |
 
-- [ ] **Step 5: `bb test` green.**
+- [ ] **Step 5: `bb test` green. `bb crap` on touched modules: leftover functions CRAP ≤ 6.**
 
 - [ ] **Step 6: Commit**
 
@@ -477,7 +488,7 @@ Assert: after approve/start, item status is `started`, a `stories/*.md` exists, 
 
 B72 rejected-story-returns-to-backlog stays: reject of `implementation-plan`, Gherkin, or QA procedure reopens the backlog item. No final bless.
 
-- [ ] **Step 5: `bb test` green.**
+- [ ] **Step 5: `bb test` green. `bb crap` on touched modules: leftover functions CRAP ≤ 6.**
 
 - [ ] **Step 6: Commit**
 
@@ -597,7 +608,7 @@ Writer prompts: one sentence each — there is no reviewer; the operator approve
 | Any `TEMPLATE: gherkin-reviewer` / `qa-procedure-reviewer` assertion | no such template |
 | `role_contract_test` lists of reviewer roles | drop gherkin-reviewer and qa-procedure-reviewer from required dispatch |
 
-- [ ] **Step 5: `bb test` green.**
+- [ ] **Step 5: `bb test` green. `bb crap` on touched modules: leftover functions CRAP ≤ 6.**
 
 - [ ] **Step 6: Commit**
 
@@ -776,7 +787,7 @@ Drop `:final-approval` and `theme-finalize-candidates` (`[]`). Story is done whe
 | `role_contract_test` `analyst-must-author-implementation-order` | invert: plan, not order file |
 | merger in `singleton-roles` | remove |
 
-- [ ] **Step 5: `bb test` green.**
+- [ ] **Step 5: `bb test` green. `bb crap` on touched modules: leftover functions CRAP ≤ 6.**
 
 - [ ] **Step 6: Commit**
 
@@ -841,7 +852,7 @@ EOF
 
 - [ ] **Step 3: Rewrite those prompts to the target pipeline in `redo.md`.** Short. SL merges the SHA. No merger, no dry-run, no impl-order, no reviewers, no project, no theme. Cleaner: property tests + clean. CR: recs. Hardener: apply recs then harden. Architect + SI own the module map.
 
-- [ ] **Step 4: `bb test` green.**
+- [ ] **Step 4: `bb test` green. `bb crap` on touched modules: leftover functions CRAP ≤ 6.**
 
 - [ ] **Step 5: Commit**
 
@@ -914,7 +925,7 @@ Also a `web-state` test: backlog open items in `backlog`; started stories in `st
 
 `board-column-by-state`: plan / gherkin / qa-proc → Specifying; implement / clean / review → Coding; harden / qa / architect / si → Finalizing; done → Done. Architect is **not** Done (overrides B100).
 
-- [ ] **Step 4: `bb test` green.** Verify in the browser if squadd is up; otherwise the HTML/API tests are the stand-in.
+- [ ] **Step 4: `bb test` green. `bb crap` on touched modules: leftover functions CRAP ≤ 6. Verify in the browser if squadd is up; otherwise the HTML/API tests are the stand-in.
 
 - [ ] **Step 5: Commit**
 
@@ -962,4 +973,4 @@ EOF
 
 Task 1 Step 1–2 only: `redo_next_test.clj` + runner registration. Watch merger tests fail for the right reason. Then implement Task 1.
 
-Do not start Task 2 until `bb test` is green on Task 1.
+Do not start Task 2 until `bb test` is green on Task 1 and leftover functions in Task 1’s files are CRAP ≤ 6.
