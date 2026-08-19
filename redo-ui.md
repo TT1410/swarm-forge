@@ -1,10 +1,10 @@
 # Redo UI
 
 **Spec:** `redo.md`  
-**Plan:** `redo-implementation-plan.md` (Slice 6)  
+**Plan:** `redo-implementation-plan.md` (Task 7)  
 **Base:** cockpit at `b73c972` (`squadd/dashboard.html`)
 
-The unit is one end-to-end **story**. No sprints. No project. Operators never see “theme.”
+The unit is one end-to-end **story**. No sprints. No project. No theme.
 
 ---
 
@@ -29,16 +29,26 @@ Keep:
 
 ## Board columns
 
+One card, one lane. **Latest stage wins.**
+
 | Column | Cards |
 |--------|--------|
-| Specifying | Stories in implementation plan, Gherkin, or QA procedure (including waiting for user approval of those artifacts) |
-| Coding | Implementer, code reviewer, cleaner |
-| Finalizing | Hardener, QA, architect, senior implementer |
-| Done | Completed **stories** |
+| Specifying | Plan and Gherkin (and QA procedure only if that is still the furthest along — implementer has not started). A pending QA-procedure approve stays in Attention after the card moves to Coding. |
+| Coding | Implementer, cleaner, code reviewer. Always **one story per card**. |
+| Finalizing | Hardener, QA, architect, senior implementer. Ready stories are **batched**. |
+| Done | Finished work. A Finalizing group that finished together can stay **one batch card**. |
 
 Unstarted stories (no analyst yet) stay in the **backlog deck**, not on the board.
 
-Stories are index cards. A **short pill** names the stage: `plan`, `gherkin`, `qa-proc`, `implement`, `review`, `clean`, `harden`, `qa`, `architect`, `si`, `done`.
+Stories (or a Finalizing/Done batch) are index cards. A **short pill** names the stage: `plan`, `gherkin`, `qa-proc`, `implement`, `clean`, `review`, `harden`, `qa`, `architect`, `si`, `done`.
+
+### Finalizing / Done batches
+
+When a hardener starts, it takes **every** story that is ready at that moment. That set is one batch card. They stay that group through Finalizing and may stay a batch card in Done.
+
+The whole group waits until every member can take the next step. A late story that becomes ready later does **not** join; it waits for the next hardener, which again takes every story then ready.
+
+If the same stories move on together, they stay one card (hardener → QA → architect → SI). Work Queue lists the stories on that assignment.
 
 ---
 
@@ -49,11 +59,10 @@ Only user approvals:
 - implementation plan
 - feature (Gherkin)
 - QA procedure
-- later story bless (architect / SI), if the FSM still requires it
 
 Each row: gate · story id · **View document** · Approve · Reject.
 
-No theme map. No Gherkin/QA reviewer.
+No theme map. No Gherkin/QA reviewer. No final bless.
 
 ---
 
@@ -67,7 +76,7 @@ Click a board card: story detail (text + links to plan / feature / QA / reviews)
 
 ## Work Queue
 
-First column is the **story**. Second is the **role** (analyst, gherkin-writer, implementer, code-reviewer, cleaner, …). No merger. No module/sprint.
+First column is the **story**. Second is the **role** (analyst, gherkin-writer, implementer, cleaner, code-reviewer, …). No merger. No module/sprint. Work Queue may show a batch as several stories on one later-role assignment.
 
 ---
 
