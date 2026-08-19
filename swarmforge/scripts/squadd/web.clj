@@ -329,10 +329,10 @@
    ["cleaned" (fn [_] "cleaner complete")]
    ["implemented" (fn [_] "implementation complete")]
    ["implementation_approved" (fn [_] "implementation approved")]
-   ["implementation_approval_ready" (fn [_] "Gherkin and QA procedure approved")]
+   ["implementation_approval_ready" (fn [_] "plan and Gherkin approved")]
    ["specification_in_progress" (fn [p]
-                                  (str "Gherkin " (get p "gherkin_review_state" "pending")
-                                       "; QA procedure " (get p "qa_procedure_review_state" "pending")))]
+                                  (str "Gherkin " (get p "gherkin_approval_state" "pending")
+                                       "; QA procedure " (get p "qa_procedure_approval_state" "pending")))]
    ["story_approved" (fn [_] "story approved")]
    ["story_recorded" (fn [_] "story recorded")]])
 

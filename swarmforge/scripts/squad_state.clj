@@ -155,17 +155,14 @@
   (value-or (current-review packet review-field)
             (if (present? packet path-field) "pending" "blocked")))
 
-(defn approval-state [packet approval-field review-field]
+(defn path-approval-state [packet approval-field path-field]
   (value-or (get packet approval-field)
-            (if (current-accepted? packet review-field) "pending" "blocked")))
+            (if (present? packet path-field) "pending" "blocked")))
 
 (def implementation-assignment-rules
   [["complete" #(present? % "implementation_sha")]
    ["assigned" #(present? % "implementation_assignment")]
-   ;; ready only when implementation is approved AND specs are currently accepted,
-   ;; matching squad_next implementer eligibility (not mere approval presence).
-   ["ready" #(and (approved? % "implementation_approval")
-                  (implementation-ready? %)
+   ["ready" #(and (implementation-ready? %)
                   (not (present? % "implementation_sha")))]])
 
 (defn state-from-rules [rules packet default-state]
@@ -202,10 +199,10 @@
   {"story_approval_state" (value-or (get packet "story_approval") "pending")
    "gherkin_assignment_state" (assignment-state packet "gherkin_path" "gherkin_assignment")
    "gherkin_review_state" (review-state packet "gherkin_review" "gherkin_path")
-   "gherkin_approval_state" (approval-state packet "gherkin_approval" "gherkin_review")
+   "gherkin_approval_state" (path-approval-state packet "gherkin_approval" "gherkin_path")
    "qa_procedure_assignment_state" (assignment-state packet "qa_procedure_path" "qa_procedure_assignment")
    "qa_procedure_review_state" (review-state packet "qa_procedure_review" "qa_procedure_path")
-   "qa_procedure_approval_state" (approval-state packet "qa_procedure_approval" "qa_procedure_review")
+   "qa_procedure_approval_state" (path-approval-state packet "qa_procedure_approval" "qa_procedure_path")
    "implementation_approval_state" (value-or (get packet "implementation_approval")
                                              (if (= "implementation_approval_ready" state) "pending" "blocked"))
    "implementation_assignment_state" (implementation-assignment-state packet)

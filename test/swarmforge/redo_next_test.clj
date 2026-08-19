@@ -354,3 +354,33 @@
         (is (not (str/includes? out "qa-procedure-reviewer"))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest written-gherkin-is-ready-for-user-approval-without-reviewer
+  ;; Given a Gherkin file on the packet and no reviewer verdict
+  ;; When packet state is derived
+  ;; Then gherkin approval is pending for the operator, not blocked on review
+  (require 'squad-state)
+  (let [state (find-ns 'squad-state)
+        packet {"story_id" "cave-graph"
+                "gherkin_path" "features/cave-graph.feature"
+                "qa_procedure_path" "qa/cave-graph.md"}
+        derived ((ns-resolve state 'derived-stage-fields) packet "specification_in_progress")]
+    (is (= "pending" (get derived "gherkin_approval_state")))
+    (is (= "pending" (get derived "qa_procedure_approval_state")))))
+
+(deftest implementer-assignment-state-does-not-need-implementation-approval-row
+  ;; Given plan and Gherkin user-approved
+  ;; When packet state is derived
+  ;; Then implementer is ready without a separate implementation_approval field
+  (require 'squad-state)
+  (let [state (find-ns 'squad-state)
+        packet {"story_id" "cave-graph"
+                "implementation_plan_approval" "approved"
+                "gherkin_approval" "approved"
+                "gherkin_path" "features/cave-graph.feature"}]
+    (is (= "implementation_approval_ready"
+           ((ns-resolve state 'recompute-state) packet)))
+    (is (= "ready"
+           (get ((ns-resolve state 'derived-stage-fields)
+                 packet "implementation_approval_ready")
+                "implementation_assignment_state")))))

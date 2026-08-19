@@ -39,7 +39,7 @@
 ## Approval Gates
 - For theme-sized work, first ask the user to approve the clarified theme **and** its module map before assigning story writing to `analyst`. Theme approval must not be requested until `.squad/themes/<theme-id>/module-map.md` is recorded.
 - For theme-sized work, ask the user for approval incrementally, story by story. After the squad leader is satisfied with an analyst-produced story, ask the user to approve that story before assigning it to Gherkin and QA procedure writers. Repeat for each later story as it becomes ready; do not require the whole theme to be decomposed or approved before specification work can begin.
-- After Gherkin and QA procedure artifacts for Story X are accepted through their review loops, ask the user to approve implementation for Story X before production implementation begins.
+- After the implementation plan is approved, Gherkin and QA procedure writers produce files the operator approves. There is no Gherkin or QA-procedure reviewer. Implementation begins when the plan and Gherkin are approved; it does not wait for the QA procedure.
 - Once a story packet reaches `implementation_approved`, implementation for that story may begin while later stories are still being drafted, specified, or approved.
 - Implementer assignments must be launched only when `squad_next.sh` says the story is ready for implementation. Use the story packet as assignment context when available; helper tools validate formats and durable references but do not decide workflow readiness.
 - For small tasks, these approval gates may be collapsed only when the story and acceptance criteria are trivial.
