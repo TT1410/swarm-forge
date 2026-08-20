@@ -177,6 +177,7 @@
       (str/starts-with? (str/trim line) "Grok ")
       (str/includes? line "Shift+Tab:mode")
       (str/includes? line "Ctrl+x:shortcuts")
+      (re-find #"(?i)^working \(\d+s\)\s*$" (str/trim line))
       (re-find #"^\s*┌─" line)
       (re-find #"^\s*└─" line)
       (re-find #"^\s*│" line)))
@@ -453,25 +454,27 @@
         {"document_url" (theme-url tid)
          "document_label" "View theme package"})
 
-      ;; story target (default) and unknown kinds fall through to story package
+      ;; story target (default): one package, gate label may jump to a section
       :else
       (case gate-n
         "gherkin"
-        {"document_url" (story-url "gherkin" tid)
-         "document_label" "View gherkin"}
+        {"document_url" (str (story-url "story" tid) "#gherkin")
+         "document_label" "View story package"}
         ("qa-procedure")
-        {"document_url" (story-url "qa-procedure" tid)
-         "document_label" "View QA procedure"}
+        {"document_url" (str (story-url "story" tid) "#qa-procedure")
+         "document_label" "View story package"}
+        "implementation-plan"
+        {"document_url" (str (story-url "story" tid) "#implementation-plan")
+         "document_label" "View story package"}
         ("code-review")
-        {"document_url" (story-url "review" tid)
-         "document_label" "View code review"}
+        {"document_url" (str (story-url "story" tid) "#code-review")
+         "document_label" "View story package"}
         "architecture"
-        {"document_url" (story-url "review" tid)
-         "document_label" "View architecture review"}
+        {"document_url" (str (story-url "story" tid) "#architecture-review")
+         "document_label" "View story package"}
         "story"
         {"document_url" (story-url "story" tid)
-         "document_label" "View story"}
-        ;; implementation, hardening, qa, final, …
+         "document_label" "View story package"}
         {"document_url" (story-url "story" tid)
          "document_label" "View story package"}))))
 
@@ -729,7 +732,7 @@
    ;; Finalizing: harden through architect/SI. Done after SI or leftover final.
    "architecture_approved" "finalizing"
    "architecture_reviewed" "finalizing"
-   "architecture_revision_returned" "finalizing"
+   "architecture_revision_returned" "done"
    "architecture_returned" "finalizing"
    "qa_approved" "finalizing"
    "final_approval_ready" "finalizing"
@@ -870,13 +873,20 @@
           stories)))
 
 (defn pane-sample-for-hash
-  "Drop the last non-empty line (timer/status widgets) before hashing."
-  [text]
-  (let [trimmed (str/replace (str text) #"\s+\z" "")
-        lines (str/split-lines trimmed)]
-    (if (<= (count lines) 1)
-      ""
-      (str/join "\n" (pop (vec lines))))))
+  "Strip the trailing status footer before hashing. Footer shape is
+  backend-specific (Grok Working (Ns) chrome vs Codex elapsed/prompt)."
+  ([text] (pane-sample-for-hash text nil))
+  ([text backend]
+   (let [stripped (str/trimr (strip-input-region (or text "") backend))
+         lines (vec (str/split-lines stripped))]
+     (cond
+       (empty? lines) ""
+       ;; Unknown backends: still drop a last timer/status line.
+       (nil? backend)
+       (if (<= (count lines) 1)
+         ""
+         (str/join "\n" (pop lines)))
+       :else stripped))))
 
 (def sl-activity-atom
   "Last SL pane sample for heat decay across polls."
@@ -886,7 +896,7 @@
   "Last pane hash/heat per agent_id for WIF thermometers."
   (atom {}))
 
-(declare sl-activity socket-value agent-session-name)
+(declare sl-activity socket-value agent-session-name agent-backend-name)
 
 (defn agent-pane-heat
   "Heat 0–6 for one agent pane (observe only; six-bar WIF therm)."
@@ -898,7 +908,8 @@
                      (zero? (:exit (sh-continue "tmux" "-S" socket "has-session" "-t" session))))
           text (when live?
                  (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-20")))
-          h (when text (str (hash (pane-sample-for-hash text))))
+          backend (agent-backend-name root agent-id)
+          h (when text (str (hash (pane-sample-for-hash text backend))))
           prev (get @agent-activity-atom agent-id)
           heat (cond
                  (not live?) 0
@@ -1047,7 +1058,11 @@
                                            (= "theme" story))
                                      []
                                      [story]))
-                       agent (or (get a "agent_id") "")]
+                       agent (or (get a "agent_id") "")
+                       agent-state (when (and root (not (str/blank? agent)))
+                                     (not-empty
+                                      (read-value (fs/path root ".squad" "agents" agent "status")
+                                                  "state")))]
                    {"assignment_id" id
                     "story" label
                     "story_id" story
@@ -1059,6 +1074,7 @@
                     "state" state
                     "updated_at" (get a "updated_at" "")
                     "agent_id" agent
+                    "agent_state" (or agent-state "")
                     "state_rank" (assignment-progress-rank state)
                     "pipeline_rank" (pipeline-rank template)})))
           (sort-by (fn [row]
@@ -1686,11 +1702,15 @@
 (defn story-content [root story-id]
   (let [packet (packet-for root story-id)
         story (artifact-project-content root (get packet "story_path"))
+        plan (artifact-project-content root (get packet "implementation_plan_path"))
+        notes (artifact-project-content root (get packet "qa_implementer_notes_path"))
         gherkin (artifact-project-content root (get packet "gherkin_path"))
         qa-procedure (artifact-project-content root (get packet "qa_procedure_path"))
         packet-text (slurp-if-exists (packet-file-for root story-id))]
     (str (section "Story" story)
          (section "Story Packet" packet-text)
+         (section "Implementation Plan" plan)
+         (section "Implementer Notes" notes)
          (section "Gherkin" gherkin)
          (section "QA Procedure" qa-procedure)
          (packet-review-sections root packet))))
@@ -1757,7 +1777,8 @@
                    (zero? (:exit (sh-continue "tmux" "-S" socket "has-session" "-t" session))))
         text (when live?
                (:out (sh-continue "tmux" "-S" socket "capture-pane" "-p" "-t" session "-S" "-40")))
-        h (when text (str (hash (pane-sample-for-hash text))))
+        backend (agent-backend-name root "squad-leader")
+        h (when text (str (hash (pane-sample-for-hash text backend))))
         prev @sl-activity-atom
         heat (cond
                (not live?) 0

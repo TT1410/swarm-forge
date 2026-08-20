@@ -77,7 +77,8 @@
                {"story_id" "s1" "story_approval" "approved" "gherkin_assignment" "a1"}
                {"story_id" "s1"
                 "implementation_plan_approval" "approved"
-                "gherkin_approval" "approved"}
+                "gherkin_approval" "approved"
+                "qa_procedure_approval" "approved"}
                {"implementation_approval" "approved"}
                {"implementation_sha" "i1"}
                {"cleaner_sha" "c1"}

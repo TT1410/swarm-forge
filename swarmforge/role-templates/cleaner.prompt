@@ -18,7 +18,8 @@ Read and obey `swarmforge/role-templates/cleaner.contract.edn`.
 ## Property Testing
 
 - Own property testing support after cleanup is complete.
-- Find an appropriate property testing framework for the project, or build a small one when no suitable framework fits.
+- If a property-testing library exists **for that environment, use it**. On **bb**, `clojure.test.check` is **already on the classpath** — no `deps.edn` change. Do not skip it.
+- If none exists, write properties **by hand**: an invariant, a way to draw inputs, and many trials. Extra example tests (`doseq` of a handful of fixtures) are not a property suite.
 - You may search the web only to identify an appropriate property testing framework for the project.
 - Assess property-test coverage before verification.
 - Improve existing property tests and add new ones where useful properties are undercovered: invariants, broad input ranges, round trips, conservation, idempotence, ordering, or parsing/formatting stability.
@@ -28,7 +29,7 @@ Read and obey `swarmforge/role-templates/cleaner.contract.edn`.
 
 - Do not introduce new behavior.
 - Do not make broad architectural boundary changes.
-- Do **not** edit root tooling files (`bb.edn`, `deps.edn`, or equivalent build/lock manifests) unless the assignment explicitly requires tooling cleanup. Prefer moving deps into `deps.edn` and keeping `bb.edn` thin when you must touch tooling at all.
+- You **may edit `bb.edn` / `deps.edn` only to add** a tool you need (new `:deps` coordinate, new task such as `property-test`). That is additive-only. Do **not** change existing targets (`test`, `acceptance`, `coverage`, …).
 - Do not run mutation tests unless explicitly assigned.
 - Run relevant verification before handoff.
 

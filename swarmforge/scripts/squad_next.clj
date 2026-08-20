@@ -347,7 +347,8 @@
 (defn artifact-paths [assignment prefix suffix]
   (->> (split-list (:artifacts assignment))
        (filter #(and (str/starts-with? % prefix)
-                     (str/ends-with? % suffix)))
+                     (str/ends-with? % suffix)
+                     (not (str/includes? % "implementer-notes"))))
        sort
        vec))
 
@@ -916,12 +917,11 @@
 
 (defn inferred-batch-member-rows
   "Senior-implementer reform often has no manifest. Infer members from
-  architecture changes-requested stories in the same theme."
+  every packet waiting on SI — never by theme."
   [root assignment kind]
   (when (and (= "batch" (:story-id assignment))
              (= "senior-implementer" kind))
     (->> (packets root)
-         (filter #(= (:theme-id assignment) (get % "theme_id")))
          (filter #(and (field-changes-requested? % "architecture_review")
                        (packet-result-missing? % kind)))
          (map (fn [packet]
@@ -1216,6 +1216,7 @@
     :candidate (fn [ctx packet]
                  (when (and (approval-satisfied? (:root ctx) packet "implementation-plan")
                             (approval-satisfied? (:root ctx) packet "gherkin")
+                            (approval-satisfied? (:root ctx) packet "qa-procedure")
                             (field-present? packet "gherkin_path")
                             (not (field-present? packet "implementation_sha")))
                    (assignment-candidate (:root ctx) (:assignments ctx) (:agents ctx) packet
@@ -1268,7 +1269,18 @@
                    (batch-candidate (:root ctx) (:assignments ctx) packet "architecture" "architecture"
                                     "qa_approved"
                                     "QA-verified story is ready for architecture batch"
-                                    60 165 "qa")))}])
+                                    60 165 "qa")))}
+   {:id :senior-implementer-batch
+    :priority 60
+    :stage-order 166
+    :candidate (fn [ctx packet]
+                 (when (and (field-changes-requested? packet "architecture_review")
+                            (not (field-present? packet "senior_implementer_sha"))
+                            (not (field-present? packet "architecture_fix_batch")))
+                   (batch-candidate (:root ctx) (:assignments ctx) packet "architecture-fix" "architecture-fix"
+                                    "architecture_changes_requested"
+                                    "architecture critique needs senior implementation"
+                                    60 166 "architecture")))}])
 
 (defn story-candidates [root rows]
   (let [ctx {:root root
@@ -1349,6 +1361,14 @@
   (and (architecture-member-ready? root packet)
        (not (field-present? packet "architecture_batch"))))
 
+(defn si-member-ready? [root packet]
+  (and (field-changes-requested? packet "architecture_review")
+       (not (field-present? packet "senior_implementer_sha"))))
+
+(defn unbatched-si-member-ready? [root packet]
+  (and (si-member-ready? root packet)
+       (not (field-present? packet "architecture_fix_batch"))))
+
 (defn any-unbatched-hardener-member-ready? [root packets]
   (boolean (some #(unbatched-hardener-member-ready? root %) packets)))
 
@@ -1357,6 +1377,9 @@
 
 (defn any-unbatched-architecture-member-ready? [root packets]
   (boolean (some #(unbatched-architecture-member-ready? root %) packets)))
+
+(defn any-unbatched-si-member-ready? [root packets]
+  (boolean (some #(unbatched-si-member-ready? root %) packets)))
 
 (defn all-batched-or-done? [packets batch-field done?]
   (every? #(or (field-present? % batch-field)
@@ -1453,7 +1476,11 @@
                                (or (architecture-batch-needing-review packets)
                                    (any-unbatched-architecture-member-ready? root packets)
                                    (open-batch-with-members batches "architecture" "architecture")))
-     :senior-ready? (any-architecture-needs-senior? packets)}))
+     :senior-ready? (and (seq packets)
+                         (or (batch-id-needing-result packets "architecture_fix_batch" "senior_implementer_sha")
+                             (any-unbatched-si-member-ready? root packets)
+                             (open-batch-with-members batches "architecture-fix" "architecture-fix")
+                             (any-architecture-needs-senior? packets)))}))
 
 (defn batch-candidate-for-rule [root assignments agents readiness
                                 {:keys [ready? template suffix reason stage-order]}]

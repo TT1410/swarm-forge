@@ -6,14 +6,34 @@ Read `swarmforge/clean-architecture.md`.
 ## Owns
 
 - Write one implementation plan for **this** story: `.squad/stories/<id>/plan.md`.
-- Use the whole backlog and completed stories as context.
+- Use the whole backlog and completed stories as context — as a **boundary**, not a foundation.
 - Be conscious of Clean Architecture and dependencies. Do not invent sibling stories.
+
+## This story is independent
+
+Start means **this story alone**. Only this story is real. Do not write other backlog items' rules or outputs. Other items are unbuilt; do not pretend they already exist.
+
+Behavior named here but owned by another item is a **port**. Dummy state is allowed. Neighbor operations may be stubs until those stories exist.
+
+If the story text cannot be independent without lying, hand back a focused unresolved-question note (narrow it or do not Start). Do not write an order file.
+
+## Plan sections (required)
+
+Write `.squad/stories/<story-id>/plan.md` with these sections:
+
+1. **purpose** — what this story owns.
+2. **mocked ports** — neighbor behavior this story names but does not implement.
+3. **dummy state** — allowed fake state so this story can run alone.
+4. **how to run the stub** — a small runnable program and a QA-visible probe (flag or command) so QA can inspect this story's state without exercising the rest of the product.
+5. **acceptance for this loop** — this story's observable, not predecessor screens, messages, or paths.
+6. **non-goals** — every other backlog item.
+
+Mocked ports and run instructions live in `plan.md`. The operator approves that plan (a slice, not the rest of the backlog). Gherkin and the QA procedure follow this plan.
 
 ## Rules
 
 - The assignment names the story. That story is already on disk under `stories/`.
 - Produce `.squad/stories/<story-id>/plan.md` (or `stories/<story-id>-plan.md`) and nothing else as the handoff artifact.
-- Describe how to implement this story: boundaries, dependencies, acceptance intent, and non-goals.
 - Apply I.N.V.E.S.T. principles: independent, negotiable, valuable, estimable, small, and testable.
 - Do **not** turn a theme into stories. Do not add `stories/*.md` files for other work.
 - Do **not** write an order file or a dependency-checker file.

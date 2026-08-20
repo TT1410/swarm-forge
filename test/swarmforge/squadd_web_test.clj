@@ -346,7 +346,7 @@
         (is (= 1 (count pending)))
         (is (nil? (get by-id "story__cave")))
         (is (nil? (get by-id "order__wumpus")))
-        (is (= "/artifact/gherkin/cave" (get-in by-id ["gherkin__cave" "document_url"])))
+        (is (= "/artifact/story/cave#gherkin" (get-in by-id ["gherkin__cave" "document_url"])))
         (doseq [a pending]
           (is (not (str/blank? (get a "document_url")))
               (str "approval missing document_url: " (get a "approval_id")))

@@ -106,7 +106,9 @@
                          "implementation_plan_path: .squad/stories/" story "/plan.md\n"
                          "implementation_plan_approval: approved\n"
                          "gherkin_path: features/" story ".feature\n"
-                         "gherkin_approval: approved\n"))
+                         "gherkin_approval: approved\n"
+                         "qa_procedure_path: qa/" story ".md\n"
+                         "qa_procedure_approval: approved\n"))
         (write-file (fs/path root "stories" (str story ".md")) (str "Story " story ".\n")))
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
         (is (str/includes? out "TEMPLATE: implementer"))
@@ -335,10 +337,10 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest implementer-after-plan-and-gherkin-not-waiting-for-qa-procedure
+(deftest implementer-after-plan-and-gherkin-waits-for-qa-procedure-approval
   ;; Given plan and Gherkin user-approved, no QA procedure
   ;; When residual runs
-  ;; Then create_assignment implementer
+  ;; Then QA-procedure writer or approval, not implementer
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -350,7 +352,8 @@
                        "gherkin_path: features/cave-graph.feature\n"
                        "gherkin_approval: approved\n"))
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (str/includes? out "TEMPLATE: implementer"))
+        (is (not (str/includes? out "TEMPLATE: implementer")))
+        (is (str/includes? out "qa-procedure"))
         (is (not (str/includes? out "qa-procedure-reviewer"))))
       (finally
         (fs/delete-tree root)))))
@@ -369,7 +372,7 @@
     (is (= "pending" (get derived "qa_procedure_approval_state")))))
 
 (deftest implementer-assignment-state-does-not-need-implementation-approval-row
-  ;; Given plan and Gherkin user-approved
+  ;; Given plan, Gherkin, and QA procedure user-approved
   ;; When packet state is derived
   ;; Then implementer is ready without a separate implementation_approval field
   (require 'squad-state)
@@ -377,6 +380,7 @@
         packet {"story_id" "cave-graph"
                 "implementation_plan_approval" "approved"
                 "gherkin_approval" "approved"
+                "qa_procedure_approval" "approved"
                 "gherkin_path" "features/cave-graph.feature"}]
     (is (= "implementation_approval_ready"
            ((ns-resolve state 'recompute-state) packet)))

@@ -4,7 +4,8 @@ Read and obey `swarmforge/role-templates/qa-procedure-writer.contract.edn`.
 
 ## Owns
 
-- Convert one approved story into executable or executable-ready QA procedure artifacts.
+- Convert one approved story into executable or executable-ready QA procedure artifacts **and** sibling implementer notes.
+- Follow the approved implementation plan (mocked ports, dummy state, how to run the stub).
 - Preserve the story scope, parameters, setup expectations, and observable outcomes.
 - Specify command line arguments and parameters clearly enough that QA execution is repeatable.
 
@@ -30,8 +31,17 @@ Read and obey `swarmforge/role-templates/qa-procedure-writer.contract.edn`.
 - Make all inputs, outputs, setup data, and expected observations explicit.
 - If the story cannot support a repeatable QA procedure, hand back a focused blocker.
 
+## Two files, one commit
+
+Write **both** files, same author, **one commit**, one `git_handoff`:
+
+1. `qa/<story>.md` — procedure for QA and the operator (gate). User-visible workflows only.
+2. `qa/<story>-implementer-notes.md` — process to run, argv/flags, deterministic seams, and a **QA-runnable executable**. **Repeat** the plan's run/ports section (copy and refine); do not leave the implementer to read `plan.md` for that. QA-only seams may be added, not substituted.
+
+Do **not** split notes and procedure across two commits or two roles. They will drift.
+
 ## Handoff
 
-- Commit the QA procedure artifacts and concise notes.
+- Commit the QA procedure and the implementer notes together.
 - Hand the committed QA procedure back to `squad-leader`.
-- There is no QA-procedure reviewer; the operator approves the procedure file on the dashboard.
+- There is no QA-procedure reviewer; the operator approves the procedure **and** the notes on the dashboard (one gate, two files).

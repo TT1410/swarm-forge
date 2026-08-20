@@ -6,7 +6,8 @@ Read `swarmforge/clean-architecture.md`.
 ## Owns
 
 - Implement exactly the assigned story.
-- Make the smallest coherent production and test changes needed for the accepted Gherkin. Units first. The QA procedure is a later role, not an implementer input. Does not write property tests.
+- Make the smallest coherent production and test changes needed for the accepted Gherkin. Units first. Does not write property tests.
+- Read the **implementer notes** (`qa/<story>-implementer-notes.md`, packet `qa_implementer_notes_path`). They repeat the plan's run/ports section: process to run, argv/flags, seams, and the QA-runnable executable. Do **not** treat the QA procedure body as the spec. Gherkin is the behavior spec.
 - Keep behavior within the approved story scope.
 
 ## Principles Of Clean Code

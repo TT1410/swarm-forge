@@ -16,7 +16,7 @@
        "  squad_packet.sh review <story-id> <code|architecture> <accepted|changes-requested> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh approve <story-id> <implementation-plan|gherkin|qa-procedure|implementation|code-review|hardening|qa|architecture> <detail...>\n"
        "  squad_packet.sh record <story-id> <implementation|cleaner|hardener|qa|architecture|senior-implementer> <assignment-id> <branch> <sha>\n"
-       "  squad_packet.sh batch <story-id> <hardener|qa|architecture> <batch-id> <stage> <assignment-id> <branch> <sha>\n"
+       "  squad_packet.sh batch <story-id> <hardener|qa|architecture|architecture-fix> <batch-id> <stage> <assignment-id> <branch> <sha>\n"
        "  squad_packet.sh status <story-id>\n"
        "  squad_packet.sh validate <story-id>"))
 
@@ -24,7 +24,7 @@
 (def artifact-kinds #{"gherkin" "qa-procedure" "implementation-plan"})
 (def review-kinds #{"code" "architecture"})
 (def result-kinds #{"implementation" "cleaner" "hardener" "qa" "architecture" "senior-implementer"})
-(def batch-kinds #{"hardener" "qa" "architecture"})
+(def batch-kinds #{"hardener" "qa" "architecture" "architecture-fix"})
 (def approval-gates #{"implementation-plan" "gherkin" "qa-procedure" "implementation"
                       "code-review" "hardening" "qa" "architecture"})
 
@@ -136,7 +136,8 @@
                  "gherkin_review_iterations"
                  "gherkin_approval" "gherkin_approval_state" "gherkin_approval_detail"
                  "gherkin_approval_iterations"
-                 "qa_procedure_path" "qa_procedure_assignment" "qa_procedure_branch" "qa_procedure_sha"
+                 "qa_procedure_path" "qa_implementer_notes_path"
+                 "qa_procedure_assignment" "qa_procedure_branch" "qa_procedure_sha"
                  "qa_procedure_assignment_state" "qa_procedure_iterations"
                  "qa_procedure_review" "qa_procedure_review_state" "qa_procedure_review_assignment"
                  "qa_procedure_review_branch" "qa_procedure_review_sha" "qa_procedure_review_target_sha"
@@ -169,6 +170,9 @@
                  "architecture_review_branch" "architecture_review_sha" "architecture_review_target_sha"
                  "architecture_review_iterations"
                  "architecture_approval" "architecture_approval_detail" "architecture_approval_iterations"
+                 "architecture_fix_batch" "architecture_fix_batch_stage"
+                 "architecture_fix_batch_assignment" "architecture_fix_batch_branch"
+                 "architecture_fix_batch_sha" "architecture_fix_batch_iterations"
                  "senior_implementer_assignment" "senior_implementer_branch"
                  "senior_implementer_sha" "senior_implementer_iterations"
                  "final_approval" "final_approval_detail" "final_approval_iterations"
@@ -276,6 +280,13 @@
   (println "PATH:" relative)
   (println "PACKET:" (str packet-file)))
 
+(defn implementer-notes-relative [procedure-relative]
+  (when (and procedure-relative
+             (str/ends-with? procedure-relative ".md")
+             (not (str/includes? procedure-relative "implementer-notes")))
+    (str (subs procedure-relative 0 (- (count procedure-relative) 3))
+         "-implementer-notes.md")))
+
 (defn attach-artifact! [story-id kind assignment-id branch sha artifact-path]
   (validate-artifact-kind! kind)
   (doseq [[label value] [["Story id" story-id]
@@ -289,7 +300,13 @@
         packet-file (ensure-packet! root story-id)
         packet (packet-map root story-id)
         prefix (str/replace kind "-" "_")
-        packet (write-packet! root story-id (packet-with-artifact packet prefix relative assignment-id branch sha))]
+        packet (packet-with-artifact packet prefix relative assignment-id branch sha)
+        notes (when (= "qa-procedure" kind)
+                (implementer-notes-relative relative))
+        packet (cond-> packet
+                 (and notes (fs/regular-file? (fs/path root notes)))
+                 (assoc "qa_implementer_notes_path" notes))
+        packet (write-packet! root story-id packet)]
     (event! root story-id (str prefix "_attached") assignment-id branch sha relative)
     (print-artifact-attached! story-id packet kind relative packet-file)))
 
@@ -404,7 +421,7 @@
     (println "SHA:" sha)))
 (defn batch-story! [story-id kind batch-id stage assignment-id branch sha]
   (when-not (contains? batch-kinds kind)
-    (exit! 2 "Batch kind must be hardener, qa, or architecture."))
+    (exit! 2 "Batch kind must be hardener, qa, architecture, or architecture-fix."))
   (doseq [[label value] [["Story id" story-id]
                          ["Batch id" batch-id]
                          ["Stage" stage]
@@ -413,18 +430,19 @@
     (validate-id! label value))
   (validate-sha! sha)
   (let [root (fs/absolutize (project-root))
+        prefix (str/replace kind "-" "_")
         _ (ensure-packet! root story-id)
         packet (packet-map root story-id)
         packet (write-packet! root story-id
                               (append-iteration
                                (assoc packet
-                                      (str kind "_batch") batch-id
-                                      (str kind "_batch_stage") stage
-                                      (str kind "_batch_assignment") assignment-id
-                                      (str kind "_batch_branch") branch
-                                      (str kind "_batch_sha") sha)
-                               (str kind "_batch") batch-id "member"))]
-    (event! root story-id (str kind "_batch_added") batch-id stage assignment-id branch sha)
+                                      (str prefix "_batch") batch-id
+                                      (str prefix "_batch_stage") stage
+                                      (str prefix "_batch_assignment") assignment-id
+                                      (str prefix "_batch_branch") branch
+                                      (str prefix "_batch_sha") sha)
+                               (str prefix "_batch") batch-id "member"))]
+    (event! root story-id (str prefix "_batch_added") batch-id stage assignment-id branch sha)
     (println "SQUAD_PACKET:" story-id)
     (println "STATE:" (get packet "state"))
     (println "BATCH:" batch-id)

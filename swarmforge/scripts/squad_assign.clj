@@ -617,7 +617,8 @@
 (def batch-template-kinds
   {"hardener" "hardener"
    "qa" "qa"
-   "architect" "architecture"})
+   "architect" "architecture"
+   "senior-implementer" "architecture-fix"})
 
 (defn manifest-story-count [manifest]
   (if (fs/regular-file? manifest)

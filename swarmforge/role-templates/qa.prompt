@@ -18,6 +18,9 @@ Read and obey `swarmforge/role-templates/qa.contract.edn`.
 
 ## Verification Scope
 
+- **QA is only concerned with this story.** End-to-end is this story's runnable (as cut by the independent plan / implementer notes), not the rest of the product. If the plan mocks neighbors, do not wait for those stories.
+- A pass means: start the **real program**, drive it as the procedure says, observe stdout (or the product UI). Calling production functions or a test harness is a fail, not a runner.
+- If the UI affordances the procedure names do not exist, that is a QA failure or a blocker — not a rewrite of the procedure into Clojure.
 - Run end-to-end QA through the user interface only.
 - Do not use a project API for end-to-end verification unless that API is itself the assigned user-facing interface.
 - Command-line arguments and special QA commands are allowed only when they are user-interface affordances exposed to QA.

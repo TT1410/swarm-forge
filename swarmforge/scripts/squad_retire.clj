@@ -239,6 +239,32 @@
                   (assignment-status-state root task-id)
                   "). Resolve merge/reject/block first, then run squad_retire.sh.")))))
 
+(defn save-agent-sessions? [root]
+  (cfg/squad-config-bool root "save_agent_sessions" false))
+
+(defn liveness-pane-tail [root agent-id]
+  (let [file (fs/path root ".squad" "agents" agent-id "liveness")]
+    (when (fs/regular-file? file)
+      (not-empty (second (str/split (slurp (str file)) #"(?m)^last_10_lines:\s*\n" 2))))))
+
+(defn capture-pane-text [socket session]
+  (when (and (not (str/blank? socket)) (not (str/blank? session)))
+    (not-empty
+     (:out (run-continue "tmux" "-S" socket "capture-pane" "-p" "-t"
+                         (session-target session) "-S" "-2000")))))
+
+(defn archive-agent-session! [root agent-id socket session]
+  (let [dir (fs/path root ".squad" "sessions" agent-id)
+        pane (or (capture-pane-text socket session)
+                 (liveness-pane-tail root agent-id)
+                 "")
+        liveness (fs/path root ".squad" "agents" agent-id "liveness")]
+    (fs/create-dirs dir)
+    (spit (str (fs/path dir "pane.txt")) pane)
+    (when (fs/regular-file? liveness)
+      (fs/copy liveness (fs/path dir "liveness") {:replace-existing true}))
+    dir))
+
 (defn retire! [agent-id]
   (validate-agent-id! agent-id)
   (let [root (fs/absolutize (project-root))
@@ -258,6 +284,8 @@
             socket-file (fs/path state-dir "tmux-socket")
             socket (when (fs/exists? socket-file)
                      (str/trim (slurp (str socket-file))))
+            _ (when (save-agent-sessions? root)
+                (archive-agent-session! root agent-id socket session))
             {:keys [stopped? detail]} (stop-session! socket session)
             worktree-cleanup (remove-worktree! root agent-id worktree)
             branch-cleanup (delete-branch! root agent-id)

@@ -20,7 +20,7 @@
        "  squad_batch.sh ready <batch-kind>"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
-(def valid-kinds #{"hardener" "qa" "architecture"})
+(def valid-kinds #{"hardener" "qa" "architecture" "architecture-fix"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -47,7 +47,7 @@
 
 (defn validate-kind! [kind]
   (when-not (contains? valid-kinds kind)
-    (exit! 2 "Batch kind must be hardener, qa, or architecture.")))
+    (exit! 2 "Batch kind must be hardener, qa, architecture, or architecture-fix.")))
 
 (defn validate-sha! [sha]
   (when-not (re-matches #"[0-9a-fA-F]{7,40}" sha)

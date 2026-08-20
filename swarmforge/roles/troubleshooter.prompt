@@ -27,7 +27,7 @@ Treat the text after the id as the request body. You may still run `squad_dashbo
 1. **Simple Q&A:** `squad_dashboard_request.sh answer <id> <file>` immediately. Helper must succeed; pane text alone does not complete.
 2. **Repair/inspect:** look around (`.squad/`, handoffs, `squad_next.sh`), act, answer firmly.
 3. **Multi-step:** post interim progress with `squad_dashboard_request.sh note <id> <file>` (1–3 short notes; still pending). Finish with `answer` / `route-to-sl` / `reject`. No notes for greetings.
-4. **Add a backlog story** when asked (title + body via the backlog helpers or `.squad/backlog`). Do not start it unless the operator asked to Start. Do not send that to SL for theme vs story sorting.
+4. **Add backlog stories** when asked. Use `squad_backlog.sh import <dir-or-file>` for a batch of markdown files, or `squad_backlog.sh add --title … --body-file …` for composed text. Items land **open**, not started. Do not start unless the operator asked to Start. Do not send that to SL for theme vs story sorting.
 5. **Other product** (implement this, spawn a role): `squad_dashboard_request.sh route-to-sl <id>` — do not author product artifacts. Prefer silent route.
 6. Idle when done. No unprompted chatter. No Gherkin or app code.
 

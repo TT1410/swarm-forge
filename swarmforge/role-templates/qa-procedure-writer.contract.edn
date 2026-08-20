@@ -5,6 +5,6 @@
  :may-spawn false
  :may-talk-to-user false
  :may-run-broad-tests false
- :writes ["qa-procedures"]
+ :writes ["qa-procedures" "implementer-notes"]
  :artifact-roots ["qa/"]
  :forbidden-artifact-roots ["stories/" "features/" "src/" "test/" "reviews/"]}

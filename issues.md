@@ -1,14 +1,15 @@
 # Issues
 
-Open items from the replay swarm and leftover redo. Bodies unchanged; grouped for reading.
+Replay-swarm and leftover-redo tracker. Bodies kept; grouped for reading. On-hold items are still open.
 
 ## Index
 
 **On hold**
 
 - Analyst orders the backlog; workflow starts stories; implementer waits on merged preds
+- Handoff drafts: diagnose from saved session files before changing the protocol
 
-**Pipeline**
+**Done**
 
 - Analyst plans each started story as independent (mock other backlog items)
 - QA-proc writer commits procedure + implementer notes; implementer reads the notes
@@ -16,23 +17,13 @@ Open items from the replay swarm and leftover redo. Bodies unchanged; grouped fo
 - Cleaner property tests: use the environment’s framework; additive bb.edn only
 - Later-role batches must project onto stories without a theme
 - Sweep leftover theme references
-
-**Cockpit**
-
 - Flexible tools to add stories to the backlog
 - Backlog icon needs a label
 - Story card popup still says “Detached window (mock host)”
-- View story package should include the implementation plan
+- View story package should include everything attached so far
 - Thermometer treats “Working (Ns)” as activity
 - WIF state icon: green dot becomes empty circle at handoff (should be arrows)
-
-**Diagnosis**
-
 - Config to keep agent sessions after retire
-
-**Upstream**
-
-- APS bug: parser must keep step data tables (and mutator must mutate them)
 
 ---
 
@@ -54,11 +45,21 @@ The analyst pass must exist **before** the workflow picks an implementer (first 
 
 **Where:** `analyst.prompt`; backlog Start vs per-story Start; residual `create_assignment` implementer; packet `implementation_sha`; this Wumpus backlog.
 
+### Handoff drafts: diagnose from saved session files before changing the protocol
+
+**On hold.** Agents often spent 15–70s after the work was done fumbling `swarm_handoff` (template placeholders like `<10-char-commit>`, SHA length, header-only drafts). Hardener left `result-handoff.draft` unfilled; events skipped `handoff_sent`.
+
+Do **not** change the protocol yet (no auto-filled draft, no new helper) until we can read **saved session files** from retire. Then decide whether assignment should ship a filled draft, a writer helper, or clearer prompt examples.
+
+**Where:** `swarm_handoff.sh`; constitution `handoffs.prompt`; leftover `result-handoff.draft`; depends on “Config to keep agent sessions after retire.”
+
 ---
 
-## Pipeline
+## Done
 
 ### Analyst plans each started story as independent (mock other backlog items)
+
+**Done.** Analyst prompt requires an independent plan (mocked ports, dummy state, how to run the stub, non-goals).
 
 Start still means **this story alone** (the backlog-order DAG issue is on hold). The analyst must cut `plan.md` to what **this story owns** and **mock everything else**. Other backlog items are unbuilt. The backlog is a **boundary** (do not implement those items), not a foundation (do not pretend they exist).
 
@@ -72,7 +73,9 @@ Today I.N.V.E.S.T. “independent” and “use the whole backlog” are already
 4. A **small runnable program** and a **QA-visible probe** (flag or command) so QA can inspect that state without exercising the rest of the product.
 5. If the story text cannot be independent without lying, **ask the operator** (narrow it or don’t Start). Still no order file.
 
-**Plan sections:** purpose · mocked ports · dummy state · how to run · acceptance for this loop · non-goals (every other backlog item).
+**Plan sections:** purpose · mocked ports · dummy state · how to run the stub · acceptance for this loop · non-goals (every other backlog item).
+
+Mocked ports and run instructions **live in `plan.md`**. The operator’s implementation-plan approval document is that plan (they are approving a slice, not the rest of the backlog).
 
 Gherkin and the QA procedure follow **that** plan.
 
@@ -80,20 +83,25 @@ Gherkin and the QA procedure follow **that** plan.
 
 ### QA-proc writer commits procedure + implementer notes; implementer reads the notes
 
+**Done.** Writer commits procedure + notes in one commit; packet records `qa_implementer_notes_path`; implementer waits on the QA-proc approval click and reads the notes.
+
 The QA procedure can name how the game is driven (this swarm: `--qa-start-rooms` and friends). The implementer is told the procedure is not an input. It implements story + Gherkin only. This swarm had **no executable** (`-main` / `bb run` / stdin). QA could not type at `SAME SET-UP (Y-N)?` and recorded `QA_PROCEDURE_PASS` against `play-script`.
 
 **Decisions:**
 
 - **Two files**, same author, **one commit**, one `git_handoff`.
   - `qa/<story>.md` — procedure for QA and the operator (gate).
-  - Sibling **implementer notes** (e.g. `qa/<story>-implementer-notes.md`) — process to run, argv/flags, deterministic seams, **QA-runnable executable**. Packet records `qa_implementer_notes_path`.
+  - Sibling **implementer notes** (e.g. `qa/<story>-implementer-notes.md`) — process to run, argv/flags, deterministic seams, **QA-runnable executable**. Packet records `qa_implementer_notes_path`. **Repeat** the plan’s run/ports section (copy and refine); do not leave the implementer to read `plan.md` for that. QA-only seams may be added, not substituted.
 - Do **not** split notes and procedure across two commits or two roles. They will drift; residual will start implementer on the wrong SHA.
-- **Implementer reads the notes only**, not the procedure body. Gherkin stays the behavior spec. Assignment: read that path; do not treat the procedure as the spec.
-- **Specify** Gherkin and QA-proc stay parallel. **Implementer waits** on merged **and** operator-approved QA-proc **and** Gherkin (and the plan), so the notes exist before coding.
+- **Implementer reads the notes only**, not the procedure body. Gherkin stays the behavior spec. Assignment: read that path; do not treat the procedure as the spec. Notes **repeat** the plan’s run/ports section (QA-proc writer copies and may refine); they do not only list extra QA seams.
+- **Specify** Gherkin and QA-proc stay parallel. **Implementer waits on the operator approval click** for QA-proc (and Gherkin, and the plan), not merely on the files being merged.
+- The **QA-procedure approval document** the operator is shown must include **both** the procedure and the implementer notes. One gate, two files.
 
 **Where:** `qa-procedure-writer.prompt` (write both files); implementer prompt (drop “QA is not an input”; require notes); residual implementer after `qa_procedure` approval; packet field; this swarm’s missing CLI.
 
 ### Tighten QA so it actually goes end to end
+
+**Done.** QA prompt: pass means start the real program for this story; calling production functions or a test harness is a fail.
 
 `qa.prompt` already says: execute the QA procedure through the **user interface only**, do not use a project API unless that API is the product UI, do not reinterpret the procedure. This swarm’s QA wrote `qa/replay_same_setup_qa.clj`, ran it, and recorded `QA_PROCEDURE_PASS`.
 
@@ -101,9 +109,13 @@ That script did not follow the procedure and did not go through the UI. It calle
 
 Tighten QA instructions so a pass means: start the real program, drive it as the procedure says, observe stdout. Calling production functions or a test harness is a fail, not a runner. If the UI affordances the procedure names do not exist, that is a QA failure or a blocker — not a rewrite of the procedure into Clojure.
 
+**QA is only concerned with this story.** End-to-end is the story’s runnable (as cut by the independent plan / implementer notes), not the rest of the product. If the plan mocks neighbors, QA does not wait for those stories.
+
 **Where:** `qa.prompt` / `qa.contract.edn`; assignment verification steps; this story’s `qa/replay_same_setup_qa.clj` vs `qa/replay-the-same-set-up-or-start-a-new-hunt.md`.
 
 ### Cleaner property tests: use the environment’s framework; additive bb.edn only
+
+**Done.** Cleaner uses `clojure.test.check` on bb; `bb.edn`/`deps.edn` edits are additive-only.
 
 The cleaner prompt already says find or build a property-testing framework. This swarm’s cleaner added `doseq` over a handful of fixtures and called it coverage. No `test.check`, no generator, no property-test task.
 
@@ -116,6 +128,8 @@ The cleaner prompt already says find or build a property-testing framework. This
 **Where:** `cleaner.prompt` (property-testing + tooling rules); assignment verification; this story’s `test/wumpus/core_test.clj` `doseq` “properties.”
 
 ### Later-role batches must project onto stories without a theme
+
+**Done.** `architecture-fix` records a story manifest; SI inference is “packets waiting on SI,” never same theme; SI-returned is Done on the board.
 
 Redo: story is **Done** after SI, or after architect with no recs. This swarm’s SI merged `architecture-fix` (turn-report rec). Residual is `wait`. The packet is still `qa_returned` / `architecture_review: changes-requested`. Board stays Finalizing.
 
@@ -135,17 +149,19 @@ Do not unstick a finished SI by spawning another assignment.
 
 ### Sweep leftover theme references
 
+**Done.** SI no longer filters by `theme_id`; story cards do not show a theme; startup checks `squad_backlog.sh` not `squad_theme.sh`. Assign CLI still takes a theme-id token for existing tests.
+
 Redo dropped theme/project ceremony. Leftovers still in the control plane (this swarm: SI member inference on `theme_id`) stall the pipeline.
 
-Hunt remaining **theme** references in production code (and tests that still require them). Treat **each** as a bug: investigate whether it is dead ceremony, a renamed concept, or still doing work. Repair so **that reference no longer exists** — no `theme_id: none` stand-in, no “same theme” filters, no theme CLI/packet fields, no dashboard copy that talks about a project/theme the operator no longer has.
+Hunt remaining **theme** references in production code (and tests that still require them). Treat **each** as a bug: investigate whether it is dead ceremony, a renamed concept, or still doing work. Repair so **that reference no longer exists** — no `theme_id: none` stand-in, no “same theme” filters, no theme CLI/packet fields, no dashboard copy that talks about a theme the operator no longer has.
 
-**Where:** `swarmforge/scripts`, `swarmforge/roles`, `squadd`, contracts/prompts; grep `theme` / `theme_id` / `.squad/themes`.
+**Project** is allowed only as the **overall container of operational data** (the swarm/product tree, project root, `.squad` / git). It is not a backlog entity, not a theme synonym, not Add Project / Start Project. If a string means that old intake object, delete or rename it. If it means the tree the squad is running in, it may stay.
 
----
-
-## Cockpit
+**Where:** `swarmforge/scripts`, `swarmforge/roles`, `squadd`, contracts/prompts; grep `theme` / `theme_id` / `.squad/themes` / `project` used as a product object.
 
 ### Flexible tools to add stories to the backlog
+
+**Done.** `squad_backlog.sh import <dir-or-file>` and `add --title`; Troubleshooter prompt names the CLI; items land open.
 
 Stories will come from many places. They might already be files on disk. They might be written by the Troubleshooter under user direction. The operator should be able to get those into the backlog quickly without a one-path ceremony.
 
@@ -153,9 +169,13 @@ The Troubleshooter prompt already says it may add a backlog story “via the bac
 
 **Needed:** flexible add tools — files, TS-composed text, dashboard — all landing as open backlog items. Do not Start unless asked.
 
-**Where:** Troubleshooter prompt vs missing `squad_backlog` (or equivalent); `.squad/backlog` item format; cockpit Add Story.
+**TS batch add:** a **CLI the Troubleshooter can run** to load a **batch of stories** efficiently (e.g. a directory of markdown files, as in `~/junk/htw-stories`). Not “reverse-engineer POST `/api/backlog`.” Operator Add Story stays. Items land **open**, not started.
+
+**Where:** Troubleshooter prompt vs a real batch-add CLI (`squad_backlog` or equivalent); `.squad/backlog` item format; cockpit Add Story.
 
 ### Backlog icon needs a label
+
+**Done.** `#backlog-deck` shows a Backlog label.
 
 The backlog deck control is an unlabeled icon (count on stacked sheets). The operator should see that it is the backlog without hovering.
 
@@ -163,27 +183,37 @@ The backlog deck control is an unlabeled icon (count on stacked sheets). The ope
 
 ### Story card popup still says “Detached window (mock host)”
 
+**Done.** Story float footer no longer says mock host.
+
 Clicking a story card opens a float whose footer is leftover mockup copy: “Detached window (mock host). Close does not stop agents.” That is not operator language for the live cockpit.
 
 **Where:** `openStoryDetail` in `squadd/dashboard.html`.
 
-### View story package should include the implementation plan
+### View story package should include everything attached so far
+
+**Done.** Story package includes story, packet, plan, notes, Gherkin, QA procedure, reviews. Story gates open that package.
 
 Attention “View story package” (implementation-plan gate) opens `/artifact/story/<id>`. That page is the story file plus the packet. The analyst’s `plan.md` is on disk and named on the packet (`implementation_plan_path`) but is not in the package body. The operator cannot read the plan from that link.
 
-The story package should show the implementation plan (and keep showing it as later artifacts attach).
+The story package should show **everything attached so far**: story, packet, plan, implementer notes, Gherkin, QA procedure, reviews — not only story+packet. Keep adding sections as later artifacts land. One Attention link, the whole package. Gate-specific labels may jump to a section; they still open this package.
 
-**Where:** `story-content` / `approval-document-ref` in `squadd/web.clj`; Attention document for gate `implementation-plan`.
+**Where:** `story-content` / `approval-document-ref` in `squadd/web.clj`; Attention document for every story gate.
 
 ### Thermometer treats “Working (Ns)” as activity
+
+**Done.** `pane-sample-for-hash` strips the trailing status footer by backend (Grok `Working (Ns)` chrome vs Codex prompt).
 
 The SL / WIF activity bars hash the tmux pane and heat up when the hash changes. `pane-sample-for-hash` only drops the last non-empty line. Codex/Grok waiting counters (`Working (12s)`, `Working (13s)`, …) sit above a status/prompt footer, so they stay in the sample and tick every poll. Idle wait looks like work.
 
 A waiting counter is not activity. The thermometer should ignore those lines.
 
-**Where:** `pane-sample-for-hash` / `sl-activity` / `agent-pane-heat` in `squadd/web.clj`.
+**Decision:** strip only the **trailing status footer**, not every line that says “working.” Footer shape **depends on the agent backend** (Grok `Working (Ns)` vs Codex elapsed/status widgets, and later types). Needs **polymorphism** keyed on backend (roles.tsv / agent metadata), not one regex for all panes.
+
+**Where:** `pane-sample-for-hash` / `sl-activity` / `agent-pane-heat` in `squadd/web.clj`; backend from agent metadata / roles.tsv.
 
 ### WIF state icon: green dot becomes empty circle at handoff (should be arrows)
+
+**Done.** WIF rows expose `agent_state`; the glyph uses agent lifecycle when `agent_id` is present.
 
 Work Queue icons are supposed to be **arrows** for `handoff_ready` / `handoff_sent`. Running is a green pulsing **dot**. During and after handoff the operator sees that dot turn into an **empty grey circle**.
 
@@ -191,35 +221,16 @@ Work Queue icons are supposed to be **arrows** for `handoff_ready` / `handoff_se
 
 The icon should follow the agent’s handoff (arrow), not an unmapped assignment status.
 
-**Where:** `stateIcon` / `renderWork` in `squadd/dashboard.html`; `work-in-flight-rows` in `squadd/web.clj`.
+**Decision:** if the WIF row has an `agent_id`, the glyph uses **agent** lifecycle (`handoff_ready` / `handoff_sent` → arrows; `running` → green dot). Assignment state is used only when there is no agent.
 
----
-
-## Diagnosis
+**Where:** `stateIcon` / `renderWork` in `squadd/dashboard.html`; `work-in-flight-rows` must expose agent state (not only assignment `state`).
 
 ### Config to keep agent sessions after retire
 
+**Done.** `save_agent_sessions` in `squad.conf` archives pane/liveness under `.squad/sessions/<agent-id>/` on retire, then still kills tmux. Default off.
+
 On retire the control plane stops the tmux session and removes the worktree. Liveness tails and pane history go with them. After the fact we cannot see how an agent formulated a handoff, which tools it tried, or where it wasted a minute.
 
-Need a **configuration switch** (squad.conf / env) that **saves agent sessions** — pane captures and/or the tmux session log — so we can look back, diagnose failures, and find efficiencies. Default can still be delete-as-you-go.
+Need a **configuration switch** (squad.conf / env) that **saves agent sessions as files** — pane capture and/or session log under `.squad/agents/<id>/` (or an archive beside it) **on retire**. Tmux is still killed. Default can still be delete-as-you-go (no files). Not a kept-alive tmux session.
 
-**Where:** `squad.conf`; `squad_retire`; agent session / liveness; optional archive under `.squad/agents/<id>/`.
-
----
-
-## Upstream
-
-### APS bug: parser must keep step data tables (and mutator must mutate them)
-
-`gherkin-parser` silently drops `|` rows that are not under `Examples:`. Step data tables (`Given a hunt started with this setup:` plus `| piece | room |`) never appear in the JSON IR. `apply-table-line` returns the unchanged state unless `:section` is `:examples`. Parser-spec currently lists “data tables attached to steps” as unsupported.
-
-That is wrong for this pipeline: the Gherkin writer used those tables, the implementer hardcoded the same numbers, and changing the `.feature` table cannot fail the suite.
-
-The mutator only walks `$.scenarios[].examples[].<key>`. Spec tables on steps (especially Then tables like `the new hunt setup is:`) are the same kind of value as example cells. If hunter room 2 becomes 9, the suite should die. Today those cells are invisible to mutation.
-
-File a bug on Acceptance-Pipeline-Specification so:
-
-1. The parser **attaches data tables to the preceding step** (or errors instead of dropping them).
-2. The mutator **mutates those table cells** (or folds them into Examples so they already are mutated). Do not leave a quiet hole.
-
-**Where:** APS `bb/src/aps/gherkin.clj` `apply-table-line`; `parser-spec.md`; `mutator-spec.md` mutation scope; this story’s `features/replay_the_same_set_up_or_start_a_new_hunt.feature`.
+**Where:** `squad.conf`; `squad_retire`; write capture/log files then stop tmux; `.squad/agents/<id>/`.

@@ -57,11 +57,10 @@
     (is (re-find #"(?i)recommend" p))
     (is (re-find #"(?i)harden" p))))
 
-(deftest implementer-does-not-wait-for-qa-procedure
+(deftest implementer-reads-notes-after-qa-procedure-approval
   (let [p (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))]
     (is (re-find #"(?i)gherkin" p))
-    (is (not (re-find #"(?i)wait.*qa procedure" p)))
-    (is (not (str/includes? p "accepted Gherkin and QA procedure")))))
+    (is (re-find #"(?i)implementer notes" p))))
 
 (deftest architect-uses-whole-backlog-and-keeps-structure
   (let [p (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))]

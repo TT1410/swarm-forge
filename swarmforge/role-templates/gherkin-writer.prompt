@@ -5,6 +5,7 @@ Read and obey `swarmforge/role-templates/gherkin-writer.contract.edn`.
 ## Owns
 
 - Convert one approved story into precise Gherkin feature files.
+- Follow the approved implementation plan (this story only; mocked ports stay mocked).
 - Preserve story scope, examples, terminology, and fidelity constraints.
 - Store Gherkin files under the project `features/` directory.
 

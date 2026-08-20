@@ -44,7 +44,8 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .col-body{display:flex;flex-direction:column;align-items:flex-start;gap:8px;flex:1;min-height:100px;max-height:100%;overflow:auto;padding:8px;background:rgba(255,255,255,.35);border:1px dashed #c5cbc2;border-radius:10px;width:max-content;min-width:var(--card-min-w)}
 @keyframes card-glow{0%,100%{box-shadow:none}50%{box-shadow:0 0 0 3px rgba(47,107,58,.55),0 0 16px rgba(47,107,58,.35)}}
 .card.glow{animation:card-glow .8s ease-in-out 3}
-.deck-btn{position:relative;width:38px;height:30px;border:0;background:transparent;cursor:pointer;flex:0 0 auto}
+.deck-btn{position:relative;min-width:38px;height:30px;padding-right:52px;border:0;background:transparent;cursor:pointer;flex:0 0 auto}
+.deck-btn .deck-label{position:absolute;left:40px;top:50%;transform:translateY(-50%);font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap}
 .deck-btn .sheet{position:absolute;inset:4px 6px 2px 2px;background:var(--card);border:1px solid #c9c2a8;border-radius:3px}
 .deck-btn .sheet:nth-child(1){transform:translate(4px,3px) rotate(8deg);opacity:.55}
 .deck-btn .sheet:nth-child(2){transform:translate(2px,1px) rotate(3deg);opacity:.8}
@@ -174,9 +175,10 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
       <div class="board-toolbar">
         <span>Board</span>
         <span class="spacer"></span>
-        <button type="button" class="deck-btn" id="backlog-deck" title="Backlog">
+        <button type="button" class="deck-btn" id="backlog-deck" title="Backlog" aria-label="Backlog">
           <span class="sheet"></span><span class="sheet"></span>
           <span class="sheet"><span class="count" id="backlog-count">0</span></span>
+          <span class="deck-label">Backlog</span>
         </button>
         <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add Story</button>
       </div>
@@ -402,7 +404,7 @@ function storyCard(s, glow) {
   const tip=hold?(label+' — '+holdTitle):label;
   return `<div class="card${glow?' glow':''}${hold?' hold':''}" data-story="${esc(s.story_id)}" data-status-fp="${esc(cardFingerprint(s))}" title="${esc(tip)}">
     <div class="title"><span class="name">${esc(label)}</span><span class="timer">${esc(age(s.updated_at))}</span></div>
-    <div class="theme">${esc(s.theme_id||'—')}</div>
+    <div class="theme">${esc(detail)}</div>
     <div class="badges"><span class="pill">${esc(s.stage_label||s.state||col)}</span></div>
     <div class="foot"><span>${esc(detail)}</span><span></span></div></div>`;
 }
@@ -503,7 +505,7 @@ function renderWork(data) {
       const isBatch=!!w.is_batch;
       const agent=w.agent_id||'';
       const roleFull=w.role||w.template||'';
-      const ico=stateIcon(w.state);
+      const ico=stateIcon(w.agent_id ? (w.agent_state || w.state) : w.state);
       // Three-bar pane activity therm for live agent
       const act=w.activity||{};
       const alvl=act.level||'';
@@ -655,7 +657,7 @@ function openStoryDetail(s) {
       <div class="actions" style="justify-content:flex-start"><button type="button" class="btn btn-sm" data-toggle-full>View full story</button>
         <span class="meta">stories/${esc(s.story_id)}.md</span></div>
       <div class="story-full" data-full>Loading…</div>
-      <div class="note">Detached window (mock host). Close does not stop agents.</div>`,
+      <div class="note">Close does not stop agents.</div>`,
     onMount(el){
       const full=el.querySelector('[data-full]');
       const tog=el.querySelector('[data-toggle-full]');

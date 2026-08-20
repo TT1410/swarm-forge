@@ -18,7 +18,7 @@
 - Put library and project dependencies in root `deps.edn`, not in `bb.edn`.
 - Prefer `bb.edn` that reuses the project via `{:deps {app/root {:local/root "."}}}` (or equivalent) plus `:tasks` only.
 - Prefer task *bodies* under `bb/tasks/*.clj` (or similar) and only a one-line task entry in `bb.edn` when a new top-level command is required.
-- Root tooling files (`bb.edn`, `deps.edn`, and equivalent lock/build manifests) are shared project infrastructure. Story-scoped implementer/cleaner/hardener work must not edit them unless the assignment explicitly is a tooling/setup story.
+- Root tooling files (`bb.edn`, `deps.edn`, and equivalent lock/build manifests) are shared project infrastructure. Implementer/hardener work must not edit them unless the assignment explicitly is a tooling/setup story. Cleaner may make **additive-only** edits (new dep, new task such as `property-test`) and must not change existing targets.
 - When a library dependency is required for a story, add it in `deps.edn` only if the assignment allows tooling edits; otherwise hand back a blocker asking for a tooling story or SL-approved tooling change.
 
 ## Design And Testability

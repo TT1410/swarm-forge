@@ -15,7 +15,7 @@ Read `swarmforge/clean-architecture.md`.
 - Do not author a startup structure document. Architect and senior implementer keep structure and dependencies current as they work.
 
 ## Pipeline
-backlog → Start → analyst plan (user approves) → Gherkin and QA procedure (user approves, no reviewers) → implementer (units + Gherkin; does not wait for QA procedure) → cleaner (property tests + clean) → code-reviewer (recs only) → hardener (apply recs, then harden) → QA → architect recs → senior implementer → story done.
+backlog → Start → analyst plan (user approves) → Gherkin and QA procedure plus implementer notes (user approves, no reviewers) → implementer (units + Gherkin; reads implementer notes; waits for the QA-procedure approval click) → cleaner (property tests + clean) → code-reviewer (recs only) → hardener (apply recs, then harden) → QA → architect recs → senior implementer → story done.
 Hardener, QA, architect, and SI may batch every story that is ready. No final user bless. Story is done after SI, or after architect if there are no recs.
 
 ## Residual
@@ -28,5 +28,5 @@ Hardener, QA, architect, and SI may batch every story that is ready. No final us
 - Transient results return only to you as git handoffs. Do not forge worker handoffs or commit from worker trees.
 
 ## Helpers
-- `squad_assign.sh`, `squad_packet.sh`, `squad_approval.sh`, `squad_spawn_request.sh`, `squad_retire.sh`, `squad_status.sh`, `squad_recover.sh`.
+- `squad_assign.sh`, `squad_packet.sh`, `squad_approval.sh`, `squad_spawn_request.sh`, `squad_retire.sh`, `squad_status.sh`, `squad_recover.sh`, `squad_backlog.sh`.
 - Templates: `analyst`, `gherkin-writer`, `qa-procedure-writer`, `implementer`, `cleaner`, `code-reviewer`, `hardener`, `qa`, `architect`, `senior-implementer`.

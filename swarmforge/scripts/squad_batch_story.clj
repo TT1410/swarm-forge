@@ -7,7 +7,7 @@
             [clojure.string :as str]))
 
 (def usage-text
-  "Usage: squad_batch_story.sh add <story-id> <hardener|qa|architecture> <batch-id> <stage> <assignment-id> <branch> <sha>")
+  "Usage: squad_batch_story.sh add <story-id> <hardener|qa|architecture|architecture-fix> <batch-id> <stage> <assignment-id> <branch> <sha>")
 
 (def script-dir (fs/parent *file*))
 
