@@ -1,0 +1,13 @@
+{:role "system-analyst"
+ :handoff-targets ["squad-leader"]
+ :may-web-search true
+ :may-fetch-tools false
+ :may-spawn false
+ :may-talk-to-user false
+ :writes ["frame" "qa-procedure" "entrypoint"]
+ :artifact-roots ["frame.md" "qa/" "src/"]
+ :allowed-root-files ["bb.edn" "deps.edn"]
+ :forbidden-artifact-roots ["features/" "stories/" ".squad/stories/"]
+ :self-contained-output true
+ :requires-dependency-checker false
+ :requires-implementation-order false}

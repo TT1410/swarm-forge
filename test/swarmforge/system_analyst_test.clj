@@ -45,3 +45,13 @@
   (is (= [] (product/open-item-ids {})))
   (is (= [] (product/open-item-ids {"open_item_ids" ""})))
   (is (= ["bl-1" "bl-2"] (product/open-item-ids {"open_item_ids" " bl-1 , ,bl-2 "}))))
+
+(deftest system-analyst-prompt-owns-the-frame-not-hunt-rules
+  (let [p (slurp (str (fs/path repo-root "swarmforge/role-templates/system-analyst.prompt")))]
+    (is (str/includes? p ".squad/backlog"))
+    (is (str/includes? p "frame.md"))
+    (is (str/includes? p "qa/product.md"))
+    (is (re-find #"(?i)placeholder" p))
+    (is (re-find #"(?i)do not implement" p))
+    (is (re-find #"(?i)one executable|one process" p))
+    (is (not (re-find #"(?i)write features/" p)))))

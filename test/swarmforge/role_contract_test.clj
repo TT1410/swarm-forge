@@ -16,7 +16,8 @@
    "hardener"
    "qa"
    "architect"
-   "senior-implementer"])
+   "senior-implementer"
+   "system-analyst"])
 
 (defn contract-path [template]
   (fs/path repo-root "swarmforge" "role-templates" (str template ".contract.edn")))
@@ -53,7 +54,7 @@
     (is (false? (:may-fetch-tools c)) (:role c)))
   (doseq [c (contracts)]
     (cond
-      (= "analyst" (:role c))
+      (#{"analyst" "system-analyst"} (:role c))
       (do
         (is (true? (:may-web-search c)))
         (is (true? (:self-contained-output c))))
