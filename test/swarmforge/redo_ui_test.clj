@@ -117,3 +117,14 @@
   (is (re-find #"sl-message'\)\.addEventListener\('keydown'" html))
   (is (re-find #"e\.key==='Enter'&&!e\.shiftKey" html))
   (is (str/includes? html "sendTsChat()")))
+
+(deftest story-edit-float-is-large-and-resizable
+  ;; Given the backlog/story edit float
+  ;; Then it opens larger than a card and the operator can grow it
+  (is (str/includes? html "function openFloat({id,title,bodyHtml,onMount,left,top,className"))
+  (is (re-find #"(?s)function openBacklogEditor.*?className:\s*'editor'" html))
+  (is (re-find #"\.float\.editor\{[^}]*resize:\s*both" html))
+  (is (re-find #"\.float\.editor\{[^}]*min-width:\s*min\(720px" html))
+  (is (not (str/includes? html "max-width:440px"))
+      "story editor must not be capped at 440px")
+  (is (re-find #"\.float\.editor textarea\{[^}]*min-height:\s*240px" html)))

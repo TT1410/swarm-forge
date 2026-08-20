@@ -712,6 +712,123 @@
         (run {:dir root :ok? false} (script "stop_squadd.clj") (str root))
         (fs/delete-tree root)))))
 
+(defn- long-story-body []
+  (apply str (repeat 2000 "The hunter says \"I smell a wumpus\" in the \\south\\ tunnel.\n")))
+
+(defn- http-get-with-timeout [url timeout-ms]
+  (let [[_ host port path] (re-matches #"http://([^:/]+):([0-9]+)(/.*)" url)
+        fut (future
+              (let [socket (java.net.Socket. host (Long/parseLong port))]
+                (with-open [socket socket
+                            reader (java.io.BufferedReader.
+                                    (java.io.InputStreamReader. (.getInputStream socket) "UTF-8"))]
+                  (let [req (str "GET " path " HTTP/1.1\r\nHost: " host "\r\nConnection: close\r\n\r\n")]
+                    (.write (.getOutputStream socket) (.getBytes req "UTF-8"))
+                    (.flush (.getOutputStream socket))
+                    (slurp reader)))))
+        result (deref fut timeout-ms ::timeout)]
+    (when (= result ::timeout)
+      (future-cancel fut)
+      (throw (ex-info (str "GET timed out: " url) {:url url})))
+    result))
+
+(deftest extract-json-field-tolerates-truncated-json
+  ;; Given a Start/save body that is cut off mid-string
+  ;; When the dashboard extracts fields
+  ;; Then it returns nil instead of throwing
+  (is (nil? (web/extract-json-field "{\"title\":\"x\",\"body\":\"unterminated" "body")))
+  (is (nil? (web/extract-json-field "{" "title")))
+  (is (= "x" (web/extract-json-field "{\"title\":\"x\"" "title"))))
+
+(deftest extract-json-field-skips-non-string-neighbors
+  ;; Given JSON with numbers, arrays, and nested objects around the story
+  ;; When the dashboard extracts body
+  ;; Then it still returns the string field
+  (is (= "ok" (web/extract-json-field
+               "{\"n\":1,\"a\":[true,{\"k\":\"v\"}],\"flag\":false,\"body\":\"ok\"}"
+               "body"))))
+
+(deftest extract-json-field-parses-large-story-bodies
+  ;; Given a long story JSON body with quotes, newlines, and backslashes
+  ;; When the dashboard extracts title and body
+  ;; Then both fields come back quickly without overflowing
+  (let [story (long-story-body)
+        payload (web/to-json {"title" "Replay hunt" "body" story})
+        t0 (System/nanoTime)
+        title (web/extract-json-field payload "title")
+        body (web/extract-json-field payload "body")
+        via-string (web/extract-json-string payload "body")
+        ms (/ (double (- (System/nanoTime) t0)) 1.0e6)]
+    (is (= "Replay hunt" title))
+    (is (= story body))
+    (is (= story via-string))
+    (is (< ms 500) (str "extract-json-field took " ms "ms"))))
+
+(deftest start-second-backlog-story-via-dashboard-http
+  ;; Given two open backlog items with long bodies
+  ;; When Start saves then approves each through the dashboard HTTP handlers
+  ;; Then both become started stories with packets
+  (let [root (tmp-dir)]
+    (try
+      (let [story (long-story-body)
+            first (web/create-backlog! root {:title "Replay hunt" :body story})
+            second (web/create-backlog! root {:title "Pit warnings" :body story})
+            id1 (get-in first [:item "id"])
+            id2 (get-in second [:item "id"])
+            save1 (web/handle-web-request root "POST" (str "/api/backlog/" id1)
+                                          (web/to-json {"title" "Replay hunt" "body" story}))
+            start1 (web/handle-web-request root "POST" (str "/api/backlog/" id1 "/approve") "{}")
+            save2 (web/handle-web-request root "POST" (str "/api/backlog/" id2)
+                                          (web/to-json {"title" "Pit warnings" "body" story}))
+            start2 (web/handle-web-request root "POST" (str "/api/backlog/" id2 "/approve") "{}")]
+        (is (= 200 (:status save1)))
+        (is (= 200 (:status start1)))
+        (is (= 200 (:status save2)))
+        (is (= 200 (:status start2)))
+        (is (fs/regular-file? (fs/path root "stories/replay-hunt.md")))
+        (is (fs/regular-file? (fs/path root "stories/pit-warnings.md")))
+        (is (fs/regular-file? (fs/path root ".squad/stories/replay-hunt/packet")))
+        (is (fs/regular-file? (fs/path root ".squad/stories/pit-warnings/packet"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest web-accept-loop-serves-while-another-client-is-held
+  ;; Given the dashboard HTTP server
+  ;; When one client holds a connection without finishing the request
+  ;; Then /api/state still returns
+  (let [root (tmp-dir)
+        server (java.net.ServerSocket. 0 50 (java.net.InetAddress/getByName "127.0.0.1"))
+        port (.getLocalPort server)
+        url (str "http://127.0.0.1:" port "/api/state")]
+    (try
+      (web/start-web-thread! root server)
+      (let [stuck (java.net.Socket. "127.0.0.1" port)]
+        (try
+          (Thread/sleep 80)
+          (let [body (http-get-with-timeout url 2000)]
+            (is (str/includes? body "\"backlog\"")))
+          (finally
+            (.close stuck))))
+      (finally
+        (.close server)
+        (fs/delete-tree root)))))
+
+(deftest session-window-html-includes-pane-snapshot
+  ;; Given an agent with liveness output
+  ;; When the session window HTML is served
+  ;; Then the pane already contains that output
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad/agents/analyst-001/liveness")
+                  "state: running\nlast_10_lines:\nWumpus plan committed\nnext: request_user_approval\n")
+      (let [resp (web/agent-page-response root "/agent/analyst-001")]
+        (is (= 200 (:status resp)))
+        (is (str/includes? (:body resp) "Wumpus plan committed"))
+        (is (str/includes? (:body resp) "<pre id=\"pane\">"))
+        (is (not (str/includes? (:body resp) "<pre id=\"pane\"></pre>"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest squadd-opens-dashboard-on-startup-when-enabled
   (let [root (tmp-dir)
         opener (fs/path root "open-dashboard")

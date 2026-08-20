@@ -130,12 +130,15 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .backlog-menu-portal .mi:hover{background:#f0f4f0}.backlog-menu-portal .mi .t{font-weight:700;display:block}.backlog-menu-portal .mi .d{color:var(--muted);font-size:10px;margin-top:2px}
 .batch-menu-portal{padding:8px 10px;font-size:11px;width:auto;min-width:200px}.batch-menu-portal ul{margin:4px 0 0;padding-left:16px}
 .float-layer{position:fixed;inset:0;pointer-events:none;z-index:100}
-.float{pointer-events:auto;position:absolute;background:#f8f8f5;border:1px solid #8a9188;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.2);min-width:320px;max-width:440px;overflow:hidden}
-.float .titlebar{display:flex;align-items:center;gap:8px;padding:7px 10px;background:linear-gradient(180deg,#eceee8,#e0e3dc);cursor:grab;font-weight:600;font-size:12px}
+.float{pointer-events:auto;position:absolute;background:#f8f8f5;border:1px solid #8a9188;border-radius:10px;box-shadow:0 12px 40px rgba(0,0,0,.2);min-width:320px;max-width:90vw;overflow:hidden}
+.float.editor{min-width:min(720px,92vw);width:min(720px,92vw);min-height:min(70vh,560px);height:min(70vh,560px);max-width:92vw;overflow:auto;resize:both;display:flex;flex-direction:column}
+.float .titlebar{display:flex;align-items:center;gap:8px;padding:7px 10px;background:linear-gradient(180deg,#eceee8,#e0e3dc);cursor:grab;font-weight:600;font-size:12px;flex:0 0 auto}
 .float .body-pad{padding:12px;background:#fffef9;max-height:min(70vh,520px);overflow:auto}
+.float.editor .body-pad{max-height:none;flex:1;min-height:0;display:flex;flex-direction:column;overflow:auto}
 .float label{display:block;font-size:10px;text-transform:uppercase;color:var(--muted);margin:0 0 4px;font-weight:700}
 .float input[type=text],.float textarea{width:100%;border:1px solid #c6cbc5;border-radius:6px;padding:8px;font:inherit;margin-bottom:10px}
-.float textarea{min-height:100px;resize:vertical}.float .actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
+.float textarea{min-height:100px;resize:vertical}
+.float.editor textarea{min-height:240px;flex:1 1 auto}.float .actions{display:flex;gap:8px;justify-content:flex-end;flex-wrap:wrap}
 .float .dates{font-size:11px;color:var(--muted);margin-bottom:8px}.float .note{font-size:11px;color:var(--muted);background:#f0f4f0;border-radius:6px;padding:8px;margin:8px 0;line-height:1.4}
 .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 10px;font-size:11px;margin:8px 0;padding:8px;background:#f4f6f2;border-radius:8px}
 .stat-grid .k{color:var(--muted)}.stat-grid .v{font-weight:600;text-align:right}
@@ -281,10 +284,10 @@ function makeDraggable(win, bar) {
   bar.addEventListener('pointerup', () => { drag=false; });
 }
 function closeWindow(id) { const w=windows.get(id); if(!w)return; w.el.remove(); windows.delete(id); }
-function openFloat({id,title,bodyHtml,onMount,left,top}) {
+function openFloat({id,title,bodyHtml,onMount,left,top,className}) {
   if (windows.has(id)) { bringFront(windows.get(id).el); return windows.get(id); }
   const el=document.createElement('div');
-  el.className='float';
+  el.className='float'+(className?(' '+className):'');
   el.style.left=(left??120)+'px'; el.style.top=(top??80)+'px';
   el.innerHTML=`<div class="titlebar"><span data-close style="cursor:pointer;color:#c00">●</span><span class="spacer"></span><span>${esc(title)}</span></div><div class="body-pad">${bodyHtml}</div>`;
   document.getElementById('float-layer').appendChild(el);
@@ -579,7 +582,8 @@ function openBacklogEditor(item) {
   const id=isNew?'bl-new':'bl-'+item.id;
   openFloat({
     id, title: isNew?'New backlog item':('Edit · '+(item.title||item.id)),
-    left: Math.max(40, innerWidth/2-180), top: 100,
+    className: 'editor',
+    left: Math.max(40, innerWidth/2-360), top: 48,
     bodyHtml: `<label>Title</label><input type="text" id="be-title" value="${esc(item&&item.title||'')}">
       <label>Description</label><textarea id="be-body">${esc(item&&item.body||'')}</textarea>
       <div class="dates">${isNew?'Not saved yet.':`Created ${esc(fmt(item.created_at))} · Modified ${esc(fmt(item.updated_at))}`}</div>

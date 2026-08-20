@@ -1289,14 +1289,105 @@
   [root id]
   (start-backlog! root id))
 
+(defn- json-ws? [c]
+  (contains? #{\space \tab \newline \return} c))
+
+(defn- skip-json-ws [s i]
+  (loop [i i]
+    (if (and (< i (count s)) (json-ws? (nth s i)))
+      (recur (inc i))
+      i)))
+
+(defn- json-string-end [s start]
+  (when (and (< start (count s)) (= \" (nth s start)))
+    (loop [i (inc start)]
+      (when (< i (count s))
+        (let [c (nth s i)]
+          (cond
+            (= c \\) (recur (+ i 2))
+            (= c \") (inc i)
+            :else (recur (inc i))))))))
+
+(defn- json-unesc [c]
+  (case c
+    \n \newline
+    \t \tab
+    \r \return
+    \b \u0008
+    \f \u000c
+    \" \"
+    \\ \\
+    \/ \/
+    c))
+
+(defn- json-string-at [s start]
+  (when (and (< start (count s)) (= \" (nth s start)))
+    (loop [i (inc start)
+           out []]
+      (when (< i (count s))
+        (let [c (nth s i)]
+          (cond
+            (= c \") [(apply str out) (inc i)]
+            (= c \\) (when (< (inc i) (count s))
+                       (recur (+ i 2) (conj out (json-unesc (nth s (inc i))))))
+            :else (recur (inc i) (conj out c))))))))
+
+(defn- skip-json-nested [s start open close]
+  (loop [i (inc start) depth 1]
+    (cond
+      (or (>= i (count s)) (zero? depth)) i
+      (= \" (nth s i)) (recur (or (json-string-end s i) (inc i)) depth)
+      (= open (nth s i)) (recur (inc i) (inc depth))
+      (= close (nth s i)) (recur (inc i) (dec depth))
+      :else (recur (inc i) depth))))
+
+(defn- skip-json-value [s i]
+  (let [i (skip-json-ws s i)]
+    (when (< i (count s))
+      (let [c (nth s i)]
+        (cond
+          (= c \") (json-string-end s i)
+          (= c \{) (skip-json-nested s i \{ \})
+          (= c \[) (skip-json-nested s i \[ \])
+          :else (loop [j i]
+                  (if (or (>= j (count s)) (contains? #{\, \} \]} (nth s j)))
+                    j
+                    (recur (inc j)))))))))
+
+(defn- read-json-field-value [s k after-k acc]
+  (let [colon (skip-json-ws s after-k)]
+    (if-not (and (< colon (count s)) (= \: (nth s colon)))
+      [after-k acc :done]
+      (let [val-at (skip-json-ws s (inc colon))]
+        (if (and (< val-at (count s)) (= \" (nth s val-at)))
+          (if-let [[v after-v] (json-string-at s val-at)]
+            [after-v (assoc acc k v) :cont]
+            [val-at acc :done])
+          [(or (skip-json-value s val-at) (inc val-at)) acc :cont])))))
+
+(defn- assoc-next-json-field [s i acc]
+  (let [i (skip-json-ws s i)]
+    (cond
+      (or (>= i (count s)) (= \} (nth s i))) [i acc :done]
+      (= \, (nth s i)) [(inc i) acc :cont]
+      :else
+      (if-let [[k after-k] (json-string-at s i)]
+        (read-json-field-value s k after-k acc)
+        [i acc :done]))))
+
+(defn- json-object-string-fields [text]
+  (let [s (or text "")
+        start (skip-json-ws s 0)]
+    (if-not (and (< start (count s)) (= \{ (nth s start)))
+      {}
+      (loop [i (inc start) acc {}]
+        (let [[ni nacc status] (assoc-next-json-field s i acc)]
+          (if (= status :done)
+            nacc
+            (recur ni nacc)))))))
+
 (defn extract-json-field [body key]
-  (or (when-let [m (re-find (re-pattern (str "(?s)\"" key "\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\"")) body)]
-        (-> (second m)
-            (str/replace #"\\n" "\n")
-            (str/replace #"\\\"" "\"")
-            (str/replace #"\\\\" "\\")))
-      (when-let [m (re-find (re-pattern (str "(?s)\"" key "\"\\s*:\\s*\"([^\"]*)\"")) body)]
-        (second m))))
+  (get (json-object-string-fields body) key))
 
 (defn web-state [root]
   (let [assignments (assignment-state root)
@@ -1745,10 +1836,12 @@
           (str "(no pane capture yet for session " session ")\n"))
         "")))
 
-(defn pane-page [agent-id]
+(defn pane-page
   "Session window (agent/SL/TS) — scroll container is the pane, open at end.
   Root cause of failed open-at-bottom: pre used min-height only so it grew with
   content and the *window* scrolled; pre.scrollTop was a no-op."
+  ([agent-id] (pane-page agent-id ""))
+  ([agent-id snapshot]
   (str "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
        "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
        "<title>Agent " (html-escape agent-id) "</title>"
@@ -1765,7 +1858,7 @@
        "border:0;border-radius:6px;padding:6px 10px;display:none;z-index:2}"
        "</style>"
        "</head><body><header><h1>" (html-escape agent-id) "</h1></header>"
-       "<pre id=\"pane\"></pre>"
+       "<pre id=\"pane\">" (html-escape snapshot) "</pre>"
        "<button id=\"new-output\" type=\"button\">New output</button>"
        "<script>"
        "(function(){"
@@ -1805,16 +1898,17 @@
        "window.addEventListener('pageshow',toEndSoon);"
        "window.addEventListener('focus',function(){if(firstPaint||stickBottom)toEndSoon();});"
        "})();"
-       "</script></body></html>"))
+       "</script></body></html>")))
 (defn agent-pane-response [root path]
   (let [[_ encoded-id] (re-matches #"/api/agents/([^/]+)/pane" path)
         agent-id (url-decode encoded-id)]
     (response 200 "text/plain; charset=utf-8" (agent-pane-content root agent-id))))
 
-(defn agent-page-response [_ path]
+(defn agent-page-response [root path]
   (let [[_ encoded-id] (re-matches #"/agent/([^/]+)" path)
         agent-id (url-decode encoded-id)]
-    (response 200 "text/html; charset=utf-8" (pane-page agent-id))))
+    (response 200 "text/html; charset=utf-8"
+              (pane-page agent-id (agent-pane-content root agent-id)))))
 
 (defn approval-web-action! [root approval-id action]
   (let [detail (if (= action "approve") "approved-by-web" "rejected-by-web")
@@ -1833,17 +1927,8 @@
 (defn web-error [message]
   {:ok false :status 409 :error message})
 
-(defn json-unescape [s]
-  (-> (or s "")
-      (str/replace #"\\n" "\n")
-      (str/replace #"\\t" "\t")
-      (str/replace #"\\\"" "\"")
-      (str/replace #"\\\\" "\\")))
-
 (defn extract-json-string [json key]
-  (when-let [[_ raw] (re-find (re-pattern (str "\"" key "\"\\s*:\\s*\"((?:\\\\.|[^\"\\\\])*)\""))
-                              (or json ""))]
-    (json-unescape raw)))
+  (extract-json-field json key))
 
 (defn parse-sl-request-body [body]
   "Accept JSON {body} (optional legacy kind ignored) or plain text body."
@@ -2199,11 +2284,21 @@
         (log! root "web-opened" url)
         (log! root "web-open-failed" url (str "exit " (:exit result)))))))
 
+(defn handle-client-thread! [root socket]
+  (let [thread (Thread. (fn []
+                          (try
+                            (handle-client! root socket)
+                            (catch Throwable e
+                              (log! root "web-error" (str (or (.getMessage e) e)))))))]
+    (.setDaemon thread true)
+    (.start thread)
+    thread))
+
 (defn web-accept-loop! [root server-socket]
   (try
     (while (not (.isClosed server-socket))
       (try
-        (handle-client! root (.accept server-socket))
+        (handle-client-thread! root (.accept server-socket))
         (catch java.net.SocketException _ nil)
         (catch Exception e
           (log! root "web-error" (.getMessage e)))))
