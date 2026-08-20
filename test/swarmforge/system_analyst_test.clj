@@ -110,13 +110,36 @@
               (assign/validate-result-manifest! "system-analysis" "system-analyst"
                                                 "system-analyst-001" bad)))))))
 
-(defn- write-merged-system-analyst! [root]
-  (write-file (fs/path root ".squad/assignments/system-analysis/metadata")
-              (str "assignment_id: system-analysis\n"
-                   "template: system-analyst\n"
-                   "scope: product\n"))
-  (write-file (fs/path root ".squad/assignments/system-analysis/status")
-              "assignment_id: system-analysis\nstate: merged\n"))
+(defn- write-roles! [root]
+  (write-file (fs/path root ".swarmforge/roles.tsv")
+              (str "squad-leader\tmaster\t" root
+                   "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n")))
+
+(defn- write-open-item! [root id title]
+  (write-file (fs/path root ".squad/backlog" (str id ".item"))
+              (str "id: " id "\n"
+                   "title: " title "\n"
+                   "status: open\n"
+                   "created_at: t\n"
+                   "updated_at: t\n"
+                   "body: |\n"
+                   "  " title "\n")))
+
+(defn- write-merged-system-analyst!
+  ([root] (write-merged-system-analyst! root nil))
+  ([root sha]
+   (write-file (fs/path root ".squad/assignments/system-analysis/metadata")
+               (str "assignment_id: system-analysis\n"
+                    "template: system-analyst\n"
+                    "scope: product\n"))
+   (write-file (fs/path root ".squad/assignments/system-analysis/status")
+               "assignment_id: system-analysis\nstate: merged\n")
+   (when-not (str/blank? sha)
+     (write-file (fs/path root ".squad/assignments/system-analysis/result-manifest")
+                 (str "assignment: system-analysis\n"
+                      "template: system-analyst\n"
+                      "commit: " sha "\n"
+                      "artifacts: frame.md,qa/product.md\n")))))
 
 (deftest frame-approval-request-is-product-scoped
   ;; Given a product record
@@ -278,3 +301,164 @@
     (is (re-find #"id=\"btn-start-backlog\"" html))
     (is (re-find #"getElementById\('btn-start-backlog'\)\.onclick" html))
     (is (str/includes? html "/api/backlog/start"))))
+
+(deftest squad-conf-caps-system-analyst-at-one
+  (let [conf (slurp (str (fs/path repo-root "swarmforge/squad.conf")))]
+    (is (re-find #"(?m)^max_active_template system-analyst 1$" conf))))
+
+(deftest system-analyst-is-not-an-artifact-assignment
+  (is (not (contains? squad-next/artifact-assignment-rules "system-analyst"))))
+
+(deftest pending-product-prints-create-product-assignment
+  ;; Given a pending product snapshot with two open items and no assignment
+  ;; When squad_next.sh runs
+  ;; Then residual assigns system-analyst via create-product
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "max_active_template system-analyst 1\n"
+                       "approval_required frame true\n"))
+      (write-open-item! root "bl-1" "Walk")
+      (write-open-item! root "bl-2" "Shoot")
+      (product/write-product! root {"state" "frame_pending"
+                                    "open_item_ids" "bl-1,bl-2"})
+      (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? out "NEXT_ACTION: create_assignment"))
+        (is (str/includes? out "squad_assign.sh create-product system-analyst system-analysis"))
+        (is (str/includes? out "--queue-spawn"))
+        (is (empty? (story-md-files root))))
+      (finally (fs/delete-tree root)))))
+
+(deftest product-frame-candidates-offer-create-product
+  ;; Given a pending product and no system-analyst assignment
+  ;; When product-frame-candidates are computed
+  ;; Then create-product is offered at high priority
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "frame_pending"
+                                    "open_item_ids" "bl-1,bl-2"})
+      (let [cands (squad-next/product-frame-candidates root [])
+            create (first (filter #(= "create_assignment" (:next-action %)) cands))]
+        (is (some? create))
+        (is (= "system-analyst" (:template create)))
+        (is (= "system-analysis" (:assignment-id create)))
+        (is (= 20 (:priority create)))
+        (is (str/includes? (:command create)
+                           "squad_assign.sh create-product system-analyst system-analysis"))
+        (is (str/includes? (:command create) "--queue-spawn")))
+      (finally (fs/delete-tree root)))))
+
+(deftest product-frame-candidates-skip-create-when-analyst-live
+  ;; Given a pending product and an in-progress system-analyst
+  ;; When product-frame-candidates are computed
+  ;; Then create-product is not offered
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "frame_pending"
+                                    "assignment_id" "system-analysis"
+                                    "open_item_ids" "bl-1"})
+      (write-file (fs/path root ".squad/assignments/system-analysis/metadata")
+                  "assignment_id: system-analysis\ntemplate: system-analyst\nscope: product\n")
+      (write-file (fs/path root ".squad/assignments/system-analysis/status")
+                  "state: in_progress\n")
+      (let [cands (squad-next/product-frame-candidates root [])]
+        (is (not (some #(= "create_assignment" (:next-action %)) cands))))
+      (finally (fs/delete-tree root)))))
+
+(deftest product-frame-candidates-include-frame-approval
+  ;; Given a merged system-analyst and no frame sha or approval
+  ;; When product-frame-candidates are computed
+  ;; Then the frame approval request is included and create-product is not
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "frame_pending"
+                                    "assignment_id" "system-analysis"})
+      (write-merged-system-analyst! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required frame true\n")
+      (let [cands (squad-next/product-frame-candidates root [])]
+        (is (some #(= "create_approval_request" (:next-action %)) cands))
+        (is (not (some #(str/includes? (str (:command %)) "create-product") cands))))
+      (finally (fs/delete-tree root)))))
+
+(deftest record-frame-sha-stamps-paths
+  ;; Given a pending product
+  ;; When the frame sha is recorded
+  ;; Then paths and snapshot ids are preserved
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "frame_pending"
+                                    "assignment_id" "system-analysis"
+                                    "open_item_ids" "bl-1"})
+      (product/record-frame-sha! root "abc1234")
+      (let [p (product/read-product root)]
+        (is (= "abc1234" (product/frame-sha p)))
+        (is (= "frame.md" (get p "frame_path")))
+        (is (= "qa/product.md" (get p "qa_path")))
+        (is (= ["bl-1"] (product/open-item-ids p)))
+        (is (true? (product/frame-ready? p))))
+      (finally (fs/delete-tree root)))))
+
+(deftest residual-records-frame-and-starts-snapshot-items
+  ;; Given merged system-analyst, approved frame, and a snapshot of two open items
+  ;; When bookkeeping residual applies
+  ;; Then frame_sha is recorded, snapshot items start, and a late item stays open
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "max_active_template system-analyst 1\n"
+                       "approval_required frame true\n"))
+      (write-open-item! root "bl-1" "Walk")
+      (write-open-item! root "bl-2" "Shoot")
+      (write-open-item! root "bl-late" "Late")
+      (write-file (fs/path root "frame.md") "# Frame\n\nrun: bb run\n")
+      (write-file (fs/path root "qa/product.md") "<!-- bl-1 -->\n<!-- bl-2 -->\n")
+      (run {:dir root} "git" "add" "frame.md" "qa/product.md")
+      (run {:dir root} "git" "commit" "-q" "-m" "frame")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "HEAD")))]
+        (product/write-product! root {"state" "frame_pending"
+                                      "assignment_id" "system-analysis"
+                                      "open_item_ids" "bl-1,bl-2"})
+        (write-merged-system-analyst! root sha)
+        (write-file (fs/path root ".squad/approvals/approved/frame__product.approval")
+                    "target_kind: product\ntarget_id: product\ngate: frame\nstate: approved\n")
+        (let [ready (squad-next/ready-actions root [])
+              bookkeeping (filter squad-next/bookkeeping-action? ready)]
+          (is (some #(= "record_frame_sha" (:next-action %)) bookkeeping)))
+        (squad-next/apply-bookkeeping-ready-actions! root (squad-next/role-rows root))
+        (let [p (product/read-product root)]
+          (is (= sha (product/frame-sha p)))
+          (is (= "frame.md" (get p "frame_path")))
+          (is (= "qa/product.md" (get p "qa_path"))))
+        (is (= "started" (get (web/get-backlog root "bl-1") "status")))
+        (is (= "started" (get (web/get-backlog root "bl-2") "status")))
+        (is (= "open" (get (web/get-backlog root "bl-late") "status")))
+        (is (= 2 (count (story-md-files root))))
+        (let [out (:out (run {:dir root} (script "squad_next.sh")))]
+          (is (str/includes? out "NEXT_ACTION: create_assignment"))
+          (is (re-find #"TEMPLATE: analyst|template analyst" out))
+          (is (not (str/includes? out "create-product")))))
+      (finally (fs/delete-tree root)))))
+
+(deftest wif-includes-in-progress-system-analyst
+  ;; Given an in-progress product-scoped system-analyst assignment
+  ;; When WIF rows are built
+  ;; Then the assignment_id is present even with a blank story_id
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad/assignments/system-analysis/metadata")
+                  (str "assignment_id: system-analysis\n"
+                       "template: system-analyst\n"
+                       "scope: product\n"))
+      (write-file (fs/path root ".squad/assignments/system-analysis/status")
+                  "state: in_progress\nupdated_at: 2026-08-20T00:00:00Z\n")
+      (let [rows (web/work-in-flight-rows root (web/assignment-state root) [])
+            row (first (filter #(= "system-analysis" (get % "assignment_id")) rows))]
+        (is (some? row))
+        (is (= "system-analyst" (get row "role")))
+        (is (str/blank? (get row "story_id"))))
+      (finally (fs/delete-tree root)))))

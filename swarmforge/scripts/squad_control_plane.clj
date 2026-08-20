@@ -87,6 +87,8 @@
     :record_batch_membership
     :record_review_result
     :attach_story_artifact
+    :record_frame_sha
+    :start_snapshot_item
     :declare_merge_blocker
     :claim_handoff
     :process_handoff

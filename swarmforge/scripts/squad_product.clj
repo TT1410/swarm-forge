@@ -26,3 +26,13 @@
 
 (defn frame-ready? [p]
   (boolean (frame-sha p)))
+
+(defn record-frame-sha!
+  "Stamp the merged frame onto the product record. Snapshot ids stay."
+  [root sha]
+  (write-product! root
+                  (merge (read-product root)
+                         {"state" "framed"
+                          "frame_sha" sha
+                          "frame_path" "frame.md"
+                          "qa_path" "qa/product.md"})))

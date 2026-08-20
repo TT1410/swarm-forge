@@ -9,6 +9,7 @@
             [squad-executor :as executor]
             [squad-product :as product]
             [squad-state :as squad-state]
+            [squadd.web :as web]
             [clojure.edn :as edn]
             [clojure.set]
             [clojure.string :as str]))
@@ -540,11 +541,100 @@
                    (assignment-records root))
              (not (approval-record-exists-for? root "product" "product" "frame"))
              (cfg/squad-approval-required? root "frame"))
-    {:next-action "create_approval_request"
+    {:priority 20
+     :stage-order 1
+     :theme-id ""
+     :story-id ""
+     :next-action "create_approval_request"
      :gate "frame"
      :reason "frame-ready"
      :command (str "squad_approval.sh request frame__product product product frame"
                    " Approve_frame frame-ready")}))
+
+(def live-system-analyst-states
+  #{"created" "assignment_created" "in_progress" "result_received" "merged"})
+
+(defn live-system-analyst [root]
+  (some #(when (and (= "system-analyst" (:template %))
+                    (contains? live-system-analyst-states (:state %)))
+           %)
+        (assignment-records root)))
+
+(defn product-assignment-id [p]
+  (or (not-empty (get p "assignment_id")) "system-analysis"))
+
+(defn create-product-analyst-candidate [root p]
+  (when (and (fs/regular-file? (product/product-file root))
+             (not (product/frame-ready? p))
+             (not (live-system-analyst root)))
+    (let [assignment-id (product-assignment-id p)]
+      {:priority 20
+       :stage-order 0
+       :theme-id ""
+       :story-id ""
+       :next-action "create_assignment"
+       :template "system-analyst"
+       :assignment-id assignment-id
+       :reason "product frame needs system-analyst"
+       :command (str "squad_assign.sh create-product system-analyst " assignment-id
+                     " --auto-instructions --queue-spawn")})))
+
+(defn frame-approved? [root]
+  (boolean
+   (some #(and (= "approved" (:state %))
+               (= "frame" (get % "gate")))
+         (approval-records root))))
+
+(defn merged-system-analyst-sha [root]
+  (some #(when (and (= "system-analyst" (:template %))
+                    (= "merged" (:state %)))
+           (not-empty (artifact-sha %)))
+        (assignment-records root)))
+
+(defn record-frame-sha-candidate [root p]
+  (when-let [sha (and (not (product/frame-ready? p))
+                      (frame-approved? root)
+                      (merged-system-analyst-sha root))]
+    {:priority 24
+     :stage-order 2
+     :theme-id ""
+     :story-id ""
+     :next-action "record_frame_sha"
+     :assignment-id (product-assignment-id p)
+     :sha sha
+     :reason "approved frame must be recorded on product"
+     :command (str "record-frame-sha " sha)}))
+
+(defn snapshot-item-open? [root id]
+  (let [file (fs/path root ".squad" "backlog" (str id ".item"))]
+    (when (fs/regular-file? file)
+      (let [status (get (file-map file) "status")]
+        (or (str/blank? status) (= "open" status))))))
+
+(defn start-snapshot-item-candidate [id]
+  {:priority 25
+   :stage-order 3
+   :theme-id ""
+   :story-id id
+   :item-id id
+   :next-action "start_snapshot_item"
+   :reason (str "start snapshotted backlog item " id)
+   :command (str "start-snapshot-item " id)})
+
+(defn start-snapshot-item-candidates [root p]
+  (if (product/frame-ready? p)
+    (mapv start-snapshot-item-candidate
+          (filter #(snapshot-item-open? root %)
+                  (product/open-item-ids p)))
+    []))
+
+(defn product-frame-candidates [root _rows]
+  (let [p (product/read-product root)]
+    (into []
+          (concat (remove nil? [(create-product-analyst-candidate root p)
+                                (frame-approval-candidate root)
+                                (record-frame-sha-candidate root p)])
+                  (start-snapshot-item-candidates root p)))))
 
 (declare assignment-create-candidate assignment-spawn-candidate spawnable-assignment?
          stale-changes-requested?)
@@ -1585,7 +1675,9 @@
     "record_review_result"
     "record_auto_approval"
     "record_batch_membership"
-    "declare_merge_blocker"})
+    "declare_merge_blocker"
+    "record_frame_sha"
+    "start_snapshot_item"})
 
 ;; Deterministic ready-actions the daemon applies under capacity/dependency scheduling.
 (def daemon-ready-actions
@@ -1630,6 +1722,23 @@
     (doseq [transition applied]
       (print-applied-transition! transition))))
 
+(defn apply-record-frame-sha! [root candidate]
+  (product/record-frame-sha! root (:sha candidate))
+  (assoc candidate :exit 0 :out "" :err ""))
+
+(defn apply-start-snapshot-item! [root candidate]
+  (let [result (web/start-backlog! root (:item-id candidate))]
+    (assoc candidate
+           :exit (if (:ok result) 0 1)
+           :out (str result)
+           :err (or (:error result) ""))))
+
+(defn apply-bookkeeping-candidate! [root candidate]
+  (case (:next-action candidate)
+    "record_frame_sha" (apply-record-frame-sha! root candidate)
+    "start_snapshot_item" (apply-start-snapshot-item! root candidate)
+    (apply-candidate! root candidate)))
+
 (defn apply-bookkeeping-ready-actions! [root rows]
   (loop [applied []
          remaining 100]
@@ -1637,7 +1746,7 @@
           bookkeeping (filter bookkeeping-action? actions)]
       (if (or (zero? remaining) (empty? bookkeeping))
         applied
-        (let [results (mapv #(apply-candidate! root %) bookkeeping)
+        (let [results (mapv #(apply-bookkeeping-candidate! root %) bookkeeping)
               failed (some #(when-not (zero? (:exit %)) %) results)
               applied (into applied results)]
           (if failed
@@ -1648,7 +1757,9 @@
   "Backward-compatible name: applies bookkeeping mechanical actions only.
   Daemon-ready actions (create/spawn/approval request) use capacity scheduling."
   [root rows]
-  (apply-bookkeeping-ready-actions! root rows))(defn lock-owner-pid [lock-dir]
+  (apply-bookkeeping-ready-actions! root rows))
+
+(defn lock-owner-pid [lock-dir]
   (let [owner (fs/path lock-dir "owner")]
     (when (fs/exists? owner)
       (some->> (str/split-lines (slurp (str owner)))
@@ -2013,7 +2124,8 @@
 
 (defn ready-actions [root rows]
   (sort-by (juxt :priority :theme-id :stage-order :story-id :assignment-id)
-           (concat (packet-repair-candidates root)
+           (concat (product-frame-candidates root rows)
+                   (packet-repair-candidates root)
                    (story-candidates root rows)
                    (batch-candidates root rows)
                    (generic-ready-assignment-candidates root rows))))

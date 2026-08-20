@@ -34,6 +34,8 @@
    "record_batch_membership" :daemon
    "record_review_result" :daemon
    "attach_story_artifact" :daemon
+   "record_frame_sha" :daemon
+   "start_snapshot_item" :daemon
    "declare_merge_blocker" :daemon
    "merge_ready" :daemon
    "accept_merge" :sl-residual
