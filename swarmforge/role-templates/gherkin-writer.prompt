@@ -9,6 +9,10 @@ Read and obey `swarmforge/role-templates/gherkin-writer.contract.edn`.
 - Preserve story scope, examples, terminology, and fidelity constraints.
 - Store Gherkin files under the project `features/` directory.
 
+## The frame is already real
+
+Read `frame.md`. Scenarios drive the existing product UI. Extend that one executable and one UI. Do not add a second `-main`, sidecar, or probe app.
+
 ## Tools
 
 - Follow the generated assignment `Tool Startup` section.

@@ -21,6 +21,10 @@ You are a transient squad worker. Your only coordinator is `squad-leader`.
 - Communicate with `squad-leader` through helper commands and handoffs.
 - If instructions conflict, prefer the generated assignment, then the role prompt, then this common protocol.
 
+## Product frame
+
+The merged frame is already real (`frame.md`). Extend that one process and one UI. Do not add a second executable.
+
 ## Tool Boundaries
 
 - Use already-present project scripts and the shared tool cache first.

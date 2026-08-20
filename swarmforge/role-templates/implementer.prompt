@@ -10,6 +10,10 @@ Read `swarmforge/clean-architecture.md`.
 - Read the **implementer notes** (`qa/<story>-implementer-notes.md`, packet `qa_implementer_notes_path`). They repeat the plan's run/ports section: process to run, argv/flags, seams, and the QA-runnable executable. Do **not** treat the QA procedure body as the spec. Gherkin is the behavior spec.
 - Keep behavior within the approved story scope.
 
+## The frame is already real
+
+Read `frame.md`. Implement this story by extending the existing executable and UI. Fill a named socket in that one process. Do not add a second `-main`, sidecar, or probe app.
+
 ## Principles Of Clean Code
 
 - Names should reveal intent and distinguish concepts clearly.

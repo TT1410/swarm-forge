@@ -9,6 +9,10 @@ Read and obey `swarmforge/role-templates/qa-procedure-writer.contract.edn`.
 - Preserve the story scope, parameters, setup expectations, and observable outcomes.
 - Specify command line arguments and parameters clearly enough that QA execution is repeatable.
 
+## The frame is already real
+
+Read `frame.md`. The procedure drives the existing product UI. Extend that one executable and one UI. Do not add a second `-main`, sidecar, or probe app.
+
 ## Tools
 
 - Follow the generated assignment `Tool Startup` section.
@@ -33,10 +37,10 @@ Read and obey `swarmforge/role-templates/qa-procedure-writer.contract.edn`.
 
 ## Two files, one commit
 
-Write **both** files, same author, **one commit**, one `git_handoff`:
+Write **both**, same author, **one commit**, one `git_handoff`:
 
-1. `qa/<story>.md` — procedure for QA and the operator (gate). User-visible workflows only.
-2. `qa/<story>-implementer-notes.md` — process to run, argv/flags, deterministic seams, and a **QA-runnable executable**. **Repeat** the plan's run/ports section (copy and refine); do not leave the implementer to read `plan.md` for that. QA-only seams may be added, not substituted.
+1. `qa/product.md` — edit this story's placeholder (`<!-- <story-id or backlog-id> -->`) in place. Procedure content for this story goes there. One procedure through the frame UI. Do not write a second story-specific procedure file or a new probe CLI.
+2. `qa/<story>-implementer-notes.md` — process to run, argv/flags, deterministic seams, and a **QA-runnable executable**. **Repeat** the plan's run/ports section (copy and refine); do not leave the implementer to read `plan.md` for that. QA-only seams may be added, not substituted. How to run is the frame's command.
 
 Do **not** split notes and procedure across two commits or two roles. They will drift.
 

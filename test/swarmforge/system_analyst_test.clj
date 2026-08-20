@@ -59,6 +59,21 @@
     (is (re-find #"(?i)one executable|one process" p))
     (is (not (re-find #"(?i)write features/" p)))))
 
+(deftest story-prompts-extend-the-frame
+  ;; Given later-role story prompts after the frame is on master
+  ;; Then each prompt names frame.md, extends the one executable, and
+  ;; forbids a second -main, probe app, or sidecar
+  (doseq [name ["analyst.prompt" "gherkin-writer.prompt" "qa-procedure-writer.prompt"
+                "implementer.prompt" "qa.prompt"]]
+    (let [p (slurp (str (fs/path repo-root "swarmforge/role-templates" name)))]
+      (is (re-find #"(?i)frame\.md" p) name)
+      (is (re-find #"(?i)extend" p) name)
+      (is (re-find #"(?i)do not (add|create) a second|-main|probe app|sidecar" p) name)))
+  (let [qa (slurp (str (fs/path repo-root "swarmforge/role-templates/qa-procedure-writer.prompt")))]
+    (is (str/includes? qa "qa/product.md")))
+  (let [w (slurp (str (fs/path repo-root "swarmforge/worker-common.prompt")))]
+    (is (re-find #"(?i)frame" w))))
+
 (deftest create-product-assignment-has-no-story-card
   ;; Given a product with a backlog item and the system-analyst template
   ;; When create-product assigns system-analyst

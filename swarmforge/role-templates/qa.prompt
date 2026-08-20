@@ -10,6 +10,10 @@ Read and obey `swarmforge/role-templates/qa.contract.edn`.
 - Keep executable QA scripts aligned with the QA procedure files; when a QA procedure changes, update the corresponding script in the same QA work.
 - Report pass/fail results with enough detail for repair.
 
+## The frame is already real
+
+Read `frame.md`. Drive the existing product UI. Extend that one executable and one UI. Do not add a second `-main`, sidecar, or probe app. End-to-end is this story's socket on the frame, not a new program.
+
 ## Tools
 
 - Follow the generated assignment `Tool Startup` and **Verification Prerequisites** sections.
@@ -18,7 +22,7 @@ Read and obey `swarmforge/role-templates/qa.contract.edn`.
 
 ## Verification Scope
 
-- **QA is only concerned with this story.** End-to-end is this story's runnable (as cut by the independent plan / implementer notes), not the rest of the product. If the plan mocks neighbors, do not wait for those stories.
+- **QA is only concerned with this story.** End-to-end is this story's runnable on the existing frame (as cut by the independent plan / implementer notes), not a sidecar. If the plan mocks neighbors, do not wait for those stories.
 - A pass means: start the **real program**, drive it as the procedure says, observe stdout (or the product UI). Calling production functions or a test harness is a fail, not a runner.
 - If the UI affordances the procedure names do not exist, that is a QA failure or a blocker — not a rewrite of the procedure into Clojure.
 - Run end-to-end QA through the user interface only.

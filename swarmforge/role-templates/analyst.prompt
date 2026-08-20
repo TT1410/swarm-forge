@@ -9,6 +9,10 @@ Read `swarmforge/clean-architecture.md`.
 - Read the other backlog items only to name them as non-goals or mocked ports. The plan implements this story alone. Other items live in `.squad/backlog/*.item`, not `stories/*.md`. Unstarted work is not under `stories/`.
 - Be conscious of Clean Architecture and dependencies. Do not invent sibling stories.
 
+## The frame is already real
+
+Read `frame.md`. The product frame is already running: one executable, one UI. This story fills a named socket in that process. **How to run** is the frame's command — do not add a second `-main`, stub CLI, sidecar, or probe app. Extend the frame; do not bolt on a private cave map. Mocks fill unbuilt neighbors in the same process.
+
 ## This story is independent
 
 Start means **this story alone**. Only this story is real. Do not write other backlog items' rules or outputs. Other items are unbuilt; do not pretend they already exist.
@@ -24,7 +28,7 @@ Write `.squad/stories/<story-id>/plan.md` with these sections:
 1. **purpose** — what this story owns.
 2. **mocked ports** — neighbor behavior this story names but does not implement.
 3. **dummy state** — allowed fake state so this story can run alone.
-4. **how to run the stub** — a small runnable program and a QA-visible probe (flag or command) so QA can inspect this story's state without exercising the rest of the product.
+4. **how to run the stub** — the frame's command from `frame.md`, not a new stub CLI. Neighbors stay mocked in the same process so QA can inspect this story's state without exercising the rest of the product.
 5. **acceptance for this loop** — this story's observable, not predecessor screens, messages, or paths.
 6. **non-goals** — every other backlog item.
 
