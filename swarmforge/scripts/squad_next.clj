@@ -7,6 +7,7 @@
             [squad-config :as cfg]
             [squad-control-plane :as plane]
             [squad-executor :as executor]
+            [squad-product :as product]
             [squad-state :as squad-state]
             [clojure.edn :as edn]
             [clojure.set]
@@ -528,6 +529,23 @@
          :gate gate
          :reason (str gate " approval is not required by configuration")
          :command (str "squad_packet.sh approve " story-id " " gate " auto-approved-by-config")}))))
+
+(defn frame-approval-candidate
+  "Product-scoped frame gate after a merged system-analyst assignment."
+  [root]
+  (when (and (fs/regular-file? (product/product-file root))
+             (not (product/frame-ready? (product/read-product root)))
+             (some #(and (= "system-analyst" (:template %))
+                         (= "merged" (:state %)))
+                   (assignment-records root))
+             (not (approval-record-exists-for? root "product" "product" "frame"))
+             (cfg/squad-approval-required? root "frame"))
+    {:next-action "create_approval_request"
+     :gate "frame"
+     :reason "frame-ready"
+     :command (str "squad_approval.sh request frame__product product product frame"
+                   " Approve_frame frame-ready")}))
+
 (declare assignment-create-candidate assignment-spawn-candidate spawnable-assignment?
          stale-changes-requested?)
 

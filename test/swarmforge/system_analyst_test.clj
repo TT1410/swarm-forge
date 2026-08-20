@@ -3,6 +3,7 @@
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
             [squad-assign :as assign]
+            [squad-next :as squad-next]
             [squad-product :as product]
             [swarmforge.test-support :refer :all]))
 
@@ -107,3 +108,90 @@
                                          (throw (ex-info (str/join " " lines) {:status status})))]
               (assign/validate-result-manifest! "system-analysis" "system-analyst"
                                                 "system-analyst-001" bad)))))))
+
+(defn- write-merged-system-analyst! [root]
+  (write-file (fs/path root ".squad/assignments/system-analysis/metadata")
+              (str "assignment_id: system-analysis\n"
+                   "template: system-analyst\n"
+                   "scope: product\n"))
+  (write-file (fs/path root ".squad/assignments/system-analysis/status")
+              "assignment_id: system-analysis\nstate: merged\n"))
+
+(deftest frame-approval-request-is-product-scoped
+  ;; Given a product record
+  ;; When frame approval is requested then approved
+  ;; Then the pending file is product-scoped and approve relocates it
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root
+                       "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (product/write-product! root {"state" "frame_pending"
+                                    "assignment_id" "system-analysis"})
+      (let [request (run {:dir root}
+                         (script "squad_approval.sh")
+                         "request"
+                         "frame__product"
+                         "product"
+                         "product"
+                         "frame"
+                         "Approve_frame"
+                         "frame-ready")
+            pending (slurp (str (fs/path root ".squad/approvals/pending/frame__product.approval")))]
+        (is (zero? (:exit request)))
+        (is (str/includes? pending "target_kind: product"))
+        (is (str/includes? pending "gate: frame"))
+        (let [approve (run {:dir root}
+                           (script "squad_approval.sh")
+                           "approve"
+                           "frame__product"
+                           "approved-by-user")]
+          (is (zero? (:exit approve)))
+          (is (fs/exists? (fs/path root ".squad/approvals/approved/frame__product.approval")))
+          (is (not (fs/exists? (fs/path root ".squad/approvals/pending/frame__product.approval"))))))
+      (finally (fs/delete-tree root)))))
+
+(deftest frame-approval-request-requires-product-record
+  ;; Given no .squad/product file
+  ;; When frame approval is requested
+  ;; Then the command fails because the target is missing
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root
+                       "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (let [request (run {:dir root :ok? false}
+                         (script "squad_approval.sh")
+                         "request"
+                         "frame__product"
+                         "product"
+                         "product"
+                         "frame"
+                         "Approve_frame"
+                         "frame-ready")]
+        (is (not (zero? (:exit request))))
+        (is (str/includes? (str (:err request) (:out request)) "Approval target not found")))
+      (finally (fs/delete-tree root)))))
+
+(deftest frame-approval-candidate-when-merged-system-analyst-and-no-frame-sha
+  ;; Given a product without frame_sha, a merged system-analyst, and no frame approval
+  ;; When the frame approval candidate is computed
+  ;; Then it requests frame__product
+  ;; And it is nil once frame_sha is set
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "frame_pending"
+                                    "assignment_id" "system-analysis"})
+      (write-merged-system-analyst! root)
+      (let [candidate (squad-next/frame-approval-candidate root)]
+        (is (= "create_approval_request" (:next-action candidate)))
+        (is (= "frame" (:gate candidate)))
+        (is (str/includes? (:command candidate)
+                           "squad_approval.sh request frame__product product product frame")))
+      (product/write-product! root {"state" "framed"
+                                    "frame_sha" "abc1234"
+                                    "assignment_id" "system-analysis"})
+      (is (nil? (squad-next/frame-approval-candidate root)))
+      (finally (fs/delete-tree root)))))

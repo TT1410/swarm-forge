@@ -9,6 +9,7 @@
 (def squad-default-approval-required
   {"theme" false
    "story" false
+   "frame" true
    "implementation-plan" true
    "implementation_plan" true
    "gherkin" true

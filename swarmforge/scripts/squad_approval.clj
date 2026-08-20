@@ -11,21 +11,22 @@
 (def usage-text
   (str "Usage:\n"
        "  squad_approval.sh required <gate>\n"
-       "  squad_approval.sh request <approval-id> <theme|story> <target-id> <gate> <title> <reason...>\n"
-       "  squad_approval.sh request-bulk <theme|story> <gate> <title> <reason> <approval-id>:<target-id>...\n"
+       "  squad_approval.sh request <approval-id> <theme|story|product> <target-id> <gate> <title> <reason...>\n"
+       "  squad_approval.sh request-bulk <theme|story|product> <gate> <title> <reason> <approval-id>:<target-id>...\n"
        "  squad_approval.sh approve <approval-id> <detail...>\n"
        "  squad_approval.sh reject <approval-id> <reason...>\n"
        "  squad_approval.sh resolve-rejection <approval-id> [detail...]\n"
        "  squad_approval.sh status [approval-id]\n"))
 
 (def valid-id #"[A-Za-z0-9][A-Za-z0-9._-]*")
-(def valid-target-kinds #{"theme" "story"})
+(def valid-target-kinds #{"theme" "story" "product"})
 (def valid-gates #{"theme" "story" "implementation-plan" "implementation_plan"
                    "gherkin" "qa_procedure" "qa-procedure" "implementation"
                    "code_review" "code-review" "hardening" "qa" "architecture" "final"
                    "implementation-order" "implementation_order"
                    "dependency-checker" "dependency_checker"
-                   "finalize" "theme_finalize" "theme-finalize"})
+                   "finalize" "theme_finalize" "theme-finalize"
+                   "frame"})
 
 (defn exit! [status & lines]
   (binding [*out* *err*]
@@ -55,7 +56,7 @@
   (when-not (contains? valid-gates gate)
     (exit! 2 (str "Approval gate must be theme, story, implementation-plan, gherkin, qa-procedure, implementation, "
                   "code-review, hardening, qa, architecture, final, implementation-order, "
-                  "dependency-checker, or finalize."))))
+                  "dependency-checker, finalize, or frame."))))
 
 (defn write-atomic! [file content]
   (fs/create-dirs (fs/parent file))
@@ -151,6 +152,8 @@
 (defn target-exists? [root target-kind target-id]
   (case target-kind
     "story" (fs/exists? (packet-file root target-id))
+    "product" (and (= "product" target-id)
+                   (fs/regular-file? (fs/path root ".squad" "product")))
     false))
 
 (defn packet-gate [gate]
@@ -189,7 +192,7 @@
 (defn request! [approval-id target-kind target-id gate title reason-parts]
   (validate-id! "Approval id" approval-id)
   (when-not (contains? valid-target-kinds target-kind)
-    (exit! 2 "Approval target kind must be theme or story."))
+    (exit! 2 "Approval target kind must be theme, story, or product."))
   (validate-id! "Target id" target-id)
   (validate-gate! gate)
   (let [root (fs/absolutize (project-root))
@@ -215,7 +218,7 @@
 
 (defn request-bulk! [target-kind gate title reason pairs]
   (when-not (contains? valid-target-kinds target-kind)
-    (exit! 2 "Approval target kind must be theme or story."))
+    (exit! 2 "Approval target kind must be theme, story, or product."))
   (validate-gate! gate)
   (when-not (seq pairs)
     (exit! 1 usage-text))
@@ -242,12 +245,13 @@
           target-id (get approval "target_id")
           gate (get approval "gate")
           detail (normalized-detail detail-parts "approved-by-user")
-          command (command-for target-kind target-id gate detail)
-          result (apply process/sh (concat [{:dir (str root) :continue true}] command))]
-      (when-not (zero? (:exit result))
-        (exit! (:exit result)
-               (str "Approval transition failed: " approval-id)
-               (:err result)))
+          command (command-for target-kind target-id gate detail)]
+      (when (seq command)
+        (let [result (apply process/sh (concat [{:dir (str root) :continue true}] command))]
+          (when-not (zero? (:exit result))
+            (exit! (:exit result)
+                   (str "Approval transition failed: " approval-id)
+                   (:err result)))))
       (move-with-state! source (approved-file root approval-id) "approved" detail)
       (println "SQUAD_APPROVAL:" approval-id)
       (println "STATE: approved")
