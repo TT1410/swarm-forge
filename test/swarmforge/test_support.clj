@@ -45,6 +45,11 @@
 (defn tmp-dir []
   (fs/create-temp-dir {:prefix "swarmforge-script-test."}))
 
+(defn write-frame-ready!
+  "Mark the product frame as present so per-card Start is allowed."
+  [root]
+  (write-file (fs/path root ".squad" "product") "frame_sha: abc1234\n"))
+
 (defn script [name]
   (str (fs/path scripts-dir name)))
 

@@ -183,6 +183,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
           </span>
           <span class="deck-label">Backlog</span>
         </button>
+        <button type="button" class="btn btn-sm btn-approve" id="btn-start-backlog">Start backlog</button>
         <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add Story</button>
       </div>
       <div class="columns" id="columns">
@@ -597,7 +598,7 @@ function openBacklogEditor(item) {
         <button type="button" class="btn" data-be="cancel">Cancel</button>
         ${!isNew?'<button type="button" class="btn btn-danger" data-be="delete">Delete</button>':''}
         <button type="button" class="btn" data-be="add">${isNew?'Add':'Save'}</button>
-        <button type="button" class="btn btn-approve" data-be="approve">Start</button>
+        <button type="button" class="btn btn-approve" data-be="approve"${(!state.frame||!state.frame.sha)?' hidden':''}>Start</button>
       </div>`,
     onMount(el){
       el.querySelector('[data-be=cancel]').onclick=()=>closeWindow(id);
@@ -706,6 +707,12 @@ async function refresh() {
   }
 }
 
+document.getElementById('btn-start-backlog').onclick=async()=>{
+  try {
+    await post('/api/backlog/start','{}','application/json; charset=utf-8');
+    refresh();
+  } catch(e){ document.getElementById('error').textContent=e.message||String(e); }
+};
 document.getElementById('btn-add-item').onclick=()=>openBacklogEditor(null);
 document.getElementById('btn-open-sl').onclick=()=>openAgentWindow('/agent/squad-leader','squad-sl');
 document.getElementById('btn-open-ts').onclick=()=>openAgentWindow('/agent/troubleshooter','squad-ts');

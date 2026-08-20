@@ -5,6 +5,7 @@
             [squad-assign :as assign]
             [squad-next :as squad-next]
             [squad-product :as product]
+            [squadd.web :as web]
             [swarmforge.test-support :refer :all]))
 
 (deftest product-record-round-trips-frame-fields
@@ -195,3 +196,85 @@
                                     "assignment_id" "system-analysis"})
       (is (nil? (squad-next/frame-approval-candidate root)))
       (finally (fs/delete-tree root)))))
+
+(defn- story-md-files [root]
+  (let [dir (fs/path root "stories")]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter #(str/ends-with? (fs/file-name %) ".md"))
+           vec)
+      [])))
+
+(deftest start-backlog-does-not-create-story-files
+  ;; Given two open items and no frame_sha
+  ;; When POST /api/backlog/start
+  ;; Then product is frame_pending with both ids, items stay open, no stories/*.md
+  (let [root (tmp-dir)]
+    (try
+      (let [a (web/create-backlog! root {:title "Walk" :body "Move."})
+            b (web/create-backlog! root {:title "Shoot" :body "Arrow."})
+            id-a (get-in a [:item "id"])
+            id-b (get-in b [:item "id"])
+            resp (web/handle-web-request root "POST" "/api/backlog/start" "{}")
+            p (product/read-product root)]
+        (is (= 200 (:status resp)))
+        (is (str/includes? (:body resp) "\"ok\":true"))
+        (is (str/includes? (:body resp) id-a))
+        (is (str/includes? (:body resp) id-b))
+        (is (= "frame_pending" (get p "state")))
+        (is (= #{id-a id-b} (set (product/open-item-ids p))))
+        (is (= "open" (get (web/get-backlog root id-a) "status")))
+        (is (= "open" (get (web/get-backlog root id-b) "status")))
+        (is (empty? (story-md-files root))))
+      (finally (fs/delete-tree root)))))
+
+(deftest per-card-start-requires-frame
+  ;; Given two open items and no frame_sha
+  ;; When POST /api/backlog/:id/approve
+  ;; Then 409 and the body mentions the frame
+  (let [root (tmp-dir)]
+    (try
+      (let [created (web/create-backlog! root {:title "Walk" :body "Move."})
+            id (get-in created [:item "id"])
+            resp (web/handle-web-request root "POST" (str "/api/backlog/" id "/approve") "{}")]
+        (is (= 409 (:status resp)))
+        (is (re-find #"(?i)frame" (str (:body resp)))))
+      (finally (fs/delete-tree root)))))
+
+(deftest start-backlog-requires-open-items
+  ;; Given no open backlog items
+  ;; When POST /api/backlog/start
+  ;; Then 400
+  (let [root (tmp-dir)]
+    (try
+      (let [resp (web/handle-web-request root "POST" "/api/backlog/start" "{}")]
+        (is (= 400 (:status resp))))
+      (finally (fs/delete-tree root)))))
+
+(deftest start-backlog-does-not-resnapshot-when-frame-exists
+  ;; Given open items and a product that already has frame_sha
+  ;; When POST /api/backlog/start
+  ;; Then 409 and the snapshot is unchanged
+  (let [root (tmp-dir)]
+    (try
+      (web/create-backlog! root {:title "Walk" :body "Move."})
+      (product/write-product! root {"state" "framed"
+                                    "frame_sha" "abc1234"
+                                    "open_item_ids" "old-id"})
+      (let [resp (web/handle-web-request root "POST" "/api/backlog/start" "{}")
+            p (product/read-product root)]
+        (is (= 409 (:status resp)))
+        (is (= "framed" (get p "state")))
+        (is (= "abc1234" (product/frame-sha p)))
+        (is (= ["old-id"] (product/open-item-ids p))))
+      (finally (fs/delete-tree root)))))
+
+(deftest dashboard-has-start-backlog-button
+  ;; Given the cockpit HTML
+  ;; Then Start backlog sits beside Add Story and posts /api/backlog/start
+  (let [html web/dashboard-html]
+    (is (str/includes? html "id=\"btn-start-backlog\""))
+    (is (str/includes? html "Start backlog"))
+    (is (re-find #"id=\"btn-start-backlog\"" html))
+    (is (re-find #"getElementById\('btn-start-backlog'\)\.onclick" html))
+    (is (str/includes? html "/api/backlog/start"))))

@@ -42,6 +42,7 @@
       (init-repo! root)
       (let [created (web/create-backlog! root {:title "Fog cues" :body "Hints."})
             open-id (get-in created [:item "id"])
+            _ (write-frame-ready! root)
             started (web/start-backlog! root open-id)
             story-id (get-in started [:item "story_id"])
             state (web/web-state root)

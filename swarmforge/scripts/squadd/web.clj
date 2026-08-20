@@ -8,6 +8,7 @@
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]
             [squad-dashboard-request :as dashreq]
+            [squad-product :as product]
             [squad-records :as rec]
             [squad-state :as squad-state]
             [stop-squadd :as stop-squadd])
@@ -1282,23 +1283,55 @@
                           "story_path: " rel "\n")))
     story-id))
 
+(defn- open-backlog-item? [item]
+  (let [status (get item "status")]
+    (or (str/blank? status) (= "open" status))))
+
+(defn- open-backlog-ids [root]
+  (->> (list-backlog root)
+       (filter open-backlog-item?)
+       (map #(get % "id"))
+       vec))
+
+(defn start-backlog-all!
+  "Snapshot current open backlog ids onto .squad/product. Does not Start stories."
+  [root]
+  (let [ids (open-backlog-ids root)]
+    (cond
+      (empty? ids)
+      {:ok false :status 400 :error "No open backlog items."}
+
+      (product/frame-ready? (product/read-product root))
+      {:ok false :status 409 :error "Frame already exists."}
+
+      :else
+      (do
+        (product/write-product! root
+                                (merge (product/read-product root)
+                                       {"state" "frame_pending"
+                                        "open_item_ids" (str/join "," ids)}))
+        (log! root "backlog-start-all" (str/join "," ids))
+        {:ok true :item_ids ids}))))
+
 (defn start-backlog!
   "Start a backlog item as a story: write stories/<id>.md and a themeless packet.
   HTTP `/api/backlog/:id/approve` stays as the Start alias until the dashboard rename."
   [root id]
-  (if-let [item (get-backlog root id)]
-    (let [title (get item "title" id)
-          story-id (or (not-empty (get item "story_id"))
-                       (unused-story-id root (story-slug title)))]
-      (write-started-story! root story-id title (get item "body" ""))
-      (let [updated (assoc item
-                           "status" "started"
-                           "story_id" story-id
-                           "updated_at" (now))]
-        (write-backlog-item! root updated)
-        (log! root "backlog-started" id story-id)
-        {:ok true :item updated}))
-    {:ok false :error "not found" :status 404}))
+  (if-not (product/frame-ready? (product/read-product root))
+    {:ok false :status 409 :error "Start the backlog first (frame required)."}
+    (if-let [item (get-backlog root id)]
+      (let [title (get item "title" id)
+            story-id (or (not-empty (get item "story_id"))
+                         (unused-story-id root (story-slug title)))]
+        (write-started-story! root story-id title (get item "body" ""))
+        (let [updated (assoc item
+                             "status" "started"
+                             "story_id" story-id
+                             "updated_at" (now))]
+          (write-backlog-item! root updated)
+          (log! root "backlog-started" id story-id)
+          {:ok true :item updated}))
+      {:ok false :error "not found" :status 404})))
 
 (defn approve-backlog!
   "Start alias so existing dashboard and tests keep calling approve-backlog!."
@@ -2147,6 +2180,13 @@
       (response 200 "application/json; charset=utf-8" (to-json {"ok" true "item" (:item result)}))
       (response (:status result 400) "text/plain; charset=utf-8" (str (:error result) "\n")))))
 
+(defn backlog-start-response [root]
+  (let [r (start-backlog-all! root)]
+    (if (:ok r)
+      (response 200 "application/json; charset=utf-8"
+                (to-json {"ok" true "item_ids" (:item_ids r)}))
+      (response (:status r 400) "text/plain; charset=utf-8" (str (:error r) "\n")))))
+
 (defn backlog-item-response [root path body]
   (let [[_ id action] (re-matches #"/api/backlog/([^/]+)(?:/(approve|delete))?" path)
         id (when id (url-decode id))]
@@ -2219,6 +2259,9 @@
    {:method "POST"
     :path "/api/backlog"
     :handler (fn [root _ body] (backlog-create-response root body))}
+   {:method "POST"
+    :path "/api/backlog/start"
+    :handler (fn [root _ _] (backlog-start-response root))}
    {:method "POST"
     :pattern #"/api/backlog/[^/]+(?:/(approve|delete))?"
     :handler (fn [root path body] (backlog-item-response root path body))}])

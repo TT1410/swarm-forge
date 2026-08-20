@@ -145,6 +145,7 @@
       (let [web (find-ns 'squadd.web)
             created ((ns-resolve web 'create-backlog!) root {:title "Cave graph" :body "Rooms and tunnels."})
             id (get-in created [:item "id"])
+            _ (write-frame-ready! root)
             started ((ns-resolve web 'approve-backlog!) root id)
             story-id (or (get-in started [:item "story_id"]) "cave-graph")
             out (:out (run {:dir root} (script "squad_next.sh")))]
@@ -240,6 +241,7 @@
       (require 'squadd.web)
       (let [web (find-ns 'squadd.web)
             created ((ns-resolve web 'create-backlog!) root {:title "Cave graph" :body "Rooms."})
+            _ (write-frame-ready! root)
             started ((ns-resolve web 'approve-backlog!) root (get-in created [:item "id"]))
             story-id (get-in started [:item "story_id"])
             applied (:out (run {:dir root} (script "squad_next.sh") "--apply-mechanical"))]
@@ -261,6 +263,7 @@
       (let [web (find-ns 'squadd.web)
             created ((ns-resolve web 'create-backlog!) root {:title "Cave graph" :body "Rooms."})
             id (get-in created [:item "id"])
+            _ (write-frame-ready! root)
             started ((ns-resolve web 'approve-backlog!) root id)
             story-id (get-in started [:item "story_id"])]
         (run {:dir root} (script "squad_approval.sh") "request"
