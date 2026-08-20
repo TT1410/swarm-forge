@@ -55,7 +55,6 @@
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
                         "create"
-                        "wumpus"
                         "cave-topology"
                         "implementer"
                         "wumpus-cave-impl"
@@ -74,7 +73,8 @@
         (is (str/includes? (:out status) "STATE: created"))
         (is (str/includes? (slurp (str assignment)) "assignment_id: wumpus-cave-impl"))
         (is (str/includes? (slurp (str assignment)) "Story: cave topology and setup."))
-        (is (str/includes? (slurp (str assignment)) "No theme. Work this story only."))
+        (is (not (str/includes? (slurp (str assignment)) "theme_id:")))
+        (is (not (str/includes? (slurp (str assignment)) "## Theme")))
         (is (not (str/includes? (slurp (str assignment)) "## Theme Module Map")))
         (is (str/includes? (slurp (str assignment)) "Write unit tests first"))
         (is (str/includes? (slurp (str assignment)) "swarm_handoff.sh"))
@@ -241,7 +241,6 @@
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
                         "create"
-                        "wumpus"
                         "cave-topology"
                         "gherkin-writer"
                         "cave-gherkin"
@@ -275,7 +274,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "code-reviewer"
            "wumpus-cave-gherkin-review"
@@ -328,7 +326,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "implementer"
            "wumpus-cave-impl"
@@ -375,7 +372,6 @@
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
                         "create"
-                        "wumpus-cli"
                         "theme"
                         "analyst"
                         "wumpus-cli-analysis"
@@ -392,8 +388,8 @@
         (is (str/includes? (:out create) "STORY: theme"))
         (is (str/includes? (:out status) "STATE: created"))
         (is (str/includes? assignment "scope: theme"))
-        (is (str/includes? assignment "## Theme"))
-        (is (str/includes? assignment "No theme. Work this story only."))
+        (is (not (str/includes? assignment "theme_id:")))
+        (is (not (str/includes? assignment "## Theme")))
         (is (not (str/includes? assignment "## Story")))
         (is (str/includes? assignment "Break the approved theme into self-contained stories."))
         (is (str/includes? metadata "scope: theme"))
@@ -419,7 +415,6 @@
       (let [create (run {:dir root}
                         (script "squad_assign.sh")
                         "create-batch"
-                        "wumpus-cli"
                         "hardener"
                         "wumpus-cli-hardener"
                         "instructions.md")
@@ -513,7 +508,6 @@
       (let [created (run {:dir root}
                          (script "squad_assign.sh")
                          "create"
-                         "wumpus"
                          "cave-topology"
                          "implementer"
                          "wumpus-cave-impl"
@@ -550,7 +544,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "cleaner"
            "wumpus-cave-clean"
@@ -583,7 +576,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "gherkin-writer"
            "wumpus-cave-gherkin"
@@ -630,7 +622,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "gherkin-writer"
            "wumpus-cave-gherkin"
@@ -690,7 +681,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "theme"
            "analyst"
            "wumpus-analysis"
@@ -737,7 +727,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "implementer"
            "wumpus-cave-accepted"
@@ -753,16 +742,13 @@
         (run {:dir root} (script "squad_assign.sh") "merge-ready" "wumpus-cave-accepted")
         (run {:dir root} (script "squad_assign.sh") "review" "wumpus-cave-accepted" "accepted" ".squad/reviews/wumpus-cave-accepted-review.md")
         (let [accepted (run {:dir root} (script "squad_assign.sh") "accept-merge" "wumpus-cave-accepted")
-              status (run {:dir root} (script "squad_assign.sh") "status" "wumpus-cave-accepted")
-              report (run {:dir root} (script "squad_report.sh") "wumpus")]
+              status (run {:dir root} (script "squad_assign.sh") "status" "wumpus-cave-accepted")]
           (is (str/includes? (:out accepted) "STATE: merged"))
           (is (str/includes? (:out accepted) "commit already reachable from HEAD"))
           (is (str/includes? (:out status) "STATE: merged"))
           (is (str/includes? (:out status) "ACCEPTED_MERGE:"))
           (is (str/includes? (slurp (str (fs/path root ".squad/assignments/wumpus-cave-accepted/accepted-merge")))
-                             "state: merged"))
-          (is (str/includes? (:out report) "wumpus-cave-accepted [implementer] story=cave-topology state=merged"))
-          (is (str/includes? (:out report) "accepted_merge=merged"))))
+                             "state: merged"))))
       (finally
         (fs/delete-tree root)))))
 
@@ -783,7 +769,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "analyst"
            "wumpus-analysis"
@@ -821,7 +806,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "implementer"
            "wumpus-cave-impl"
@@ -876,7 +860,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "code-reviewer"
            "wumpus-cave-review"
@@ -920,7 +903,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "code-reviewer"
            "wumpus-cave-review"
@@ -965,7 +947,7 @@
       (write-file (fs/path root "theme.md") "Theme.\n")
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
-      (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
+      (run {:dir root} (script "squad_assign.sh") "create" "cave" "implementer"
            "cave-impl" "instructions.md")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "result.handoff")
@@ -1019,7 +1001,7 @@
       (write-file (fs/path root "theme.md") "Theme.\n")
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
-      (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
+      (run {:dir root} (script "squad_assign.sh") "create" "cave" "implementer"
            "cave-impl" "instructions.md")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "result.handoff")
@@ -1051,7 +1033,7 @@
       (write-file (fs/path root "theme.md") "Theme.\n")
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
-      (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
+      (run {:dir root} (script "squad_assign.sh") "create" "cave" "implementer"
            "cave-impl" "instructions.md")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))
             lock-dir (fs/path root ".swarmforge/squad/main-git.lock")]

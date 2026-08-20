@@ -279,14 +279,14 @@
     (is (= 2 (exit-status #(assign/parse-requirement! "gate:story"))))
     (is (= 2 (exit-status #(assign/parse-requirement! "approval:"))))
     (is (= "story-1" (:story-id (assign/parse-create-args!
-                                 ["create" "theme" "story-1" "implementer" "story-1-impl" "instructions.md"]))))
+                                 ["create" "story-1" "implementer" "story-1-impl" "instructions.md"]))))
     (is (= "story" (get-in (assign/parse-create-args!
-                            ["create" "theme" "story-1" "implementer" "story-1-impl" "instructions.md"
+                            ["create" "story-1" "implementer" "story-1-impl" "instructions.md"
                              "--requires" "approval:story"])
                            [:requirement :value])))
     (is (= 1 (exit-status #(assign/parse-create-args! ["create" "too-short"]))))
     (is (= 1 (exit-status #(assign/parse-create-args!
-                            ["create" "theme" "story" "template" "assignment" "file" "--bad" "approval:story"])))))
+                            ["create" "story" "template" "assignment" "file" "--bad" "approval:story"])))))
   (let [text (assign/render-assignment {:theme-id "theme"
                                         :story-id "story-1"
                                         :template "cleaner"
@@ -1821,8 +1821,6 @@
     (write-file (fs/path root "stories/cave-graph.md") "taken\n")
     (is (true? (squadd-web/story-id-taken? root "cave-graph")))
     (is (= "cave-graph-2" (squadd-web/unused-story-id root "cave-graph")))
-    (is (= "none" (next/assignment-theme-id nil)))
-    (is (= "wumpus" (next/assignment-theme-id "wumpus")))
     (is (true? (next/awaiting-implementation-plan? {"story_id" "s1"})))
     (is (false? (next/awaiting-implementation-plan? {"gherkin_path" "features/s1.feature"})))
     (is (true? (assign/themeless-theme? "none")))

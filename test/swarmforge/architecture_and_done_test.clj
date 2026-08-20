@@ -135,7 +135,7 @@
                        "Add HHG use case to the module map.\n"))
       (run {:dir root}
            (script "squad_assign.sh")
-           "create" "wumpus" "batch" "senior-implementer"
+           "create" "batch" "senior-implementer"
            "wumpus-architecture-fix" "--auto-instructions")
       (let [text (slurp (str (fs/path root ".squad/assignments/wumpus-architecture-fix/assignment.md")))]
         (is (str/includes? text "Fix IO randomness")

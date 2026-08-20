@@ -429,7 +429,7 @@
         (is (str/includes? (:out next) "TEMPLATE: implementer"))
         (is (str/includes? (:out next) "ASSIGNMENT: alpha-implementation"))
         (is (str/includes? (:out next)
-                           "COMMAND: squad_assign.sh create wumpus alpha implementer alpha-implementation --auto-instructions --queue-spawn"))
+                           "COMMAND: squad_assign.sh create alpha implementer alpha-implementation --auto-instructions --queue-spawn"))
         (is (not (str/includes? (:out next) "NEXT_ACTION: wait"))))
       (finally
         (fs/delete-tree root)))))
@@ -557,7 +557,7 @@
         (is (str/includes? (:out create-assignment) "NEXT_ACTION: create_assignment"))
         (is (str/includes? (:out create-assignment) "STORY: alpha"))
         (is (str/includes? (:out create-assignment) "TEMPLATE: gherkin-writer"))
-        (is (re-find #"COMMAND: squad_assign.sh create (none|wumpus) alpha gherkin-writer alpha-gherkin --auto-instructions --queue-spawn"
+        (is (re-find #"COMMAND: squad_assign.sh create alpha gherkin-writer alpha-gherkin --auto-instructions --queue-spawn"
                      (:out create-assignment))))
       (write-file (fs/path root "instructions.md")
                   "Write Gherkin.\n")
@@ -986,8 +986,8 @@
           (is (str/includes? (:out next) "NEXT_ACTION: create_assignment"))
           (is (str/includes? (:out next) "STORY: batch"))
           (is (str/includes? (:out next) "TEMPLATE: hardener"))
-          (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-batch none hardener"))
-          (is (not (str/includes? (:out next) "squad_assign.sh create none batch")))))
+          (is (str/includes? (:out next) "COMMAND: squad_assign.sh create-batch hardener"))
+          (is (not (str/includes? (:out next) "squad_assign.sh create batch")))))
       (finally
         (fs/delete-tree root)))))
 
@@ -1011,7 +1011,7 @@
           (run {:dir root} (script "squad_packet.sh") "approve" story "code-review" "approved")))
       (let [out (:out (run {:dir root} (script "squad_next.sh")))]
         (is (str/includes? out "TEMPLATE: hardener"))
-        (is (str/includes? out "create-batch none hardener"))
+        (is (str/includes? out "create-batch hardener"))
         (is (str/includes? out "STORY: alpha"))
         (is (str/includes? out "STORY: beta")))
       (finally
@@ -1028,7 +1028,6 @@
       (let [result (run {:dir root :ok? false}
                         (script "squad_assign.sh")
                         "create-batch"
-                        "wumpus"
                         "hardener"
                         "wumpus-hardener"
                         "instructions.md")]
@@ -1054,7 +1053,7 @@
       (run {:dir root} (script "squad_batch.sh") "add" "wumpus-hardener" "alpha"
            "code_reviewed" "alpha-review" "master" "abcdef1111")
       (write-file (fs/path root "instructions.md") "Harden the batch.\n")
-      (run {:dir root} (script "squad_assign.sh") "create-batch" "wumpus" "hardener"
+      (run {:dir root} (script "squad_assign.sh") "create-batch" "hardener"
            "wumpus-hardener" "instructions.md")
       (let [status (slurp (str (fs/path root ".squad/batches/wumpus-hardener/status")))]
         (is (str/includes? status "state: closed")

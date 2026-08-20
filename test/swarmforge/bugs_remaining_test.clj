@@ -27,7 +27,7 @@
       (write-file (fs/path root "instructions.md") "Do work.\n")
       (write-file (fs/path root "rejection.md") "Merge conflict; park for operator.\n")
       (prepare-implementation-packet! root "wumpus" "cave")
-      (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
+      (run {:dir root} (script "squad_assign.sh") "create" "cave" "implementer"
            "cave-impl" "instructions.md")
       (let [reject (run {:dir root} (script "squad_assign.sh") "reject" "cave-impl" "rejection.md")
             blockers (web/assignment-blocker-state root)
@@ -87,7 +87,7 @@
       (write-file (fs/path root "stories/cave.md") "Story.\n")
       (write-file (fs/path root "instructions.md") "Do work.\n")
       (prepare-implementation-packet! root "wumpus" "cave")
-      (run {:dir root} (script "squad_assign.sh") "create" "wumpus" "cave" "implementer"
+      (run {:dir root} (script "squad_assign.sh") "create" "cave" "implementer"
            "cave-impl" "instructions.md")
       (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
         (write-file (fs/path root "result.handoff")

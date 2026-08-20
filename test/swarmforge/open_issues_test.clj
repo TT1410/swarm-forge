@@ -237,6 +237,69 @@
     (is (str/includes? (get ref "document_url") "/artifact/story/cave"))
     (is (re-find #"(?i)package|QA procedure" (get ref "document_label")))))
 
+(deftest story-package-html-has-ids-for-gate-jumps
+  ;; Given a story with plan, Gherkin, notes, and QA procedure
+  ;; When the story package page is served
+  ;; Then section ids match Attention hashes so the browser can jump
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root "stories/cave.md") "# Cave\n\nWalk.\n")
+      (write-file (fs/path root ".squad/stories/cave/plan.md") "Purpose: walk.\n")
+      (write-file (fs/path root "qa/cave.md") "Type Y at SAME SET-UP.\n")
+      (write-file (fs/path root "qa/cave-implementer-notes.md") "bb run -- --qa-start-rooms\n")
+      (write-file (fs/path root "features/cave.feature") "Feature: cave\n")
+      (write-file (fs/path root ".squad/stories/cave/packet")
+                  (str "story_id: cave\n"
+                       "story_path: stories/cave.md\n"
+                       "implementation_plan_path: .squad/stories/cave/plan.md\n"
+                       "qa_procedure_path: qa/cave.md\n"
+                       "qa_implementer_notes_path: qa/cave-implementer-notes.md\n"
+                       "gherkin_path: features/cave.feature\n"))
+      (let [page (:body (web/artifact-response root "/artifact/story/cave"))
+            ref (web/approval-document-ref
+                 {"target_kind" "story" "target_id" "cave" "gate" "gherkin"})]
+        (is (str/includes? page "id=\"gherkin\""))
+        (is (str/includes? page "id=\"qa-procedure\""))
+        (is (str/includes? page "id=\"implementation-plan\""))
+        (is (str/includes? page "id=\"implementer-notes\""))
+        (is (str/includes? page "bb run -- --qa-start-rooms"))
+        (is (str/includes? (get ref "document_url") "#gherkin")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest assign-create-has-no-theme-id-slot
+  ;; Given a story with no theme
+  ;; When assign create / residual create run
+  ;; Then usage and COMMAND have no theme-id, and metadata has no theme_id: none
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt") "plan\n")
+      (write-file (fs/path root "stories/cave-graph.md") "Rooms.\n")
+      (write-file (fs/path root ".squad/stories/cave-graph/packet")
+                  "story_id: cave-graph\nstory_path: stories/cave-graph.md\n")
+      (write-file (fs/path root "instructions.md") "Write the plan.\n")
+      (let [usage (:err (run {:dir root :ok? false} (script "squad_assign.sh")))
+            created (run {:dir root} (script "squad_assign.sh")
+                         "create" "cave-graph" "analyst" "cave-graph-analysis"
+                         "instructions.md")
+            meta (slurp (str (fs/path root ".squad/assignments/cave-graph-analysis/metadata")))
+            md (slurp (str (fs/path root ".squad/assignments/cave-graph-analysis/assignment.md")))
+            residual (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (str/includes? usage "create <story-id>"))
+        (is (not (str/includes? usage "create <theme-id>")))
+        (is (str/includes? usage "create-batch <template>"))
+        (is (not (str/includes? usage "create-batch <theme-id>")))
+        (is (zero? (:exit created)))
+        (is (not (str/includes? meta "theme_id:")))
+        (is (not (str/includes? md "theme_id:")))
+        (is (not (str/includes? residual "create none ")))
+        (is (not (str/includes? residual "create-batch none ")))
+        (is (not (re-find #"THEME: none" residual))))
+      (finally
+        (fs/delete-tree root)))))
+
 ;;; --- Cockpit ---
 
 (deftest backlog-deck-has-a-visible-label

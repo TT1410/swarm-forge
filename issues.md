@@ -149,7 +149,7 @@ Do not unstick a finished SI by spawning another assignment.
 
 ### Sweep leftover theme references
 
-**Done.** SI no longer filters by `theme_id`; story cards do not show a theme; startup checks `squad_backlog.sh` not `squad_theme.sh`. Assign CLI still takes a theme-id token for existing tests.
+**Done.** SI no longer filters by `theme_id`; story cards do not show a theme; startup checks `squad_backlog.sh` not `squad_theme.sh`. `squad_assign.sh create` is `<story-id> <template> …` (no theme-id). Residual does not emit `none`. New assignment metadata omits `theme_id`.
 
 Redo dropped theme/project ceremony. Leftovers still in the control plane (this swarm: SI member inference on `theme_id`) stall the pipeline.
 
@@ -191,7 +191,7 @@ Clicking a story card opens a float whose footer is leftover mockup copy: “Det
 
 ### View story package should include everything attached so far
 
-**Done.** Story package includes story, packet, plan, notes, Gherkin, QA procedure, reviews. Story gates open that package.
+**Done.** Story package includes story, packet, plan, notes, Gherkin, QA procedure, reviews. Story gates open that package. HTML sections have ids (`#gherkin`, `#qa-procedure`, `#implementation-plan`, …) so Attention hashes jump.
 
 Attention “View story package” (implementation-plan gate) opens `/artifact/story/<id>`. That page is the story file plus the packet. The analyst’s `plan.md` is on disk and named on the packet (`implementation_plan_path`) but is not in the package body. The operator cannot read the plan from that link.
 

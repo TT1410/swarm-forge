@@ -1655,8 +1655,8 @@
        (map (fn [{:keys [title body]}] (section title body)))
        (apply str)))
 
-(defn theme-package-page [theme-id parts]
-  "HTML with clear section chrome and jump links so module map / order are not lost under theme prose."
+(defn package-page [heading parts]
+  "HTML with section ids so Attention hashes (#gherkin, #qa-procedure, …) jump."
   (let [nav (when (seq parts)
               (str "<nav class=\"toc\">"
                    (str/join " · "
@@ -1674,7 +1674,7 @@
                    parts))]
     (str "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
          "<meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">"
-         "<title>Project " (html-escape theme-id) "</title>"
+         "<title>" (html-escape heading) "</title>"
          "<style>:root{font-family:ui-sans-serif,system-ui,sans-serif;color-scheme:light dark}"
          "body{margin:0;background:#f7f7f4;color:#202124}"
          "header{padding:14px 18px;border-bottom:1px solid #d9d9d2}"
@@ -1685,9 +1685,12 @@
          "section.pkg{background:white;border:1px solid #d9d9d2;border-radius:8px;padding:14px}"
          "section.pkg pre{white-space:pre-wrap;margin:0;overflow:auto;font-size:13px;line-height:1.45}"
          "</style></head><body>"
-         "<header><h1>Project package: " (html-escape theme-id) "</h1></header>"
+         "<header><h1>" (html-escape heading) "</h1></header>"
          (or nav "")
          "<main>" body "</main></body></html>")))
+
+(defn theme-package-page [theme-id parts]
+  (package-page (str "Project package: " theme-id) parts))
 
 (defn packet-review-sections [root packet]
   (apply str
@@ -1699,21 +1702,39 @@
                 ["Code Review" "code_review_assignment"]
                 ["Architecture Review" "architecture_review_assignment"]])))
 
-(defn story-content [root story-id]
+(defn story-package-parts [root story-id]
   (let [packet (packet-for root story-id)
         story (artifact-project-content root (get packet "story_path"))
         plan (artifact-project-content root (get packet "implementation_plan_path"))
         notes (artifact-project-content root (get packet "qa_implementer_notes_path"))
         gherkin (artifact-project-content root (get packet "gherkin_path"))
         qa-procedure (artifact-project-content root (get packet "qa_procedure_path"))
-        packet-text (slurp-if-exists (packet-file-for root story-id))]
-    (str (section "Story" story)
-         (section "Story Packet" packet-text)
-         (section "Implementation Plan" plan)
-         (section "Implementer Notes" notes)
-         (section "Gherkin" gherkin)
-         (section "QA Procedure" qa-procedure)
-         (packet-review-sections root packet))))
+        packet-text (slurp-if-exists (packet-file-for root story-id))
+        reviews [["code-review" "Code Review" "code_review_assignment"]
+                 ["architecture-review" "Architecture Review" "architecture_review_assignment"]
+                 ["gherkin-review" "Gherkin Review" "gherkin_review_assignment"]
+                 ["qa-procedure-review" "QA Procedure Review" "qa_procedure_review_assignment"]]]
+    (vec
+     (concat
+      (keep (fn [[id title body]]
+              (when-not (str/blank? body)
+                {:id id :title title :body body}))
+            [["story" "Story" story]
+             ["packet" "Story Packet" packet-text]
+             ["implementation-plan" "Implementation Plan" plan]
+             ["implementer-notes" "Implementer Notes" notes]
+             ["gherkin" "Gherkin" gherkin]
+             ["qa-procedure" "QA Procedure" qa-procedure]])
+      (keep (fn [[id title field]]
+              (when-let [assignment (get packet field)]
+                (when-let [body (review-content root assignment)]
+                  {:id id :title title :body body})))
+            reviews)))))
+
+(defn story-content [root story-id]
+  (->> (story-package-parts root story-id)
+       (map (fn [{:keys [title body]}] (section title body)))
+       (apply str)))
 
 (defn assignment-document-content [root assignment-id]
   (assignment-artifact-content root assignment-id "assignment.md"))
@@ -1749,11 +1770,21 @@
   (let [[_ kind encoded-id] (re-matches #"/artifact/([^/]+)/([^/]+)" path)
         id (url-decode encoded-id)
         title (str (str/capitalize (str/replace kind "-" " ")) " " id)]
-    (if (= "theme" kind)
+    (cond
+      (= "theme" kind)
       (let [parts (theme-package-parts root id)]
         (if (seq parts)
           (response 200 "text/html; charset=utf-8" (theme-package-page id parts))
           (response 404 "text/plain; charset=utf-8" "Project package not found\n")))
+
+      (= "story" kind)
+      (let [parts (story-package-parts root id)]
+        (if (seq parts)
+          (response 200 "text/html; charset=utf-8"
+                    (package-page (str "Story package: " id) parts))
+          (response 404 "text/plain; charset=utf-8" "Artifact not found\n")))
+
+      :else
       (if-let [content (not-empty (or (artifact-content root kind id) ""))]
         (response 200 "text/html; charset=utf-8" (artifact-page title content))
         (response 404 "text/plain; charset=utf-8" "Artifact not found\n")))))

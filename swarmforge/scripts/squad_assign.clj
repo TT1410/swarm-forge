@@ -12,8 +12,8 @@
 
 (def usage-text
   (str "Usage:\n"
-       "  squad_assign.sh create <theme-id> <story-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
-       "  squad_assign.sh create-batch <theme-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
+       "  squad_assign.sh create <story-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
+       "  squad_assign.sh create-batch <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
        "  squad_assign.sh merge-ready <assignment-id>\n"
        "  squad_assign.sh review <assignment-id> <accepted|changes-requested> <review-file>\n"
@@ -132,22 +132,20 @@
         (recur tokens options)))))
 
 (defn parse-create-args! [args]
-  (when-not (>= (count args) 6)
+  (when-not (>= (count args) 5)
     (exit! 1 usage-text))
-  (let [[_ theme-id story-id template assignment-id instructions-file & option-tokens] args]
-    (merge {:theme-id theme-id
-            :story-id story-id
+  (let [[_ story-id template assignment-id instructions-file & option-tokens] args]
+    (merge {:story-id story-id
             :template template
             :assignment-id assignment-id
             :instructions-file instructions-file}
            (parse-create-options! option-tokens))))
 
 (defn parse-create-batch-args! [args]
-  (when-not (>= (count args) 5)
+  (when-not (>= (count args) 4)
     (exit! 1 usage-text))
-  (let [[_ theme-id template assignment-id instructions-file & option-tokens] args]
-    (merge {:theme-id theme-id
-            :story-id "batch"
+  (let [[_ template assignment-id instructions-file & option-tokens] args]
+    (merge {:story-id "batch"
             :template template
             :assignment-id assignment-id
             :instructions-file instructions-file
@@ -310,15 +308,17 @@
 (defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text module-map-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
-       "theme_id: " theme-id "\n"
+       (when (and theme-id (not (str/blank? theme-id)) (not= "none" theme-id))
+         (str "theme_id: " theme-id "\n"))
        "scope: " scope "\n"
        "story_id: " story-id "\n"
        "template: " template "\n"
        (when requirement
          (str "requires: " (:text requirement) "\n"))
        "\n"
-       "## Theme\n\n"
-       theme-text "\n\n"
+       (when (and theme-text (not (str/blank? theme-text))
+                  (not (str/starts-with? theme-text "No theme")))
+         (str "## Theme\n\n" theme-text "\n\n"))
        (when module-map-text
          (str "## Theme Module Map\n\n"
               module-map-text "\n\n"))
@@ -459,10 +459,20 @@
   "Surface architect critique for senior-implementer assignments.
   Drop Module Map Recommendations so they are not assigned work."
   [{:keys [root theme-id assignment-id]}]
-  (let [candidates [(fs/path root "reviews" (str theme-id "-architecture-review.md"))
-                    (fs/path root "reviews" "htw-architecture-review.md")
-                    (fs/path root "reviews" (str assignment-id "-review.md"))]
-        hit (first (filter fs/regular-file? candidates))]
+  (let [dir (fs/path root "reviews")
+        named (cond-> []
+                (not (themeless-theme? theme-id))
+                (conj (fs/path dir (str theme-id "-architecture-review.md")))
+                true
+                (conj (fs/path dir (str assignment-id "-review.md")))
+                true
+                (conj (fs/path dir "htw-architecture-review.md")))
+        glob (if (fs/directory? dir)
+               (->> (fs/list-dir dir)
+                    (filter #(re-find #"architecture-review\.md$" (str (fs/file-name %))))
+                    (sort-by str))
+               [])
+        hit (first (filter fs/regular-file? (concat named glob)))]
     (when hit
       (str "Source: " hit "\n\n" (strip-module-map-recommendations (slurp (str hit)))))))
 
@@ -486,7 +496,8 @@
       ;; Findings before full theme dump
       (str "# Squad Assignment\n\n"
            "assignment_id: " (:assignment-id context) "\n"
-           "theme_id: " (:theme-id context) "\n"
+           (when-not (themeless-theme? (:theme-id context))
+             (str "theme_id: " (:theme-id context) "\n"))
            "scope: " (:scope context) "\n"
            "story_id: " (:story-id context) "\n"
            "template: senior-implementer\n\n"
@@ -494,10 +505,11 @@
            review "\n\n"
            "## Leader Instructions\n\n"
            (:instructions-text base) "\n\n"
-           "## Theme (context only — not a greenfield rebuild brief)\n\n"
-           (:theme-text base) "\n\n"
+           (when (and (:theme-text base)
+                      (not (str/starts-with? (str (:theme-text base)) "No theme")))
+             (str "## Context\n\n" (:theme-text base) "\n\n"))
            (when (:module-map-text base)
-             (str "## Theme Module Map (context)\n\n" (:module-map-text base) "\n\n"))
+             (str "## Module Map (context)\n\n" (:module-map-text base) "\n\n"))
            (tool-lines "Required Tools" (:required-tools base))
            (tool-startup-lines "senior-implementer" (:required-tools base))
            (tool-evidence-lines (:required-evidence base))
@@ -511,7 +523,8 @@
       (render-assignment (merge context base)))))
 (defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now batch-id]}]
   (str "assignment_id: " assignment-id "\n"
-       "theme_id: " theme-id "\n"
+       (when-not (themeless-theme? theme-id)
+         (str "theme_id: " theme-id "\n"))
        "scope: " scope "\n"
        "story_id: " story-id "\n"
        "template: " template "\n"
@@ -541,7 +554,8 @@
 
 (defn print-create-result! [{:keys [assignment-id theme-id story-id template requirement]} assignment-file]
   (println "SQUAD_ASSIGNMENT:" assignment-id)
-  (println "THEME:" theme-id)
+  (when-not (themeless-theme? theme-id)
+    (println "THEME:" theme-id))
   (println "STORY:" story-id)
   (println "TEMPLATE:" template)
   (when requirement
@@ -673,13 +687,16 @@
   (or (read-value file field) default))
 
 (defn assignment-metadata-fields [assignment-id metadata status]
-  [["ASSIGNMENT" assignment-id]
-   ["THEME" (field-value metadata "theme_id" "unknown")]
-   ["STORY" (field-value metadata "story_id" "unknown")]
-   ["TEMPLATE" (field-value metadata "template" "unknown")]
-   ["STATE" (field-value status "state" "unknown")]
-   ["DETAIL" (field-value status "detail" "")]
-   ["ASSIGNMENT_FILE" (field-value metadata "assignment_file" "unknown")]])
+  (let [theme (field-value metadata "theme_id" nil)]
+    (cond-> [["ASSIGNMENT" assignment-id]]
+      (not (themeless-theme? theme))
+      (conj ["THEME" theme])
+      true
+      (into [["STORY" (field-value metadata "story_id" "unknown")]
+             ["TEMPLATE" (field-value metadata "template" "unknown")]
+             ["STATE" (field-value status "state" "unknown")]
+             ["DETAIL" (field-value status "detail" "")]
+             ["ASSIGNMENT_FILE" (field-value metadata "assignment_file" "unknown")]]))))
 
 (defn print-assignment-metadata! [assignment-id {:keys [metadata status]}]
   (doseq [[label value] (assignment-metadata-fields assignment-id metadata status)]
@@ -1356,8 +1373,8 @@
         requirement-text (read-value old-metadata "requires")
         now (timestamp)]
     (ensure-assignment-dir! old-dir old-assignment-id)
-    (when-not (and theme-id story-id)
-      (exit! 2 "Original assignment metadata must include theme_id and story_id."))
+    (when-not story-id
+      (exit! 2 "Original assignment metadata must include story_id."))
     (create-assignment! {:theme-id theme-id
                          :story-id story-id
                          :template template

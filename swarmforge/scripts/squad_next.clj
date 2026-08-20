@@ -565,25 +565,21 @@
                                        (next-assignment-id assignments story-id "code-review")
                                        "cleaned story needs code review" 60 110 nil))))))
 
-(defn assignment-theme-id [theme-id]
-  (if (str/blank? theme-id) "none" theme-id))
-
 (defn assignment-create-candidate [theme-id story-id template assignment-id reason priority stage-order requirement]
-  (let [theme-id (assignment-theme-id theme-id)]
-    {:priority priority
-     :stage-order stage-order
-     :next-action "create_assignment"
-     :theme-id theme-id
-     :story-id story-id
-     :template template
-     :assignment-id assignment-id
-     :reason reason
-     :command (str "squad_assign.sh create " theme-id " " story-id " " template " "
-                   assignment-id " --auto-instructions"
-                   (when requirement
-                     (str " --requires approval:" requirement))
-                   (when-not requirement
-                     " --queue-spawn"))}))
+  {:priority priority
+   :stage-order stage-order
+   :next-action "create_assignment"
+   :theme-id theme-id
+   :story-id story-id
+   :template template
+   :assignment-id assignment-id
+   :reason reason
+   :command (str "squad_assign.sh create " story-id " " template " "
+                 assignment-id " --auto-instructions"
+                 (when requirement
+                   (str " --requires approval:" requirement))
+                 (when-not requirement
+                   " --queue-spawn"))})
 
 (defn batch-assignment-create-candidate [theme-id template assignment-id reason priority stage-order requirement]
   {:priority priority
@@ -594,7 +590,7 @@
    :template template
    :assignment-id assignment-id
    :reason reason
-   :command (str "squad_assign.sh create-batch " theme-id " " template " "
+   :command (str "squad_assign.sh create-batch " template " "
                  assignment-id " --auto-instructions"
                  (when requirement
                    (str " --requires approval:" requirement))
@@ -1486,7 +1482,7 @@
                                 {:keys [ready? template suffix reason stage-order]}]
   (when-let [ready-value (get readiness ready?)]
     (let [assignment-base (if (string? ready-value) ready-value suffix)]
-      (batch-assignment-candidate root assignments agents "none"
+      (batch-assignment-candidate root assignments agents nil
                                   template assignment-base
                                   reason 60 stage-order))))
 
@@ -1509,7 +1505,7 @@
   [["NEXT_ACTION" :next-action true]
    ["OP" :op false]
    ["AUTHORITY" :authority false]
-   ["THEME" :theme-id true]
+   ["THEME" :theme-id false]
    ["STORY" :story-id false]
    ["GATE" :gate false]
    ["TEMPLATE" :template false]

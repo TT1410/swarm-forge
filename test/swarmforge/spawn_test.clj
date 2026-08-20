@@ -234,7 +234,6 @@
       (run {:dir root}
            (script "squad_assign.sh")
            "create"
-           "wumpus"
            "cave-topology"
            "implementer"
            "wumpus-cave-impl"
