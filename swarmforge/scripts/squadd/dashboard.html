@@ -44,8 +44,9 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .col-body{display:flex;flex-direction:column;align-items:flex-start;gap:8px;flex:1;min-height:100px;max-height:100%;overflow:auto;padding:8px;background:rgba(255,255,255,.35);border:1px dashed #c5cbc2;border-radius:10px;width:max-content;min-width:var(--card-min-w)}
 @keyframes card-glow{0%,100%{box-shadow:none}50%{box-shadow:0 0 0 3px rgba(47,107,58,.55),0 0 16px rgba(47,107,58,.35)}}
 .card.glow{animation:card-glow .8s ease-in-out 3}
-.deck-btn{position:relative;min-width:38px;height:30px;padding-right:52px;border:0;background:transparent;cursor:pointer;flex:0 0 auto}
-.deck-btn .deck-label{position:absolute;left:40px;top:50%;transform:translateY(-50%);font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap}
+.deck-btn{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 4px 0 0;border:0;background:transparent;cursor:pointer;flex:0 0 auto}
+.deck-btn .deck-icon{position:relative;width:38px;height:30px;flex:0 0 38px}
+.deck-btn .deck-label{font-size:12px;font-weight:700;color:var(--ink);white-space:nowrap}
 .deck-btn .sheet{position:absolute;inset:4px 6px 2px 2px;background:var(--card);border:1px solid #c9c2a8;border-radius:3px}
 .deck-btn .sheet:nth-child(1){transform:translate(4px,3px) rotate(8deg);opacity:.55}
 .deck-btn .sheet:nth-child(2){transform:translate(2px,1px) rotate(3deg);opacity:.8}
@@ -176,8 +177,10 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
         <span>Board</span>
         <span class="spacer"></span>
         <button type="button" class="deck-btn" id="backlog-deck" title="Backlog" aria-label="Backlog">
-          <span class="sheet"></span><span class="sheet"></span>
-          <span class="sheet"><span class="count" id="backlog-count">0</span></span>
+          <span class="deck-icon">
+            <span class="sheet"></span><span class="sheet"></span>
+            <span class="sheet"><span class="count" id="backlog-count">0</span></span>
+          </span>
           <span class="deck-label">Backlog</span>
         </button>
         <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add Story</button>

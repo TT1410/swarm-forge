@@ -148,6 +148,12 @@
   [session]
   (str "=" session))
 
+(defn pane-target
+  "Exact pane in the named session. capture-pane -t is a pane target.
+  `=session` is a session target; tmux reports can't find pane."
+  [session]
+  (str "=" session ":"))
+
 (defn session-exists? [socket session]
   (and (not (str/blank? socket))
        (not (str/blank? session))
@@ -251,7 +257,7 @@
   (when (and (not (str/blank? socket)) (not (str/blank? session)))
     (not-empty
      (:out (run-continue "tmux" "-S" socket "capture-pane" "-p" "-t"
-                         (session-target session) "-S" "-2000")))))
+                         (pane-target session) "-S" "-2000")))))
 
 (defn archive-agent-session! [root agent-id socket session]
   (let [dir (fs/path root ".squad" "sessions" agent-id)

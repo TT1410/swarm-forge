@@ -309,6 +309,16 @@
   ;; Then the backlog control is labeled Backlog without hovering
   (is (re-find #"id=\"backlog-deck\"[^>]*>[\s\S]*Backlog" web/dashboard-html)))
 
+(deftest backlog-label-does-not-cover-add-story
+  ;; Given the board toolbar: Backlog deck next to Add Story
+  ;; Then the Backlog label is in the deck button's layout flow, not
+  ;; absolutely positioned over Add Story
+  (let [html web/dashboard-html]
+    (is (re-find #"id=\"backlog-deck\"" html))
+    (is (re-find #"id=\"btn-add-item\"" html))
+    (is (not (re-find #"\.deck-btn \.deck-label\{[^}]*position:\s*absolute" html)))
+    (is (re-find #"\.deck-btn\{[^}]*display:\s*(inline-)?flex" html))))
+
 (deftest story-card-popup-is-not-mock-host-copy
   ;; Given the story card float
   ;; Then it does not say Detached window (mock host)
@@ -385,6 +395,36 @@
   ;; Then retire still archives pane files
   (let [root (tmp-dir)]
     (is (true? (retire/save-agent-sessions? root)))))
+
+(deftest retire-archives-live-pane-without-liveness
+  ;; Given a running tmux session and no liveness file
+  ;; When the agent is retired
+  ;; Then pane.txt is the captured pane, not empty
+  (let [root (tmp-dir)
+        worktree (fs/path root ".worktrees/agent-001")]
+    (write-file (fs/path root "swarmforge/squad.conf")
+                "save_agent_sessions true\n")
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (str "squad-leader\tmaster\t" root "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"
+                     "agent-001\tagent-001\t" worktree "\tswarmforge-agent-001\tAgent 001\tcodex\ttask\n"))
+    (write-file (fs/path root ".swarmforge/tmux-socket") "sock\n")
+    (write-file (fs/path root ".squad/agents/agent-001/metadata") "task_id: task-1\n")
+    (fs/create-dirs worktree)
+    (with-redefs [retire/project-root (constantly root)
+                  retire/acquire-lock! (fn [_])
+                  retire/run-continue
+                  (fn [& args]
+                    (if (= "=swarmforge-agent-001:" (nth args 6 nil))
+                      {:exit 0 :out "Codex wrote plan.md\n" :err ""}
+                      {:exit 1 :out "" :err "can't find pane"}))
+                  retire/stop-session! (fn [_ _] {:stopped? true :detail "tmux session stopped"})
+                  retire/remove-worktree! (fn [_ _ _] {:removed? true :detail "worktree removed"})
+                  retire/delete-branch! (fn [_ agent-id]
+                                          {:deleted? true :branch (str "swarmforge-" agent-id)})
+                  retire/timestamp (constantly "2026-08-20T00:00:00Z")]
+      (retire/retire! "agent-001")
+      (is (= "Codex wrote plan.md\n"
+             (slurp (str (fs/path root ".squad/sessions/agent-001/pane.txt"))))))))
 
 (deftest retire-saves-session-files-when-configured
   ;; Given save_agent_sessions true
