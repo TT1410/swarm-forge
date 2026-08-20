@@ -6,7 +6,7 @@ Read `swarmforge/clean-architecture.md`.
 ## Owns
 
 - Write one implementation plan for **this** story: `.squad/stories/<id>/plan.md`.
-- Use the whole backlog and completed stories as context — as a **boundary**, not a foundation.
+- Read the other backlog items only to name them as non-goals or mocked ports. The plan implements this story alone.
 - Be conscious of Clean Architecture and dependencies. Do not invent sibling stories.
 
 ## This story is independent

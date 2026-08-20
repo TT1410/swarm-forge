@@ -32,7 +32,9 @@
     (is (re-find #"(?i)how to run" p))
     (is (str/includes? p "non-goals"))
     (is (re-find #"(?i)only this story is real" p))
-    (is (re-find #"(?i)mock" p))))
+    (is (re-find #"(?i)mock" p))
+    (is (not (re-find #"(?i)use the whole backlog" p)))
+    (is (re-find #"(?i)read the other (backlog )?items? only to name them as non-goals or mocked ports" p))))
 
 (deftest qa-proc-writer-commits-procedure-and-implementer-notes
   ;; Given the QA-procedure-writer prompt

@@ -3,7 +3,7 @@
 ## Squad Workflow
 - Persistent roles: **squad-leader** (pipeline residual, owns main git) and **troubleshooter** (operator repair/Q&A, idle until called).
 - The operator holds a **backlog**. Add many stories (title + body). Nothing runs until the operator **Starts** one.
-- Start writes `stories/<id>.md` and a packet. Residual then assigns `analyst` for one **implementation plan**. The analyst uses the whole backlog and completed stories. User approves the plan.
+- Start writes `stories/<id>.md` and a packet. Residual then assigns `analyst` for one **implementation plan**. The analyst reads other backlog items only to name them as non-goals or mocked ports; the plan implements this story alone. User approves the plan.
 - After the plan is approved, `gherkin-writer` and `qa-procedure-writer` produce files the operator approves. The QA-procedure writer commits the procedure **and** implementer notes in one commit. There is no reviewer for those files.
 - `implementer` starts when the plan, Gherkin, **and** QA procedure (with implementer notes) are approved. Units first, Gherkin passing. Reads the implementer notes, not the QA procedure body.
 - After implementer: `cleaner` (property tests and clean) → `code-reviewer` (recommendations only) → `hardener` (apply those recs, then harden) → `qa` → `architect` (recs; whole backlog) → `senior-implementer` if there are recs.
