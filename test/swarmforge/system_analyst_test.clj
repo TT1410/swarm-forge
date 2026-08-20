@@ -2,6 +2,7 @@
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
+            [squad-assign :as assign]
             [squad-product :as product]
             [swarmforge.test-support :refer :all]))
 
@@ -86,3 +87,23 @@
         (is (str/includes? md "Walk"))
         (is (not (str/includes? md "provided theme"))))
       (finally (fs/delete-tree root)))))
+
+(deftest system-analyst-result-requires-frame-and-qa-product
+  ;; Given a system-analyst git_handoff result
+  ;; When artifacts omit frame.md or qa/product.md
+  ;; Then validation fails naming the missing path
+  (let [ok {"assignment" "system-analysis" "agent" "system-analyst-001"
+            "template" "system-analyst" "artifacts" "frame.md,qa/product.md"}
+        missing-qa (assoc ok "artifacts" "frame.md")
+        missing-frame (assoc ok "artifacts" "qa/product.md")
+        none (assoc ok "artifacts" "none")]
+    (is (= ok (assign/validate-result-manifest! "system-analysis" "system-analyst"
+                                                "system-analyst-001" ok)))
+    (doseq [[bad missing] [[missing-qa #"qa/product.md"]
+                           [missing-frame #"frame.md"]
+                           [none #"qa/product.md"]]]
+      (is (thrown-with-msg? clojure.lang.ExceptionInfo missing
+            (with-redefs [assign/exit! (fn [status & lines]
+                                         (throw (ex-info (str/join " " lines) {:status status})))]
+              (assign/validate-result-manifest! "system-analysis" "system-analyst"
+                                                "system-analyst-001" bad)))))))

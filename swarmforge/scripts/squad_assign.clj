@@ -803,6 +803,13 @@
          (not (contains? valid-review-decisions review-decision)))
     (exit! 2 "Review decision must be accepted or changes-requested.")))
 
+(defn validate-system-analyst-artifacts! [template artifacts]
+  (when (= "system-analyst" template)
+    (let [paths (set (split-list artifacts))
+          missing (filterv #(not (contains? paths %)) ["frame.md" "qa/product.md"])]
+      (when (seq missing)
+        (exit! 2 (str "System-analyst result must include " (str/join ", " missing) "."))))))
+
 (defn validate-result-manifest! [assignment-id template from manifest]
   (let [{handoff-assignment "assignment"
          handoff-agent "agent"
@@ -817,6 +824,7 @@
       (exit! 2 (str "Result manifest template must match assignment template: " template)))
     (when (str/blank? artifacts)
       (exit! 2 "Result manifest must include artifacts, or artifacts: none."))
+    (validate-system-analyst-artifacts! template artifacts)
     (validate-result-review-decision! template review-decision)
     manifest))
 
