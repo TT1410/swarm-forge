@@ -115,15 +115,21 @@
               (str "squad-leader\tmaster\t" root
                    "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n")))
 
-(defn- write-open-item! [root id title]
+(defn- write-item! [root id title status]
   (write-file (fs/path root ".squad/backlog" (str id ".item"))
               (str "id: " id "\n"
                    "title: " title "\n"
-                   "status: open\n"
+                   "status: " status "\n"
                    "created_at: t\n"
                    "updated_at: t\n"
                    "body: |\n"
                    "  " title "\n")))
+
+(defn- write-open-item! [root id title]
+  (write-item! root id title "open"))
+
+(defn- write-started-item! [root id title]
+  (write-item! root id title "started"))
 
 (defn- write-merged-system-analyst!
   ([root] (write-merged-system-analyst! root nil))
@@ -442,6 +448,54 @@
           (is (str/includes? out "NEXT_ACTION: create_assignment"))
           (is (re-find #"TEMPLATE: analyst|template analyst" out))
           (is (not (str/includes? out "create-product")))))
+      (finally (fs/delete-tree root)))))
+
+(deftest residual-leaves-late-open-items-unstarted
+  ;; Given a framed product whose snapshot is already-started bl-1 and a late open item bl-new
+  ;; When squad_next.sh applies residual
+  ;; Then no stories/ file is created for bl-new and bl-new stays open
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  (str "max_active_template system-analyst 1\n"
+                       "approval_required frame true\n"))
+      (write-started-item! root "bl-1" "Walk")
+      (write-open-item! root "bl-new" "New")
+      (product/write-product! root {"state" "framed"
+                                    "frame_sha" "abc1234"
+                                    "open_item_ids" "bl-1"})
+      (run {:dir root} (script "squad_next.sh") "--apply-mechanical")
+      (is (= "started" (get (web/get-backlog root "bl-1") "status")))
+      (is (= "open" (get (web/get-backlog root "bl-new") "status")))
+      (is (empty? (story-md-files root)))
+      (is (not (fs/regular-file? (fs/path root "stories/new.md"))))
+      (let [cands (squad-next/product-frame-candidates root [])]
+        (is (not (some #(and (= "start_snapshot_item" (:next-action %))
+                             (= "bl-new" (:item-id %)))
+                       cands))))
+      (finally (fs/delete-tree root)))))
+
+(deftest per-card-start-after-frame-starts-only-that-item
+  ;; Given a framed product and a late open item bl-new
+  ;; When POST /api/backlog/bl-new/approve
+  ;; Then 200 and stories exist only for that item
+  (let [root (tmp-dir)]
+    (try
+      (write-open-item! root "bl-new" "New")
+      (write-open-item! root "bl-other" "Other")
+      (product/write-product! root {"state" "framed"
+                                    "frame_sha" "abc1234"
+                                    "open_item_ids" "bl-1"})
+      (let [resp (web/handle-web-request root "POST" "/api/backlog/bl-new/approve" "{}")]
+        (is (= 200 (:status resp)))
+        (is (str/includes? (:body resp) "\"ok\":true"))
+        (is (= "started" (get (web/get-backlog root "bl-new") "status")))
+        (is (= "open" (get (web/get-backlog root "bl-other") "status")))
+        (is (fs/regular-file? (fs/path root "stories/new.md")))
+        (is (not (fs/regular-file? (fs/path root "stories/other.md"))))
+        (is (= 1 (count (story-md-files root)))))
       (finally (fs/delete-tree root)))))
 
 (deftest wif-includes-in-progress-system-analyst
