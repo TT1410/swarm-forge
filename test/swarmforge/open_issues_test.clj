@@ -369,6 +369,30 @@
 
 ;;; --- Backlog CLI ---
 
+(deftest backlog-cli-imports-mission-heading-apart-from-stories
+  ;; Given a directory with #MISSION and two story files
+  ;; When squad_backlog.sh import runs
+  ;; Then one item is status mission titled Mission, two are open
+  (let [root (tmp-dir)
+        stories (fs/path root "incoming")]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path stories "000-Mission.md")
+                  "#MISSION\n\nOne console loop.\n")
+      (write-file (fs/path stories "001-walk.md") "# Walk\n\nMove.\n")
+      (write-file (fs/path stories "002-shoot.md") "# Shoot\n\nArrow.\n")
+      (let [result (run {:dir root} (script "squad_backlog.sh") "import" (str stories))
+            items (web/list-backlog root)
+            by-status (group-by #(get % "status") items)]
+        (is (zero? (:exit result)))
+        (is (= 1 (count (by-status "mission"))))
+        (is (= 2 (count (by-status "open"))))
+        (is (= "Mission" (get (first (by-status "mission")) "title")))
+        (is (str/includes? (get (first (by-status "mission")) "body") "One console loop"))
+        (is (not (str/includes? (get (first (by-status "mission")) "body") "#MISSION"))))
+      (finally (fs/delete-tree root)))))
+
 (deftest backlog-cli-imports-a-directory-of-markdown-as-open-items
   ;; Given a directory of story markdown files
   ;; When squad_backlog.sh import runs
@@ -469,6 +493,16 @@
             "session capture stored")))))
 
 ;;; --- Analysis fumbles ---
+
+(deftest squad-run-closes-stdin-on-a-tty
+  ;; Given squad_run is attached to a TTY
+  ;; Then the child does not inherit that TTY; a redirected pipe is still inherited
+  (is (= :closed (squad-run/child-stdin :tty)))
+  (is (= :inherit (squad-run/child-stdin :pipe)))
+  (with-redefs [squad-run/tty-stdin? (constantly true)]
+    (is (= "" (squad-run/process-in))))
+  (with-redefs [squad-run/tty-stdin? (constantly false)]
+    (is (= :inherit (squad-run/process-in)))))
 
 (deftest squad-run-parses-a-bare-command
   ;; Given squad_run.sh grep -q foo

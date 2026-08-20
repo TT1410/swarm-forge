@@ -57,6 +57,9 @@
     (is (re-find #"(?i)placeholder" p))
     (is (re-find #"(?i)do not implement" p))
     (is (re-find #"(?i)one executable|one process" p))
+    (is (re-find #"(?i)mission" p))
+    (is (re-find #"(?i)product form|console loop|that UI" p))
+    (is (re-find #"(?i)not treat the mission as a socket" p))
     (is (not (re-find #"(?i)write features/" p)))))
 
 (deftest story-prompts-extend-the-frame
@@ -73,6 +76,97 @@
     (is (str/includes? qa "qa/product.md")))
   (let [w (slurp (str (fs/path repo-root "swarmforge/worker-common.prompt")))]
     (is (re-find #"(?i)frame" w))))
+
+(deftest create-backlog-title-mission-is-not-open
+  ;; Given Add Story titled Mission
+  ;; Then the item is status mission, not open
+  (let [root (tmp-dir)]
+    (try
+      (let [r (web/create-backlog! root {:title "Mission" :body "One console loop.\n"})]
+        (is (true? (:ok r)))
+        (is (= "mission" (get-in r [:item "status"])))
+        (is (= "Mission" (get-in r [:item "title"])))
+        (is (str/includes? (get-in r [:item "body"]) "console loop")))
+      (finally (fs/delete-tree root)))))
+
+(deftest create-backlog-mission-heading-is-not-open
+  ;; Given a body whose first heading is #MISSION
+  ;; Then the item is status mission
+  (let [root (tmp-dir)]
+    (try
+      (let [r (web/create-backlog! root {:title "000 Mission"
+                                         :body "#MISSION\n\nOne console loop.\n"})]
+        (is (true? (:ok r)))
+        (is (= "mission" (get-in r [:item "status"]))))
+      (finally (fs/delete-tree root)))))
+
+(deftest create-backlog-rejects-a-second-mission
+  ;; Given an existing mission
+  ;; When another Mission is added
+  ;; Then 409 names the existing item
+  (let [root (tmp-dir)]
+    (try
+      (let [first (web/create-backlog! root {:title "Mission" :body "Loop.\n"})
+            id (get-in first [:item "id"])
+            second (web/create-backlog! root {:title "Mission" :body "Another.\n"})]
+        (is (true? (:ok first)))
+        (is (false? (:ok second)))
+        (is (= 409 (:status second)))
+        (is (str/includes? (str (:error second)) id)))
+      (finally (fs/delete-tree root)))))
+
+(deftest save-mission-persists-body
+  ;; Given a mission item
+  ;; When it is saved with a new body
+  ;; Then it stays mission and the body is the new text
+  (let [root (tmp-dir)]
+    (try
+      (let [id (get-in (web/create-backlog! root {:title "Mission" :body "Old.\n"}) [:item "id"])
+            r (web/update-backlog! root id {:body "New loop.\n"})]
+        (is (true? (:ok r)))
+        (is (= "mission" (get-in r [:item "status"])))
+        (is (str/includes? (get-in r [:item "body"]) "New loop")))
+      (finally (fs/delete-tree root)))))
+
+(deftest save-reclassifies-mission-and-story
+  ;; Given a mission, saving without the marker makes it open
+  ;; Given an open story titled Mission, saving makes it a mission
+  (let [root (tmp-dir)]
+    (try
+      (let [mid (get-in (web/create-backlog! root {:title "Mission" :body "#MISSION\n\nLoop.\n"})
+                        [:item "id"])
+            to-story (web/update-backlog! root mid {:title "Walk" :body "Move.\n"})]
+        (is (true? (:ok to-story)))
+        (is (= "open" (get-in to-story [:item "status"])))
+        (let [sid (get-in (web/create-backlog! root {:title "Walk" :body "Move.\n"}) [:item "id"])
+              to-mission (web/update-backlog! root sid {:title "Mission" :body "Loop.\n"})]
+          (is (true? (:ok to-mission)))
+          (is (= "mission" (get-in to-mission [:item "status"])))))
+      (finally (fs/delete-tree root)))))
+
+(deftest save-second-mission-is-rejected
+  ;; Given a mission and an open story
+  ;; When the story is saved as Mission
+  ;; Then 409
+  (let [root (tmp-dir)]
+    (try
+      (web/create-backlog! root {:title "Mission" :body "Loop.\n"})
+      (let [sid (get-in (web/create-backlog! root {:title "Walk" :body "Move.\n"}) [:item "id"])
+            r (web/update-backlog! root sid {:title "Mission"})]
+        (is (false? (:ok r)))
+        (is (= 409 (:status r))))
+      (finally (fs/delete-tree root)))))
+
+(deftest system-analyst-instructions-name-frame-artifacts
+  ;; Given auto-instructions for a product system-analyst
+  ;; Then they name frame.md and qa/product.md and do not talk about a story or plan.md
+  (let [text (assign/default-instructions {:template "system-analyst" :scope "product"})]
+    (is (str/includes? text "frame.md"))
+    (is (str/includes? text "qa/product.md"))
+    (is (not (re-find #"(?i)use the story" text)))
+    (is (not (re-find #"artifact for" text)))
+    (is (re-find #"(?i)do not write plan\.md" text))
+    (is (not (re-find #"(?i)copy these names into plan\.md" text)))))
 
 (deftest create-product-assignment-has-no-story-card
   ;; Given a product with a backlog item and the system-analyst template
@@ -103,6 +197,69 @@
         (is (str/includes? md "swarm_handoff.sh"))
         (is (str/includes? md "Walk"))
         (is (not (str/includes? md "provided theme"))))
+      (finally (fs/delete-tree root)))))
+
+(deftest product-assignment-lists-sockets-not-non-goals
+  ;; Given two open backlog items and create-product for system-analyst
+  ;; When assignment.md is written
+  ;; Then titles are sockets to stub, not non-goals to copy into plan.md
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root
+                       "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/role-templates/system-analyst.prompt")
+                  (slurp (str (fs/path repo-root "swarmforge/role-templates/system-analyst.prompt"))))
+      (write-file (fs/path root "swarmforge/role-templates/system-analyst.contract.edn")
+                  (slurp (str (fs/path repo-root "swarmforge/role-templates/system-analyst.contract.edn"))))
+      (write-file (fs/path root ".squad/backlog/bl-1.item")
+                  "id: bl-1\ntitle: Walk\nstatus: open\ncreated_at: t\nupdated_at: t\nbody: |\n  w\n")
+      (write-file (fs/path root ".squad/backlog/bl-2.item")
+                  "id: bl-2\ntitle: Shoot\nstatus: open\ncreated_at: t\nupdated_at: t\nbody: |\n  s\n")
+      (run {:dir root} (script "squad_assign.sh")
+           "create-product" "system-analyst" "system-analysis"
+           "--auto-instructions")
+      (let [md (slurp (str (fs/path root ".squad/assignments/system-analysis/assignment.md")))]
+        (is (re-find #"(?i)## Sockets" md))
+        (is (str/includes? md "Walk"))
+        (is (str/includes? md "Shoot"))
+        (is (re-find #"(?i)stub" md))
+        (is (not (str/includes? md "Non-goals (other backlog items)")))
+        (is (not (re-find #"(?i)copy these names into plan\.md" md))))
+      (finally (fs/delete-tree root)))))
+
+(deftest product-assignment-includes-mission-not-as-socket
+  ;; Given a mission item and two open stories
+  ;; When create-product assigns system-analyst
+  ;; Then assignment has Mission body and Sockets for the stories only
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root
+                       "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/role-templates/system-analyst.prompt")
+                  (slurp (str (fs/path repo-root "swarmforge/role-templates/system-analyst.prompt"))))
+      (write-file (fs/path root "swarmforge/role-templates/system-analyst.contract.edn")
+                  (slurp (str (fs/path repo-root "swarmforge/role-templates/system-analyst.contract.edn"))))
+      (write-file (fs/path root ".squad/backlog/bl-m.item")
+                  (str "id: bl-m\ntitle: Mission\nstatus: mission\ncreated_at: t\nupdated_at: t\n"
+                       "body: |\n  One console loop.\n"))
+      (write-file (fs/path root ".squad/backlog/bl-1.item")
+                  "id: bl-1\ntitle: Walk\nstatus: open\ncreated_at: t\nupdated_at: t\nbody: |\n  w\n")
+      (write-file (fs/path root ".squad/backlog/bl-2.item")
+                  "id: bl-2\ntitle: Shoot\nstatus: open\ncreated_at: t\nupdated_at: t\nbody: |\n  s\n")
+      (run {:dir root} (script "squad_assign.sh")
+           "create-product" "system-analyst" "system-analysis"
+           "--auto-instructions")
+      (let [md (slurp (str (fs/path root ".squad/assignments/system-analysis/assignment.md")))]
+        (is (re-find #"(?i)## Mission" md))
+        (is (str/includes? md "One console loop."))
+        (is (re-find #"(?i)## Sockets" md))
+        (is (str/includes? md "Walk"))
+        (is (str/includes? md "Shoot"))
+        (is (not (re-find #"(?m)^- Mission$" md))))
       (finally (fs/delete-tree root)))))
 
 (deftest story-assignment-names-the-merged-frame
@@ -265,6 +422,91 @@
         (is (str/includes? (str (:err request) (:out request)) "Approval target not found")))
       (finally (fs/delete-tree root)))))
 
+(defn- write-system-analyst-handoff! [root]
+  (write-file (fs/path root ".swarmforge/handoffs/inbox/in_process/50_frame.handoff")
+              (str "type: git_handoff\n"
+                   "to: squad-leader\n"
+                   "from: system-analyst-001\n"
+                   "task: system-analysis\n"
+                   "assignment: system-analysis\n"
+                   "agent: system-analyst-001\n"
+                   "template: system-analyst\n"
+                   "commit: abcdef1234\n"
+                   "artifacts: frame.md,qa/product.md\n")))
+
+(deftest frame-approval-candidate-when-result-received-and-no-frame-sha
+  ;; Given a product without frame_sha and a result_received system-analyst
+  ;; When the frame approval candidate is computed
+  ;; Then it requests frame__product before merge
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "frame_pending"
+                                    "assignment_id" "system-analysis"})
+      (write-file (fs/path root ".squad/assignments/system-analysis/metadata")
+                  "assignment_id: system-analysis\ntemplate: system-analyst\nscope: product\n")
+      (write-file (fs/path root ".squad/assignments/system-analysis/status")
+                  "assignment_id: system-analysis\nstate: result_received\n")
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required frame true\n")
+      (let [candidate (squad-next/frame-approval-candidate root)]
+        (is (= "create_approval_request" (:next-action candidate)))
+        (is (= "frame" (:gate candidate)))
+        (is (str/includes? (:command candidate)
+                           "squad_approval.sh request frame__product product product frame")))
+      (finally (fs/delete-tree root)))))
+
+(deftest system-analyst-handoff-does-not-merge-before-frame-approval
+  ;; Given a claimed git_handoff for a result_received system-analyst
+  ;; When frame approval is still required
+  ;; Then residual does not accept-merge
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required frame true\n")
+      (product/write-product! root {"state" "frame_pending"
+                                    "assignment_id" "system-analysis"})
+      (write-file (fs/path root ".squad/assignments/system-analysis/metadata")
+                  "assignment_id: system-analysis\ntemplate: system-analyst\nscope: product\n")
+      (write-file (fs/path root ".squad/assignments/system-analysis/status")
+                  "assignment_id: system-analysis\nstate: result_received\n")
+      (write-system-analyst-handoff! root)
+      (let [handoff (fs/path root ".swarmforge/handoffs/inbox/in_process/50_frame.handoff")
+            step (squad-next/in-process-git-handoff-command root handoff)
+            out (:out (run {:dir root} (script "squad_next.sh")))]
+        (is (nil? step))
+        (is (false? (squad-next/in-process-needs-action?
+                     {:root root :in-process handoff})))
+        (is (not (str/includes? out "accept-merge")))
+        (is (str/includes? out "create_approval_request")))
+      (finally (fs/delete-tree root)))))
+
+(deftest system-analyst-handoff-merges-after-frame-approval
+  ;; Given a claimed git_handoff, result_received system-analyst, and approved frame
+  ;; When residual considers the handoff
+  ;; Then it accept-merges
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "swarmforge/squad.conf")
+                  "approval_required frame true\n")
+      (product/write-product! root {"state" "frame_pending"
+                                    "assignment_id" "system-analysis"})
+      (write-file (fs/path root ".squad/assignments/system-analysis/metadata")
+                  "assignment_id: system-analysis\ntemplate: system-analyst\nscope: product\n")
+      (write-file (fs/path root ".squad/assignments/system-analysis/status")
+                  "assignment_id: system-analysis\nstate: result_received\n")
+      (write-file (fs/path root ".squad/approvals/approved/frame__product.approval")
+                  "target_kind: product\ntarget_id: product\ngate: frame\nstate: approved\n")
+      (write-system-analyst-handoff! root)
+      (let [handoff (fs/path root ".swarmforge/handoffs/inbox/in_process/50_frame.handoff")
+            step (squad-next/in-process-git-handoff-command root handoff)]
+        (is (= "accept_merge" (:action step)))
+        (is (str/includes? (:command step) "squad_assign.sh accept-merge system-analysis")))
+      (finally (fs/delete-tree root)))))
+
 (deftest frame-approval-candidate-when-merged-system-analyst-and-no-frame-sha
   ;; Given a product without frame_sha, a merged system-analyst, and no frame approval
   ;; When the frame approval candidate is computed
@@ -295,11 +537,12 @@
       [])))
 
 (deftest start-backlog-does-not-create-story-files
-  ;; Given two open items and no frame_sha
+  ;; Given a mission, two open items, and no frame_sha
   ;; When POST /api/backlog/start
-  ;; Then product is frame_pending with both ids, items stay open, no stories/*.md
+  ;; Then product is frame_pending with story ids only, items stay open, no stories/*.md
   (let [root (tmp-dir)]
     (try
+      (web/create-backlog! root {:title "Mission" :body "Loop.\n"})
       (let [a (web/create-backlog! root {:title "Walk" :body "Move."})
             b (web/create-backlog! root {:title "Shoot" :body "Arrow."})
             id-a (get-in a [:item "id"])
@@ -315,6 +558,44 @@
         (is (= "open" (get (web/get-backlog root id-a) "status")))
         (is (= "open" (get (web/get-backlog root id-b) "status")))
         (is (empty? (story-md-files root))))
+      (finally (fs/delete-tree root)))))
+
+(deftest start-backlog-requires-a-mission
+  ;; Given open stories and no mission
+  ;; When POST /api/backlog/start
+  ;; Then 400 names the mission
+  (let [root (tmp-dir)]
+    (try
+      (web/create-backlog! root {:title "Walk" :body "Move."})
+      (let [resp (web/handle-web-request root "POST" "/api/backlog/start" "{}")]
+        (is (= 400 (:status resp)))
+        (is (re-find #"(?i)mission" (str (:body resp)))))
+      (finally (fs/delete-tree root)))))
+
+(deftest start-backlog-requires-open-stories
+  ;; Given a mission and no open stories
+  ;; When POST /api/backlog/start
+  ;; Then 400 names open stories
+  (let [root (tmp-dir)]
+    (try
+      (web/create-backlog! root {:title "Mission" :body "Loop.\n"})
+      (let [resp (web/handle-web-request root "POST" "/api/backlog/start" "{}")]
+        (is (= 400 (:status resp)))
+        (is (re-find #"(?i)open stor" (str (:body resp)))))
+      (finally (fs/delete-tree root)))))
+
+(deftest per-card-start-rejects-a-mission
+  ;; Given a framed product and a mission item
+  ;; When POST /api/backlog/:id/approve for that mission
+  ;; Then 409 and the body says it is not a story
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "framed" "frame_sha" "abc1234"})
+      (let [id (get-in (web/create-backlog! root {:title "Mission" :body "Loop.\n"})
+                       [:item "id"])
+            resp (web/handle-web-request root "POST" (str "/api/backlog/" id "/approve") "{}")]
+        (is (= 409 (:status resp)))
+        (is (re-find #"(?i)not a story" (str (:body resp)))))
       (finally (fs/delete-tree root)))))
 
 (deftest per-card-start-requires-frame
@@ -680,9 +961,79 @@
 
 (deftest dashboard-start-backlog-enabled-only-when-open-and-idle
   ;; Given the cockpit script
-  ;; Then Start backlog is disabled without open items, with a frame sha, or with an in-flight system-analyst
+  ;; Then Start backlog is disabled without open stories, without a mission,
+  ;; with a frame sha, or with an in-flight system-analyst
   (let [html web/dashboard-html]
     (is (re-find #"getElementById\('btn-start-backlog'\).*disabled" html))
     (is (re-find #"system-analyst" html))
     (is (re-find #"(?s)btn-start-backlog.*merged" html))
-    (is (re-find #"(?s)frame\.sha|frame\]\.sha|frame && .*sha" html))))
+    (is (re-find #"(?s)frame\.sha|frame\]\.sha|frame && .*sha" html))
+    (is (re-find #"status==='mission'" html))))
+
+(deftest dashboard-deck-lists-mission-and-hides-its-start
+  ;; Given the cockpit script
+  ;; Then the deck includes mission items, labels them Mission, and hides Start on that editor
+  (let [html web/dashboard-html]
+    (is (re-find #"status==='open'.*status==='mission'|status==='mission'.*status==='open'" html))
+    (is (re-find #"Mission ·" html))
+    (is (re-find #"item\.status==='mission'" html))))
+
+(deftest pending-frame-approval-appears-in-attention
+  ;; Given a pending product frame approval
+  ;; When the dashboard lists pending approvals
+  ;; Then Attention includes that frame gate
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad/approvals/pending/frame__product.approval")
+                  (str "approval_id: frame__product\n"
+                       "target_kind: product\n"
+                       "target_id: product\n"
+                       "gate: frame\n"
+                       "state: pending\n"
+                       "title: Approve_frame\n"
+                       "reason: frame-ready\n"))
+      (let [pending (web/approval-state-for root "pending")]
+        (is (= 1 (count pending)))
+        (is (= "frame" (get (first pending) "gate")))
+        (is (= "frame__product" (get (first pending) "approval_id"))))
+      (finally (fs/delete-tree root)))))
+
+(deftest dashboard-attention-lists-frame-gate
+  ;; Given the cockpit script
+  ;; Then Attention's operator gate list includes frame
+  (is (re-find #"operatorGates=\{[^}]*\bframe:" web/dashboard-html)))
+
+(deftest frame-approval-document-is-product-package
+  ;; Given a pending product frame approval
+  ;; When Attention attaches a document link
+  ;; Then the url is the product package
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad/approvals/pending/frame__product.approval")
+                  (str "approval_id: frame__product\n"
+                       "target_kind: product\n"
+                       "target_id: product\n"
+                       "gate: frame\n"
+                       "state: pending\n"))
+      (let [pending (web/approval-state-for root "pending")
+            a (first pending)]
+        (is (= "/artifact/product/product" (get a "document_url")))
+        (is (re-find #"(?i)package" (get a "document_label"))))
+      (finally (fs/delete-tree root)))))
+
+(deftest product-package-page-shows-frame-and-qa
+  ;; Given frame.md and qa/product.md
+  ;; When the product package is served
+  ;; Then the page includes both documents
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root "frame.md") "# Frame\n\nRun: bb run\n")
+      (write-file (fs/path root "qa/product.md") "Type Y at SAME SET-UP.\n")
+      (let [resp (web/artifact-response root "/artifact/product/product")
+            page (:body resp)]
+        (is (= 200 (:status resp)))
+        (is (str/includes? page "id=\"frame\""))
+        (is (str/includes? page "Run: bb run"))
+        (is (str/includes? page "id=\"qa-procedure\""))
+        (is (str/includes? page "Type Y at SAME SET-UP.")))
+      (finally (fs/delete-tree root)))))

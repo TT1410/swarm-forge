@@ -25,12 +25,12 @@ Independent per-story assignments produce a series of little applications. This 
 
 ## Flow
 
-1. Operator adds items (files / Troubleshooter / dashboard). They stay **open**.
-2. Operator **Starts the backlog**. Residual creates assignment `*-system-analysis` and spawns `system-analyst-001` only. No story packets yet. Per-card Start is disabled.
-3. Agent reads `.squad/backlog/*.item`. One worktree, one commit:
-   - One process / one `-main` / product entrypoint: empty turn loop, named stub sockets, dummy state. No hunt rules, messages, or wins.
-   - `frame.md`: socket list (from the backlog), how to run, what is not implemented.
-   - `qa/product.md`: one QA procedure through that UI, with a labeled placeholder per open item.
+1. Operator adds items (files / Troubleshooter / dashboard). Stories stay **open**. A **mission** (see `2026-08-20-backlog-mission-design.md`) is not open.
+2. Operator **Starts the backlog** (requires a mission and at least one open story). Residual creates assignment `*-system-analysis` and spawns `system-analyst-001` only. No story packets yet. Per-card Start is disabled.
+3. Agent reads the Mission on the assignment and every open `.squad/backlog/*.item`. One worktree, one commit:
+   - One process / one `-main` / product entrypoint: the form the Mission names (empty turn loop, named stub sockets, dummy state). No hunt rules, messages, or wins.
+   - `frame.md`: socket list (from **open stories**), how to run, what is not implemented.
+   - `qa/product.md`: one QA procedure through that UI, with a labeled placeholder per open story.
 4. Handoff: `swarm_handoff.sh` with no file. Missing `frame.md` or `qa/product.md` is an invalid git_handoff.
 5. Operator Attention gate **`frame`**: package is `frame.md` + `qa/product.md` + run command. Approve or reject (same UX as a plan).
 6. SL `accept-merge`. Residual records **`frame_sha`** on a **product-level** record (not a story packet).
@@ -73,7 +73,7 @@ Required artifacts on the git_handoff: `frame.md`, `qa/product.md`, and the entr
 
 ## Cockpit
 
-- Backlog deck: **Start backlog** enabled when there are open items, no `frame_sha`, and no in-flight `system-analyst`.
+- Backlog deck: **Start backlog** enabled when there is a mission, at least one open story, no `frame_sha`, and no in-flight `system-analyst`. Mission item: visible, labeled, editable until Start; never a story card. Details: `2026-08-20-backlog-mission-design.md`.
 - Per-card Start hidden or disabled until `frame_sha`.
 - Attention: `frame` gate with View package.
 - Toolbar status: `Frame: none | pending | in review | on master`.

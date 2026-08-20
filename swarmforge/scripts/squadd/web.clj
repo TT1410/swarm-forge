@@ -455,6 +455,10 @@
         {"document_url" (theme-url tid)
          "document_label" "View theme package"})
 
+      (= kind "product")
+      {"document_url" (str "/artifact/product/" (enc tid))
+       "document_label" "View package"}
+
       ;; story target (default): one package, gate label may jump to a section
       :else
       (case gate-n
@@ -485,7 +489,7 @@
   (merge approval (approval-document-ref approval)))
 
 (def operator-attention-gates
-  #{"implementation-plan" "gherkin" "qa-procedure"})
+  #{"implementation-plan" "gherkin" "qa-procedure" "frame"})
 
 (defn operator-attention-gate? [gate]
   (contains? operator-attention-gates
@@ -1213,33 +1217,78 @@
       (when (fs/regular-file? f)
         (parse-backlog-item f)))))
 
+(defn mission-title? [title]
+  (= "mission" (str/lower-case (str/trim (str title)))))
+
+(defn mission-heading? [body]
+  (boolean
+   (some #(re-find #"(?i)^#\s*mission\s*$" %)
+         (str/split-lines (str body)))))
+
+(defn mission-spec? [title body]
+  (or (mission-title? title) (mission-heading? body)))
+
+(defn mission-item [root]
+  (some #(when (= "mission" (get % "status")) %)
+        (list-backlog root)))
+
+(defn classify-backlog-status [title body current-status]
+  (cond
+    (contains? #{"started" "cancelled"} current-status) current-status
+    (mission-spec? title body) "mission"
+    :else "open"))
+
+(defn other-mission [root except-id]
+  (when-let [m (mission-item root)]
+    (when (not= except-id (get m "id")) m)))
+
+(defn mission-conflict [root except-id title body]
+  (when (mission-spec? title body)
+    (when-let [existing (other-mission root except-id)]
+      {:ok false
+       :status 409
+       :error (str "A mission already exists: " (get existing "id"))})))
+
 (defn create-backlog! [root {:keys [title body]}]
   (let [title (str/trim (or title ""))
         body (or body "")]
     (cond
       (str/blank? title) {:ok false :error "title required" :status 400}
       :else
-      (let [now (now)
-            id (next-backlog-id root)
-            item {"id" id
-                  "title" title
-                  "body" body
-                  "status" "open"
-                  "created_at" now
-                  "updated_at" now}]
-        (write-backlog-item! root item)
-        {:ok true :item item}))))
+      (if-let [conflict (mission-conflict root nil title body)]
+        conflict
+        (let [now (now)
+              id (next-backlog-id root)
+              item {"id" id
+                    "title" title
+                    "body" body
+                    "status" (classify-backlog-status title body "open")
+                    "created_at" now
+                    "updated_at" now}]
+          (write-backlog-item! root item)
+          {:ok true :item item})))))
 
 (defn update-backlog! [root id {:keys [title body status]}]
   (if-let [item (get-backlog root id)]
     (let [updated (cond-> (assoc item "updated_at" (now))
                     (some? title) (assoc "title" (str/trim title))
                     (some? body) (assoc "body" body)
-                    (some? status) (assoc "status" status))]
-      (if (str/blank? (get updated "title"))
+                    (some? status) (assoc "status" status))
+          new-title (get updated "title")
+          new-body (get updated "body")
+          classified (assoc updated "status"
+                            (or status
+                                (classify-backlog-status new-title new-body
+                                                         (get item "status"))))]
+      (cond
+        (str/blank? new-title)
         {:ok false :error "title required" :status 400}
-        (do (write-backlog-item! root updated)
-            {:ok true :item updated})))
+
+        :else
+        (if-let [conflict (mission-conflict root id new-title new-body)]
+          conflict
+          (do (write-backlog-item! root classified)
+              {:ok true :item classified}))))
     {:ok false :error "not found" :status 404}))
 
 (defn delete-backlog! [root id]
@@ -1298,11 +1347,14 @@
   [root]
   (let [ids (open-backlog-ids root)]
     (cond
-      (empty? ids)
-      {:ok false :status 400 :error "No open backlog items."}
-
       (product/frame-ready? (product/read-product root))
       {:ok false :status 409 :error "Frame already exists."}
+
+      (nil? (mission-item root))
+      {:ok false :status 400 :error "A mission is required."}
+
+      (empty? ids)
+      {:ok false :status 400 :error "Open stories are required."}
 
       :else
       (do
@@ -1320,17 +1372,19 @@
   (if-not (product/frame-ready? (product/read-product root))
     {:ok false :status 409 :error "Start the backlog first (frame required)."}
     (if-let [item (get-backlog root id)]
-      (let [title (get item "title" id)
-            story-id (or (not-empty (get item "story_id"))
-                         (unused-story-id root (story-slug title)))]
-        (write-started-story! root story-id title (get item "body" ""))
-        (let [updated (assoc item
-                             "status" "started"
-                             "story_id" story-id
-                             "updated_at" (now))]
-          (write-backlog-item! root updated)
-          (log! root "backlog-started" id story-id)
-          {:ok true :item updated}))
+      (if (= "mission" (get item "status"))
+        {:ok false :status 409 :error "Not a story."}
+        (let [title (get item "title" id)
+              story-id (or (not-empty (get item "story_id"))
+                           (unused-story-id root (story-slug title)))]
+          (write-started-story! root story-id title (get item "body" ""))
+          (let [updated (assoc item
+                               "status" "started"
+                               "story_id" story-id
+                               "updated_at" (now))]
+            (write-backlog-item! root updated)
+            (log! root "backlog-started" id story-id)
+            {:ok true :item updated})))
       {:ok false :error "not found" :status 404})))
 
 (defn approve-backlog!
@@ -1770,6 +1824,17 @@
        (map (fn [{:keys [title body]}] (section title body)))
        (apply str)))
 
+(defn product-package-parts [root]
+  (let [p (product/read-product root)
+        frame-path (or (not-empty (get p "frame_path")) "frame.md")
+        qa-path (or (not-empty (get p "qa_path")) "qa/product.md")]
+    (vec
+     (keep (fn [[id title body]]
+             (when-not (str/blank? body)
+               {:id id :title title :body body}))
+           [["frame" "Frame" (artifact-project-content root frame-path)]
+            ["qa-procedure" "QA Procedure" (artifact-project-content root qa-path)]]))))
+
 (defn assignment-document-content [root assignment-id]
   (assignment-artifact-content root assignment-id "assignment.md"))
 
@@ -1816,6 +1881,13 @@
         (if (seq parts)
           (response 200 "text/html; charset=utf-8"
                     (package-page (str "Story package: " id) parts))
+          (response 404 "text/plain; charset=utf-8" "Artifact not found\n")))
+
+      (= "product" kind)
+      (let [parts (product-package-parts root)]
+        (if (seq parts)
+          (response 200 "text/html; charset=utf-8"
+                    (package-page "Product package" parts))
           (response 404 "text/plain; charset=utf-8" "Artifact not found\n")))
 
       :else

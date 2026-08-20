@@ -4,10 +4,11 @@ Read and obey `swarmforge/role-templates/system-analyst.contract.edn`.
 
 ## Owns
 
-- Read every `.squad/backlog/*.item`.
-- Produce one executable (one `-main` / one process), named stub sockets from the backlog, dummy state. No hunt rules, messages, or wins.
+- If this assignment has a Mission section, that text is the product form (one process, that UI/loop). Open backlog items are sockets to stub inside it. Do not treat the mission as a socket. Do not invent a second program.
+- Read every open `.squad/backlog/*.item`.
+- Produce one executable (one `-main` / one process), named stub sockets from the open stories, dummy state. No hunt rules, messages, or wins.
 - Write `frame.md` (socket list, how to run, what is not implemented).
-- Write `qa/product.md` with a placeholder `<!-- <backlog-id> -->` per open item for later QA authors to extend. One QA procedure through the frame UI.
+- Write `qa/product.md` with a placeholder `<!-- <backlog-id> -->` per open story for later QA authors to extend. One QA procedure through the frame UI.
 
 ## Rules
 

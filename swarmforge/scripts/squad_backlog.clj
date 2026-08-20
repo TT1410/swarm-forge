@@ -38,14 +38,27 @@
       :else
       (exit! 1 (str "Not a file or directory: " path)))))
 
+(defn mission-heading-line? [line]
+  (boolean (re-find #"(?i)^#\s*mission\s*$" (str line))))
+
 (defn title-body-from-markdown [file]
   (let [text (slurp (str file))
         lines (str/split-lines text)
-        heading (first (filter #(re-find #"^#\s+" %) lines))]
-    (if heading
+        mission-heading (first (filter mission-heading-line? lines))
+        heading (or mission-heading
+                    (first (filter #(re-find #"^#+\s+" %) lines)))]
+    (cond
+      mission-heading
+      {:title "Mission"
+       :body (str/trim
+              (str/join "\n" (remove #(= % mission-heading) lines)))}
+
+      heading
       {:title (str/trim (str/replace heading #"^#+\s*" ""))
        :body (str/trim
               (str/join "\n" (remove #(= % heading) lines)))}
+
+      :else
       {:title (-> file fs/file-name (str/replace #"\.[^.]+$" "") (str/replace #"[-_]+" " "))
        :body (str/trim text)})))
 

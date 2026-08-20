@@ -372,7 +372,7 @@ function renderAttention(data) {
   } else stallSec.style.display='none';
 
   const rows=[];
-  const operatorGates={ 'implementation-plan':1,'implementation_plan':1,gherkin:1,'qa-procedure':1,qa_procedure:1 };
+  const operatorGates={ 'implementation-plan':1,'implementation_plan':1,gherkin:1,'qa-procedure':1,qa_procedure:1,frame:1 };
   (data.approvals&&data.approvals.pending||[]).forEach(a=>{
     const g=String(a.gate||'').toLowerCase().replace(/_/g,'-');
     if(!operatorGates[g]) return;
@@ -440,7 +440,7 @@ function sortByProgress(stories) {
 function renderBoard(data) {
   const stories=data.stories||[];
   const batches=data.batches||[];
-  const openBl=(data.backlog||[]).filter(b=>b.status==='open'||!b.status);
+  const openBl=(data.backlog||[]).filter(b=>b.status==='open'||b.status==='mission'||!b.status);
   // Specifying · Coding · Finalizing · Done (no Ready)
   const cols=['specifying','coding','finalizing','done'];
   const titles={specifying:'Specifying',coding:'Coding',finalizing:'Finalizing',done:'Done'};
@@ -490,7 +490,7 @@ function bindBacklogDeck(openBl) {
   if(!deck||!menu) return;
   const fill=()=>{
     menu.innerHTML=openBl.length?openBl.map(b=>`<button type="button" class="mi" data-edit-bl="${esc(b.id)}">
-      <span class="t">${esc(b.title||b.id)}</span>
+      <span class="t">${b.status==='mission'?'Mission · ':''}${esc(b.title||b.id)}</span>
       <span class="d">created ${esc(fmt(b.created_at))} · modified ${esc(fmt(b.updated_at))}</span></button>`).join(''):
       '<div style="padding:12px;color:#68726c;font-size:11px">Empty — Add Story</div>';
   };
@@ -603,7 +603,7 @@ function openBacklogEditor(item) {
         <button type="button" class="btn" data-be="cancel">Cancel</button>
         ${!isNew?'<button type="button" class="btn btn-danger" data-be="delete">Delete</button>':''}
         <button type="button" class="btn" data-be="add">${isNew?'Add':'Save'}</button>
-        <button type="button" class="btn btn-approve" data-be="approve"${(!state.frame||!state.frame.sha)?' hidden':''}>Start</button>
+        <button type="button" class="btn btn-approve" data-be="approve"${(!state.frame||!state.frame.sha)||(item&&item.status==='mission')?' hidden':''}>Start</button>
       </div>`,
     onMount(el){
       el.querySelector('[data-be=cancel]').onclick=()=>closeWindow(id);
@@ -691,14 +691,15 @@ function renderFrame(data) {
   const labels={none:'none',pending:'pending',in_review:'in review',on_master:'on master'};
   const el=document.getElementById('frame-status');
   if(el) el.textContent='Frame: '+(labels[frame.state]||frame.state||'none');
-  const openItems=(data.backlog||[]).some(b=>b.status==='open'||!b.status);
+  const openStories=(data.backlog||[]).some(b=>b.status==='open'||!b.status);
+  const hasMission=(data.backlog||[]).some(b=>b.status==='mission');
   const sha=frame.sha;
   const inflight=(data.work_in_flight||data.assignments||[]).some(a=>{
     const t=a.role||a.template||'';
     const s=a.state||'';
     return t==='system-analyst' && s!=='merged' && s!=='retired';
   });
-  document.getElementById('btn-start-backlog').disabled=!openItems||!!sha||inflight;
+  document.getElementById('btn-start-backlog').disabled=!openStories||!hasMission||!!sha||inflight;
 }
 
 async function refresh() {

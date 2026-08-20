@@ -531,14 +531,21 @@
          :reason (str gate " approval is not required by configuration")
          :command (str "squad_packet.sh approve " story-id " " gate " auto-approved-by-config")}))))
 
+(def system-analyst-frame-gate-states
+  #{"result_received" "merge_ready" "merged"})
+
+(defn system-analyst-for-frame-gate [root]
+  (some #(when (and (= "system-analyst" (:template %))
+                    (contains? system-analyst-frame-gate-states (:state %)))
+           %)
+        (assignment-records root)))
+
 (defn frame-approval-candidate
-  "Product-scoped frame gate after a merged system-analyst assignment."
+  "Product-scoped frame gate after system-analyst result, before or after merge."
   [root]
   (when (and (fs/regular-file? (product/product-file root))
              (not (product/frame-ready? (product/read-product root)))
-             (some #(and (= "system-analyst" (:template %))
-                         (= "merged" (:state %)))
-                   (assignment-records root))
+             (system-analyst-for-frame-gate root)
              (not (approval-record-exists-for? root "product" "product" "frame"))
              (cfg/squad-approval-required? root "frame"))
     {:priority 20
@@ -552,7 +559,7 @@
                    " Approve_frame frame-ready")}))
 
 (def live-system-analyst-states
-  #{"created" "assignment_created" "in_progress" "result_received" "merged"})
+  #{"created" "assignment_created" "in_progress" "result_received" "merge_ready" "merged"})
 
 (defn live-system-analyst [root]
   (some #(when (and (= "system-analyst" (:template %))
@@ -1609,6 +1616,19 @@
    :reason reason
    :command (str "squad_assign.sh accept-merge " assignment-id)})
 
+(defn hold-merge-for-frame?
+  "System-analyst git_handoff waits for the operator frame gate before accept-merge."
+  [root assignment-id]
+  (let [rec (some #(when (= assignment-id (:assignment-id %)) %)
+                  (assignment-records root))]
+    (boolean
+     (and rec
+          (= "system-analyst" (:template rec))
+          (contains? #{"result_received" "merge_ready"} (:state rec))
+          (cfg/squad-approval-required? root "frame")
+          (not (frame-approved? root))
+          (not (product/frame-ready? (product/read-product root)))))))
+
 (def story-candidate-fields
   [["NEXT_ACTION" :next-action true]
    ["OP" :op false]
@@ -1869,6 +1889,9 @@
          :command (str "SWARMFORGE_ROLE=squad-leader done_with_current.sh "
                        (pr-str (str file)))}
 
+        (hold-merge-for-frame? root assignment-id)
+        nil
+
         ;; Status can lag merge file when result was re-recorded after merge-ready.
         (and (= "result_received" state)
              (= "merge_ready" merge-state))
@@ -1897,8 +1920,10 @@
 
 (defn in-process-needs-action?
   "True when an in-process handoff is claimed and must be advanced or finished."
-  [{:keys [in-process]}]
-  (boolean in-process))
+  [{:keys [root in-process]}]
+  (boolean
+   (and in-process
+        (not (and root (hold-merge-for-frame? root (handoff-task in-process)))))))
 
 (defn print-in-process-handoff-action! [root file]
   (if-let [{:keys [action reason command]} (in-process-git-handoff-command root file)]

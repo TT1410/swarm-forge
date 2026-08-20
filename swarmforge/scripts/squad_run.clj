@@ -85,6 +85,20 @@
                    :expected-failure? expected-failure?
                    :command (vec remaining)})))))))))
 
+(defn child-stdin
+  "TTY stdin is closed so interactive programs cannot wait on the agent pane.
+  A redirected pipe is inherited so `printf Y | squad_run.sh …` still works."
+  [kind]
+  (if (= kind :tty) :closed :inherit))
+
+(defn tty-stdin? []
+  (zero? (:exit (process/sh {:continue true} "test" "-t" "0"))))
+
+(defn process-in []
+  (if (= :inherit (child-stdin (if (tty-stdin?) :tty :pipe)))
+    :inherit
+    ""))
+
 (defn split-args [args]
   (let [parsed (parse-run-args args)]
     (cond
@@ -101,7 +115,8 @@
     (let [result (apply process/sh
                         (concat [{:continue true
                                   :out :inherit
-                                  :err :inherit}]
+                                  :err :inherit
+                                  :in (process-in)}]
                                 command))]
       (if (zero? (:exit result))
         (event! "running" (str phase " passed: " detail))

@@ -330,8 +330,10 @@
                          (str/ends-with? (fs/file-name %) ".item")))
            (keep (fn [file]
                    (let [title (read-value file "title")
+                         status (or (read-value file "status") "open")
                          item-story (read-value file "story_id")]
                      (when (and (not (str/blank? title))
+                                (not= "mission" status)
                                 (or (str/blank? story-id)
                                     (not= story-id item-story)))
                        title))))
@@ -339,12 +341,47 @@
            vec)
       [])))
 
+(defn item-body [file]
+  (let [text (slurp (str file))
+        marker "body: |\n"]
+    (when-let [idx (str/index-of text marker)]
+      (->> (subs text (+ idx (count marker)))
+           str/split-lines
+           (map #(if (str/starts-with? % "  ") (subs % 2) %))
+           (str/join "\n")
+           str/trim))))
+
+(defn mission-file? [file]
+  (and (fs/regular-file? file)
+       (str/ends-with? (fs/file-name file) ".item")
+       (= "mission" (read-value file "status"))))
+
+(defn mission-section [root]
+  (when root
+    (let [dir (fs/path root ".squad" "backlog")]
+      (when (fs/directory? dir)
+        (when-let [file (first (filter mission-file? (fs/list-dir dir)))]
+          (when-let [body (not-empty (item-body file))]
+            (str "## Mission\n\n" body "\n\n")))))))
+
 (defn non-goals-section [titles]
   (when (seq titles)
     (str "## Non-goals (other backlog items)\n\n"
          (apply str (for [title titles]
                       (str "- " title "\n")))
          "Copy these names into plan.md non-goals. Read `.squad/backlog/<id>.item` only if a port needs a sentence.\n\n")))
+
+(defn sockets-section [titles]
+  (when (seq titles)
+    (str "## Sockets\n\n"
+         (apply str (for [title titles]
+                      (str "- " title "\n")))
+         "Stub these in-process. Do not implement them. They are not leftovers and not CLI verbs.\n\n")))
+
+(defn backlog-titles-section [scope template titles]
+  (if (or (= "product" scope) (= "system-analyst" template))
+    (sockets-section titles)
+    (non-goals-section titles)))
 
 (defn frame-run-line [p]
   (let [run (get p "run")]
@@ -385,7 +422,9 @@
               packet-text
               "```\n\n"))
        (frame-section root)
-       (non-goals-section other-backlog-titles)
+       (when (or (= "product" scope) (= "system-analyst" template))
+         (mission-section root))
+       (backlog-titles-section scope template other-backlog-titles)
        (tool-lines "Required Tools" required-tools)
        (tool-lines "Optional Tools" optional-tools)
        (tool-startup-lines template required-tools)
@@ -483,12 +522,20 @@
     (exit! 2 (str "Assignment already exists: " (:assignment-id context)))))
 
 (defn default-instructions [{:keys [template story-id scope]}]
-  (if (= "senior-implementer" template)
+  (cond
+    (= "senior-implementer" template)
     (str "Apply only the architecture review findings for this " scope " assignment.\n"
          "Lead with reviews/*-architecture-review.md (or the critique path in this package).\n"
          "Do not greenfield-rebuild modules the review accepted; preserve working process/domain code.\n"
          "Skip Module Map Recommendations unless the squad leader explicitly assigned a map-only chore.\n"
          "Implement the listed code/structure/acceptance recommendations, verify with bb test and bb acceptance, hand off.\n")
+
+    (or (= "product" scope) (= "system-analyst" template))
+    (str "Follow the " template " role contract for this product assignment.\n"
+         "Produce frame.md, qa/product.md, and the one executable. Do not write plan.md.\n"
+         "Commit the work, then run swarm_handoff.sh (no file).\n")
+
+    :else
     (str "Follow the " template " role contract for this " scope " assignment.\n"
          "Use the story in this assignment and the role prompt as the source of truth.\n"
          "Produce the required artifact for " story-id ", commit the work, then run swarm_handoff.sh (no file).\n")))
