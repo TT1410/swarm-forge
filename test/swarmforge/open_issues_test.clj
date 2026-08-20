@@ -5,6 +5,7 @@
             [clojure.test :refer [deftest is]]
             [squad-config :as cfg]
             [squad-retire :as retire]
+            [squad-run :as squad-run]
             [squad-state :as state]
             [squadd.web :as web]
             [swarmforge.test-support :refer :all]))
@@ -34,7 +35,11 @@
     (is (re-find #"(?i)only this story is real" p))
     (is (re-find #"(?i)mock" p))
     (is (not (re-find #"(?i)use the whole backlog" p)))
-    (is (re-find #"(?i)read the other (backlog )?items? only to name them as non-goals or mocked ports" p))))
+    (is (re-find #"(?i)read the other (backlog )?items? only to name them as non-goals or mocked ports" p))
+    (is (str/includes? p ".squad/backlog"))
+    (is (str/includes? p "stories/<") )
+    (is (str/includes? p ".squad/stories/<story-id>/plan.md"))
+    (is (re-find #"do not search for a stories directory" (str/lower-case p)))))
 
 (deftest qa-proc-writer-commits-procedure-and-implementer-notes
   ;; Given the QA-procedure-writer prompt
@@ -462,3 +467,77 @@
                 (fs/regular-file? (fs/path root ".squad/agents/agent-001/session-pane.txt"))
                 (fs/regular-file? (fs/path archive "session.log")))
             "session capture stored")))))
+
+;;; --- Analysis fumbles ---
+
+(deftest squad-run-parses-a-bare-command
+  ;; Given squad_run.sh grep -q foo
+  ;; Then phase is run and the command is grep
+  (is (= {:phase "run"
+          :detail "grep -q foo"
+          :expected-failure? false
+          :command ["grep" "-q" "foo"]}
+         (squad-run/parse-run-args ["grep" "-q" "foo"])))
+  (is (= {:phase "run"
+          :detail "bb test"
+          :expected-failure? true
+          :command ["bb" "test"]}
+         (squad-run/parse-run-args ["--expect-failure" "bb" "test"])))
+  (is (true? (:help? (squad-run/parse-run-args ["--help"]))))
+  (is (= "verifying"
+         (:phase (squad-run/parse-run-args
+                  ["verifying" "quick command" "--" "sh" "-c" "exit 0"])))))
+
+(deftest worker-common-shows-bare-squad-run
+  (let [p (slurp (str (fs/path repo-root "swarmforge/worker-common.prompt")))]
+    (is (re-find #"squad_run\.sh .+\n" p))
+    (is (str/includes? p "swarm_handoff.sh"))))
+
+(deftest assigned-git-handoff-is-no-arg
+  (let [p (slurp (str (fs/path repo-root "swarmforge/constitution/articles/handoffs.prompt")))]
+    (is (re-find #"(?i)no args|with no file|swarm_handoff\.sh\n" p))
+    (is (str/includes? p "note"))))
+
+(deftest assignment-protocol-is-one-handoff-command
+  ;; Given a story assignment
+  ;; Then protocol is swarm_handoff.sh with no draft template, no theme, story in doc,
+  ;; and other backlog titles listed as non-goals
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-roles! root)
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt") "plan\n")
+      (write-file (fs/path root "stories/replay.md") "# Replay\n\nRestart the hunt.\n")
+      (write-file (fs/path root ".squad/stories/replay/packet")
+                  "story_id: replay\nstory_path: stories/replay.md\n")
+      (write-file (fs/path root ".squad/backlog/bl-1.item")
+                  (str "id: bl-1\n"
+                       "title: Walk the cave\n"
+                       "status: open\n"
+                       "created_at: 2026-08-20T00:00:00Z\n"
+                       "updated_at: 2026-08-20T00:00:00Z\n"
+                       "body: |\n  Walk.\n"))
+      (write-file (fs/path root ".squad/backlog/bl-2.item")
+                  (str "id: bl-2\n"
+                       "title: Replay the hunt\n"
+                       "status: started\n"
+                       "story_id: replay\n"
+                       "created_at: 2026-08-20T00:00:00Z\n"
+                       "updated_at: 2026-08-20T00:00:00Z\n"
+                       "body: |\n  Replay.\n"))
+      (write-file (fs/path root "instructions.md") "Write the plan.\n")
+      (let [created (run {:dir root} (script "squad_assign.sh")
+                         "create" "replay" "analyst" "replay-analysis"
+                         "instructions.md")
+            md (slurp (str (fs/path root ".squad/assignments/replay-analysis/assignment.md")))]
+        (is (zero? (:exit created)))
+        (is (str/includes? md "swarm_handoff.sh"))
+        (is (not (str/includes? md "using this draft shape")))
+        (is (not (str/includes? md "<10-char-commit>")))
+        (is (not (str/includes? md "provided theme")))
+        (is (re-find #"(?i)the story is in this document" md))
+        (is (re-find #"(?i)do not search for a stories directory" md))
+        (is (str/includes? md "Walk the cave"))
+        (is (not (str/includes? md "Non-goals (other backlog items)\n\n- Replay the hunt"))))
+      (finally
+        (fs/delete-tree root)))))

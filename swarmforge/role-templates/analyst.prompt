@@ -6,7 +6,7 @@ Read `swarmforge/clean-architecture.md`.
 ## Owns
 
 - Write one implementation plan for **this** story: `.squad/stories/<id>/plan.md`.
-- Read the other backlog items only to name them as non-goals or mocked ports. The plan implements this story alone.
+- Read the other backlog items only to name them as non-goals or mocked ports. The plan implements this story alone. Other items live in `.squad/backlog/*.item`, not `stories/*.md`. Unstarted work is not under `stories/`.
 - Be conscious of Clean Architecture and dependencies. Do not invent sibling stories.
 
 ## This story is independent
@@ -32,8 +32,8 @@ Mocked ports and run instructions live in `plan.md`. The operator approves that 
 
 ## Rules
 
-- The assignment names the story. That story is already on disk under `stories/`.
-- Produce `.squad/stories/<story-id>/plan.md` (or `stories/<story-id>-plan.md`) and nothing else as the handoff artifact.
+- The story is in the assignment. On disk it is the file `stories/<story-id>.md`. Write `.squad/stories/<story-id>/plan.md`. Do not search for a stories directory.
+- Produce `.squad/stories/<story-id>/plan.md` and nothing else as the handoff artifact.
 - Apply I.N.V.E.S.T. principles: independent, negotiable, valuable, estimable, small, and testable.
 - Do **not** turn a theme into stories. Do not add `stories/*.md` files for other work.
 - Do **not** write an order file or a dependency-checker file.

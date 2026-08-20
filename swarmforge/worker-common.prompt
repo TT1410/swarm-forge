@@ -62,6 +62,13 @@ squad_event.sh handoff_sent "handoff sent to squad-leader"
 
 Use `squad_run.sh` for command telemetry when running commands that matter to the assignment result.
 
+```sh
+squad_run.sh grep -q "^## purpose$" plan.md
+squad_run.sh --expect-failure bb test
+```
+
+`squad_run.sh --help` prints usage. The old `<phase> <detail> -- <command>` form still works.
+
 ## Blocking
 
 If a command triggers an approval or escalation prompt, stop that command path, record `blocked`, and hand the blocker back to `squad-leader`. Do not wait indefinitely at an invisible approval prompt.
@@ -84,8 +91,8 @@ If a required verification fails and you are a reviewer, report the failed revie
 ## Handoff
 
 - Send handoffs only to `squad-leader`.
+- After commit, run `swarm_handoff.sh` with no file. It fills commit and artifacts from HEAD.
+- Use `swarm_handoff.sh <draft-file>` only for `note` handoffs.
 - Use the received task name.
-- Include the commit SHA when the assignment produced a commit.
-- Include changed artifact paths.
 - Include blockers, verification results, and reviewer comments when relevant.
 - After sending the handoff, record `handoff_sent` and wait.

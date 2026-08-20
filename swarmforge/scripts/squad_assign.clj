@@ -305,7 +305,30 @@
 (defn include-module-map? [template]
   (contains? module-map-templates template))
 
-(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text module-map-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence]}]
+(defn other-backlog-titles [root story-id]
+  (let [dir (fs/path root ".squad" "backlog")]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter #(and (fs/regular-file? %)
+                         (str/ends-with? (fs/file-name %) ".item")))
+           (keep (fn [file]
+                   (let [title (read-value file "title")
+                         item-story (read-value file "story_id")]
+                     (when (and (not (str/blank? title))
+                                (not= story-id item-story))
+                       title))))
+           sort
+           vec)
+      [])))
+
+(defn non-goals-section [titles]
+  (when (seq titles)
+    (str "## Non-goals (other backlog items)\n\n"
+         (apply str (for [title titles]
+                      (str "- " title "\n")))
+         "Copy these names into plan.md non-goals. Read `.squad/backlog/<id>.item` only if a port needs a sentence.\n\n")))
+
+(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text module-map-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence other-backlog-titles]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
        (when (and theme-id (not (str/blank? theme-id)) (not= "none" theme-id))
@@ -318,9 +341,9 @@
        "\n"
        (when (and theme-text (not (str/blank? theme-text))
                   (not (str/starts-with? theme-text "No theme")))
-         (str "## Theme\n\n" theme-text "\n\n"))
+         (str "## Context\n\n" theme-text "\n\n"))
        (when module-map-text
-         (str "## Theme Module Map\n\n"
+         (str "## Module Map\n\n"
               module-map-text "\n\n"))
        (when story-text
          (str "## Story\n\n"
@@ -330,6 +353,7 @@
               "```text\n"
               packet-text
               "```\n\n"))
+       (non-goals-section other-backlog-titles)
        (tool-lines "Required Tools" required-tools)
        (tool-lines "Optional Tools" optional-tools)
        (tool-startup-lines template required-tools)
@@ -338,12 +362,10 @@
        instructions-text "\n\n"
        "## Required Transient Protocol\n\n"
        "- Stay inside this assignment boundary.\n"
+       "- The story is in this document. Write `.squad/stories/" story-id "/plan.md` only if you are the analyst. Do not search for a stories directory.\n"
        "- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent. Do not self-retire; after handoff report handoff_sent and leave retirement to squad_retire.sh after the Squad Leader resolves the workflow. Put phase names and progress wording in the detail argument, not the state.\n"
        "- Commit completed work on your transient branch.\n"
-       "- Send the result to `squad-leader` with `swarm_handoff.sh` using this draft shape:\n\n"
-       "```text\n"
-       (result-handoff-template assignment-id template)
-       "```\n"))
+       "- After commit, send the result with `swarm_handoff.sh` (no file).\n"))
 
 (defn themeless-theme? [theme-id]
   (or (str/blank? theme-id) (= "none" theme-id)))
@@ -433,8 +455,8 @@
          "Skip Module Map Recommendations unless the squad leader explicitly assigned a map-only chore.\n"
          "Implement the listed code/structure/acceptance recommendations, verify with bb test and bb acceptance, hand off.\n")
     (str "Follow the " template " role contract for this " scope " assignment.\n"
-         "Use the provided theme, story packet, and role prompt as the source of truth.\n"
-         "Produce the required artifact for " story-id ", commit the work, and hand it off with the provided draft.\n")))
+         "Use the story in this assignment and the role prompt as the source of truth.\n"
+         "Produce the required artifact for " story-id ", commit the work, then run swarm_handoff.sh (no file).\n")))
 
 (defn assignment-instructions-text [context]
   (if (:auto-instructions? context)
@@ -489,7 +511,8 @@
                              (slurp (str packet)))
               :required-tools (tools/required-tools (:root context) (:template context))
               :optional-tools (tools/optional-tools (:root context) (:template context))
-              :required-evidence (tools/required-evidence (:root context) (:template context))}
+              :required-evidence (tools/required-evidence (:root context) (:template context))
+              :other-backlog-titles (other-backlog-titles (:root context) (:story-id context))}
         review (when (= "senior-implementer" (:template context))
                  (architecture-review-text context))]
     (if review
@@ -519,7 +542,7 @@
            "- Skip Module Map Recommendations unless the squad leader assigned a map-only chore.\n"
            "- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent.\n"
            "- Commit completed work on your transient branch.\n"
-           "- Send the result to `squad-leader` with `swarm_handoff.sh`.\n")
+           "- After commit, send the result with `swarm_handoff.sh` (no file).\n")
       (render-assignment (merge context base)))))
 (defn assignment-metadata-text [{:keys [assignment-id theme-id scope story-id template requirement assignment-file now batch-id]}]
   (str "assignment_id: " assignment-id "\n"

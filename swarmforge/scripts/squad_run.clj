@@ -6,7 +6,10 @@
             [clojure.string :as str]))
 
 (def usage-text
-  "Usage: squad_run.sh [--expect-failure] <phase> <detail> -- <command...>")
+  (str "Usage:\n"
+       "  squad_run.sh [--expect-failure] <command...>\n"
+       "  squad_run.sh [--expect-failure] <phase> <detail> -- <command...>\n"
+       "  squad_run.sh --help"))
 
 (def script-dir (-> *file* fs/path fs/parent))
 
@@ -24,18 +27,72 @@
     (when-not (zero? (:exit result))
       (exit! (:exit result) (str/trim (str (:err result)))))))
 
+(defn parse-run-args [args]
+  (let [args (vec args)]
+    (cond
+      (or (empty? args)
+          (#{"--help" "-h"} (first args)))
+      {:help? true}
+
+      :else
+      (loop [i 0
+             expected-failure? false
+             phase nil
+             detail nil]
+        (let [a (get args i)]
+          (cond
+            (nil? a)
+            {:error true}
+
+            (= a "--expect-failure")
+            (recur (inc i) true phase detail)
+
+            (= a "--phase")
+            (if-let [v (get args (inc i))]
+              (recur (+ i 2) expected-failure? v detail)
+              {:error true})
+
+            (= a "--detail")
+            (if-let [v (get args (inc i))]
+              (recur (+ i 2) expected-failure? phase v)
+              {:error true})
+
+            (= a "--")
+            (let [cmd (subvec args (inc i))]
+              (if (empty? cmd)
+                {:error true}
+                {:phase (or phase "run")
+                 :detail (or detail (str/join " " cmd))
+                 :expected-failure? expected-failure?
+                 :command (vec cmd)}))
+
+            :else
+            (let [remaining (subvec args i)
+                  dash (.indexOf remaining "--")]
+              (if (>= dash 0)
+                (let [before (subvec remaining 0 dash)
+                      cmd (subvec remaining (inc dash))]
+                  (if (or (empty? before) (empty? cmd))
+                    {:error true}
+                    {:phase (or phase (first before))
+                     :detail (or detail (str/join " " (next before)))
+                     :expected-failure? expected-failure?
+                     :command (vec cmd)}))
+                (if (empty? remaining)
+                  {:error true}
+                  {:phase (or phase "run")
+                   :detail (or detail (str/join " " remaining))
+                   :expected-failure? expected-failure?
+                   :command (vec remaining)})))))))))
+
 (defn split-args [args]
-  (let [[flags args] (split-with #(str/starts-with? % "--") args)
-        expected-failure? (contains? (set flags) "--expect-failure")]
-    (when (some #(not= "--expect-failure" %) flags)
-      (exit! 1 usage-text))
-    (let [[before after] (split-with #(not= "--" %) args)]
-    (when (or (empty? before) (< (count before) 2) (empty? after) (empty? (rest after)))
-      (exit! 1 usage-text))
-    {:phase (first before)
-     :detail (str/join " " (rest before))
-     :expected-failure? expected-failure?
-     :command (vec (rest after))})))
+  (let [parsed (parse-run-args args)]
+    (cond
+      (:help? parsed)
+      (do (println usage-text) (System/exit 0))
+      (:error parsed)
+      (exit! 1 usage-text)
+      :else parsed)))
 
 (defn -main [& args]
   (let [{:keys [phase detail command expected-failure?]} (split-args args)

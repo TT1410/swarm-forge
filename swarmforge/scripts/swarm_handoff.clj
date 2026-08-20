@@ -7,7 +7,13 @@
             [clojure.string :as str]))
 
 (def usage-text
-  (str "Usage: swarm_handoff.sh <draft-file>\n\n"
+  (str "Usage:\n"
+       "  swarm_handoff.sh\n"
+       "  swarm_handoff.sh --review-decision accepted\n"
+       "  swarm_handoff.sh <draft-file>\n"
+       "  swarm_handoff.sh --help\n\n"
+       "No file: fill the assignment result-handoff.draft from HEAD and queue it.\n"
+       "A path is for note handoffs and odd cases.\n\n"
        "Draft formats:\n\n"
        "type: git_handoff\n"
        "to: <role>[,<role>...]\n"
@@ -17,7 +23,7 @@
        "assignment: <assignment-id>\n"
        "template: <role-template>\n"
        "artifacts: <comma-separated-paths-or-none>\n"
-       "review_decision: <accepted|changes-requested> # review assignments only\n\n"
+       "review_decision: accepted or changes-requested  # review assignments only\n\n"
        "type: note\n"
        "to: <role>[,<role>...]\n"
        "priority: NN\n"
@@ -437,10 +443,18 @@
     (println)
     (println usage-text)))
 
-(defn ensure-draft-args! [args]
-  (when (not= 1 (count args))
-    (usage)
-    (System/exit 1)))
+(defn help-arg? [args]
+  (boolean (some #{"--help" "-h"} args)))
+
+(defn parse-handoff-args [args]
+  (let [args (vec args)]
+    (cond
+      (help-arg? args) {:help? true}
+      (empty? args) {:assignment? true}
+      (and (= "--review-decision" (first args)) (second args) (nil? (get args 2)))
+      {:assignment? true :review-decision (second args)}
+      (= 1 (count args)) {:draft (fs/path (first args))}
+      :else {:error true})))
 
 (defn ensure-draft-file! [draft]
   (when-not (fs/regular-file? draft)
@@ -459,27 +473,96 @@
       (System/exit 2))
     {:headers headers :validation validation}))
 
-(defn queue-handoff! [draft sender {:keys [headers validation]}]
-  (let [recipients (:recipients validation)
-        canonical-commit (:canonical-commit validation)]
-    (if-let [existing (duplicate-git-handoff sender recipients headers canonical-commit)]
-      (do
-        (fs/delete draft)
-        (println "HANDOFF EXISTING:" (str existing)))
-      (let [outbox-file (write-handoff! {:headers headers
-                                         :recipients recipients
-                                         :canonical-commit canonical-commit
-                                         :sender sender})]
-        (fs/delete draft)
-        (println "HANDOFF QUEUED:" (str outbox-file))))))
+(defn queue-handoff!
+  ([draft sender checked]
+   (queue-handoff! draft sender checked false))
+  ([draft sender {:keys [headers validation]} keep-draft?]
+   (let [recipients (:recipients validation)
+         canonical-commit (:canonical-commit validation)
+         finish! (fn [line]
+                   (when-not keep-draft?
+                     (fs/delete draft))
+                   (println line))]
+     (if-let [existing (duplicate-git-handoff sender recipients headers canonical-commit)]
+       (finish! (str "HANDOFF EXISTING: " existing))
+       (let [outbox-file (write-handoff! {:headers headers
+                                          :recipients recipients
+                                          :canonical-commit canonical-commit
+                                          :sender sender})]
+         (finish! (str "HANDOFF QUEUED: " outbox-file)))))))
 
-(defn -main [& args]
-  (ensure-draft-args! args)
-  (let [draft (fs/path (first args))
-        sender (sender-role)]
+(defn read-kv [file field]
+  (when (fs/regular-file? file)
+    (read-header file field)))
+
+(defn head-commit []
+  (let [result (command "." "git" "rev-parse" "--short=10" "HEAD")]
+    (when-not (zero? (:exit result))
+      (exit! 1 "Cannot read HEAD commit."))
+    (str/trim (:out result))))
+
+(defn head-artifacts []
+  (let [result (command "." "git" "diff-tree" "--no-commit-id" "--name-only" "-r" "HEAD")
+        paths (->> (str/split-lines (or (:out result) ""))
+                   (remove str/blank?))]
+    (if (seq paths)
+      (str/join "," paths)
+      "none")))
+
+(defn write-draft-headers! [draft headers ordered]
+  (let [fields (distinct (concat ordered ["commit" "artifacts" "review_decision"]))
+        lines (keep (fn [field]
+                      (when-let [value (get headers field)]
+                        (str field ": " value)))
+                    fields)]
+    (spit (str draft) (str (str/join "\n" lines) "\n"))))
+
+(defn fill-assignment-draft! [draft commit artifacts review-decision]
+  (let [{:keys [headers ordered]} (parse-draft draft)
+        headers (-> headers
+                    (assoc "commit" commit)
+                    (assoc "artifacts" artifacts)
+                    (cond-> (not (str/blank? review-decision))
+                      (assoc "review_decision" review-decision)))]
+    (write-draft-headers! draft headers ordered)
+    draft))
+
+(defn reviewer-draft? [headers]
+  (contains? #{"code-reviewer" "architect"} (get headers "template")))
+
+(defn ensure-review-decision! [headers]
+  (when (and (reviewer-draft? headers)
+             (not (#{"accepted" "changes-requested"} (get headers "review_decision"))))
+    (exit! 2 "Review assignments require --review-decision accepted or changes-requested.")))
+
+(defn assignment-git-handoff! [review-decision]
+  (let [sender (sender-role)
+        root (project-root)
+        task-id (read-kv (fs/path root ".squad" "agents" sender "metadata") "task_id")
+        draft (when task-id
+                (fs/path root ".squad" "assignments" task-id "result-handoff.draft"))]
+    (when (str/blank? task-id)
+      (exit! 1 "Agent metadata task_id is missing."))
     (ensure-draft-file! draft)
     (ensure-known-sender! sender)
-    (queue-handoff! draft sender (checked-draft draft))))
+    (fill-assignment-draft! draft (head-commit) (head-artifacts) review-decision)
+    (let [checked (checked-draft draft)]
+      (ensure-review-decision! (:headers checked))
+      (queue-handoff! draft sender checked true))))
+
+(defn -main [& args]
+  (let [parsed (parse-handoff-args args)]
+    (cond
+      (:help? parsed) (do (usage) (System/exit 0))
+      (:error parsed) (do (usage) (System/exit 1))
+      (:draft parsed)
+      (let [draft (:draft parsed)
+            sender (sender-role)]
+        (ensure-draft-file! draft)
+        (ensure-known-sender! sender)
+        (queue-handoff! draft sender (checked-draft draft)))
+      :else
+      (assignment-git-handoff! (:review-decision parsed)))))
 
 (when (= *file* (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))

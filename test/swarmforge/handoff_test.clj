@@ -114,6 +114,55 @@
                          :body "merge_and_process sender 0123456789"}
                         attrs))))
 
+(deftest swarm-handoff-help-prints-usage
+  ;; Given swarm_handoff.sh --help
+  ;; Then it prints usage and does not treat --help as a draft path
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false}
+                      (script "swarm_handoff.sh") "--help")
+          text (str (:out result) (:err result))]
+      (is (zero? (:exit result)))
+      (is (str/includes? text "Usage:"))
+      (is (not (str/includes? text "Draft file not found"))))))
+
+(deftest swarm-handoff-no-args-fills-assignment-draft-from-head
+  ;; Given an assignment draft with placeholders and a commit on HEAD
+  ;; When swarm_handoff.sh runs with no file
+  ;; Then it queues a git_handoff from HEAD and keeps the filled assignment draft
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (write-file (fs/path root "plan.md") "# plan\n")
+    (run {:dir root} "git" "add" "plan.md")
+    (run {:dir root} "git" "commit" "-q" "-m" "Add plan")
+    (let [commit (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+      (write-file (fs/path root ".squad/agents/sender/metadata")
+                  "task_id: cave-analysis\n")
+      (write-file (fs/path root ".squad/assignments/cave-analysis/result-handoff.draft")
+                  (str "type: git_handoff\n"
+                       "to: receiver\n"
+                       "priority: 50\n"
+                       "task: cave-analysis\n"
+                       "commit: <10-char-commit>\n"
+                       "assignment: cave-analysis\n"
+                       "template: analyst\n"
+                       "artifacts: <comma-separated-paths-or-none>\n"))
+      (let [result (run {:dir root
+                         :env {"SWARMFORGE_ROLE" "sender"
+                               "SWARMFORGE_PROJECT_ROOT" (str root)}}
+                        (script "swarm_handoff.sh"))
+            queued (-> (:out result) str/trim (str/replace #"^HANDOFF QUEUED: " ""))
+            draft (slurp (str (fs/path root ".squad/assignments/cave-analysis/result-handoff.draft")))
+            content (read-file queued)]
+        (is (zero? (:exit result)))
+        (is (str/includes? content (str "commit: " commit "\n")))
+        (is (str/includes? content "artifacts: plan.md\n"))
+        (is (str/includes? draft (str "commit: " commit "\n")))
+        (is (str/includes? draft "artifacts: plan.md\n"))
+        (is (not (str/includes? draft "<10-char-commit>")))))))
+
 (deftest swarm-handoff-validates-and-queues-git-handoffs
   (let [root (tmp-dir)
         commit (init-repo! root)]

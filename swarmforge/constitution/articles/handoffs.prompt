@@ -1,7 +1,8 @@
 # Handoff Rules
 
 ## Sending Handoffs
-- Write a draft handoff file with only structured headers, then run `swarm_handoff.sh <draft-file>`.
+- For assigned `git_handoff`, commit first, then run `swarm_handoff.sh` with no args (no file). It fills `commit` and `artifacts` from HEAD on the assignment `result-handoff.draft` and queues it. Reviewers pass `--review-decision accepted` or `changes-requested`.
+- `swarm_handoff.sh --help` prints usage. Do not pass `--help` as a draft path.
 - Use only these message types:
   - `git_handoff`
   - `note`
@@ -10,19 +11,7 @@
 - When blocked by ambiguity, contradiction, or test/specification conflict,
   stop and ask for clarification; do not send a `note` handoff unless one of
   the explicit authorities above directed that note.
-- For `git_handoff`, commit first, then write:
-
-```text
-type: git_handoff
-to: <role>[,<role>...]
-priority: NN
-task: <short-stable-task-name>
-commit: <10-character-commit-abbrev>
-assignment: <assignment-id>
-template: <role-template>
-artifacts: <comma-separated-paths-or-none>
-```
-
+- For a `note`, write a draft file and run `swarm_handoff.sh <draft-file>`.
 - In the squad workflow, transient agents do not forward work to other
   transient agents. Send completed assigned work only back to `squad-leader`.
 - The squad leader uses `squad_next.sh` to decide every downstream action after
@@ -38,9 +27,10 @@ priority: NN
 message: <one line, max 80 chars>
 ```
 
-- If `swarm_handoff.sh` reports validation errors, repair the draft and rerun it.
-- After a successful send, the helper removes the draft file. If you need to
-  remove a stale draft manually, use `rm <draft-file>`, not `rm -f`.
+- If `swarm_handoff.sh` reports validation errors, repair and rerun it.
+- After a successful send of a path draft, the helper removes that draft file.
+  The assignment `result-handoff.draft` is kept as the record. If you need to
+  remove a stale path draft manually, use `rm <draft-file>`, not `rm -f`.
 - Do not write long handoff bodies. The helper generates the delivered payload.
 - Do not send tmux notifications directly.
 - Do not hand-edit, merge, stage, or commit handoff runtime state.
