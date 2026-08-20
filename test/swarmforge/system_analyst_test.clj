@@ -105,6 +105,51 @@
         (is (not (str/includes? md "provided theme"))))
       (finally (fs/delete-tree root)))))
 
+(deftest story-assignment-names-the-merged-frame
+  ;; Given .squad/product has frame_sha
+  ;; When a later story assignment is created
+  ;; Then assignment.md names frame.md, qa/product.md, and extend; not provided theme
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root
+                       "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/role-templates/analyst.prompt")
+                  (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt"))))
+      (write-file (fs/path root "stories/replay.md") "# Replay\n\nRestart the hunt.\n")
+      (write-file (fs/path root ".squad/stories/replay/packet")
+                  "story_id: replay\nstory_path: stories/replay.md\n")
+      (write-file (fs/path root "instructions.md") "Write the plan.\n")
+      (write-file (fs/path root "frame.md") "# Frame\n\nRun: bb run\n")
+      (product/write-product! root {"state" "framed"
+                                    "frame_sha" "abc1234"
+                                    "frame_path" "frame.md"
+                                    "qa_path" "qa/product.md"
+                                    "run" "bb run"})
+      (let [created (run {:dir root} (script "squad_assign.sh")
+                         "create" "replay" "analyst" "replay-analysis"
+                         "instructions.md")
+            md (slurp (str (fs/path root ".squad/assignments/replay-analysis/assignment.md")))]
+        (is (zero? (:exit created)))
+        (is (str/includes? md "frame.md"))
+        (is (str/includes? md "qa/product.md"))
+        (is (re-find #"(?i)extend" md))
+        (is (str/includes? md "Run: bb run"))
+        (is (not (str/includes? md "provided theme"))))
+      (finally (fs/delete-tree root)))))
+
+(deftest frame-section-without-run-key-points-at-frame-md
+  ;; Given a framed product with no run key
+  ;; When the assignment frame section is rendered
+  ;; Then Run points at frame.md
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"frame_sha" "abc1234"})
+      (is (str/includes? (assign/frame-section root) "Run: see frame.md"))
+      (is (nil? (assign/frame-section nil)))
+      (finally (fs/delete-tree root)))))
+
 (deftest system-analyst-result-requires-frame-and-qa-product
   ;; Given a system-analyst git_handoff result
   ;; When artifacts omit frame.md or qa/product.md

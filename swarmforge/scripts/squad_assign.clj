@@ -5,6 +5,7 @@
             [babashka.process :as process]
             [squad-config :as cfg]
             [squad-lease :as lease]
+            [squad-product :as product]
             [squad-tool-table :as tools]
             [squad-transition :as transition]
             [clojure.edn :as edn]
@@ -345,7 +346,19 @@
                       (str "- " title "\n")))
          "Copy these names into plan.md non-goals. Read `.squad/backlog/<id>.item` only if a port needs a sentence.\n\n")))
 
-(defn render-assignment [{:keys [theme-id story-id template assignment-id scope theme-text module-map-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence other-backlog-titles]}]
+(defn frame-run-line [p]
+  (let [run (get p "run")]
+    (if (str/blank? run) "see frame.md" run)))
+
+(defn frame-section [root]
+  (when root
+    (let [p (product/read-product root)]
+      (when (product/frame-ready? p)
+        (str "## Frame\n\n"
+             "The product frame is already on master (`frame.md`). Extend that one executable and UI. Do not add a second -main or probe app. QA-proc writers edit `qa/product.md` placeholders.\n\n"
+             "Run: " (frame-run-line p) "\n\n")))))
+
+(defn render-assignment [{:keys [root theme-id story-id template assignment-id scope theme-text module-map-text story-text instructions-text requirement packet-text required-tools optional-tools required-evidence other-backlog-titles]}]
   (str "# Squad Assignment\n\n"
        "assignment_id: " assignment-id "\n"
        (when (and theme-id (not (str/blank? theme-id)) (not= "none" theme-id))
@@ -371,6 +384,7 @@
               "```text\n"
               packet-text
               "```\n\n"))
+       (frame-section root)
        (non-goals-section other-backlog-titles)
        (tool-lines "Required Tools" required-tools)
        (tool-lines "Optional Tools" optional-tools)
