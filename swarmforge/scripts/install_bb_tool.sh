@@ -1,16 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-if [ "$#" -ne 2 ]; then
-  echo "Usage: install_bb_tool.sh <tool-root> <bb-task>" >&2
+if [ "$#" -ne 1 ]; then
+  echo "Usage: install_bb_tool.sh <bb-task>" >&2
   exit 1
 fi
 
-tool_root="$1"
-bb_task="$2"
+bb_task="$1"
+tool_root="${SWARMFORGE_TOOL_SRC_DIR:-}"
 
 if [ -z "${SWARMFORGE_TOOL_TARGET:-}" ]; then
   echo "SWARMFORGE_TOOL_TARGET is required" >&2
+  exit 1
+fi
+
+if [ -z "$tool_root" ]; then
+  echo "SWARMFORGE_TOOL_SRC_DIR is required" >&2
   exit 1
 fi
 

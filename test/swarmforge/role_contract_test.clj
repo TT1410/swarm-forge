@@ -174,7 +174,9 @@
         startup (tools/startup-instructions (tools/required-tools repo-root "gherkin-writer"))]
     (is (str/includes? startup "## Tool Startup"))
     (is (str/includes? startup "squad_tool.sh require gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest"))
-    (is (str/includes? startup (str "squad_tool.sh ensure gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest -- 'bash' '" helper "' '/Users/unclebob/projects/Acceptance-Pipeline-Specification' 'gherkin-parser'")))
+    (is (str/includes? startup (str "squad_tool.sh ensure gherkin-parser github.com/unclebob/Acceptance-Pipeline-Specification latest -- 'bash' '" helper "' 'gherkin-parser'")))
+    (is (not (str/includes? startup "/Users/unclebob/projects/Acceptance-Pipeline-Specification")))
+    (is (not (str/includes? startup "/Users/unclebob/projects/clojure/")))
     (is (str/includes? startup "squad_tool.sh require ir-dry-checker github.com/unclebob/Acceptance-Pipeline-Specification latest"))
     (is (str/includes? startup "record `blocked`"))))
 

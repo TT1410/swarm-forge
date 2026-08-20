@@ -3,6 +3,7 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
+            [squad-tool :as tool]
             [swarmforge.test-support :refer :all]))
 
 (deftest squad-tool-registers-executables-in-shared-cache
@@ -163,3 +164,72 @@
                 (str/includes? (slurp (str local-manifest)) "mode: copy"))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest tool-table-installs-from-github-not-a-local-checkout
+  ;; Given the canonical tool table
+  ;; Then every tool source is GitHub and no install command points at a local working copy
+  (let [table (edn/read-string
+               (slurp (str (fs/path repo-root "swarmforge/tool-table.edn"))))]
+    (doseq [[name spec] (:tools table)]
+      (is (str/starts-with? (str (:source spec)) "github.com/")
+          (str name " source must be a GitHub repo"))
+      (is (not (re-find #"/Users/|/home/" (str (:install-command spec))))
+          (str name " must not install from a local working copy"))
+      (is (= "latest" (:version spec))
+          (str name " version is latest from GitHub")))))
+
+(deftest github-https-url-is-the-clone-source
+  (is (= "https://github.com/unclebob/Acceptance-Pipeline-Specification.git"
+         (tool/github-https-url "github.com/unclebob/Acceptance-Pipeline-Specification")))
+  (is (nil? (tool/github-https-url "/Users/unclebob/projects/Acceptance-Pipeline-Specification"))))
+
+(deftest latest-ensure-refreshes-instead-of-reusing-stale-cache
+  ;; Given a tool already cached at version latest
+  ;; When ensure latest runs again
+  ;; Then the install command runs again (GitHub refresh), not a cache hit
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root
+                       "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (let [install (run {:dir root}
+                         (script "squad_tool.sh")
+                         "ensure" "built-tool" "github.com/example/built-tool" "latest"
+                         "--" "sh" "-c"
+                         "printf '#!/usr/bin/env sh\nprintf \"v1\\\\n\"\n' > \"$SWARMFORGE_TOOL_TARGET\"")
+            refresh (run {:dir root}
+                         (script "squad_tool.sh")
+                         "ensure" "built-tool" "github.com/example/built-tool" "latest"
+                         "--" "sh" "-c"
+                         "printf '#!/usr/bin/env sh\nprintf \"v2\\\\n\"\n' > \"$SWARMFORGE_TOOL_TARGET\"")
+            cached (fs/path root ".swarmforge/tools/bin/built-tool")]
+        (is (str/includes? (:out install) "STATE: installed"))
+        (is (str/includes? (:out refresh) "STATE: installed"))
+        (is (= "v2" (str/trim (:out (run {:dir root} (str cached)))))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest git-source-sync-clones-and-updates-from-remote
+  ;; Given a GitHub-shaped git remote
+  ;; When the tool source is synced at latest
+  ;; Then the cache copy matches the remote HEAD, including a later update
+  (let [upstream (tmp-dir)
+        dest (tmp-dir)]
+    (try
+      (init-repo! upstream)
+      (write-file (fs/path upstream "bb.edn") "{:tasks {ping {:task (println :ok)}}}\n")
+      (write-file (fs/path upstream "marker") "one\n")
+      (run {:dir upstream} "git" "add" "bb.edn" "marker")
+      (run {:dir upstream} "git" "commit" "-q" "-m" "one")
+      (fs/delete-tree dest)
+      (tool/sync-git-source! dest (str upstream) "latest")
+      (is (= "one\n" (slurp (str (fs/path dest "marker")))))
+      (write-file (fs/path upstream "marker") "two\n")
+      (run {:dir upstream} "git" "add" "marker")
+      (run {:dir upstream} "git" "commit" "-q" "-m" "two")
+      (tool/sync-git-source! dest (str upstream) "latest")
+      (is (= "two\n" (slurp (str (fs/path dest "marker")))))
+      (finally
+        (fs/delete-tree upstream)
+        (when (fs/exists? dest) (fs/delete-tree dest))))))

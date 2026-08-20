@@ -2,6 +2,8 @@
 
 ## Startup Tools
 - Required tool identities are defined by `swarmforge/tool-table.edn`.
+- GitHub repositories named in that table are the **sole source of truth** for APS and quality tools. Do not install them from a local working copy.
+- Version `latest` means the current default branch on GitHub. `squad_tool.sh ensure` for `latest` refreshes from GitHub before use.
 - At startup, agents must load required tools from the generated assignment tool section by running `squad_tool.sh require <tool-name> <source> <version>`.
 - If a required tool is missing and the assignment includes an exact authorized install command, use `squad_tool.sh ensure <tool-name> <source> <version> -- <install-command...>`.
 - If a required tool is missing and no install command is authorized, record `blocked` and hand the blocker back to `squad-leader`.
@@ -30,8 +32,8 @@
 - Keep property tests separate from normal verification. Do not include property-test tags in normal unit coverage, Gherkin acceptance mutation, language mutation tools, CRAP, or coverage commands unless the role owns property-test verification or the user explicitly asks for property tests.
 
 ## Acceptance Pipeline
-- Use github.com/unclebob/Acceptance-Pipeline-Specification for Gherkin acceptance tests.
-- The Acceptance Pipeline Specification supplies `gherkin-parser` and `gherkin-mutator`; install or build those commands from that repository instead of reimplementing them in the project.
+- Use github.com/unclebob/Acceptance-Pipeline-Specification for Gherkin acceptance tests. That GitHub repository is the only APS tree SwarmForge may install.
+- The Acceptance Pipeline Specification supplies `gherkin-parser` and `gherkin-mutator`; install those commands from GitHub via `squad_tool.sh ensure` instead of reimplementing them or wrapping a local checkout.
 - Prefer the Babashka APS tools for `gherkin-parser`, `gherkin-mutator`, and related APS support commands.
 - Use Go-based APS tools only if the Babashka APS tools do not work in the current project environment.
 - Project-specific acceptance pipeline components are the acceptance entrypoint generator, acceptance runtime, project step handlers, thin runner adapter, and convenience scripts (six-pack coder model). Prefer additive step modules over one mega runner file.

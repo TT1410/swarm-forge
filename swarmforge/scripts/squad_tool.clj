@@ -381,10 +381,61 @@
            (str "SQUAD_TOOL_INSTALL_INCOMPLETE: " tool)
            (str "REASON: missing target executable " target))))
 
+(defn github-https-url
+  "Clone URL for a github.com/org/repo source. Local paths are not a source of truth."
+  [source]
+  (when (and (string? source) (str/starts-with? source "github.com/"))
+    (str "https://" source ".git")))
+
+(defn latest-version? [version]
+  (= "latest" (str/lower-case (str version))))
+
+(defn git-ok! [result context]
+  (when-not (zero? (:exit result))
+    (exit! (or (:exit result) 1)
+           (str "SQUAD_TOOL_GIT_FAILED: " context)
+           (str/trim (str (:err result) "\n" (:out result)))))
+  result)
+
+(defn git-clone! [url dir]
+  (when (fs/exists? dir)
+    (fs/delete-tree dir))
+  (when-let [parent (fs/parent dir)]
+    (fs/create-dirs parent))
+  (git-ok! (process/sh {:continue true} "git" "clone" "--" url (str dir))
+           (str "clone " url)))
+
+(defn git-in [dir & args]
+  (git-ok! (apply process/sh {:continue true :dir (str dir)} args)
+           (str/join " " args)))
+
+(defn git-update! [dir version]
+  (git-in dir "git" "fetch" "origin")
+  (if (latest-version? version)
+    (let [ref (str/trim (:out (git-in dir "git" "rev-parse" "--abbrev-ref" "origin/HEAD")))]
+      (git-in dir "git" "reset" "--hard" ref))
+    (git-in dir "git" "checkout" "--detach" (str version))))
+
+(defn sync-git-source! [dir url version]
+  (if (fs/exists? (fs/path dir ".git"))
+    (git-update! dir version)
+    (do
+      (git-clone! url dir)
+      (git-update! dir version))))
+
+(defn install-bb-tool-command? [install-command]
+  (boolean (some #(str/includes? (str %) "install_bb_tool.sh") install-command)))
+
+(defn maybe-sync-github-source! [tool-src source version install-command]
+  (when-let [url (and (install-bb-tool-command? install-command)
+                      (github-https-url source))]
+    (sync-git-source! tool-src url version)))
+
 (defn install-tool! [paths tool source version install-command]
   (let [target (executable-target paths tool)
         tool-src (fs/path (:src paths) tool)]
     (fs/create-dirs tool-src)
+    (maybe-sync-github-source! tool-src source version install-command)
     (fs/delete-if-exists target)
     (ensure-install-success! tool (run-install-command! paths tool source version target tool-src install-command))
     (ensure-install-target! tool target)
@@ -400,7 +451,8 @@
         lock-dir (acquire-lock! (:locks paths) tool)]
     (try
       (let [state (tool-state paths tool source version)]
-        (if (= :available (:state state))
+        (if (and (not (latest-version? version))
+                 (= :available (:state state)))
           (print-cached-tool! tool state)
           (install-tool! paths tool source version install-command)))
       (finally
