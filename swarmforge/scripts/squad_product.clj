@@ -27,6 +27,21 @@
 (defn frame-ready? [p]
   (boolean (frame-sha p)))
 
+(defn pending-frame-approval? [root]
+  (fs/regular-file?
+   (fs/path root ".squad" "approvals" "pending" "frame__product.approval")))
+
+(defn frame-view
+  "Cockpit frame: none | pending | in_review | on_master."
+  [root]
+  (let [p (read-product root)
+        sha (frame-sha p)]
+    (cond
+      sha {"state" "on_master" "sha" sha}
+      (pending-frame-approval? root) {"state" "in_review"}
+      (= "frame_pending" (get p "state")) {"state" "pending"}
+      :else {"state" "none"})))
+
 (defn record-frame-sha!
   "Stamp the merged frame onto the product record. Snapshot ids stay."
   [root sha]

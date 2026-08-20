@@ -1470,6 +1470,7 @@
               "batches" batches
               "work_in_flight" wif
               "backlog" backlog
+              "frame" (product/frame-view root)
               "blockers" (blocker-state root assignments agents)
               "stalls" stalls
               "approvals" approvals

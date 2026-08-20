@@ -22,7 +22,11 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .btn-primary:hover,.btn-primary:focus-visible{background:#4a6b54;border-color:#4a6b54;color:#fff}
 .btn-primary:active{background:#2a3f32;border-color:#1e2e24;color:#fff;transform:translateY(1px)}
 .btn-sm{padding:4px 8px;font-size:11px}
+.btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+.btn:disabled:hover,.btn:disabled:active,.btn:disabled:focus-visible{background:inherit;transform:none}
+.btn-approve:disabled:hover,.btn-approve:disabled:active,.btn-approve:disabled:focus-visible{background:#2f6b3a;border-color:#2f6b3a;color:#fff}
 .btn-approve{background:#2f6b3a;border-color:#2f6b3a;color:#fff}
+#frame-status{font-weight:600;color:var(--ink)}
 .btn-approve:hover,.btn-approve:focus-visible{background:#3d8a4a;border-color:#3d8a4a;color:#fff}
 .btn-approve:active{background:#1e4a28;border-color:#16381e;color:#fff;transform:translateY(1px)}
 .attention{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:120px;overflow:auto}
@@ -175,6 +179,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
     <main class="board">
       <div class="board-toolbar">
         <span>Board</span>
+        <span id="frame-status">Frame: none</span>
         <span class="spacer"></span>
         <button type="button" class="deck-btn" id="backlog-deck" title="Backlog" aria-label="Backlog">
           <span class="deck-icon">
@@ -183,7 +188,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
           </span>
           <span class="deck-label">Backlog</span>
         </button>
-        <button type="button" class="btn btn-sm btn-approve" id="btn-start-backlog">Start backlog</button>
+        <button type="button" class="btn btn-sm btn-approve" id="btn-start-backlog" disabled>Start backlog</button>
         <button type="button" class="btn btn-sm btn-primary" id="btn-add-item">Add Story</button>
       </div>
       <div class="columns" id="columns">
@@ -681,6 +686,21 @@ function openStoryDetail(s) {
   });
 }
 
+function renderFrame(data) {
+  const frame=data.frame||{};
+  const labels={none:'none',pending:'pending',in_review:'in review',on_master:'on master'};
+  const el=document.getElementById('frame-status');
+  if(el) el.textContent='Frame: '+(labels[frame.state]||frame.state||'none');
+  const openItems=(data.backlog||[]).some(b=>b.status==='open'||!b.status);
+  const sha=frame.sha;
+  const inflight=(data.work_in_flight||data.assignments||[]).some(a=>{
+    const t=a.role||a.template||'';
+    const s=a.state||'';
+    return t==='system-analyst' && s!=='merged' && s!=='retired';
+  });
+  document.getElementById('btn-start-backlog').disabled=!openItems||!!sha||inflight;
+}
+
 async function refresh() {
   try {
     const data=await (await fetch('/api/state',{cache:'no-store'})).json();
@@ -695,6 +715,7 @@ async function refresh() {
     document.getElementById('error').textContent='';
     // expose for tests / console
     window.__lastState=data;
+    renderFrame(data);
     renderAttention(data);
     // data.stalls used by tests and Attention
     void data.stalls;

@@ -516,3 +516,113 @@
         (is (= "system-analyst" (get row "role")))
         (is (str/blank? (get row "story_id"))))
       (finally (fs/delete-tree root)))))
+
+(deftest dashboard-wif-does-not-require-story-card-for-system-analyst
+  ;; Given the Work Queue renderer
+  ;; Then a row can label from assignment_id when story_id is blank
+  (let [html web/dashboard-html]
+    (is (re-find #"w\.story\|\|w\.story_id\|\|w\.assignment_id" html))))
+
+(deftest web-state-frame-is-none-without-product
+  ;; Given no product file
+  ;; When web-state is built
+  ;; Then frame state is none and sha is absent
+  (let [root (tmp-dir)]
+    (try
+      (let [frame (get (web/web-state root) "frame")]
+        (is (= "none" (get frame "state")))
+        (is (str/blank? (str (get frame "sha")))))
+      (finally (fs/delete-tree root)))))
+
+(deftest web-state-frame-is-none-when-product-empty
+  ;; Given an empty product file
+  ;; When web-state is built
+  ;; Then frame state is none
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {})
+      (is (= "none" (get-in (web/web-state root) ["frame" "state"])))
+      (finally (fs/delete-tree root)))))
+
+(deftest web-state-frame-is-pending-when-snapshot-has-no-sha
+  ;; Given product state frame_pending, no frame_sha, no pending frame approval
+  ;; When web-state is built
+  ;; Then frame state is pending
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "frame_pending"
+                                    "open_item_ids" "bl-1"})
+      (let [frame (get (web/web-state root) "frame")]
+        (is (= "pending" (get frame "state")))
+        (is (str/blank? (str (get frame "sha")))))
+      (finally (fs/delete-tree root)))))
+
+(deftest web-state-frame-is-in-review-when-frame-approval-pending
+  ;; Given a pending frame__product approval
+  ;; When web-state is built
+  ;; Then frame state is in_review
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "frame_pending"
+                                    "assignment_id" "system-analysis"})
+      (write-file (fs/path root ".squad/approvals/pending/frame__product.approval")
+                  "target_kind: product\ntarget_id: product\ngate: frame\nstate: pending\n")
+      (let [frame (get (web/web-state root) "frame")]
+        (is (= "in_review" (get frame "state")))
+        (is (str/blank? (str (get frame "sha")))))
+      (finally (fs/delete-tree root)))))
+
+(deftest web-state-frame-is-on-master-when-sha-set
+  ;; Given frame_sha is set
+  ;; When web-state is built
+  ;; Then frame state is on_master and sha is the value
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "framed"
+                                    "frame_sha" "abc1234"})
+      (write-file (fs/path root ".squad/approvals/pending/frame__product.approval")
+                  "target_kind: product\ntarget_id: product\ngate: frame\n")
+      (let [frame (get (web/web-state root) "frame")]
+        (is (= "on_master" (get frame "state")))
+        (is (= "abc1234" (get frame "sha"))))
+      (finally (fs/delete-tree root)))))
+
+(deftest api-state-json-includes-frame
+  ;; Given a framed product
+  ;; When GET /api/state
+  ;; Then the JSON body includes the frame object
+  (let [root (tmp-dir)]
+    (try
+      (product/write-product! root {"state" "framed" "frame_sha" "deadbeef"})
+      (let [resp (web/handle-web-request root "GET" "/api/state" "")]
+        (is (= 200 (:status resp)))
+        (is (str/includes? (:body resp) "\"frame\""))
+        (is (str/includes? (:body resp) "\"on_master\""))
+        (is (str/includes? (:body resp) "\"deadbeef\"")))
+      (finally (fs/delete-tree root)))))
+
+(deftest dashboard-has-frame-status
+  ;; Given the cockpit HTML
+  ;; Then the toolbar shows frame-status near Start backlog
+  (let [html web/dashboard-html]
+    (is (str/includes? html "id=\"frame-status\""))
+    (is (re-find #"(?s)id=\"frame-status\".*id=\"btn-start-backlog\"|id=\"btn-start-backlog\".*id=\"frame-status\"" html))))
+
+(deftest dashboard-updates-frame-status-from-state
+  ;; Given the cockpit script
+  ;; Then refresh sets #frame-status from data.frame as Frame: none etc.
+  (let [html web/dashboard-html]
+    (is (re-find #"getElementById\('frame-status'\)" html))
+    (is (str/includes? html "Frame: "))
+    (is (re-find #"data\.frame" html))
+    (is (str/includes? html "in review"))
+    (is (str/includes? html "on master"))))
+
+(deftest dashboard-start-backlog-enabled-only-when-open-and-idle
+  ;; Given the cockpit script
+  ;; Then Start backlog is disabled without open items, with a frame sha, or with an in-flight system-analyst
+  (let [html web/dashboard-html]
+    (is (re-find #"getElementById\('btn-start-backlog'\).*disabled" html))
+    (is (re-find #"system-analyst" html))
+    (is (re-find #"(?s)btn-start-backlog.*merged" html))
+    (is (re-find #"(?s)frame\.sha|frame\]\.sha|frame && .*sha" html))))
