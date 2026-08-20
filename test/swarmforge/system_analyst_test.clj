@@ -55,3 +55,34 @@
     (is (re-find #"(?i)do not implement" p))
     (is (re-find #"(?i)one executable|one process" p))
     (is (not (re-find #"(?i)write features/" p)))))
+
+(deftest create-product-assignment-has-no-story-card
+  ;; Given a product with a backlog item and the system-analyst template
+  ;; When create-product assigns system-analyst
+  ;; Then the assignment is product-scoped, has no story_id, lists backlog titles, and uses swarm_handoff.sh
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (str "squad-leader\tmaster\t" root
+                       "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n"))
+      (write-file (fs/path root "swarmforge/role-templates/system-analyst.prompt")
+                  (slurp (str (fs/path repo-root "swarmforge/role-templates/system-analyst.prompt"))))
+      (write-file (fs/path root "swarmforge/role-templates/system-analyst.contract.edn")
+                  (slurp (str (fs/path repo-root "swarmforge/role-templates/system-analyst.contract.edn"))))
+      (write-file (fs/path root ".squad/backlog/bl-1.item")
+                  "id: bl-1\ntitle: Walk\nstatus: open\ncreated_at: t\nupdated_at: t\nbody: |\n  w\n")
+      (let [r (run {:dir root} (script "squad_assign.sh")
+                   "create-product" "system-analyst" "system-analysis"
+                   "--auto-instructions")
+            md (slurp (str (fs/path root ".squad/assignments/system-analysis/assignment.md")))
+            meta (slurp (str (fs/path root ".squad/assignments/system-analysis/metadata")))]
+        (is (zero? (:exit r)))
+        (is (str/includes? (:out r) "SQUAD_ASSIGNMENT: system-analysis"))
+        (is (str/includes? md "scope: product"))
+        (is (not (re-find #"(?m)^story_id:" md)))
+        (is (not (re-find #"(?m)^story_id:" meta)))
+        (is (str/includes? md "swarm_handoff.sh"))
+        (is (str/includes? md "Walk"))
+        (is (not (str/includes? md "provided theme"))))
+      (finally (fs/delete-tree root)))))

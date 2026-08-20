@@ -14,6 +14,7 @@
   (str "Usage:\n"
        "  squad_assign.sh create <story-id> <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
        "  squad_assign.sh create-batch <template> <assignment-id> <instructions-file|--auto-instructions> [--requires approval:<gate>] [--queue-spawn]\n"
+       "  squad_assign.sh create-product <template> <assignment-id> <instructions-file|--auto-instructions> [--queue-spawn]\n"
        "  squad_assign.sh result <assignment-id> <handoff-file>\n"
        "  squad_assign.sh merge-ready <assignment-id>\n"
        "  squad_assign.sh review <assignment-id> <accepted|changes-requested> <review-file>\n"
@@ -152,6 +153,17 @@
             :scope "batch"}
            (parse-create-options! option-tokens))))
 
+(defn parse-create-product-args! [args]
+  (when-not (>= (count args) 4)
+    (exit! 1 usage-text))
+  (let [[_ template assignment-id instructions-file & option-tokens] args]
+    (merge {:story-id nil
+            :template template
+            :assignment-id assignment-id
+            :instructions-file instructions-file
+            :scope "product"}
+           (parse-create-options! option-tokens))))
+
 (def valid-review-decisions
   {"accepted" "review_accepted"
    "changes-requested" "review_changes_requested"})
@@ -275,6 +287,10 @@
   (or (= "batch" scope)
       (= "batch" story-id)))
 
+(defn product-scoped-assignment? [scope template]
+  (or (= "product" scope)
+      (= "system-analyst" template)))
+
 (defn tool-lines [label tools]
   (when (seq tools)
     (str "## " label "\n\n"
@@ -315,7 +331,8 @@
                    (let [title (read-value file "title")
                          item-story (read-value file "story_id")]
                      (when (and (not (str/blank? title))
-                                (not= story-id item-story))
+                                (or (str/blank? story-id)
+                                    (not= story-id item-story)))
                        title))))
            sort
            vec)
@@ -334,7 +351,8 @@
        (when (and theme-id (not (str/blank? theme-id)) (not= "none" theme-id))
          (str "theme_id: " theme-id "\n"))
        "scope: " scope "\n"
-       "story_id: " story-id "\n"
+       (when-not (str/blank? story-id)
+         (str "story_id: " story-id "\n"))
        "template: " template "\n"
        (when requirement
          (str "requires: " (:text requirement) "\n"))
@@ -362,7 +380,8 @@
        instructions-text "\n\n"
        "## Required Transient Protocol\n\n"
        "- Stay inside this assignment boundary.\n"
-       "- The story is in this document. Write `.squad/stories/" story-id "/plan.md` only if you are the analyst. Do not search for a stories directory.\n"
+       (when-not (or (= "product" scope) (= "system-analyst" template))
+         (str "- The story is in this document. Write `.squad/stories/" story-id "/plan.md` only if you are the analyst. Do not search for a stories directory.\n"))
        "- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent. Do not self-retire; after handoff report handoff_sent and leave retirement to squad_retire.sh after the Squad Leader resolves the workflow. Put phase names and progress wording in the detail argument, not the state.\n"
        "- Commit completed work on your transient branch.\n"
        "- After commit, send the result with `swarm_handoff.sh` (no file).\n"))
@@ -373,9 +392,9 @@
 (defn validate-create-ids! [theme-id story-id assignment-id]
   (when-not (themeless-theme? theme-id)
     (validate-id! "Theme id" theme-id))
-  (doseq [[kind value] [["Story id" story-id]
-                        ["Assignment id" assignment-id]]]
-    (validate-id! kind value)))
+  (when-not (str/blank? story-id)
+    (validate-id! "Story id" story-id))
+  (validate-id! "Assignment id" assignment-id))
 
 (defn first-existing-file [files]
   (first (filter fs/regular-file? files)))
@@ -388,6 +407,7 @@
   (cond
     (theme-scoped-assignment? template story-id) "theme"
     (batch-scoped-assignment? scope story-id) "batch"
+    (product-scoped-assignment? scope template) "product"
     :else "story"))
 
 (defn story-file-required? [scope]
@@ -420,7 +440,8 @@
      :auto-instructions? auto-instructions?
      :dir (assignment-dir root assignment-id)
      :contract (role-contract root template)
-     :packet (optional-story-packet root story-id)
+     :packet (when-not (str/blank? story-id)
+               (optional-story-packet root story-id))
      :now (timestamp)}))
 
 (defn packet-theme-id [packet]
@@ -436,12 +457,12 @@
     (exit! 2
            (str "Story packet " story-id " belongs to a different theme."))))
 
-(defn ensure-story-file! [theme-scoped? batch-scoped? story-file]
-  (when-not (or theme-scoped? batch-scoped?)
+(defn ensure-story-file! [scope story-file]
+  (when (story-file-required? scope)
     (ensure-file! "Story file not found" story-file)))
 
-(defn ensure-create-context! [{:keys [theme-scoped? batch-scoped? story-file template-file dir] :as context}]
-  (ensure-story-file! theme-scoped? batch-scoped? story-file)
+(defn ensure-create-context! [{:keys [scope story-file template-file dir] :as context}]
+  (ensure-story-file! scope story-file)
   (ensure-file! "Role template not found" template-file)
   (ensure-packet-theme! context)
   (when (fs/exists? dir)
@@ -549,7 +570,8 @@
        (when-not (themeless-theme? theme-id)
          (str "theme_id: " theme-id "\n"))
        "scope: " scope "\n"
-       "story_id: " story-id "\n"
+       (when-not (str/blank? story-id)
+         (str "story_id: " story-id "\n"))
        "template: " template "\n"
        (when requirement
          (str "requires: " (:text requirement) "\n"))
@@ -579,7 +601,8 @@
   (println "SQUAD_ASSIGNMENT:" assignment-id)
   (when-not (themeless-theme? theme-id)
     (println "THEME:" theme-id))
-  (println "STORY:" story-id)
+  (when-not (str/blank? story-id)
+    (println "STORY:" story-id))
   (println "TEMPLATE:" template)
   (when requirement
     (println "REQUIRES:" (:text requirement)))
@@ -1445,6 +1468,7 @@
 (def assignment-commands
   {"create" (fn [args] (create-assignment! (parse-create-args! args)))
    "create-batch" (fn [args] (create-batch-assignment! (parse-create-batch-args! args)))
+   "create-product" (fn [args] (create-assignment! (parse-create-product-args! args)))
    "result" (fn [args] (run-counted-command! args 3 #(record-result! (second %) (nth % 2))))
    "merge-ready" (fn [args] (run-counted-command! args 2 #(mark-merge-ready! (second %))))
    "review" (fn [args] (run-counted-command! args 4 #(record-review! (second %) (nth % 2) (nth % 3))))
