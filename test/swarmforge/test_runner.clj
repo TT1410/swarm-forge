@@ -26,6 +26,7 @@
             [swarmforge.squad-next-test]
             [swarmforge.squadd-test]
             [swarmforge.squadd-web-test]
+            [swarmforge.system-analyst-test]
             [swarmforge.tool-test]
             [swarmforge.window-cleanup-test]))
 
@@ -53,6 +54,7 @@
     swarmforge.squad-next-test
     swarmforge.squadd-test
     swarmforge.squadd-web-test
+    swarmforge.system-analyst-test
     swarmforge.tool-test
     swarmforge.window-cleanup-test])
 
