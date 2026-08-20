@@ -227,7 +227,7 @@ The icon should follow the agent’s handoff (arrow), not an unmapped assignment
 
 ### Config to keep agent sessions after retire
 
-**Done.** `save_agent_sessions` in `squad.conf` archives pane/liveness under `.squad/sessions/<agent-id>/` on retire, then still kills tmux. Default off.
+**Done.** `save_agent_sessions` in `squad.conf` archives pane/liveness under `.squad/sessions/<agent-id>/` on retire, then still kills tmux. Default on.
 
 On retire the control plane stops the tmux session and removes the worktree. Liveness tails and pane history go with them. After the fact we cannot see how an agent formulated a handoff, which tools it tried, or where it wasted a minute.
 

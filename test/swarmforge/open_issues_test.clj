@@ -380,6 +380,12 @@
 
 ;;; --- Retire: save sessions ---
 
+(deftest save-agent-sessions-defaults-on
+  ;; Given no save_agent_sessions line
+  ;; Then retire still archives pane files
+  (let [root (tmp-dir)]
+    (is (true? (retire/save-agent-sessions? root)))))
+
 (deftest retire-saves-session-files-when-configured
   ;; Given save_agent_sessions true
   ;; When an agent is retired

@@ -240,7 +240,7 @@
                   "). Resolve merge/reject/block first, then run squad_retire.sh.")))))
 
 (defn save-agent-sessions? [root]
-  (cfg/squad-config-bool root "save_agent_sessions" false))
+  (cfg/squad-config-bool root "save_agent_sessions" true))
 
 (defn liveness-pane-tail [root agent-id]
   (let [file (fs/path root ".squad" "agents" agent-id "liveness")]
