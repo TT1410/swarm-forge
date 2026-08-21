@@ -1616,19 +1616,6 @@
    :reason reason
    :command (str "squad_assign.sh accept-merge " assignment-id)})
 
-(defn hold-merge-for-frame?
-  "System-analyst git_handoff waits for the operator frame gate before accept-merge."
-  [root assignment-id]
-  (let [rec (some #(when (= assignment-id (:assignment-id %)) %)
-                  (assignment-records root))]
-    (boolean
-     (and rec
-          (= "system-analyst" (:template rec))
-          (contains? #{"result_received" "merge_ready"} (:state rec))
-          (cfg/squad-approval-required? root "frame")
-          (not (frame-approved? root))
-          (not (product/frame-ready? (product/read-product root)))))))
-
 (def story-candidate-fields
   [["NEXT_ACTION" :next-action true]
    ["OP" :op false]
@@ -1889,9 +1876,6 @@
          :command (str "SWARMFORGE_ROLE=squad-leader done_with_current.sh "
                        (pr-str (str file)))}
 
-        (hold-merge-for-frame? root assignment-id)
-        nil
-
         ;; Status can lag merge file when result was re-recorded after merge-ready.
         (and (= "result_received" state)
              (= "merge_ready" merge-state))
@@ -1920,10 +1904,8 @@
 
 (defn in-process-needs-action?
   "True when an in-process handoff is claimed and must be advanced or finished."
-  [{:keys [root in-process]}]
-  (boolean
-   (and in-process
-        (not (and root (hold-merge-for-frame? root (handoff-task in-process)))))))
+  [{:keys [in-process]}]
+  (boolean in-process))
 
 (defn print-in-process-handoff-action! [root file]
   (if-let [{:keys [action reason command]} (in-process-git-handoff-command root file)]

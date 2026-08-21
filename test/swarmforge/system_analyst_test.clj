@@ -455,10 +455,10 @@
                            "squad_approval.sh request frame__product product product frame")))
       (finally (fs/delete-tree root)))))
 
-(deftest system-analyst-handoff-does-not-merge-before-frame-approval
+(deftest system-analyst-handoff-merges-before-frame-approval
   ;; Given a claimed git_handoff for a result_received system-analyst
-  ;; When frame approval is still required
-  ;; Then residual does not accept-merge
+  ;; When the frame is not yet approved
+  ;; Then residual still accept-merges (stories wait on frame_sha, not on merge)
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -473,13 +473,11 @@
                   "assignment_id: system-analysis\nstate: result_received\n")
       (write-system-analyst-handoff! root)
       (let [handoff (fs/path root ".swarmforge/handoffs/inbox/in_process/50_frame.handoff")
-            step (squad-next/in-process-git-handoff-command root handoff)
-            out (:out (run {:dir root} (script "squad_next.sh")))]
-        (is (nil? step))
-        (is (false? (squad-next/in-process-needs-action?
-                     {:root root :in-process handoff})))
-        (is (not (str/includes? out "accept-merge")))
-        (is (str/includes? out "create_approval_request")))
+            step (squad-next/in-process-git-handoff-command root handoff)]
+        (is (= "accept_merge" (:action step)))
+        (is (str/includes? (:command step) "squad_assign.sh accept-merge system-analysis"))
+        (is (true? (squad-next/in-process-needs-action?
+                    {:root root :in-process handoff}))))
       (finally (fs/delete-tree root)))))
 
 (deftest system-analyst-handoff-merges-after-frame-approval
@@ -858,6 +856,22 @@
         (is (str/blank? (get row "story_id"))))
       (finally (fs/delete-tree root)))))
 
+(deftest wif-hides-system-analyst-after-result
+  ;; Given a system-analyst whose result is recorded
+  ;; When WIF rows are built
+  ;; Then that assignment is not in the Work Queue
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".squad/assignments/system-analysis/metadata")
+                  (str "assignment_id: system-analysis\n"
+                       "template: system-analyst\n"
+                       "scope: product\n"))
+      (write-file (fs/path root ".squad/assignments/system-analysis/status")
+                  "state: result_received\nupdated_at: 2026-08-20T00:00:00Z\n")
+      (let [rows (web/work-in-flight-rows root (web/assignment-state root) [])]
+        (is (empty? (filter #(= "system-analysis" (get % "assignment_id")) rows))))
+      (finally (fs/delete-tree root)))))
+
 (deftest dashboard-wif-does-not-require-story-card-for-system-analyst
   ;; Given the Work Queue renderer
   ;; Then a row can label from assignment_id when story_id is blank
@@ -1036,4 +1050,32 @@
         (is (str/includes? page "Run: bb run"))
         (is (str/includes? page "id=\"qa-procedure\""))
         (is (str/includes? page "Type Y at SAME SET-UP.")))
+      (finally (fs/delete-tree root)))))
+
+(deftest product-package-reads-unmerged-system-analyst-commit
+  ;; Given frame.md only on the system-analyst commit, not the working tree
+  ;; When the product package is served
+  ;; Then the page includes that committed frame
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "frame.md") "# Frame\n\nRun: clojure -M -m wumpus.main\n")
+      (write-file (fs/path root "qa/product.md") "Type Y at SAME SET-UP.\n")
+      (run {:dir root} "git" "add" "frame.md" "qa/product.md")
+      (run {:dir root} "git" "commit" "-q" "-m" "frame")
+      (let [sha (str/trim (:out (run {:dir root} "git" "rev-parse" "HEAD")))]
+        (fs/delete-if-exists (fs/path root "frame.md"))
+        (fs/delete-if-exists (fs/path root "qa/product.md"))
+        (write-file (fs/path root ".squad/assignments/system-analysis/metadata")
+                    "assignment_id: system-analysis\ntemplate: system-analyst\nscope: product\n")
+        (write-file (fs/path root ".squad/assignments/system-analysis/result-manifest")
+                    (str "assignment: system-analysis\n"
+                         "template: system-analyst\n"
+                         "commit: " sha "\n"
+                         "artifacts: frame.md,qa/product.md\n"))
+        (let [resp (web/artifact-response root "/artifact/product/product")
+              page (:body resp)]
+          (is (= 200 (:status resp)))
+          (is (str/includes? page "Run: clojure -M -m wumpus.main"))
+          (is (str/includes? page "Type Y at SAME SET-UP."))))
       (finally (fs/delete-tree root)))))

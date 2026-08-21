@@ -1047,6 +1047,10 @@
    (let [batch-by-id (into {} (map (fn [b] [(get b "batch_id") b]) batches))]
      (->> assignments
           (remove #(= "merger" (get % "template")))
+          (remove (fn [a]
+                    (and (= "system-analyst" (get a "template"))
+                         (contains? #{"result_received" "merge_ready"}
+                                    (get a "state")))))
           (map (fn [a]
                  (let [id (get a "assignment_id" "")
                        story (get a "story_id" "")
@@ -1824,16 +1828,38 @@
        (map (fn [{:keys [title body]}] (section title body)))
        (apply str)))
 
+(defn git-show-file [root sha rel]
+  (when (and (not (str/blank? sha)) (not (str/blank? rel)))
+    (let [r (process/sh {:dir (str root) :continue true}
+                        "git" "show" (str sha ":" rel))]
+      (when (zero? (:exit r))
+        (:out r)))))
+
+(defn system-analyst-result-commit [root]
+  (let [dir (fs/path root ".squad" "assignments")]
+    (when (fs/directory? dir)
+      (some (fn [assignment-dir]
+              (let [meta (parse-kv-file (fs/path assignment-dir "metadata"))
+                    manifest (parse-kv-file (fs/path assignment-dir "result-manifest"))]
+                (when (= "system-analyst" (get meta "template"))
+                  (not-empty (get manifest "commit")))))
+            (filter fs/directory? (fs/list-dir dir))))))
+
+(defn product-file-text [root sha rel]
+  (or (artifact-project-content root rel)
+      (git-show-file root sha rel)))
+
 (defn product-package-parts [root]
   (let [p (product/read-product root)
+        sha (system-analyst-result-commit root)
         frame-path (or (not-empty (get p "frame_path")) "frame.md")
         qa-path (or (not-empty (get p "qa_path")) "qa/product.md")]
     (vec
      (keep (fn [[id title body]]
              (when-not (str/blank? body)
                {:id id :title title :body body}))
-           [["frame" "Frame" (artifact-project-content root frame-path)]
-            ["qa-procedure" "QA Procedure" (artifact-project-content root qa-path)]]))))
+           [["frame" "Frame" (product-file-text root sha frame-path)]
+            ["qa-procedure" "QA Procedure" (product-file-text root sha qa-path)]]))))
 
 (defn assignment-document-content [root assignment-id]
   (assignment-artifact-content root assignment-id "assignment.md"))

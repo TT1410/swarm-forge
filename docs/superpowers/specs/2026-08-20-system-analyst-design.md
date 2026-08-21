@@ -32,8 +32,8 @@ Independent per-story assignments produce a series of little applications. This 
    - `frame.md`: socket list (from **open stories**), how to run, what is not implemented.
    - `qa/product.md`: one QA procedure through that UI, with a labeled placeholder per open story.
 4. Handoff: `swarm_handoff.sh` with no file. Missing `frame.md` or `qa/product.md` is an invalid git_handoff.
-5. Operator Attention gate **`frame`**: package is `frame.md` + `qa/product.md` + run command. Approve or reject (same UX as a plan).
-6. SL `accept-merge`. Residual records **`frame_sha`** on a **product-level** record (not a story packet).
+5. SL `accept-merge` of the frame commit (`frame.md`, `qa/product.md`, executable). Session is captured on retire.
+6. Operator Attention gate **`frame`**: package is those merged files. Approve or reject (same UX as a plan). Residual records **`frame_sha`** only after approve. Stories do not start until then.
 7. Residual then Starts **every item that was open at Backlog Start**: `stories/<id>.md`, packet, analyst — today’s Start, for each.
 8. Story pipeline is unchanged except prompts: the frame is already real; extend it; QA-proc writer edits `qa/product.md` in place for this story’s placeholder (implementer notes as today).
 9. Items **added after** Backlog Start stay open until the operator **Starts that card**. Individual Start is allowed only when `frame_sha` is present. No second System-Analyst.
