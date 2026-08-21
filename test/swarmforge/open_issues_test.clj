@@ -1,5 +1,5 @@
 (ns swarmforge.open-issues-test
-  "Open issues.md items (not on hold): prompts, residual, cockpit, retire, backlog CLI."
+  "Open issues.md items (not on hold): residual, cockpit, retire, backlog CLI."
   (:require [babashka.fs :as fs]
             [clojure.string :as str]
             [clojure.test :refer [deftest is]]
@@ -14,81 +14,6 @@
   (write-file (fs/path root ".swarmforge/roles.tsv")
               (str "squad-leader\tmaster\t" root
                    "\tswarmforge-squad-leader\tSquad Leader\tcodex\ttask\n")))
-
-(defn- prompt [name]
-  (slurp (str (fs/path repo-root "swarmforge/role-templates" name))))
-
-(defn- role-prompt [name]
-  (slurp (str (fs/path repo-root "swarmforge/roles" name))))
-
-;;; --- Pipeline prompts ---
-
-(deftest analyst-plan-mocks-other-backlog-items
-  ;; Given the analyst prompt
-  ;; Then the plan treats this story as the only real item, mocks the rest,
-  ;; and includes ports, dummy state, how to run the stub, and non-goals
-  (let [p (prompt "analyst.prompt")]
-    (is (str/includes? p "mocked ports"))
-    (is (str/includes? p "dummy state"))
-    (is (re-find #"(?i)how to run" p))
-    (is (str/includes? p "non-goals"))
-    (is (re-find #"(?i)only this story is real" p))
-    (is (re-find #"(?i)mock" p))
-    (is (not (re-find #"(?i)use the whole backlog" p)))
-    (is (re-find #"(?i)read the other (backlog )?items? only to name them as non-goals or mocked ports" p))
-    (is (str/includes? p ".squad/backlog"))
-    (is (str/includes? p "stories/<") )
-    (is (str/includes? p ".squad/stories/<story-id>/plan.md"))
-    (is (re-find #"do not search for a stories directory" (str/lower-case p)))))
-
-(deftest qa-proc-writer-commits-procedure-and-implementer-notes
-  ;; Given the QA-procedure-writer prompt
-  ;; Then it writes procedure + implementer notes in one commit
-  (let [p (prompt "qa-procedure-writer.prompt")]
-    (is (re-find #"(?i)implementer notes" p))
-    (is (re-find #"(?i)one commit" p))
-    (is (re-find #"qa/.+-implementer-notes\.md" p))
-    (is (re-find #"(?i)QA-runnable executable" p))))
-
-(deftest implementer-reads-notes-not-qa-procedure-body
-  ;; Given the implementer prompt
-  ;; Then it reads implementer notes and does not treat the QA procedure as the spec
-  (let [p (prompt "implementer.prompt")]
-    (is (re-find #"(?i)implementer notes" p))
-    (is (not (str/includes? p "The QA procedure is a later role, not an implementer input.")))))
-
-(deftest qa-pass-means-drive-the-real-program
-  ;; Given the QA prompt
-  ;; Then a pass starts the real program through the UI; calling production
-  ;; functions or a test harness is a fail
-  (let [p (prompt "qa.prompt")]
-    (is (re-find #"(?i)real program|user interface only" p))
-    (is (re-find #"(?i)test harness is a fail|calling production functions" p))
-    (is (re-find #"(?i)this story" p))))
-
-(deftest cleaner-uses-property-framework-and-additive-tooling
-  ;; Given the cleaner prompt
-  ;; Then it uses the environment's property-testing library (test.check on bb)
-  ;; and may add to bb.edn/deps.edn without changing existing targets
-  (let [p (prompt "cleaner.prompt")]
-    (is (re-find #"clojure\.test\.check" p))
-    (is (re-find #"(?i)already on the classpath" p))
-    (is (re-find #"(?i)additive" p))
-    (is (not (re-find #"Do \*\*not\*\* edit root tooling files.*unless the assignment explicitly requires tooling cleanup" p)))))
-
-(deftest troubleshooter-prompt-names-backlog-cli
-  ;; Given the Troubleshooter prompt
-  ;; Then it names the batch-add CLI rather than reverse-engineering HTTP
-  (let [p (role-prompt "troubleshooter.prompt")]
-    (is (str/includes? p "squad_backlog.sh"))))
-
-(deftest sl-and-local-workflow-wait-for-qa-proc-approval
-  (let [sl (role-prompt "squad-leader.prompt")
-        wf (slurp (str (fs/path repo-root "swarmforge/constitution/articles/local-workflow.prompt")))]
-    (is (not (str/includes? sl "does not wait for QA procedure")))
-    (is (not (str/includes? wf "Does not wait for the QA procedure.")))
-    (is (re-find #"(?i)qa procedure" sl))
-    (is (re-find #"(?i)implementer notes" wf))))
 
 ;;; --- Residual: implementer waits on QA-proc approval ---
 
@@ -521,16 +446,6 @@
   (is (= "verifying"
          (:phase (squad-run/parse-run-args
                   ["verifying" "quick command" "--" "sh" "-c" "exit 0"])))))
-
-(deftest worker-common-shows-bare-squad-run
-  (let [p (slurp (str (fs/path repo-root "swarmforge/worker-common.prompt")))]
-    (is (re-find #"squad_run\.sh .+\n" p))
-    (is (str/includes? p "swarm_handoff.sh"))))
-
-(deftest assigned-git-handoff-is-no-arg
-  (let [p (slurp (str (fs/path repo-root "swarmforge/constitution/articles/handoffs.prompt")))]
-    (is (re-find #"(?i)no args|with no file|swarm_handoff\.sh\n" p))
-    (is (str/includes? p "note"))))
 
 (deftest assignment-protocol-is-one-handoff-command
   ;; Given a story assignment

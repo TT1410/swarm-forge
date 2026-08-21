@@ -23,7 +23,9 @@ You are a transient squad worker. Your only coordinator is `squad-leader`.
 
 ## Product frame
 
-The merged frame is already real (`frame.md`). Extend that one process and one UI. Do not add a second executable.
+If you are creating the frame (system-analyst), this section does not apply; you author `frame.md` and the entrypoint. You may edit `bb.edn` or `deps.edn` only as needed to run that executable.
+
+Otherwise the merged frame is already real (`frame.md`). Extend that one process and one UI. Do not add a second executable.
 
 ## Tool Boundaries
 
@@ -67,7 +69,7 @@ squad_event.sh handoff_sent "handoff sent to squad-leader"
 Use `squad_run.sh` for command telemetry when running commands that matter to the assignment result.
 
 ```sh
-squad_run.sh grep -q "^## purpose$" plan.md
+squad_run.sh bb test
 squad_run.sh --expect-failure bb test
 ```
 

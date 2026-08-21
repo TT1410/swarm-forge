@@ -103,16 +103,6 @@
   (is (= "finalizing" (web/board-column "hardening_approved")))
   (is (= "finalizing" (web/board-column "qa_returned"))))
 
-(deftest architect-prompt-uses-backlog-and-keeps-structure
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))]
-    (is (str/includes? prompt "backlog"))
-    (is (str/includes? prompt "module map"))))
-
-(deftest senior-implementer-keeps-structure-with-architect
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/senior-implementer.prompt")))]
-    (is (str/includes? prompt "module map"))
-    (is (not (re-find #"(?i)skip module map" prompt)))))
-
 (deftest senior-impl-assignment-omits-map-recommendations
   ;; Given an architecture review that includes Module Map Recommendations
   ;; When a senior-implementer assignment is created

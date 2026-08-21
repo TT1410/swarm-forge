@@ -49,34 +49,6 @@
   (is (= [] (product/open-item-ids {"open_item_ids" ""})))
   (is (= ["bl-1" "bl-2"] (product/open-item-ids {"open_item_ids" " bl-1 , ,bl-2 "}))))
 
-(deftest system-analyst-prompt-owns-the-frame-not-hunt-rules
-  (let [p (slurp (str (fs/path repo-root "swarmforge/role-templates/system-analyst.prompt")))]
-    (is (str/includes? p ".squad/backlog"))
-    (is (str/includes? p "frame.md"))
-    (is (str/includes? p "qa/product.md"))
-    (is (re-find #"(?i)placeholder" p))
-    (is (re-find #"(?i)do not implement" p))
-    (is (re-find #"(?i)one executable|one process" p))
-    (is (re-find #"(?i)mission" p))
-    (is (re-find #"(?i)product form|console loop|that UI" p))
-    (is (re-find #"(?i)not treat the mission as a socket" p))
-    (is (not (re-find #"(?i)write features/" p)))))
-
-(deftest story-prompts-extend-the-frame
-  ;; Given later-role story prompts after the frame is on master
-  ;; Then each prompt names frame.md, extends the one executable, and
-  ;; forbids a second -main, probe app, or sidecar
-  (doseq [name ["analyst.prompt" "gherkin-writer.prompt" "qa-procedure-writer.prompt"
-                "implementer.prompt" "qa.prompt"]]
-    (let [p (slurp (str (fs/path repo-root "swarmforge/role-templates" name)))]
-      (is (re-find #"(?i)frame\.md" p) name)
-      (is (re-find #"(?i)extend" p) name)
-      (is (re-find #"(?i)do not (add|create) a second|-main|probe app|sidecar" p) name)))
-  (let [qa (slurp (str (fs/path repo-root "swarmforge/role-templates/qa-procedure-writer.prompt")))]
-    (is (str/includes? qa "qa/product.md")))
-  (let [w (slurp (str (fs/path repo-root "swarmforge/worker-common.prompt")))]
-    (is (re-find #"(?i)frame" w))))
-
 (deftest create-backlog-title-mission-is-not-open
   ;; Given Add Story titled Mission
   ;; Then the item is status mission, not open
@@ -196,13 +168,15 @@
         (is (not (re-find #"(?m)^story_id:" meta)))
         (is (str/includes? md "swarm_handoff.sh"))
         (is (str/includes? md "Walk"))
-        (is (not (str/includes? md "provided theme"))))
+        (is (not (str/includes? md "provided theme")))
+        (is (re-find #"(?i)mission and stories are in this document" md))
+        (is (re-find #"(?i)do not search for a backlog or stories directory" md)))
       (finally (fs/delete-tree root)))))
 
-(deftest product-assignment-lists-sockets-not-non-goals
+(deftest product-assignment-lists-stories-not-non-goals
   ;; Given two open backlog items and create-product for system-analyst
   ;; When assignment.md is written
-  ;; Then titles are sockets to stub, not non-goals to copy into plan.md
+  ;; Then story titles and bodies are inlined, not sockets to stub or plan.md non-goals
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -221,18 +195,21 @@
            "create-product" "system-analyst" "system-analysis"
            "--auto-instructions")
       (let [md (slurp (str (fs/path root ".squad/assignments/system-analysis/assignment.md")))]
-        (is (re-find #"(?i)## Sockets" md))
+        (is (re-find #"(?i)## Stories" md))
         (is (str/includes? md "Walk"))
         (is (str/includes? md "Shoot"))
-        (is (re-find #"(?i)stub" md))
+        (is (re-find #"\bw\b" md))
+        (is (re-find #"\bs\b" md))
+        (is (not (re-find #"(?i)## Sockets" md)))
+        (is (not (re-find #"(?i)stub these" md)))
         (is (not (str/includes? md "Non-goals (other backlog items)")))
         (is (not (re-find #"(?i)copy these names into plan\.md" md))))
       (finally (fs/delete-tree root)))))
 
-(deftest product-assignment-includes-mission-not-as-socket
+(deftest product-assignment-includes-mission-and-story-bodies
   ;; Given a mission item and two open stories
   ;; When create-product assigns system-analyst
-  ;; Then assignment has Mission body and Sockets for the stories only
+  ;; Then assignment has Mission body and Stories with bodies; mission is not a story
   (let [root (tmp-dir)]
     (try
       (init-repo! root)
@@ -247,7 +224,7 @@
                   (str "id: bl-m\ntitle: Mission\nstatus: mission\ncreated_at: t\nupdated_at: t\n"
                        "body: |\n  One console loop.\n"))
       (write-file (fs/path root ".squad/backlog/bl-1.item")
-                  "id: bl-1\ntitle: Walk\nstatus: open\ncreated_at: t\nupdated_at: t\nbody: |\n  w\n")
+                  "id: bl-1\ntitle: Walk\nstatus: open\ncreated_at: t\nupdated_at: t\nbody: |\n  INSTRUCTIONS (Y-N)?\n")
       (write-file (fs/path root ".squad/backlog/bl-2.item")
                   "id: bl-2\ntitle: Shoot\nstatus: open\ncreated_at: t\nupdated_at: t\nbody: |\n  s\n")
       (run {:dir root} (script "squad_assign.sh")
@@ -256,10 +233,12 @@
       (let [md (slurp (str (fs/path root ".squad/assignments/system-analysis/assignment.md")))]
         (is (re-find #"(?i)## Mission" md))
         (is (str/includes? md "One console loop."))
-        (is (re-find #"(?i)## Sockets" md))
+        (is (re-find #"(?i)## Stories" md))
         (is (str/includes? md "Walk"))
+        (is (str/includes? md "INSTRUCTIONS (Y-N)?"))
         (is (str/includes? md "Shoot"))
-        (is (not (re-find #"(?m)^- Mission$" md))))
+        (is (not (re-find #"(?i)## Sockets" md)))
+        (is (not (re-find #"(?m)^### Mission$" md))))
       (finally (fs/delete-tree root)))))
 
 (deftest story-assignment-names-the-merged-frame

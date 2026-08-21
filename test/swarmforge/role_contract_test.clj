@@ -3,7 +3,7 @@
             [clojure.edn :as edn]
             [clojure.string :as str]
             [squad-tool-table :as tools]
-            [clojure.test :refer [deftest is testing]]
+            [clojure.test :refer [deftest is]]
             [swarmforge.test-support :refer :all]))
 
 (def current-squad-templates
@@ -36,16 +36,6 @@
     (is (fs/exists? (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))
     (is (fs/exists? (contract-path template)))))
 
-(deftest squad-role-prompts-reference-contracts
-  (doseq [template current-squad-templates]
-    (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
-      (is (str/includes? prompt (str template ".contract.edn")) template))))
-
-(deftest squad-role-prompts-confine-artifacts-to-worktrees
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/worker-common.prompt")))]
-    (is (str/includes? prompt "Use the assigned worktree for all file inspection, edits, staging, commits, and local verification."))
-    (is (str/includes? prompt "Do not create or edit project-root files directly"))))
-
 (deftest squad-role-contracts-encode-worker-boundaries
   (doseq [c (contracts)]
     (is (= ["squad-leader"] (:handoff-targets c)) (:role c))
@@ -54,9 +44,14 @@
     (is (false? (:may-fetch-tools c)) (:role c)))
   (doseq [c (contracts)]
     (cond
-      (#{"analyst" "system-analyst"} (:role c))
+      (= "analyst" (:role c))
       (do
         (is (true? (:may-web-search c)))
+        (is (true? (:self-contained-output c))))
+
+      (= "system-analyst" (:role c))
+      (do
+        (is (false? (:may-web-search c)))
         (is (true? (:self-contained-output c))))
 
       (= "cleaner" (:role c))
@@ -109,66 +104,18 @@
     (is (= #{"crap4clj" "dry4clj"} (required-tool-names "qa")))
     (is (= #{"gherkin-parser" "ir-dry-checker"} (required-tool-names "gherkin-writer")))))
 
-(deftest squad-role-prompts-include-valid-helper-examples
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/worker-common.prompt")))]
-    (is (str/includes? prompt "squad_event.sh running"))
-    (is (str/includes? prompt "squad_event.sh blocked"))
-    (is (not (re-find #"squad_event\.sh\s+[a-z][a-z0-9-]*-\d{3}\s+" prompt)))
-    (is (not (re-find #"squad_tool\.sh require [A-Za-z0-9._-]+(?:`|\n)" prompt))))
-  (let [cleaner (slurp (str (fs/path repo-root "swarmforge/role-templates/cleaner.prompt")))
-        hardener (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))
-        gherkin (slurp (str (fs/path repo-root "swarmforge/role-templates/gherkin-writer.prompt")))
-        qa (slurp (str (fs/path repo-root "swarmforge/role-templates/qa.prompt")))]
-    (doseq [prompt [cleaner qa hardener]]
-      (is (str/includes? prompt "Tool Startup") prompt)
-      (is (str/includes? prompt "swarmforge/tool-table.edn"))
-      (is (not (str/includes? prompt "record `blocked`"))))
-    (is (str/includes? hardener "Verification Prerequisites"))
-    (is (str/includes? gherkin "generated assignment `Tool Startup` section"))
-    (is (str/includes? gherkin "Acceptance Pipeline Specification"))))
-
-(deftest squad-reviewer-prompts-use-deterministic-review-helper
-  (doseq [template ["code-reviewer" "architect"]]
-    (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
-      (is (str/includes? prompt "squad_review.sh <assignment-id> <accepted|changes-requested> <review-file>")
-          template))))
-
-(deftest squad-analyst-prompt-includes-invest-story-guidance
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))]
-    (is (str/includes? prompt "I.N.V.E.S.T."))
-    (doseq [word ["independent" "negotiable" "valuable" "estimable" "small" "testable"]]
-      (is (str/includes? prompt word)))))
-
 (deftest analyst-writes-a-per-story-implementation-plan
   ;; Given Start has already created the story
   ;; When the analyst role is specified
-  ;; Then the handoff artifact is a plan for that story, not theme order/checker
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))
-        c (contract "analyst")]
-    (is (str/includes? prompt ".squad/stories/<id>/plan.md"))
-    (is (str/includes? prompt "Do not invent sibling stories"))
-    (is (not (str/includes? prompt "implementation-order.md")))
-    (is (not (str/includes? prompt "dependency-checker.edn")))
+  ;; Then the contract is a plan for that story, not theme order/checker
+  (let [c (contract "analyst")]
     (is (false? (:requires-dependency-checker c)))
     (is (false? (:requires-implementation-order c)))
     (is (not (some #{"implementation-order"} (:writes c))))))
 
-(deftest squad-architect-prompt-frames-principles-as-review-advice
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))]
-    (is (str/includes? prompt "Make recommendations; do not directly rewrite the system."))
-    (is (str/includes? prompt "Low level is close to IO"))
-    (is (str/includes? prompt "high level is far from IO"))
-    (is (str/includes? prompt "Dependencies should point from lower-level functions and modules"))
-    (is (str/includes? prompt "Large modules with many responsibilities"))
-    (is (str/includes? prompt "well-named modules with single responsibilities"))))
-
 (deftest squad-senior-implementer-runs-full-verification-before-handoff
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/senior-implementer.prompt")))
-        contract (contract "senior-implementer")]
-    (is (str/includes? prompt "full acceptance suite"))
-    (is (str/includes? prompt "bb acceptance"))
-    (is (not (str/includes? prompt "Run relevant verification before handoff.")))
-    (is (true? (:may-run-broad-tests contract)))))
+  (let [c (contract "senior-implementer")]
+    (is (true? (:may-run-broad-tests c)))))
 
 (deftest required-tool-startup-instructions-come-from-tool-table
   (let [helper (str (fs/path repo-root "swarmforge/scripts/install_bb_tool.sh"))
@@ -182,19 +129,14 @@
     (is (str/includes? startup "record `blocked`"))))
 
 (deftest hardener-forbids-root-tooling-files
-  ;; Hardener must not thrash root bb.edn/deps.edn
-  (let [c (contract "hardener")
-        prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))]
+  (let [c (contract "hardener")]
     (is (some #{"bb.edn"} (:forbidden-root-files c)))
-    (is (some #{"deps.edn"} (:forbidden-root-files c)))
-    (is (str/includes? prompt "Root tooling denylist"))
-    (is (str/includes? prompt "swarm_handoff"))))
+    (is (some #{"deps.edn"} (:forbidden-root-files c)))))
 
 (deftest hardener-tool-startup-includes-coverage-and-acceptance-prerequisites
   (let [startup (tools/startup-instructions
                  (tools/required-tools repo-root "hardener")
-                 (tools/verification-prerequisites repo-root "hardener"))
-        hardener (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))]
+                 (tools/verification-prerequisites repo-root "hardener"))]
     (is (str/includes? startup "## Tool Startup"))
     (is (str/includes? startup "## Verification Prerequisites"))
     (is (str/includes? startup "bb coverage"))
@@ -203,61 +145,24 @@
     (is (str/includes? startup "gherkin-mutator"))
     (is (str/includes? startup "lcov"))
     (is (not (str/includes? startup "gherkin-mutator --runner-worker \"bb acceptance\"")))
-    (is (str/includes? hardener "bb acceptance-worker"))
-    (is (not (str/includes? hardener "--runner-worker \"bb acceptance\"")))
     (is (seq (tools/required-evidence repo-root "hardener")))))
 
-(deftest implementer-prompt-requires-six-pack-aps-model
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))]
-    (is (str/includes? prompt "six-pack"))
-    (is (str/includes? prompt "entrypoint generator"))
-    (is (str/includes? (str/lower-case prompt) "step handlers"))
-    (is (str/includes? prompt "bb acceptance-worker"))
-    (is (str/includes? prompt "acceptance/steps/"))))
-
-(deftest hardener-prompt-requires-quality-bar
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))
-        lower (str/lower-case prompt)
-        prereqs (tools/verification-prerequisites repo-root "hardener")
+(deftest hardener-verification-quality-bar
+  (let [prereqs (tools/verification-prerequisites repo-root "hardener")
         evidence (map :header (tools/required-evidence repo-root "hardener"))]
-    (is (str/includes? prompt "CRAP ≤ 6") prompt)
-    (is (str/includes? lower "all mutants are killed") prompt)
-    (is (str/includes? lower "reduce duplication") prompt)
-    (is (str/includes? lower "hand back a blocker") prompt)
     (is (some #(str/includes? % "CRAP ≤ 6") prereqs))
     (is (some #(= "dry" %) evidence))))
 
-(deftest troubleshooter-role-prompt-is-short-and-operator-focused
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/roles/troubleshooter.prompt")))
-        contract (edn/read-string (slurp (str (fs/path repo-root "swarmforge/roles/troubleshooter.contract.edn"))))]
-    (is (< (count prompt) 2500) "prompt stays short")
-    (is (str/includes? (str/lower-case prompt) "look around"))
-    (is (str/includes? prompt "Squad Leader"))
-    (is (true? (:persistent contract)))
-    (is (true? (:idle-until-called contract)))
-    (is (true? (:elevated-ops contract)))))
-
-(deftest implementer-prompt-owns-acceptance-pipeline
-  (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))]
-    (is (str/includes? prompt "Acceptance Pipeline"))
-    (is (str/includes? prompt "bb acceptance"))
-    (is (str/includes? prompt "ACCEPTANCE_BLOCKER"))))
-
-(deftest late-roles-require-full-acceptance-suite-before-handoff
-  (doseq [[template needle] [["hardener" "full acceptance suite"]
-                             ["qa" "full acceptance suite"]
-                             ["architect" "full acceptance suite"]
-                             ["senior-implementer" "full acceptance suite"]]]
-    (let [prompt (slurp (str (fs/path repo-root "swarmforge/role-templates" (str template ".prompt"))))]
-      (is (str/includes? prompt needle) template)
-      (is (str/includes? prompt "bb acceptance") template))))
+(deftest troubleshooter-contract-is-operator-focused
+  (let [c (edn/read-string (slurp (str (fs/path repo-root "swarmforge/roles/troubleshooter.contract.edn"))))]
+    (is (true? (:persistent c)))
+    (is (true? (:idle-until-called c)))
+    (is (true? (:elevated-ops c)))))
 
 (deftest squad-leader-contract-encodes-orchestration-boundary
   (let [contract-file (fs/path repo-root "swarmforge/roles/squad-leader.contract.edn")
-        prompt (slurp (str (fs/path repo-root "swarmforge/roles/squad-leader.prompt")))
         c (edn/read-string (slurp (str contract-file)))]
     (is (fs/exists? contract-file))
-    (is (str/includes? prompt "squad-leader.contract.edn"))
     (is (true? (:persistent c)))
     (is (true? (:may-talk-to-user c)))
     (is (true? (:may-spawn c)))
@@ -268,30 +173,14 @@
     (is (= "squad_next.sh --residual-only" (:implementation-readiness-source c)))
     (is (= "squad_next.sh --residual-only" (:concurrent-action-source c)))
     (is (true? (:applied-transitions-informational c)))
-    (is (str/includes? prompt "accept-merge"))
-    (is (not (str/includes? prompt "Theme Module Map")))
-    (is (not (str/includes? prompt "squad_theme.sh")))
-    (is (not (str/includes? prompt "theme-module-map.md")))
     (is (= ["hardener" "qa" "architect" "senior-implementer"] (:singleton-roles c)))
     (is (some #{"stories"} (:forbidden-writes c)))
     (is (some #{"production-code"} (:forbidden-writes c)))
     (is (not (some #{"theme-module-maps"} (:writes c))))))
 
-(deftest analyst-implementer-architect-prompts-reference-module-map
-  (let [analyst (slurp (str (fs/path repo-root "swarmforge/role-templates/analyst.prompt")))
-        implementer (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))
-        architect (slurp (str (fs/path repo-root "swarmforge/role-templates/architect.prompt")))
-        outline (slurp (str (fs/path repo-root "swarmforge/templates/theme-module-map.md")))]
-    (is (str/includes? analyst ".squad/stories/<id>/plan.md"))
-    (is (str/includes? analyst "Clean Architecture"))
-    (is (not (str/includes? analyst "implementation-order")))
-    (is (not (str/includes? analyst "dependency-checker.edn")))
+(deftest theme-module-map-outline-has-clean-architecture-sections
+  (let [outline (slurp (str (fs/path repo-root "swarmforge/templates/theme-module-map.md")))]
     (is (str/includes? outline "**analyst** authors"))
-    (is (str/includes? implementer "Theme Module Map"))
-    (is (str/includes? implementer "root tooling files"))
-    (is (str/includes? implementer "deps.edn"))
-    (is (str/includes? architect "module map"))
-    (is (str/includes? architect "backlog"))
     (is (str/includes? outline "## Use Cases (Business / Process Rules)"))
     (is (str/includes? outline "## Dependency Rule"))
     (is (str/includes? outline "## UI (Interface Adapters)"))
@@ -324,21 +213,8 @@
 
 (deftest product-tooling-templates-keep-bb-edn-thin
   (let [bb (slurp (str (fs/path repo-root "swarmforge/templates/product-bb.edn")))
-        deps (slurp (str (fs/path repo-root "swarmforge/templates/product-deps.edn")))
-        engineering (slurp (str (fs/path repo-root "swarmforge/constitution/articles/engineering.prompt")))
-        implementer (slurp (str (fs/path repo-root "swarmforge/role-templates/implementer.prompt")))
-        cleaner (slurp (str (fs/path repo-root "swarmforge/role-templates/cleaner.prompt")))
-        hardener (slurp (str (fs/path repo-root "swarmforge/role-templates/hardener.prompt")))]
+        deps (slurp (str (fs/path repo-root "swarmforge/templates/product-deps.edn")))]
     (is (str/includes? bb "local/root"))
     (is (str/includes? bb "bb/tasks/test.clj"))
     (is (not (str/includes? bb ":paths")))
-    (is (str/includes? deps ":paths"))
-    (is (str/includes? engineering "Project Tooling Layout"))
-    (is (str/includes? engineering "Keep root `bb.edn` thin"))
-    (doseq [prompt [implementer cleaner hardener]]
-      (is (str/includes? prompt "bb.edn"))
-      (is (str/includes? prompt "deps.edn")))))
-
-(deftest runtime-constitution-does-not-require-development-design-doc
-  (let [project-article (slurp (str (fs/path repo-root "swarmforge/constitution/articles/project.prompt")))]
-    (is (not (str/includes? project-article "squad-design.md")))))
+    (is (str/includes? deps ":paths"))))

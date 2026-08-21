@@ -371,16 +371,29 @@
                       (str "- " title "\n")))
          "Copy these names into plan.md non-goals. Read `.squad/backlog/<id>.item` only if a port needs a sentence.\n\n")))
 
-(defn sockets-section [titles]
-  (when (seq titles)
-    (str "## Sockets\n\n"
-         (apply str (for [title titles]
-                      (str "- " title "\n")))
-         "Stub these in-process. Do not implement them. They are not leftovers and not CLI verbs.\n\n")))
+(defn open-story-file? [file]
+  (and (fs/regular-file? file)
+       (str/ends-with? (fs/file-name file) ".item")
+       (let [status (or (read-value file "status") "open")]
+         (or (str/blank? status) (= "open" status)))))
 
-(defn backlog-titles-section [scope template titles]
+(defn stories-section [root]
+  (when root
+    (let [dir (fs/path root ".squad" "backlog")]
+      (when (fs/directory? dir)
+        (let [blocks (for [file (->> (fs/list-dir dir)
+                                     (filter open-story-file?)
+                                     (sort-by str))]
+                       (let [title (or (not-empty (read-value file "title"))
+                                       (fs/file-name file))
+                             body (or (item-body file) "")]
+                         (str "### " title "\n\n" body "\n\n")))]
+          (when (seq blocks)
+            (str "## Stories\n\n" (apply str blocks))))))))
+
+(defn backlog-titles-section [scope template root titles]
   (if (or (= "product" scope) (= "system-analyst" template))
-    (sockets-section titles)
+    (stories-section root)
     (non-goals-section titles)))
 
 (defn frame-run-line [p]
@@ -424,7 +437,7 @@
        (frame-section root)
        (when (or (= "product" scope) (= "system-analyst" template))
          (mission-section root))
-       (backlog-titles-section scope template other-backlog-titles)
+       (backlog-titles-section scope template root other-backlog-titles)
        (tool-lines "Required Tools" required-tools)
        (tool-lines "Optional Tools" optional-tools)
        (tool-startup-lines template required-tools)
@@ -433,7 +446,8 @@
        instructions-text "\n\n"
        "## Required Transient Protocol\n\n"
        "- Stay inside this assignment boundary.\n"
-       (when-not (or (= "product" scope) (= "system-analyst" template))
+       (if (or (= "product" scope) (= "system-analyst" template))
+         "- The mission and stories are in this document. Do not search for a backlog or stories directory.\n"
          (str "- The story is in this document. Write `.squad/stories/" story-id "/plan.md` only if you are the analyst. Do not search for a stories directory.\n"))
        "- Use `squad_event.sh` only with lifecycle states: starting, running, blocked, failed, handoff_ready, handoff_sent. Do not self-retire; after handoff report handoff_sent and leave retirement to squad_retire.sh after the Squad Leader resolves the workflow. Put phase names and progress wording in the detail argument, not the state.\n"
        "- Commit completed work on your transient branch.\n"
@@ -532,7 +546,9 @@
 
     (or (= "product" scope) (= "system-analyst" template))
     (str "Follow the " template " role contract for this product assignment.\n"
-         "Produce frame.md, qa/product.md, and the one executable. Do not write plan.md.\n"
+         "Produce frame.md, qa/product.md, and the one executable. "
+         "You may edit bb.edn or deps.edn only as needed to run that executable. "
+         "Do not write plan.md.\n"
          "Commit the work, then run swarm_handoff.sh (no file).\n")
 
     :else

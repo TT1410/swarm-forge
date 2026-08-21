@@ -27,7 +27,7 @@ Independent per-story assignments produce a series of little applications. This 
 
 1. Operator adds items (files / Troubleshooter / dashboard). Stories stay **open**. A **mission** (see `2026-08-20-backlog-mission-design.md`) is not open.
 2. Operator **Starts the backlog** (requires a mission and at least one open story). Residual creates assignment `*-system-analysis` and spawns `system-analyst-001` only. No story packets yet. Per-card Start is disabled.
-3. Agent reads the Mission on the assignment and every open `.squad/backlog/*.item`. One worktree, one commit:
+3. Agent reads the Mission and Stories on the assignment (do not search the worktree for `.squad/backlog` or `stories/`). Conceives a vision, ships one executable consistent with those stories, and writes that vision as a comment in the framework and in `qa/product.md`. Do not create plug points. One worktree, one commit:
    - One process / one `-main` / product entrypoint: the form the Mission names (empty turn loop, named stub sockets, dummy state). No hunt rules, messages, or wins.
    - `frame.md`: socket list (from **open stories**), how to run, what is not implemented.
    - `qa/product.md`: one QA procedure through that UI, with a labeled placeholder per open story.

@@ -11,10 +11,8 @@ Replay-swarm and leftover-redo tracker. Bodies kept; grouped for reading. On-hol
 **Open**
 
 - Start the backlog: System-Analyst builds the executable frame
-
-**Done**
-
-- Analysis fumbles (analyst-001 session)
+- QA placeholders should use story names
+- System-analyst did not use the story bodies
 
 ---
 
@@ -42,13 +40,13 @@ The analyst pass must exist **before** the workflow picks an implementer (first 
 
 ### Start the backlog: System-Analyst builds the executable frame
 
-**Open.** Not implemented. Spec: `docs/superpowers/specs/2026-08-20-system-analyst-design.md`. Replaces the on-hold DAG: no story order file, no implementer waiting on a predecessor SHA.
+**Open.** Spec: `docs/superpowers/specs/2026-08-20-system-analyst-design.md`. Replaces the on-hold DAG: no story order file, no implementer waiting on a predecessor SHA.
 
 Independent per-story assignments still yield a series of little applications unless every role shares one product to extend. A mission paragraph is not enough. The vision has to be a **running skeleton**.
 
 **Start the backlog** is the operator saying: this set of stories is one product. Not Start on a single card.
 
-**System-Analyst** then reads every backlog item and produces the **frame**, not the game:
+**System-Analyst** then reads the Mission and Sockets on the assignment and produces the **frame**, not the game:
 
 - One executable, one console, one turn loop.
 - Named sockets from the backlog (restart prompt, move, pits, bats, Wumpus, arrows) as empty ports or dummy state.
@@ -64,80 +62,30 @@ What it is not: a theme, an order file, a second backlog, or a late glue pass. I
 
 Operator gates that frame the way they gate a plan. After it is on master, per-story work cuts **this** story only, against that executable.
 
-**Where:** backlog Start (whole backlog, not one story); new System-Analyst role (or first pass before per-story analyst); residual waits for the frame on master before story implementers; constitution / prompts so every role treats the frame as already real.
+**Where:** backlog Start (whole backlog, not one story); System-Analyst role; residual waits for the frame on master before story implementers; constitution / prompts so every role treats the frame as already real.
 
-### Analysis fumbles (analyst-001 session)
+### QA placeholders should use story names
 
-**Done.** No-arg `swarm_handoff.sh` fills HEAD commit/artifacts; `--help` is usage. `squad_run.sh` accepts a bare command. Assignment lists other backlog titles, drops “provided theme,” and says the story is in the document. Analyst prompt names `.squad/backlog` and the plan path.
+**Open.** `qa/product.md` from `system-analyst-001` is only HTML comments:
 
-The plan was fine. After that the agent reconstructed helper CLIs and looked in the wrong place. Prompts that say “do the right thing” did not help. Same pattern on every fumble: do not make the agent author ceremony.
-
-Skip: commit message without the assignment id. `worker-common` already says identify the assignment.
-
-Do not change note handoffs, SL routing, retire capture, analyst plan sections, or the independent-story rule.
-
-**Where:** `.squad/sessions/analyst-001/pane.txt`; `swarm_handoff.sh`; `squad_run.sh`; `squad_assign.clj`; `analyst.prompt`; `worker-common.prompt`; constitution `handoffs.prompt`.
-
-#### Handoff drafts: `swarm_handoff.sh` with no args fills commit and artifacts from HEAD
-
-Agents often spent 15–70s after the work was done fumbling `swarm_handoff` (template placeholders like `<10-char-commit>`, SHA length, header-only drafts). Hardener left `result-handoff.draft` unfilled; events skipped `handoff_sent`.
-
-This run: the assignment already shipped a nearly complete `result-handoff.draft`. The agent never touched it. Instructions showed the **shape**, not the **path**, and `swarm_handoff.sh` requires a file, so it ran `--help` (treated as a filename: `Draft file not found: --help`), then `mktemp` in `/tmp` and queued successfully. The leftover draft still has `<10-char-commit>`. SHA and artifacts were correct. The protocol is the problem, not the SHA.
-
-This agent was already told to use “the provided draft.” A filled draft at create time cannot know the commit SHA. A separate fill helper plus `swarm_handoff.sh <file>` is an extra step they will skip.
-
-**Proposed fix:** assignment `git_handoff` is `swarm_handoff.sh` with no args. After the commit:
-
-```sh
-swarm_handoff.sh
+```
+<!-- bl-20260821-002 -->
 ```
 
-The helper:
+No walk / pits / bats / Wumpus / arrows / replay. Later QA-proc writers cannot see which placeholder is theirs.
 
-1. Uses `SWARMFORGE_ROLE` and the agent metadata `task_id` to find `.squad/assignments/<id>/result-handoff.draft` on the **project root**.
-2. Sets `commit` to `git rev-parse --short=10 HEAD`.
-3. Sets `artifacts` from `git diff-tree --name-only -r HEAD` (or `none`).
-4. Validates and queues as it does today.
-5. Reviewers still must have `review_decision` in the draft (or pass `--review-decision`); otherwise fail with that one line.
-6. A path argument stays for `note` handoffs and odd cases.
+The prompt asked for `<!-- <backlog-id> -->` per open item. The agent did that and stopped.
 
-`--help` prints usage. It must not be read as a draft path.
+**Proposed fix:** assignment and prompt: one placeholder per **open story**, labeled with the story title (and the id if needed). Not a bare backlog id. Mission is not a placeholder.
 
-Assignment protocol text becomes one command, not a template block. Drop “using this draft shape” and the pasted placeholders. Constitution: assigned `git_handoff` is no-arg `swarm_handoff.sh`; notes still use a draft file.
+**Where:** `qa/product.md`; `system-analyst.prompt`; `system-analyst-001` pane.
 
-The draft file remains the record; the agent stops authoring it.
+### System-analyst did not use the story bodies
 
-#### `squad_run.sh` CLI
+**Open.** After it found the product-root items, it opened all seven `.item` files. `frame.md` got titles and ids. The frame UI is still `LOOK` / `WAIT` / `QUIT`. Walk already specifies `INSTRUCTIONS (Y-N)?` and the room report. Those sentences never entered the executable.
 
-After the plan was written it ran `squad_run.sh "verify required analyst plan sections" sh -lc '…'` and hit `Usage: squad_run.sh [--expect-failure] <phase> <detail> -- <command...>`. Reran correctly. `worker-common.prompt` says to use `squad_run.sh` and never shows `<phase> <detail> --`.
+It treated the files as a list of ids, not as stories. Counting “seven backlog items” (mission plus six stories) as “game sockets plus the application loop” is the same miss.
 
-**Proposed fix:** accept the natural form.
+**Proposed fix:** put story **bodies** (or the first-screen / command text) on the assignment, not a path to hunt. Prompt: the Mission is the loop; the stories name the empty prompts of **that** loop. Do not invent LOOK/WAIT/QUIT. Do not invent a menu of socket names.
 
-```sh
-squad_run.sh grep -q "^## purpose$" plan.md
-squad_run.sh --expect-failure bb test
-```
-
-Default `phase=run`, detail = the command string. Keep `--` / `--phase` / `--detail` for callers that want them. Print that one-liner in `worker-common.prompt`. `--help` prints usage, not a failed parse.
-
-Do not require a heading-grep via `squad_run` for the analyst; if they use it, the simple form must work.
-
-#### Non-goals missed the backlog
-
-The prompt says read other backlog items only to name them as non-goals. Five other open items (walk, pits, bats, Wumpus, arrows) live in `.squad/backlog/*.item`. The analyst grepped `stories/*.md`, found only the started story, and wrote that no other stories are present. Ports in the plan were close; the non-goals list was empty of the actual backlog.
-
-**Proposed fix:** put the other titles on the assignment. `assignment.md` gets a **Non-goals (other backlog items)** list of open `.squad/backlog` titles (not this story). Analyst copies those names into `plan.md` non-goals; read `.squad/backlog/<id>.item` only if a port needs a sentence.
-
-Name the path in `analyst.prompt`: other items are `.squad/backlog/*.item`, not `stories/*.md`. Unstarted work is not under `stories/`.
-
-#### Hunting for a `stories/` directory
-
-The assignment already inlined the story. The prompt says it is on disk under `stories/`. The file is `stories/<id>.md`; the plan is `.squad/stories/<id>/plan.md`. The agent listed directories.
-
-**Proposed fix:** assignment: “The story is in this document. Write `.squad/stories/<id>/plan.md`. Do not search for a stories directory.” Prompt: same two paths, file vs plan dir.
-
-#### Leftover “provided theme”
-
-`squad_assign.clj` default instructions still say “Use the provided theme, story packet, and role prompt as the source of truth.”
-
-**Proposed fix:** drop theme. “Use the story in this assignment and the role prompt.” Sweep remaining “theme” in assignment copy (not git/project-root).
+**Where:** `.squad/sessions/system-analyst-001/pane.txt`; `frame.md`; `src/wumpus/frame.clj`; assignment Mission/Sockets; `system-analyst.prompt`.

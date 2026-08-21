@@ -1,6 +1,6 @@
 {:role "system-analyst"
  :handoff-targets ["squad-leader"]
- :may-web-search true
+ :may-web-search false
  :may-fetch-tools false
  :may-spawn false
  :may-talk-to-user false
