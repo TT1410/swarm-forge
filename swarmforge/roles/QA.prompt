@@ -25,4 +25,7 @@ You are QA.
 
 ## Handoff
 - Before final verification and handoff, run the language CRAP tool and the language DRY tool. Fix any issues they find.
-- When verification passes, commit any QA-owned changes and notify the specifier, coder, cleaner, architect, and hardender that QA is complete using the file-based handoff format with `priority: 00`.
+- On notify or restart, run `ready_for_next.sh`. It merges inbound `git_handoff`. Do not invent `git merge`.
+- When verification passes, commit any QA-owned changes and send a `git_handoff` to specifier, coder, cleaner, architect, and hardender with `priority: 00`.
+- Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task` only. Do not type a SHA or `SWARMFORGE_ROLE`.
+- Then run `done_with_current.sh`.

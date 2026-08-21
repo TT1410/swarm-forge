@@ -33,5 +33,6 @@ You are the specifier.
 - Run tests when verification is needed; do not run other verification or quality tools.
 
 ## Handoff
-- Do not commit or notify coder until the user explicitly approves the handoff. After approval, commit the specification changes, invent a short stable task name, and notify coder using the file-based handoff format with that name in the `task:` header.
-- When QA notifies you that the job is complete, merge the changes and ask the user for the next feature to add.
+- Do not commit or notify coder until the user explicitly approves the handoff. After approval, commit the specification changes, invent a short stable task name, and send a `git_handoff` to `coder` with that name in `task:`.
+- Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task` only. Do not type a SHA or `SWARMFORGE_ROLE`.
+- When QA notifies you that the job is complete, run `ready_for_next.sh` (it merges). Then ask the user for the next feature to add. Do not invent `git merge`.
