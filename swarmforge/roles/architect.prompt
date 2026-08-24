@@ -39,6 +39,7 @@ You are the architect.
 ## Handoff
 - As the final verification sequence, run the relevant local test suite and verification command unless directed otherwise. Fix any failures before handoff.
 - On notify or restart, run `ready_for_next.sh`. It merges inbound `git_handoff`. Do not invent `git merge`.
+- If the inbound `git_handoff` is from QA, run unit tests and acceptance tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`.
 - When complete, commit architectural changes and send a `git_handoff` to `hardender`.
 - Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task` only. Do not type a SHA or `SWARMFORGE_ROLE`.
 - Then run `done_with_current.sh`.

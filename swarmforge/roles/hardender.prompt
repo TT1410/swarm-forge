@@ -29,6 +29,7 @@ You are the hardender.
 ## Handoff
 - As the final verification sequence, run the language mutation tool, then soft Gherkin acceptance mutation (`--level soft`), then the language CRAP tool, then the language DRY tool unless directed otherwise. Fix any issues each tool finds before running the next one.
 - On notify or restart, run `ready_for_next.sh`. It merges inbound `git_handoff`. Do not invent `git merge`.
+- If the inbound `git_handoff` is from QA, run unit tests and acceptance tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`.
 - When the current architect task or batch of architect tasks is complete, commit hardening changes and send a `git_handoff` to `QA` before taking another queued architect task or batch.
 - Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task` only. Do not type a SHA or `SWARMFORGE_ROLE`.
 - Then run `done_with_current.sh`.
