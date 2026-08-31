@@ -21,13 +21,15 @@
        "  pack_board.sh archive --role <role> [--root <dir>]\n"
        "  pack_board.sh archive <role>\n"
        "  pack_board.sh archive-all [--root <dir>]\n"
-       "  pack_board.sh increment-audit --task-id <task-id> [--root <dir>]\n"
+       "  pack_board.sh increment-audit --task-id <task-id> --caller <handoffd|lieutenant> [--root <dir>]\n"
+       "  pack_board.sh request-allow --name <name> --act <move|done|increment-audit> [--root <dir>]\n"
+       "  pack_board.sh allow --name <name> --act <move|done|increment-audit> [--root <dir>]\n"
        "  pack_board.sh delete --name <name> [--root <dir>]\n"
        "  pack_board.sh delete <name>"))
 
 (def flags {"--root" :root "--name" :name "--lane" :lane "--text" :text
             "--role" :role "--task-id" :task-id "--type" :type
-            "--caller" :caller "--archive" :archive})
+            "--caller" :caller "--archive" :archive "--act" :act})
 (def script-dir (fs/parent *file*))
 (try
   (require 'handoff-lib)
@@ -219,16 +221,58 @@
       (card-type/format-row (assoc row :lane lane :updated (timestamp)))
       line)))
 
+(def allow-acts #{"move" "done" "increment-audit"})
+
 (defn lt-allow-file [root name act]
   (fs/path root ".swarmforge" "board" "lt-allow" (str name "-" act)))
+
+(defn lt-pending-file [root name act]
+  (fs/path root ".swarmforge" "board" "lt-allow-pending" (str name "-" act)))
+
+(defn require-act! [act]
+  (require-value! act "act")
+  (when-not (contains? allow-acts act)
+    (exit! 1 (str "Unknown act: " act))))
+
+(defn caller-task-name [opts]
+  (or (not-empty (task-name opts))
+      (when-let [id (not-empty (:task-id opts))]
+        (some (fn [line]
+                (let [row (card-type/parse-row line)]
+                  (when (or (= id (:id row)) (= id (:name row)))
+                    (:name row))))
+              (read-rows (tasks-file (resolve-root opts)))))))
+
+(defn request-allow! [opts]
+  (let [name (task-name opts)
+        act (:act opts)
+        root (resolve-root opts)
+        file (lt-pending-file root name act)]
+    (require-value! name "task name")
+    (require-act! act)
+    (fs/create-dirs (fs/parent file))
+    (spit (str file) (str "name: " name "\nact: " act "\n"))))
+
+(defn allow! [opts]
+  (let [name (task-name opts)
+        act (:act opts)
+        root (resolve-root opts)
+        pending (lt-pending-file root name act)
+        allow (lt-allow-file root name act)]
+    (require-value! name "task name")
+    (require-act! act)
+    (fs/create-dirs (fs/parent allow))
+    (spit (str allow) (str "name: " name "\nact: " act "\n"))
+    (fs/delete-if-exists pending)))
 
 (defn caller-allowed? [opts act]
   (let [caller (:caller opts)
         root (resolve-root opts)
-        name (task-name opts)]
+        name (caller-task-name opts)]
     (cond
       (= "handoffd" caller) true
       (and (= "lieutenant" caller)
+           (not (str/blank? name))
            (fs/regular-file? (lt-allow-file root name act)))
       true
       :else false)))
@@ -237,19 +281,26 @@
   (when-not (caller-allowed? opts act)
     (exit! 1 (str act " requires --caller handoffd or --caller lieutenant with Attention"))))
 
+(defn consume-allow! [opts act]
+  (when (= "lieutenant" (:caller opts))
+    (when-let [name (not-empty (caller-task-name opts))]
+      (fs/delete-if-exists (lt-allow-file (resolve-root opts) name act)))))
+
 (defn set-lane! [opts lane]
-  (require-caller! opts (if (= "done" lane) "done" "move"))
-  (let [name (task-name opts)
-        file (tasks-file (resolve-root opts))]
-    (require-value! name "task name")
-    (require-value! lane "lane")
-    (with-board-lock
-      (resolve-root opts)
-      (fn []
-        (let [rows (read-rows file)]
-          (when-not (find-task rows name)
-            (exit! 1 (str "Unknown task name: " name)))
-          (write-rows file (mapv #(rewrite-lane % name lane) rows)))))))
+  (let [act (if (= "done" lane) "done" "move")]
+    (require-caller! opts act)
+    (let [name (task-name opts)
+          file (tasks-file (resolve-root opts))]
+      (require-value! name "task name")
+      (require-value! lane "lane")
+      (with-board-lock
+        (resolve-root opts)
+        (fn []
+          (let [rows (read-rows file)]
+            (when-not (find-task rows name)
+              (exit! 1 (str "Unknown task name: " name)))
+            (write-rows file (mapv #(rewrite-lane % name lane) rows)))))
+      (consume-allow! opts act))))
 
 (defn move! [opts]
   (set-lane! opts (task-lane opts)))
@@ -363,7 +414,8 @@
                                rows)]
             (when-not present?
               (exit! 1 (str "Unknown task ID: " task-id)))
-            (write-rows file (mapv #(rewrite-audit-count % task-id) rows))))))))
+            (write-rows file (mapv #(rewrite-audit-count % task-id) rows)))))))
+  (consume-allow! opts "increment-audit"))
 
 (defn delete! [opts]
   (let [name (task-name opts)
@@ -391,6 +443,8 @@
    "archive" archive!
    "archive-all" archive-all!
    "increment-audit" increment-audit!
+   "request-allow" request-allow!
+   "allow" allow!
    "delete" delete!})
 
 (defn -main [& args]

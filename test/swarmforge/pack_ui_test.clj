@@ -113,7 +113,8 @@
   ([root name lane ok?]
    (let [card-type (case lane
                      "coder" "utility"
-                     "cleaner" "review"
+                     "cleaner" "utility"
+                     "QA" "QA"
                      "component")
          created (pack-board root ok?
                              "create"
@@ -207,12 +208,13 @@
 (defn task-card [root name]
   (some #(when (= name (:name %)) %) (:tasks (web-state root))))
 
-(defn start-tmux! [root sessions]
-  (let [sock (str (fs/path root "tmux.sock"))]
-    (write-file (fs/path root ".swarmforge/tmux-socket") (str sock "\n"))
-    (doseq [session sessions]
-      (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" session "sleep" "120"))
-    sock))
+(defn start-tmux!
+  ([root sessions] (start-tmux! root sessions (str (fs/path root "tmux.sock"))))
+  ([root sessions sock]
+   (write-file (fs/path root ".swarmforge/tmux-socket") (str sock "\n"))
+   (doseq [session sessions]
+     (run {:dir root} "tmux" "-S" sock "new-session" "-d" "-s" session "sleep" "120"))
+   sock))
 
 (defn stop-tmux! [sock]
   (run {:dir "." :ok? false} "tmux" "-S" sock "kill-server"))
@@ -299,7 +301,30 @@
     (let [no-caller (pack-board root false "move" "--root" (str root)
                                 "--name" "stay" "--lane" "specifier")]
       (is (pos? (:exit no-caller)))
-      (is (str/includes? (:err no-caller) "requires --caller")))))
+      (is (str/includes? (:err no-caller) "requires --caller")))
+    (let [lt-denied (pack-board root false "move" "--root" (str root)
+                                "--name" "stay" "--lane" "specifier"
+                                "--caller" "lieutenant")]
+      (is (pos? (:exit lt-denied)))
+      (is (str/includes? (:err lt-denied) "requires --caller")))
+    (let [requested (pack-board root true "request-allow" "--root" (str root)
+                                "--name" "stay" "--act" "move")
+          pending (fs/path root ".swarmforge/board/lt-allow-pending/stay-move")
+          allowed (do (pack-board root true "allow" "--root" (str root)
+                                  "--name" "stay" "--act" "move")
+                      (pack-board root true "move" "--root" (str root)
+                                  "--name" "stay" "--lane" "specifier"
+                                  "--caller" "lieutenant"))]
+      (is (zero? (:exit requested)))
+      (is (not (fs/exists? pending)))
+      (is (zero? (:exit allowed)))
+      (is (= "specifier" (task-lane root "stay")))
+      (is (not (fs/exists? (fs/path root ".swarmforge/board/lt-allow/stay-move")))))
+    (let [reuse (pack-board root false "move" "--root" (str root)
+                            "--name" "stay" "--lane" "coder"
+                            "--caller" "lieutenant")]
+      (is (pos? (:exit reuse)))
+      (is (str/includes? (:err reuse) "requires --caller")))))
 
 (deftest pack-board-serializes-concurrent-audit-increments
   (let [root (tmp-dir)
@@ -380,6 +405,66 @@
       (finally
         (stop-tmux! sock)))))
 
+(deftest handoffd-writes-forge-notify-on-specifier-handoff
+  (let [forge (tmp-dir)
+        project (fs/path forge "projects" "cave")
+        roles six-pack-roles
+        lt-sock (str (fs/path forge "tmux.sock"))]
+    (fs/create-dirs project)
+    (setup-pack! project roles)
+    (create-task project "HTW" "specifier")
+    (queue-handoff! project {:from "specifier" :to "coder" :task "HTW"})
+    (write-file (fs/path forge ".swarmforge/tmux-socket") (str lt-sock "\n"))
+    (run {:dir forge} "tmux" "-S" lt-sock "new-session" "-d" "-s" "swarmforge-lieutenant" "sleep" "120")
+    (let [sock (start-tmux! project roles (str (fs/path forge "proj.sock")))]
+      (try
+        (handoffd-once project)
+        (let [notes (vec (fs/glob (fs/path forge ".swarmforge/notify") "*.notify"))
+              log (fs/path project ".swarmforge/daemon/handoffd.log")]
+          (is (seq notes) (when (fs/exists? log) (slurp (str log))))
+          (let [text (slurp (str (first notes)))
+                pane (:out (run {:dir forge}
+                                "tmux" "-S" lt-sock "capture-pane" "-p" "-t" "swarmforge-lieutenant"))]
+            (is (= 1 (count notes)))
+            (is (str/includes? (fs/file-name (first notes)) "specifier-handoff"))
+            (is (str/includes? text "project: cave\n"))
+            (is (str/includes? text "event: specifier-handoff\n"))
+            (is (str/includes? text "task: HTW\n"))
+            (is (str/includes? pane "Notify: specifier-handoff"))
+            (is (= "specifier" (task-lane project "HTW")))))
+        (finally
+          (stop-tmux! sock)
+          (stop-tmux! lt-sock))))))
+
+(deftest handoffd-writes-forge-notify-on-card-done
+  (let [forge (tmp-dir)
+        project (fs/path forge "projects" "cave")
+        roles ["coder" "cleaner"]
+        lt-sock (str (fs/path forge "tmux.sock"))]
+    (fs/create-dirs project)
+    (setup-pack! project roles)
+    (create-task project "HTW" "cleaner")
+    (queue-handoff! project {:from "cleaner" :to "coder" :task "HTW"})
+    (write-file (fs/path forge ".swarmforge/tmux-socket") (str lt-sock "\n"))
+    (run {:dir forge} "tmux" "-S" lt-sock "new-session" "-d" "-s" "swarmforge-lieutenant" "sleep" "120")
+    (let [sock (start-tmux! project roles (str (fs/path forge "proj.sock")))]
+      (try
+        (handoffd-once project)
+        (let [notes (vec (fs/glob (fs/path forge ".swarmforge/notify") "*.notify"))
+              log (fs/path project ".swarmforge/daemon/handoffd.log")]
+          (is (seq notes) (when (fs/exists? log) (slurp (str log))))
+          (let [text (slurp (str (first notes)))
+                pane (:out (run {:dir forge}
+                                "tmux" "-S" lt-sock "capture-pane" "-p" "-t" "swarmforge-lieutenant"))]
+            (is (= 1 (count notes)))
+            (is (str/includes? (fs/file-name (first notes)) "card-done"))
+            (is (str/includes? text "event: card-done\n"))
+            (is (str/includes? pane "Notify: card-done"))
+            (is (= "done" (task-lane project "HTW")))))
+        (finally
+          (stop-tmux! sock)
+          (stop-tmux! lt-sock))))))
+
 (def four-pack-roles ["specifier" "coder" "refactorer" "architect"])
 (def reverse-structure-body
   (str "Re-read your role and constitution.\n\n"
@@ -423,21 +508,23 @@
       (finally
         (stop-tmux! sock)))))
 
-(deftest handoffd-four-pack-architect-back-all-dones-because-last
+(deftest handoffd-six-pack-hardender-dones-because-last-on-component
   (let [root (tmp-dir)
-        roles four-pack-roles
-        sock (do (setup-pack! root roles {"refactorer" "back-one" "architect" "back-all"})
-                 (create-task root "HTW" "architect")
-                 (queue-handoff! root {:from "architect" :to "specifier" :task "HTW"
+        roles six-pack-roles
+        sock (do (setup-pack! root roles {"cleaner" "back-one"
+                                          "architect" "back-all"
+                                          "QA" "back-all"})
+                 (create-task root "HTW" "hardender")
+                 (queue-handoff! root {:from "hardender" :to "specifier" :task "HTW"
                                        :priority "50" :non-forwarding true})
-                 (doseq [role ["specifier" "coder" "refactorer"]]
-                   (queue-handoff! root {:from "architect" :to role :task "HTW"
+                 (doseq [role ["specifier" "coder" "cleaner" "architect"]]
+                   (queue-handoff! root {:from "hardender" :to role :task "HTW"
                                          :priority "00" :non-forwarding true
                                          :body reverse-structure-body}))
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
-      (doseq [role ["specifier" "coder" "refactorer"]]
+      (doseq [role ["specifier" "coder" "cleaner" "architect"]]
         (is (seq (inbox-names root roles role)) role))
       (is (= "done" (task-lane root "HTW")))
       (finally
@@ -636,16 +723,16 @@
       (finally
         (stop-tmux! sock)))))
 
-(deftest four-pack-end-broadcast-marks-the-card-done
-  ;; Given four-pack, card in architect
-  ;; When architect queues git_handoff to every other role
+(deftest component-hardender-end-broadcast-marks-the-card-done
+  ;; Given six-pack, component card in hardender
+  ;; When hardender queues git_handoff to every other role
   ;; Then the card is done
   (let [root (tmp-dir)
-        roles ["specifier" "coder" "refactorer" "architect"]
+        roles six-pack-roles
         sock (do (setup-pack! root roles)
-                 (create-task root "htw-console-app" "architect")
-                 (queue-handoff! root {:from "architect"
-                                       :to "specifier,coder,refactorer"
+                 (create-task root "htw-console-app" "hardender")
+                 (queue-handoff! root {:from "hardender"
+                                       :to "specifier,coder,cleaner,architect,QA"
                                        :task "htw-console-app"})
                  (start-tmux! root roles))]
     (try
@@ -653,20 +740,20 @@
       (is (= "done" (task-lane root "htw-console-app")))
       (is (seq (inbox-names root roles "specifier")))
       (is (seq (inbox-names root roles "coder")))
-      (is (seq (inbox-names root roles "refactorer")))
+      (is (seq (inbox-names root roles "cleaner")))
       (is (= [] (pending-names root)))
       (finally
         (stop-tmux! sock)))))
 
-(deftest four-pack-last-role-git-handoff-is-done
-  ;; Given four-pack, card in architect
-  ;; When architect queues git_handoff to specifier,coder (not every other role)
-  ;; Then the card is done because architect is last
+(deftest component-hardender-last-role-git-handoff-is-done
+  ;; Given six-pack, component card in hardender
+  ;; When hardender queues git_handoff to specifier,coder (not every other role)
+  ;; Then the card is done because hardender is last on this card
   (let [root (tmp-dir)
-        roles ["specifier" "coder" "refactorer" "architect"]
+        roles six-pack-roles
         sock (do (setup-pack! root roles)
-                 (create-task root "htw-console-app" "architect")
-                 (queue-handoff! root {:from "architect"
+                 (create-task root "htw-console-app" "hardender")
+                 (queue-handoff! root {:from "hardender"
                                        :to "specifier,coder"
                                        :task "htw-console-app"})
                  (start-tmux! root roles))]
@@ -676,15 +763,15 @@
       (finally
         (stop-tmux! sock)))))
 
-(deftest four-pack-one-recipient-non-forwarding-is-done
-  ;; Given four-pack, card in architect
-  ;; When architect queues a non-forwarding git_handoff to specifier only
+(deftest component-hardender-one-recipient-non-forwarding-is-done
+  ;; Given six-pack, component card in hardender
+  ;; When hardender queues a non-forwarding git_handoff to specifier only
   ;; Then the card is done, not moved to specifier
   (let [root (tmp-dir)
-        roles ["specifier" "coder" "refactorer" "architect"]
+        roles six-pack-roles
         sock (do (setup-pack! root roles)
-                 (create-task root "HTW" "architect")
-                 (queue-handoff! root {:from "architect"
+                 (create-task root "HTW" "hardender")
+                 (queue-handoff! root {:from "hardender"
                                        :to "specifier"
                                        :task "HTW"
                                        :non-forwarding true})
@@ -2508,6 +2595,30 @@
       (is (= "cave" (:project approval)))
       (is (= ["cave"] (:open_projects state)))
       (is (= "cave" (:name (first (:projects state))))))))
+
+(deftest forge-state-lists-board-allows-and-allow-writes-file
+  (let [root (tmp-dir)
+        project (fs/path root "projects/cave")]
+    (seed-mini-forge! root)
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
+                  "--test-new-project" (str root) "cave" "two-pack" "m")
+    (create-task project "HTW" "specifier")
+    (pack-board project true "request-allow" "--root" (str project)
+                "--name" "HTW" "--act" "move")
+    (let [state (json/parse-string
+                 (:out (pack-web root true "--test-state" (str root)))
+                 true)
+          item (first (:board_allows state))]
+      (is (= "cave" (:project item)))
+      (is (= "HTW" (:task item)))
+      (is (= "move" (:act item))))
+    (pack-web root true "--test-allow" (str root) "HTW" "move" "cave")
+    (is (fs/exists? (fs/path project ".swarmforge/board/lt-allow/HTW-move")))
+    (is (not (fs/exists? (fs/path project ".swarmforge/board/lt-allow-pending/HTW-move"))))
+    (let [state (json/parse-string
+                 (:out (pack-web root true "--test-state" (str root)))
+                 true)]
+      (is (empty? (:board_allows state))))))
 
 (deftest forge-pane-capture-uses-project-root
   ;; Given a forge with an open project and a recorded specifier pane

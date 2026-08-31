@@ -264,8 +264,9 @@
   (if (and (= "git_handoff" (get headers "type"))
            (let [card (or (board-card-named (get headers "task"))
                           (first (board-cards-in-lane sender)))]
-             (or (and card (card-type/last-on-card? (:type card) sender))
-                 (last-pack-role? sender))))
+             (if card
+               (card-type/last-on-card? (:type card) sender)
+               (last-pack-role? sender))))
     (assoc headers "non-forwarding" "true")
     headers))
 
@@ -321,14 +322,32 @@
        distinct
        vec))
 
-(defn commit-artifacts [sha]
+(defn banned-path-errors [card-type files added]
+  (if-not (contains? #{"utility" "review"} card-type)
+    []
+    (cond-> []
+      (some #(or (str/starts-with? % "features/") (str/ends-with? % ".feature")) files)
+      (conj "This card type must not add features/*.feature.")
+      (some #(str/starts-with? % "qa/") added)
+      (conj "This card type must not add QA procedures."))))
+
+(defn commit-named-files [sha diff-filter]
   (if-let [base (not-empty (current-task-base))]
-    (named-files (command (git-cwd) "git" "diff" "--name-only" "--diff-filter=ACMRT" base sha))
-    (let [against-parent (command (git-cwd) "git" "diff" "--name-only" "--diff-filter=ACMRT" (str sha "^") sha)]
+    (named-files (command (git-cwd) "git" "diff" "--name-only"
+                          (str "--diff-filter=" diff-filter) base sha))
+    (let [against-parent (command (git-cwd) "git" "diff" "--name-only"
+                                  (str "--diff-filter=" diff-filter) (str sha "^") sha)]
       (if (zero? (:exit against-parent))
         (named-files against-parent)
         (named-files (command (git-cwd) "git" "diff-tree" "--root"
-                              "--no-commit-id" "--name-only" "--diff-filter=ACMRT" "-r" sha))))))
+                              "--no-commit-id" "--name-only"
+                              (str "--diff-filter=" diff-filter) "-r" sha))))))
+
+(defn commit-artifacts [sha]
+  (commit-named-files sha "ACMRT"))
+
+(defn commit-added [sha]
+  (commit-named-files sha "A"))
 
 (defn state-dir []
   (fs/path (project-root) ".swarmforge" "handoffs"))
@@ -957,7 +976,13 @@
             (error-report draft all-errors)
             (System/exit 2))
           (let [files (when (= "git_handoff" (get headers "type"))
-                        (commit-artifacts sha))]
+                        (commit-artifacts sha))
+                added (when (= "git_handoff" (get headers "type"))
+                        (commit-added sha))
+                path-errors (banned-path-errors (get headers "card_type") files added)]
+            (when (seq path-errors)
+              (error-report draft path-errors)
+              (System/exit 2))
             (when (and (= "git_handoff" (get headers "type")) (empty? files))
               (exit! 1 (str "Result commit " sha " has no changed files")))
             (let [submit! #(write-handoffs! {:headers headers

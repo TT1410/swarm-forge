@@ -47,7 +47,8 @@
        "  pack_web.sh --test-open-project <root> <name>\n"
        "  pack_web.sh --test-close-project <root> <name>\n"
        "  pack_web.sh --test-inferred-name <input> [github]\n"
-       "  pack_web.sh --test-mission <root> [project]"))
+       "  pack_web.sh --test-mission <root> [project]\n"
+       "  pack_web.sh --test-allow <root> <name> <act> [project]"))
 
 (def example-task-name "htw-console-app")
 (def example-task-text
@@ -508,6 +509,29 @@
 (defn approvals [root]
   (mapv #(approval-entry root %) (pending-files root)))
 
+(defn board-allow-pending-dir [root]
+  (fs/path root ".swarmforge" "board" "lt-allow-pending"))
+
+(defn parse-allow-field [text field]
+  (second (re-find (re-pattern (str "(?m)^" field ": (.*)$")) (or text ""))))
+
+(defn board-allows [root]
+  (let [dir (board-allow-pending-dir root)]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/regular-file?)
+           (sort-by #(fs/file-name %))
+           (keep (fn [path]
+                   (let [text (slurp (str path))
+                         name (parse-allow-field text "name")
+                         act (parse-allow-field text "act")]
+                     (when (and (not (str/blank? name)) (not (str/blank? act)))
+                       {:id (fs/file-name path)
+                        :task name
+                        :act act}))))
+           vec)
+      [])))
+
 (defn listed [dir pred]
   (if (fs/directory? dir)
     (->> (fs/list-dir dir)
@@ -753,6 +777,7 @@
      :lanes (lanes root)
      :tasks (tasks root)
      :approvals (approvals root)
+     :board_allows (board-allows root)
      :work_in_flight (work-in-flight root)
      :chat (list-chat root)
      :clarifications (list-clarifications root)}))
@@ -794,6 +819,11 @@
                                  (tagged name (approvals (open-project-root root name)))
                                  (catch Exception _ [])))
                              open))
+     :board_allows (vec (mapcat (fn [name]
+                                  (try
+                                    (tagged name (board-allows (open-project-root root name)))
+                                    (catch Exception _ [])))
+                                open))
      :clarifications (vec (mapcat (fn [name]
                                     (try
                                       (tagged name (list-clarifications (open-project-root root name)))
@@ -1706,6 +1736,21 @@
 (defn post-close-project [root body]
   (json-ok-data (forge/close-project! root (:name (body-map body)))))
 
+(defn post-board-allow [root body]
+  (let [m (body-map body)
+        name (:name m)
+        act (:act m)
+        dest (if (forge/forge? root)
+               (let [project (:project m)]
+                 (when (str/blank? project)
+                   (throw (ex-info "Missing project" {:http-status 400})))
+                 (str (forge/project-dir root project)))
+               root)]
+    (when (or (str/blank? name) (str/blank? act))
+      (throw (ex-info "Missing name or act" {:http-status 400})))
+    (pack-board dest "allow" "--name" name "--act" act)
+    (json-ok)))
+
 (defn scoped-approval-root [root uri body]
   (if-not (forge/forge? root)
     root
@@ -1734,6 +1779,7 @@
     (post-retry-task (scoped-approval-root root uri body) body)
     (= "/api/chat" uri) (post-chat root body)
     (= "/api/teardown" uri) (teardown-response root body)
+    (= "/api/board/allow" uri) (post-board-allow root body)
     (str/starts-with? (or uri "") "/api/approvals/")
     (post-approval (scoped-approval-root root uri body) uri body)
     (str/starts-with? (or uri "") "/api/clarifications/")
@@ -1835,6 +1881,17 @@
   (test-http! (handle-request (require-root! root)
                               {:method "POST"
                                :uri (str "/api/approvals/" id "/" action)})))
+
+(defn test-allow! [root name act & [project]]
+  (when (or (str/blank? name) (str/blank? act))
+    (exit! 1 "Missing name or act"))
+  (test-http! (handle-request (require-root! root)
+                              {:method "POST"
+                               :uri "/api/board/allow"
+                               :body (json/generate-string
+                                      (cond-> {:name name :act act}
+                                        (not (str/blank? project))
+                                        (assoc :project project)))})))
 
 (defn test-save-comments! [root id path comments]
   (when (str/blank? id)

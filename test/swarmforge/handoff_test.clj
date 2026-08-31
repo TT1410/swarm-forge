@@ -1025,6 +1025,39 @@
         (is (not (fs/exists? pid-file)))
         (is (not= 0 (:exit (run {:dir root :ok? false} "kill" "-0" pid))))))))
 
+(defn pack-board
+  ([root ok? & args]
+   (apply run {:dir root :ok? ok?} (script "pack_board.sh") args)))
+
+(deftest swarm-handoff-refuses-features-on-utility-and-new-qa-on-review
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        _ (setup-project! root [["coder" "task" "forward-only"]
+                                ["cleaner" "task" "back-one"]
+                                ["architect" "batch" "back-all"]])]
+    (pack-board root true "create" "--root" (str root) "--name" "util" "--type" "utility")
+    (write-file (fs/path root "features/console.feature") "Feature: console\n")
+    (run {:dir root} "git" "add" "features/console.feature")
+    (run {:dir root} "git" "commit" "-q" "-m" "Add feature")
+    (let [draft (fs/path root "tmp" "util.handoff")]
+      (write-file draft "type: git_handoff\nto: cleaner\npriority: 50\ntask: util\n")
+      (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "coder"} :ok? false}
+                        (script "swarm_handoff.sh") (str draft))]
+        (is (= 2 (:exit result)))
+        (is (str/includes? (:err result) "must not add features"))
+        (is (empty? (outbox-handoffs root)))))
+    (pack-board root true "create" "--root" (str root) "--name" "rev" "--type" "review")
+    (write-file (fs/path root "qa/headed.md") "# headed\n")
+    (run {:dir root} "git" "add" "qa/headed.md")
+    (run {:dir root} "git" "commit" "-q" "-m" "Add qa")
+    (let [draft (fs/path root "tmp" "rev.handoff")]
+      (write-file draft "type: git_handoff\nto: architect\npriority: 50\ntask: rev\n")
+      (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "cleaner"} :ok? false}
+                        (script "swarm_handoff.sh") (str draft))]
+        (is (= 2 (:exit result)))
+        (is (str/includes? (:err result) "must not add QA procedures"))
+        (is (empty? (outbox-handoffs root)))))))
+
 (deftest swarm-handoff-fills-artifacts-from-the-commit
   ;; Given a git_handoff of a commit that added a file
   ;; When it is queued

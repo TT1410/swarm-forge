@@ -154,6 +154,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
     <div class="tag">Attention</div>
     <div id="attention-rows">
       <div id="attention-approvals"></div>
+      <div id="attention-allows"></div>
       <div id="attention-clarifications"></div>
     </div>
   </div>
@@ -860,6 +861,9 @@ function chimeNewAttention(data) {
   (data.clarifications || []).forEach((item) => {
     if (item && item.id && item.status === "pending") keys.push("c:" + item.id);
   });
+  (data.board_allows || []).forEach((item) => {
+    if (item && item.id) keys.push("b:" + (item.project || "") + ":" + item.id);
+  });
   let fresh = false;
   if (attentionPrimed) {
     keys.forEach((key) => {
@@ -989,6 +993,36 @@ function renderApprovals(items) {
   (items || []).forEach((item) => box.appendChild(attentionRow(item)));
 }
 
+function boardAllowRow(item) {
+  const row = document.createElement("div");
+  row.className = "att-row";
+  const pill = document.createElement("span");
+  pill.className = "pill pill-warn";
+  pill.textContent = "Allow " + (item.act || "move");
+  const summary = attentionWorkPair(item.project, item.task);
+  const allow = document.createElement("button");
+  allow.type = "button";
+  allow.className = "btn btn-sm btn-approve";
+  allow.textContent = "Allow";
+  allow.onclick = async () => {
+    await fetch("/api/board/allow", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({name: item.task, act: item.act, project: item.project})
+    });
+    loadState();
+  };
+  row.append(pill, summary, allow);
+  return row;
+}
+
+function renderBoardAllows(items) {
+  const box = $("attention-allows");
+  if (!box) return;
+  box.replaceChildren();
+  (items || []).forEach((item) => box.appendChild(boardAllowRow(item)));
+}
+
 function renderClarifications(items) {
   const box = $("attention-clarifications");
   const pending = (items || []).filter((item) => item.status === "pending");
@@ -1009,6 +1043,7 @@ function renderClarifications(items) {
 function renderAttention(data) {
   chimeNewAttention(data);
   renderApprovals(data.approvals);
+  renderBoardAllows(data.board_allows);
   renderClarifications(data.clarifications);
 }
 

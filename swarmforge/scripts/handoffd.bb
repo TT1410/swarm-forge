@@ -229,8 +229,9 @@
 (defn terminal-handoff? [_roles headers]
   (let [from (get headers "from")
         row (board-row-for-headers headers)]
-    (or (and row (card-type/last-on-card? (:type row) from))
-        (last-pack-role? from))))
+    (if row
+      (card-type/last-on-card? (:type row) from)
+      (last-pack-role? from))))
 
 (defn finished-task-keys [role-info]
   (if-not role-info
@@ -401,8 +402,6 @@
       (fail! path "missing to header")
       (do
         (update-board! roles headers)
-        (when (= "git_handoff" (get headers "type"))
-          (notify-lieutenant! headers))
         (doseq [recipient recipients]
           (let [role-info (get roles recipient)]
             (when-not role-info
@@ -439,6 +438,8 @@
 (defn process-outbox-file! [roles socket path]
   (let [headers (:headers (parse-message path))
         from (get headers "from")]
+    (when (= "git_handoff" (get headers "type"))
+      (notify-lieutenant! headers))
     (if (should-hold? roles headers)
       (hold! (fs/path path))
       (deliver! roles socket (or from "") (fs/path path)))))

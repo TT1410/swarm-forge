@@ -341,6 +341,30 @@ test.describe("pack dashboard", () => {
     }
   });
 
+  test("Attention Allow writes lieutenant approval on disk", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      writeFile(
+        path.join(local.root, "projects/htw/.swarmforge/board/lt-allow-pending/HTW-move"),
+        "name: HTW\nact: move\n"
+      );
+      await page.goto(local.url);
+      const row = page.locator("#attention-allows .att-row");
+      await expect(row).toContainText("HTW");
+      await expect(row).toContainText("Allow move");
+      await row.locator("button", { hasText: "Allow" }).click();
+      await expect(page.locator("#attention-allows .att-row")).toHaveCount(0);
+      const allow = path.join(local.root, "projects/htw/.swarmforge/board/lt-allow/HTW-move");
+      await expect.poll(() => fs.existsSync(allow)).toBe(true);
+      expect(fs.existsSync(path.join(
+        local.root,
+        "projects/htw/.swarmforge/board/lt-allow-pending/HTW-move"
+      ))).toBe(false);
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
   test("Clarification Open posts the answer", async ({ page, context }) => {
     const local = await startDashboard();
     try {
