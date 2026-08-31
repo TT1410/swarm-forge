@@ -909,7 +909,8 @@
     (window-row ctx "lieutenant" agent "master" "task" "forward-only" extra-args false)))
 
 (defn forge-root? [root]
-  (fs/directory? (fs/path root "packs")))
+  (or (fs/directory? (fs/path root "packs"))
+      (fs/directory? (fs/path root "projects"))))
 
 (defn session-names-from-file [ctx]
   (let [file (:sessions-file ctx)]
@@ -1062,6 +1063,7 @@
     "--test-create-role-session" (test-create-role-session! (second args) (nth args 2))
     "--start-project" (run-project! (second args))
     "--stop-project" (run-stop-project! (second args))
+    "--test-forge-root" (println (boolean (forge-root? (second args))))
     (let [root (or (first args) (System/getProperty "user.dir"))]
       (if (forge-root? root)
         (run-host! root)

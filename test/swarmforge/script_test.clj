@@ -394,6 +394,33 @@
       (finally
         (fs/delete-tree root)))))
 
+(deftest lieutenant-forge-with-projects-is-a-host
+  (let [root (tmp-dir)]
+    (try
+      (fs/create-dirs (fs/path root "projects"))
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "# Host lieutenant. Default is grok with no extra args.\n")
+      (let [out (str/trim (:out (run {:dir root}
+                                     (script "swarmforge.bb")
+                                     "--test-forge-root"
+                                     (str root))))]
+        (is (= "true" out)))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest pack-tree-without-projects-is-not-a-host
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window specifier grok master\n")
+      (let [out (str/trim (:out (run {:dir root}
+                                     (script "swarmforge.bb")
+                                     "--test-forge-root"
+                                     (str root))))]
+        (is (= "false" out)))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest grok-lieutenant-launch-waits-for-chat
   ;; Given a host lieutenant
   ;; When SwarmForge builds the grok launch command
