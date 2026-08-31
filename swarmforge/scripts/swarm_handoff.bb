@@ -29,7 +29,8 @@
        "message: <one line, max 80 chars>"))
 
 (def reserved-fields #{"id" "from" "role" "recipient" "created_at" "enqueued_at"
-                       "dequeued_at" "completed_at" "task_base_commit" "non-forwarding"})
+                       "dequeued_at" "completed_at" "task_base_commit" "non-forwarding"
+                       "card_type"})
 (def allowed-fields #{"type" "to" "priority" "task_id" "task" "commit" "message"})
 (def allowed-types #{"git_handoff" "note"})
 (def script-dir (fs/parent *file*))
@@ -37,6 +38,10 @@
   (require 'handoff-lib)
   (catch Exception _
     (load-file (str (fs/path script-dir "handoff_lib.bb")))))
+(try
+  (require 'card-type)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "card_type.bb")))))
 
 (defn usage []
   (binding [*out* *err*]
@@ -97,11 +102,9 @@
     (if (fs/exists? file)
       (into []
             (keep (fn [line]
-                    (let [[name task-lane _created _updated task-id] (str/split line #"\t" -1)]
-                      (when (not (str/blank? name))
-                        {:name name
-                         :lane task-lane
-                         :id (or (not-empty task-id) name)}))))
+                    (let [row (card-type/parse-row line)]
+                      (when (not (str/blank? (:name row)))
+                        row))))
             (str/split-lines (slurp (str file))))
       [])))
 
@@ -245,19 +248,24 @@
 (defn last-pack-role? [role]
   (= role (last (pack-role-names))))
 
-(defn reverse-roles [sender]
-  (let [roles (pack-role-names)
-        idx (.indexOf roles sender)]
-    (if (neg? idx)
-      []
-      (case (handoff-lib/role-propagation sender)
-        "back-one" (if (pos? idx) [(nth roles (dec idx))] [])
-        "back-all" (vec (take idx roles))
-        []))))
+(defn reverse-roles [sender task]
+  (let [card (or (board-card-named task) (first (board-cards-in-lane sender)))
+        earlier (if card
+                  (card-type/earlier-roles (:type card) sender)
+                  (let [roles (pack-role-names)
+                        idx (.indexOf roles sender)]
+                    (if (neg? idx) [] (vec (take idx roles)))))]
+    (case (handoff-lib/role-propagation sender)
+      "back-one" (vec (take-last 1 earlier))
+      "back-all" (vec earlier)
+      [])))
 
 (defn with-non-forwarding [headers sender]
   (if (and (= "git_handoff" (get headers "type"))
-           (last-pack-role? sender))
+           (let [card (or (board-card-named (get headers "task"))
+                          (first (board-cards-in-lane sender)))]
+             (or (and card (card-type/last-on-card? (:type card) sender))
+                 (last-pack-role? sender))))
     (assoc headers "non-forwarding" "true")
     headers))
 
@@ -453,6 +461,7 @@
   (let [script (str (fs/path script-dir "pack_board.sh"))
         result (command (project-root) script "increment-audit"
                         "--root" (str (project-root))
+                        "--caller" "handoffd"
                         "--task-id" task-id)]
     (when-not (zero? (:exit result))
       (exit! 1 (str/trim (str (:err result) "\n" (:out result)))))))
@@ -486,10 +495,20 @@
     headers
     (assoc headers "priority" "50")))
 
+(defn fill-card-type [headers sender]
+  (if-not (= "git_handoff" (get headers "type"))
+    headers
+    (let [card (or (board-card-named (get headers "task"))
+                   (first (board-cards-in-lane sender)))]
+      (if card
+        (assoc headers "card_type" (:type card))
+        headers))))
+
 (defn prepare-headers [headers sender]
   (-> headers
       fill-commit
       (with-board-task sender)
+      (fill-card-type sender)
       (with-non-forwarding sender)
       fill-priority))
 
@@ -644,6 +663,27 @@
               (recur (next lines) line-no body-seen? (assoc headers field value) (conj ordered field) errors)))))
       {:headers headers :ordered ordered :errors errors})))
 
+(defn chain-recipient-errors [headers recipients]
+  (let [card-type (get headers "card_type")
+        sender (sender-role)]
+    (if (or (not= "git_handoff" (get headers "type"))
+            (str/blank? card-type)
+            (not (card-type/on-chain? card-type sender)))
+      []
+      (let [next (card-type/next-role card-type sender)
+            last? (card-type/last-on-card? card-type sender)]
+        (cond
+          last?
+          (mapv #(format "Recipient '%s' is not on this card's chain." %)
+                (filter #(not (card-type/on-chain? card-type %)) recipients))
+          :else
+          (cond-> []
+            (some #(not= % next) recipients)
+            (conj (format "Recipient must be next on this card (%s); got %s."
+                          next (str/join "," recipients)))
+            (some #(not (card-type/on-chain? card-type %)) recipients)
+            (conj "Recipient is not on this card's chain.")))))))
+
 (defn validate-recipients [to]
   (if (str/blank? to)
     [[] []]
@@ -756,6 +796,7 @@
      :canonical-commit canonical
      :errors (vec (concat (base-errors headers)
                           recipient-errors
+                          (chain-recipient-errors headers recipients)
                           (field-errors type ordered)
                           (git-header-errors type headers)
                           (if commit-error [commit-error] [])
@@ -830,6 +871,8 @@
                       (str "task: " (get headers "task"))
                       (str "commit: " canonical-commit)
                       (str "artifacts: " artifacts))
+                (and (= "git_handoff" type) (not (str/blank? (get headers "card_type"))))
+                (conj (str "card_type: " (get headers "card_type")))
                 (and (= "git_handoff" type) (not (str/blank? (current-task-base))))
                 (conj (str "task_base_commit: " (current-task-base)))
                 non-forwarding?
@@ -855,7 +898,7 @@
                                                  :priority "00"
                                                  :non-forwarding true
                                                  :reverse? true)))
-                        (reverse-roles (:sender ctx))))]
+                        (reverse-roles (:sender ctx) (get-in ctx [:headers "task"]))))]
     (into [forward] reverse)))
 
 (defn error-report [draft errors]

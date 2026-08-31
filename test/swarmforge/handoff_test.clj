@@ -410,7 +410,7 @@
         _ (setup-project! root {"coder" "task"})
         _ (write-file (fs/path root ".swarmforge" "roles.tsv")
                       (format "coder\tmaster\t%s\tsession\tCoder\tcodex\ttask\n" wt))]
-    (run {:dir root} (script "pack_board.sh") "create" "--name" "HTW" "--lane" "coder" "--root" (str root))
+    (run {:dir root} (script "pack_board.sh") "create" "--name" "HTW" "--type" "utility" "--root" (str root))
     (let [from-lib (run {:dir wt} (script "handoff_lib.bb") "project-root")
           listed (run {:dir wt} (script "pack_board.sh") "list")]
       (is (= (str (fs/canonicalize root))

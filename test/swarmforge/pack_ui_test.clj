@@ -97,16 +97,6 @@
          (remove str/blank?)
          (mapv read-string))))
 
-(defn create-task
-  ([root name lane] (create-task root name lane true))
-  ([root name lane ok?]
-   (pack-board root ok?
-               "create"
-               "--root" (str root)
-               "--name" name
-               "--lane" lane
-               "--text" "Integrate HTW stories")))
-
 (defn list-tasks [root]
   (pack-board root true "list" "--root" (str root)))
 
@@ -118,8 +108,33 @@
   (let [cols (str/split (or (task-row (:out (list-tasks root)) name) "") #"\t")]
     (nth cols 1 nil)))
 
+(defn create-task
+  ([root name lane] (create-task root name lane true))
+  ([root name lane ok?]
+   (let [card-type (case lane
+                     "coder" "utility"
+                     "cleaner" "review"
+                     "component")
+         created (pack-board root ok?
+                             "create"
+                             "--root" (str root)
+                             "--name" name
+                             "--type" card-type
+                             "--text" "Integrate HTW stories")]
+     (when (and ok? (zero? (:exit created)))
+       (let [now (task-lane root name)]
+         (when (and now (not= now lane))
+           (pack-board root true
+                       "move"
+                       "--root" (str root)
+                       "--name" name
+                       "--lane" lane
+                       "--caller" "handoffd"))))
+     created)))
+
 (defn increment-audit! [root task-id]
-  (pack-board root true "increment-audit" "--root" (str root) "--task-id" task-id))
+  (pack-board root true "increment-audit" "--root" (str root)
+              "--task-id" task-id "--caller" "handoffd"))
 
 (defn queue-handoff! [root {:keys [from to task artifacts non-forwarding priority body]}]
   (let [priority (or priority "50")]
@@ -229,7 +244,8 @@
     (is (= "specifier" (nth cols 1 nil)))
     (is (re-matches #"\d{4}-\d{2}-\d{2}T.*Z" (nth cols 2 "")))
     (is (= (nth cols 2 nil) (nth cols 3 nil)))
-    (is (= "0" (nth cols 5 nil)))))
+    (is (= "0" (nth cols 5 nil)))
+    (is (= "component" (nth cols 6 nil)))))
 
 (deftest new-task-writes-the-card-and-body
   ;; Given specifier is master
@@ -244,14 +260,46 @@
                               "create"
                               "--root" (str root)
                               "--name" "htw-console-app"
-                              "--lane" "specifier"
+                              "--type" "component"
                               "--text" text)
           body (slurp (str (fs/path root ".swarmforge/board/htw-console-app.txt")))]
       (is (zero? (:exit created)))
       (is (= "specifier" (task-lane root "htw-console-app")))
       (is (= text body))
-      (is (= (str "# htw-console-app\n\n" text "\n")
+      (is (= (str "# htw-console-app\n\nType: component\n\n" text "\n")
              (slurp (str (fs/path root "tasks/htw-console-app.md"))))))))
+
+(deftest pack-board-create-type-sets-lane-and-rejects-lane-flag
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)]
+    (is (zero? (:exit (pack-board root true "create" "--root" (str root)
+                                  "--name" "util" "--type" "utility"))))
+    (is (= "coder" (task-lane root "util")))
+    (is (= "utility" (nth (str/split (or (task-row (:out (list-tasks root)) "util") "") #"\t") 6)))
+    (is (str/includes? (slurp (str (fs/path root "tasks/util.md"))) "Type: utility"))
+    (is (zero? (:exit (pack-board root true "create" "--root" (str root)
+                                  "--name" "rev" "--type" "review"))))
+    (is (= "cleaner" (task-lane root "rev")))
+    (let [rejected (pack-board root false "create" "--root" (str root)
+                               "--name" "bad" "--type" "utility" "--lane" "specifier")]
+      (is (pos? (:exit rejected)))
+      (is (str/includes? (:err rejected) "rejects --lane")))
+    (let [unknown (pack-board root false "create" "--root" (str root)
+                              "--name" "bad2" "--type" "four")]
+      (is (pos? (:exit unknown)))
+      (is (str/includes? (:err unknown) "Unknown type")))
+    (let [moved (do (pack-board root true "create" "--root" (str root)
+                                "--name" "stay" "--type" "utility")
+                    (pack-board root true "move" "--root" (str root)
+                                "--name" "stay" "--lane" "cleaner"
+                                "--caller" "handoffd")
+                    (str/split (or (task-row (:out (list-tasks root)) "stay") "") #"\t"))]
+      (is (= "cleaner" (nth moved 1)))
+      (is (= "utility" (nth moved 6))))
+    (let [no-caller (pack-board root false "move" "--root" (str root)
+                                "--name" "stay" "--lane" "specifier")]
+      (is (pos? (:exit no-caller)))
+      (is (str/includes? (:err no-caller) "requires --caller")))))
 
 (deftest pack-board-serializes-concurrent-audit-increments
   (let [root (tmp-dir)
@@ -489,16 +537,17 @@
 
 
 (deftest pack-web-post-task-creates-a-card-in-the-master-lane
-  ;; Given a pack whose master role is coder
-  ;; When POST /api/tasks records name and text
-  ;; Then the card sits in lane coder with that body
+  ;; Given a six-role pack
+  ;; When POST /api/tasks records name and text with no type
+  ;; Then the card is component in specifier
   (let [root (tmp-dir)
         text "Integrate HTW stories"]
-    (setup-pack! root ["coder" "cleaner"])
+    (setup-pack! root six-pack-roles)
     (let [result (pack-web root true "--test-post-task" (str root) "htw-console-app" text)
           body (slurp (str (fs/path root ".swarmforge/board/htw-console-app.txt")))]
       (is (zero? (:exit result)))
-      (is (= "coder" (task-lane root "htw-console-app")))
+      (is (= "specifier" (task-lane root "htw-console-app")))
+      (is (= "component" (:type (task-card root "htw-console-app"))))
       (is (= text body)))))
 
 (deftest handoffd-delivers-new-task-note-without-moving-the-card
@@ -859,11 +908,11 @@
   ;; Then inject failure is ignored and the card is still created
   (let [root (tmp-dir)
         text example-task-text]
-    (setup-pack! root ["coder" "cleaner"])
+    (setup-pack! root six-pack-roles)
     (let [result (pack-web root false "--test-post-task" (str root) "htw-console-app" text)
           body (slurp (str (fs/path root ".swarmforge/board/htw-console-app.txt")))]
       (is (zero? (:exit result)))
-      (is (= "coder" (task-lane root "htw-console-app")))
+      (is (= "specifier" (task-lane root "htw-console-app")))
       (is (= text body))
       (is (str/includes? (slurp (str (fs/path root "tasks/htw-console-app.md")))
                          text)))))
@@ -1257,7 +1306,8 @@
   (let [root (tmp-dir)]
     (setup-pack! root)
     (create-task root "HTW" "specifier")
-    (pack-board root true "move" "--root" (str root) "--name" "htw" "--lane" "coder")
+    (pack-board root true "move" "--root" (str root) "--name" "htw" "--lane" "coder"
+                "--caller" "handoffd")
     (is (= "coder" (task-lane root "HTW")))))
 
 (deftest handoffd-moves-card-when-handoff-task-case-differs
@@ -2213,7 +2263,7 @@
     (setup-pack! root)
     (pack-board root true
                 "create" "--root" (str root)
-                "--name" "HTW" "--lane" "specifier" "--text" text)
+                "--name" "HTW" "--type" "component" "--text" text)
     (let [result (pack-web root false "--test-task" (str root) "HTW")]
       (is (zero? (:exit result)))
       (is (str/includes? (:out result) "HTW"))
@@ -2356,12 +2406,11 @@
   (write-file (fs/path root "swarmforge/constitution/articles/engineering.prompt") "eng\n")
   (write-file (fs/path root "swarmforge/constitution/articles/workflow.prompt") "wf\n")
   (write-file (fs/path root "swarmforge/constitution/articles/handoffs.prompt") "ho\n")
-  (doseq [pack ["two-pack" "four-pack" "six-pack"]]
-    (write-file (fs/path root "packs" pack "swarmforge/swarmforge.conf")
-                "window specifier grok master\nwindow coder grok coder\n")
-    (write-file (fs/path root "packs" pack "swarmforge/constitution.prompt") "pack-const\n")
-    (write-file (fs/path root "packs" pack "swarmforge/roles/specifier.prompt") "spec\n")
-    (write-file (fs/path root "packs" pack "swarmforge/roles/coder.prompt") "coder\n")))
+  (write-file (fs/path root ".swarmforge/project-pack/swarmforge/swarmforge.conf")
+              "window specifier grok master\nwindow coder grok coder\n")
+  (write-file (fs/path root ".swarmforge/project-pack/swarmforge/constitution.prompt") "pack-const\n")
+  (write-file (fs/path root ".swarmforge/project-pack/swarmforge/roles/specifier.prompt") "spec\n")
+  (write-file (fs/path root ".swarmforge/project-pack/swarmforge/roles/coder.prompt") "coder\n"))
 
 (deftest forge-infers-github-project-name
   (let [result (pack-web (tmp-dir) true "--test-inferred-name" "unclebob/swarm-forge" "github")]
@@ -2379,7 +2428,7 @@
       (is (= "Hunt the wumpus\n" (slurp (str (fs/path dest "mission.md")))))
       (is (fs/exists? (fs/path dest "swarmforge/swarmforge.conf")))
       (is (fs/exists? (fs/path dest "swarmforge/roles/specifier.prompt")))
-      (is (str/includes? (slurp (str (fs/path dest ".swarmforge/pack"))) "four-pack"))
+      (is (str/includes? (slurp (str (fs/path dest ".swarmforge/pack"))) "lieutenant"))
       (is (str/includes? (slurp (str (fs/path root ".swarmforge/open-projects"))) "cave")))))
 
 (deftest forge-new-project-rejects-existing-name

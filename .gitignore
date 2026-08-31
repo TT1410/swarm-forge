@@ -3,7 +3,9 @@
 .claude/
 .cpcache/
 .superpowers/
-.swarmforge/
+.swarmforge/*
+!.swarmforge/project-pack/
+!.swarmforge/project-pack/**
 .worktrees/
 target/
 node_modules/

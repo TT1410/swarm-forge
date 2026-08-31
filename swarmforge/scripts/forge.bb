@@ -17,11 +17,14 @@
 (defn packs-dir [root]
   (fs/path root "packs"))
 
+(defn project-pack-dir [root]
+  (fs/path root ".swarmforge" "project-pack"))
+
 (defn projects-dir [root]
   (fs/path root "projects"))
 
-(defn pack-dir [root pack]
-  (fs/path (packs-dir root) pack))
+(defn pack-dir [root _pack]
+  (project-pack-dir root))
 
 (defn project-dir [root name]
   (fs/path (projects-dir root) name))
@@ -49,18 +52,12 @@
       (str (fs/path (str/replace base #"/+$" "") name)))))
 
 (defn list-pack-names [root]
-  (let [dir (packs-dir root)]
-    (if (fs/directory? dir)
-      (->> (fs/list-dir dir)
-           (filter fs/directory?)
-           (filter #(fs/regular-file? (fs/path % "swarmforge" "swarmforge.conf")))
-           (map fs/file-name)
-           sort
-           vec)
-      [])))
+  (if (fs/regular-file? (fs/path (project-pack-dir root) "swarmforge" "swarmforge.conf"))
+    ["lieutenant"]
+    []))
 
-(defn pack-conf [root pack]
-  (let [file (fs/path (pack-dir root pack) "swarmforge" "swarmforge.conf")]
+(defn pack-conf [root _pack]
+  (let [file (fs/path (project-pack-dir root) "swarmforge" "swarmforge.conf")]
     (when (fs/regular-file? file)
       (slurp (str file)))))
 
@@ -155,10 +152,10 @@
               (fs/copy file (fs/path dest "swarmforge" "constitution" "articles" name)
                        {:replace-existing true}))))))))
 
-(defn overlay-pack! [forge dest pack keep-conf?]
+(defn overlay-pack! [forge dest _pack keep-conf?]
   (copy-shared-scripts! forge dest)
   (copy-shared-articles! forge dest)
-  (copy-pack-local! (pack-dir forge pack) dest keep-conf?))
+  (copy-pack-local! (project-pack-dir forge) dest keep-conf?))
 
 (defn init-git-if-needed! [dir]
   (when-not (fs/exists? (fs/path dir ".git"))
@@ -184,10 +181,8 @@
         dest (project-dir forge dir-name)]
     (when (str/blank? dir-name)
       (throw (ex-info "Missing project name" {:http-status 400})))
-    (when (str/blank? pack)
-      (throw (ex-info "Missing pack" {:http-status 400})))
-    (when-not (fs/directory? (pack-dir forge pack))
-      (throw (ex-info (str "Unknown pack: " pack) {:http-status 400})))
+    (when-not (fs/regular-file? (fs/path (project-pack-dir forge) "swarmforge" "swarmforge.conf"))
+      (throw (ex-info "Missing lieutenant pack at .swarmforge/project-pack" {:http-status 500})))
     (when (fs/exists? dest)
       (throw (ex-info (str "Project already exists: " dir-name)
                       {:http-status 409 :error "exists"})))
@@ -202,7 +197,7 @@
     (when-not (nil? mission)
       (spit (str (fs/path dest "mission.md"))
             (if (str/ends-with? (or mission "") "\n") mission (str mission "\n"))))
-    (write-pack-name! dest pack)
+    (write-pack-name! dest "lieutenant")
     (when-not github
       (init-git-if-needed! dest))
     {:name dir-name :path (str dest)}))

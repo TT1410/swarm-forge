@@ -18,6 +18,10 @@
 (def once? false)
 (def project-root nil)
 (def script-dir (fs/parent *file*))
+(try
+  (require 'card-type)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "card_type.bb")))))
 (def state-dir nil)
 (def daemon-dir nil)
 (def roles-file nil)
@@ -151,7 +155,7 @@
 
 (defn pack-board! [& args]
   (let [script (str (fs/path script-dir "pack_board.sh"))
-        result (apply sh (concat [script] args ["--root" (str project-root)]))]
+        result (apply sh (concat [script] args ["--caller" "handoffd" "--root" (str project-root)]))]
     (when-not (zero? (:exit result))
       (log! "pack-board-failed" args (:err result) (:out result))
       (throw (ex-info (str/trim (str (:err result) "\n" (:out result))) result)))))
@@ -160,7 +164,7 @@
   (let [from (get headers "from")]
     (when (and (not (str/blank? from))
                (not (re-matches #"\(.+\)" from)))
-      (pack-board! "archive" "--role" from))))
+      (pack-board! "archive" "--archive" from))))
 
 (defn master-role-name [roles]
   (some (fn [[role info]]
@@ -184,9 +188,6 @@
 
 (defn last-pack-role? [role]
   (= role (last (pack-role-names))))
-
-(defn terminal-handoff? [_roles headers]
-  (last-pack-role? (get headers "from")))
 
 (defn listed-handoffs [dir]
   (if (fs/directory? dir)
@@ -216,6 +217,20 @@
 (defn task-key [headers]
   (or (not-empty (get headers "task_id"))
       (get headers "task")))
+
+(defn board-row-for-headers [headers]
+  (let [named (task-key headers)]
+    (some (fn [line]
+            (let [row (card-type/parse-row line)]
+              (when (or (= named (:id row)) (= named (:name row)))
+                row)))
+          (or (read-lines (board-file)) []))))
+
+(defn terminal-handoff? [_roles headers]
+  (let [from (get headers "from")
+        row (board-row-for-headers headers)]
+    (or (and row (card-type/last-on-card? (:type row) from))
+        (last-pack-role? from))))
 
 (defn finished-task-keys [role-info]
   (if-not role-info
@@ -261,6 +276,36 @@
                       (= task-key name))
               name)))
         (read-lines (board-file))))
+
+(defn forge-root []
+  (let [parent (fs/parent project-root)
+        grand (when parent (fs/parent parent))]
+    (when (and parent grand
+               (= "projects" (fs/file-name parent))
+               (fs/directory? (fs/path grand "projects")))
+      (str grand))))
+
+(defn notify-lieutenant! [headers]
+  (when-let [forge (forge-root)]
+    (let [event (if (terminal-handoff? nil headers) "card-done"
+                    (if (and (= "specifier" (get headers "from"))
+                             (= "git_handoff" (get headers "type")))
+                      "specifier-handoff"
+                      "handoff"))
+          dir (fs/path forge ".swarmforge" "notify")
+          stamp (str/replace (now) #"[^0-9A-Za-z]" "")
+          file (fs/path dir (str stamp "-" event ".notify"))
+          socket-path (fs/path forge ".swarmforge" "tmux-socket")
+          socket (when (fs/exists? socket-path)
+                   (not-empty (str/trim (slurp (str socket-path)))))]
+      (fs/create-dirs dir)
+      (spit (str file)
+            (str "project: " (fs/file-name project-root) "\n"
+                 "event: " event "\n"
+                 "from: " (get headers "from") "\n"
+                 "task: " (or (get headers "task") "") "\n"))
+      (when socket
+        (sh "tmux" "-S" socket "send-keys" "-t" "swarmforge-lieutenant" (str "Notify: " event) "Enter")))))
 
 (defn update-board! [roles headers]
   (when (and (fs/exists? (board-file))
@@ -356,6 +401,8 @@
       (fail! path "missing to header")
       (do
         (update-board! roles headers)
+        (when (= "git_handoff" (get headers "type"))
+          (notify-lieutenant! headers))
         (doseq [recipient recipients]
           (let [role-info (get roles recipient)]
             (when-not role-info

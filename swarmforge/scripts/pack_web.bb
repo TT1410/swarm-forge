@@ -10,6 +10,7 @@
 
 (def script-dir (fs/parent *file*))
 (load-file (str (fs/path script-dir "forge.bb")))
+(load-file (str (fs/path script-dir "card_type.bb")))
 
 (def usage-text
   (str "Usage:\n"
@@ -179,14 +180,13 @@
   (str/trim (pack-board root "master-lane")))
 
 (defn task-entry [line]
-  (let [[name lane _created updated task-id audit-count] (str/split line #"\t" -1)]
-    {:name name
-     :id (or (not-empty task-id) name)
-     :lane lane
-     :updated_at updated
-     :audit_count (if (and audit-count (re-matches #"[0-9]+" audit-count))
-                    (Long/parseLong audit-count)
-                    0)}))
+  (let [row (card-type/parse-row line)]
+    {:name (:name row)
+     :id (:id row)
+     :lane (:lane row)
+     :updated_at (:updated row)
+     :audit_count (:audit-count row)
+     :type (:type row)}))
 
 (defn last-n-lines [text n]
   (vec (take-last n (str/split-lines (or text "")))))
@@ -835,8 +835,8 @@
 (defn new-task-id [name]
   (str (id-timestamp) "-" (id-slug name)))
 
-(defn queue-new-task-note! [root task-id name text]
-  (let [to (master-role root)
+(defn queue-new-task-note! [root task-id name text card-type]
+  (let [to (card-type/starting-lane card-type)
         now (.format java.time.format.DateTimeFormatter/ISO_INSTANT
                      (java.time.Instant/now))
         stamp (str/replace now #"[^0-9A-Za-z]" "")
@@ -976,26 +976,29 @@
       (catch Exception e
         (http-error (or (:http-status (ex-data e)) 400) (.getMessage e))))))
 
-(defn create-task! [root name text]
+(defn create-task! [root name text card-type]
   (when (str/blank? name)
     (throw (ex-info "Missing task name" {:http-status 400})))
-  (let [task-id (new-task-id name)]
-  (pack-board root "create"
-              "--name" name
-              "--lane" (master-role root)
-              "--task-id" task-id
-              "--text" (or text ""))
-    (queue-new-task-note! root task-id name (or text ""))))
+  (let [card-type (if (str/blank? card-type) card-type/default-type card-type)]
+    (when-not (card-type/known? card-type)
+      (throw (ex-info (str "Unknown type: " card-type) {:http-status 400})))
+    (let [task-id (new-task-id name)]
+      (pack-board root "create"
+                  "--name" name
+                  "--type" card-type
+                  "--task-id" task-id
+                  "--text" (or text ""))
+      (queue-new-task-note! root task-id name (or text "") card-type))))
 
 (defn post-tasks [root body]
-  (let [{:keys [name text project]} (json/parse-string (or body "{}") true)
+  (let [{:keys [name text project type]} (json/parse-string (or body "{}") true)
         dest (if (and (forge/forge? root) (not (str/blank? project)))
                (str (forge/project-dir root project))
                root)]
     (try
       (when (and (forge/forge? root) (str/blank? project))
         (throw (ex-info "Missing project" {:http-status 400})))
-      (create-task! dest name text)
+      (create-task! dest name text type)
       (json-ok)
       (catch Exception e
         (http-error (or (:http-status (ex-data e)) 400) (.getMessage e))))))
@@ -1150,7 +1153,7 @@
 
 (defn increment-audit-count! [root task-id]
   (when-not (str/blank? task-id)
-    (pack-board root "increment-audit" "--task-id" task-id)))
+    (pack-board root "increment-audit" "--task-id" task-id "--caller" "handoffd")))
 
 (defn review-findings [reviews]
   (->> reviews

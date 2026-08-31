@@ -80,9 +80,20 @@
     (spit (str tmp) (str (str/join "\n" result) "\n"))
     (fs/move tmp file {:replace-existing true})))
 
+(defn board-card-type [task-name]
+  (let [file (fs/path (System/getProperty "user.dir") ".swarmforge" "board" "tasks.tsv")]
+    (when (and task-name (fs/exists? file))
+      (some (fn [line]
+              (let [cols (str/split line #"\t" -1)]
+                (when (= task-name (first cols))
+                  (or (not-empty (nth cols 6 nil)) "QA"))))
+            (str/split-lines (slurp (str file)))))))
+
 (defn print-task [file]
   (let [task-name (header-field file "task")
-        task-id (header-field file "task_id")]
+        task-id (header-field file "task_id")
+        card-type (or (header-field file "card_type")
+                      (board-card-type task-name))]
     (println "TASK:" (str file))
     (println "FROM:" (header-value file "from" "unknown"))
     (println "TYPE:" (header-value file "type" "unknown"))
@@ -91,6 +102,8 @@
       (println "TASK_NAME:" task-name))
     (when task-id
       (println "TASK_ID:" task-id))
+    (when card-type
+      (println "CARD_TYPE:" card-type))
     (println "PAYLOAD:")
     (print (body file))))
 

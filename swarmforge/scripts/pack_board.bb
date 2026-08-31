@@ -9,8 +9,8 @@
 
 (def usage-text
   (str "Usage:\n"
-       "  pack_board.sh create --name <name> --lane <lane> [--root <dir>] [--text <text>]\n"
-       "  pack_board.sh create <name> <lane>\n"
+       "  pack_board.sh create --name <name> --type <utility|component|QA|review> [--root <dir>] [--text <text>]\n"
+       "  pack_board.sh create <name> --type <utility|component|QA|review>\n"
        "  pack_board.sh move --name <name> --lane <lane> [--root <dir>]\n"
        "  pack_board.sh move <name> <lane>\n"
        "  pack_board.sh done --name <name> [--root <dir>]\n"
@@ -25,12 +25,18 @@
        "  pack_board.sh delete --name <name> [--root <dir>]\n"
        "  pack_board.sh delete <name>"))
 
-(def flags {"--root" :root "--name" :name "--lane" :lane "--text" :text "--role" :role "--task-id" :task-id})
+(def flags {"--root" :root "--name" :name "--lane" :lane "--text" :text
+            "--role" :role "--task-id" :task-id "--type" :type
+            "--caller" :caller "--archive" :archive})
 (def script-dir (fs/parent *file*))
 (try
   (require 'handoff-lib)
   (catch Exception _
     (load-file (str (fs/path script-dir "handoff_lib.bb")))))
+(try
+  (require 'card-type)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "card_type.bb")))))
 
 (defn usage []
   (binding [*out* *err*]
@@ -107,13 +113,14 @@
       (fs/create-dirs (fs/parent file))
       (spit (str file) text))))
 
-(defn write-task-doc! [root name text]
+(defn write-task-doc! [root name text card-type]
   (when (some? name)
     (let [file (task-doc-file root name)
           body (or text "")]
       (fs/create-dirs (fs/parent file))
       (spit (str file)
             (str "# " name "\n\n"
+                 "Type: " (card-type/normalize card-type) "\n\n"
                  body
                  (when-not (str/ends-with? body "\n") "\n"))))))
 
@@ -160,9 +167,17 @@
 
 (defn task-row
   ([name lane now]
-   (task-row name lane now (new-task-id name)))
+   (task-row name lane now (new-task-id name) card-type/default-type))
   ([name lane now task-id]
-   (str/join "\t" [name lane now now task-id "0"])))
+   (task-row name lane now task-id card-type/default-type))
+  ([name lane now task-id card-type]
+   (card-type/format-row {:name name
+                          :lane lane
+                          :created now
+                          :updated now
+                          :id task-id
+                          :audit-count 0
+                          :type card-type})))
 
 (defn task-name [opts]
   (or (:name opts) (second (:positional opts))))
@@ -175,29 +190,55 @@
     (exit! 1 (str "Missing " label))))
 
 (defn create! [opts]
+  (when (contains? opts :lane)
+    (exit! 1 "create rejects --lane; lane is computed from --type"))
   (let [name (task-name opts)
-        lane (task-lane opts)
+        card-type (:type opts)
         root (resolve-root opts)
         file (tasks-file root)]
     (require-value! name "task name")
-    (require-value! lane "lane")
-    (with-board-lock
-      root
-      (fn []
-        (let [rows (read-rows file)]
-          (when (find-task rows name)
-            (exit! 1 (str "Duplicate task name: " name)))
-          (write-rows file (conj rows (task-row name lane (timestamp) (or (:task-id opts) (new-task-id name)))))
-          (write-body! root name (:text opts))
-          (write-task-doc! root name (:text opts)))))))
+    (require-value! card-type "type")
+    (when-not (card-type/known? card-type)
+      (exit! 1 (str "Unknown type: " card-type)))
+    (let [lane (card-type/starting-lane card-type)]
+      (with-board-lock
+        root
+        (fn []
+          (let [rows (read-rows file)]
+            (when (find-task rows name)
+              (exit! 1 (str "Duplicate task name: " name)))
+            (write-rows file (conj rows (task-row name lane (timestamp)
+                                                 (or (:task-id opts) (new-task-id name))
+                                                 card-type)))
+            (write-body! root name (:text opts))
+            (write-task-doc! root name (:text opts) card-type)))))))
 
 (defn rewrite-lane [line name lane]
-  (let [[row-name _ created _updated task-id audit-count] (str/split line #"\t" -1)]
-    (if (= (str/lower-case (or name "")) (str/lower-case (or row-name "")))
-      (str/join "\t" [row-name lane created (timestamp) task-id (or (not-empty audit-count) "0")])
+  (let [row (card-type/parse-row line)]
+    (if (= (str/lower-case (or name "")) (str/lower-case (or (:name row) "")))
+      (card-type/format-row (assoc row :lane lane :updated (timestamp)))
       line)))
 
+(defn lt-allow-file [root name act]
+  (fs/path root ".swarmforge" "board" "lt-allow" (str name "-" act)))
+
+(defn caller-allowed? [opts act]
+  (let [caller (:caller opts)
+        root (resolve-root opts)
+        name (task-name opts)]
+    (cond
+      (= "handoffd" caller) true
+      (and (= "lieutenant" caller)
+           (fs/regular-file? (lt-allow-file root name act)))
+      true
+      :else false)))
+
+(defn require-caller! [opts act]
+  (when-not (caller-allowed? opts act)
+    (exit! 1 (str act " requires --caller handoffd or --caller lieutenant with Attention"))))
+
 (defn set-lane! [opts lane]
+  (require-caller! opts (if (= "done" lane) "done" "move"))
   (let [name (task-name opts)
         file (tasks-file (resolve-root opts))]
     (require-value! name "task name")
@@ -270,7 +311,7 @@
         (spit (str file) text)))))
 
 (defn archive-role [opts]
-  (or (:role opts) (second (:positional opts))))
+  (or (:archive opts) (:role opts) (second (:positional opts))))
 
 (defn archive! [opts]
   (let [role (archive-role opts)]
@@ -299,13 +340,14 @@
     0))
 
 (defn rewrite-audit-count [line task-id]
-  (let [[name lane created updated row-task-id audit-count] (str/split line #"\t" -1)
-        row-key (or (not-empty row-task-id) name)]
+  (let [row (card-type/parse-row line)
+        row-key (or (not-empty (:id row)) (:name row))]
     (if (= task-id row-key)
-      (str/join "\t" [name lane created updated row-task-id (str (inc (parse-count audit-count)))])
+      (card-type/format-row (assoc row :audit-count (inc (:audit-count row))))
       line)))
 
 (defn increment-audit! [opts]
+  (require-caller! opts "increment-audit")
   (let [task-id (:task-id opts)
         root (resolve-root opts)
         file (tasks-file root)]

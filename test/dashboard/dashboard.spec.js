@@ -20,7 +20,7 @@ function seedProject(project) {
   );
   writeFile(
     path.join(project, ".swarmforge/board/tasks.tsv"),
-    "HTW\tspecifier\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-htw\t0\n"
+    "HTW\tspecifier\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-htw\t0\tQA\n"
   );
   writeFile(path.join(project, ".swarmforge/board/HTW.txt"), "Integrate the cave.\n");
   writeFile(path.join(project, "mission.md"), "Hunt the wumpus from the cave.\n");
@@ -50,11 +50,11 @@ function seedProject(project) {
 
 function seedForge(root) {
   writeFile(
-    path.join(root, "packs/four-pack/swarmforge/swarmforge.conf"),
+    path.join(root, ".swarmforge/project-pack/swarmforge/swarmforge.conf"),
     "window specifier grok master\nwindow coder grok coder\n"
   );
-  writeFile(path.join(root, "packs/four-pack/swarmforge/roles/specifier.prompt"), "spec\n");
-  writeFile(path.join(root, "packs/four-pack/swarmforge/roles/coder.prompt"), "coder\n");
+  writeFile(path.join(root, ".swarmforge/project-pack/swarmforge/roles/specifier.prompt"), "spec\n");
+  writeFile(path.join(root, ".swarmforge/project-pack/swarmforge/roles/coder.prompt"), "coder\n");
   fs.mkdirSync(path.join(root, "projects"), { recursive: true });
   const project = path.join(root, "projects/htw");
   seedProject(project);
@@ -156,6 +156,20 @@ test.describe("pack dashboard", () => {
     await page.goto(handle.url);
     await page.locator(".project-header button", { hasText: "New Task" }).click();
     await expect(page.locator("#nt-name")).toBeFocused();
+    await expect(page.locator("input[name=nt-type][value=component]")).toBeChecked();
+    await expect(page.locator("input[name=nt-type]")).toHaveCount(4);
+  });
+
+  test("New Project has no pack radios", async ({ page }) => {
+    await page.goto(handle.url);
+    await page.locator("#btn-new-project").click();
+    await expect(page.locator("#np-packs")).toHaveCount(0);
+    await expect(page.locator("input[name=np-pack]")).toHaveCount(0);
+  });
+
+  test("board card shows type", async ({ page }) => {
+    await page.goto(handle.url);
+    await expect(page.locator(".card .pill", { hasText: "QA" })).toBeVisible();
   });
 
   test("Attention lists approvals and clarifications", async ({ page }) => {

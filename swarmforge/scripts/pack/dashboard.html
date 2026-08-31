@@ -216,8 +216,6 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
       <label class="toggle"><input type="checkbox" id="np-github"> github repo</label>
       <label for="np-mission">Mission</label>
       <textarea id="np-mission" placeholder="What this project is for…"></textarea>
-      <label>Pack</label>
-      <div class="pack-radios" id="np-packs"></div>
       <label for="np-conf">Config</label>
       <textarea id="np-conf"></textarea>
       <div class="actions">
@@ -232,11 +230,18 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
   <div class="float" role="dialog" aria-labelledby="nt-title">
     <div class="titlebar" id="nt-title">New Task</div>
     <div class="body-pad">
-      <p class="note">Creates a card in the master lane and sends name + text to the master agent.</p>
+      <p class="note">Creates a card and sends name + text to the starting role for that type.</p>
       <label for="nt-name">Name</label>
       <input id="nt-name" type="text" placeholder="task-name">
+      <label>Type</label>
+      <div class="pack-radios" id="nt-types">
+        <label><input type="radio" name="nt-type" value="utility"> Utility</label>
+        <label><input type="radio" name="nt-type" value="component" checked> Component</label>
+        <label><input type="radio" name="nt-type" value="QA"> QA</label>
+        <label><input type="radio" name="nt-type" value="review"> Review</label>
+      </div>
       <label for="nt-text">Task</label>
-      <textarea id="nt-text" placeholder="What the master agent should do…"></textarea>
+      <textarea id="nt-text" placeholder="What the starting agent should do…"></textarea>
       <div class="actions">
         <button type="button" class="btn" id="nt-cancel">Cancel</button>
         <button type="button" class="btn btn-primary" id="nt-ok">OK</button>
@@ -267,6 +272,12 @@ function cardEl(task, opts) {
   name.className = "name";
   name.textContent = task.name;
   title.appendChild(name);
+  if (task.type) {
+    const badge = document.createElement("span");
+    badge.className = "pill";
+    badge.textContent = task.type;
+    title.appendChild(badge);
+  }
   const audit = document.createElement("span");
   audit.className = "audit-count";
   audit.title = "Audit count: " + (task.audit_count || 0);
@@ -1022,15 +1033,26 @@ function closeNewTask() {
   taskProject = "";
 }
 
+function selectedType() {
+  const box = document.querySelector("input[name=nt-type]:checked");
+  return box ? box.value : "component";
+}
+
+function resetTypeRadios() {
+  document.querySelectorAll("input[name=nt-type]").forEach((el) => {
+    el.checked = el.value === "component";
+  });
+}
+
 function openNewTask(project) {
   taskProject = project || "";
+  resetTypeRadios();
   $("new-task-layer").classList.add("open");
   $("nt-name").focus();
 }
 
 function selectedPack() {
-  const box = $("np-packs").querySelector("input[name=np-pack]:checked");
-  return box ? box.value : "";
+  return "lieutenant";
 }
 
 function updateInferred() {
@@ -1045,20 +1067,10 @@ function updateInferred() {
 }
 
 function fillPackRadios() {
-  const box = $("np-packs");
-  box.replaceChildren();
-  forgePacks.forEach((pack, i) => {
-    const label = document.createElement("label");
-    const radio = document.createElement("input");
-    radio.type = "radio";
-    radio.name = "np-pack";
-    radio.value = pack.name;
-    if (i === 0) radio.checked = true;
-    radio.onchange = () => { $("np-conf").value = pack.conf || ""; };
-    label.append(radio, " " + pack.name);
-    box.appendChild(label);
-  });
-  if (forgePacks[0]) $("np-conf").value = forgePacks[0].conf || "";
+  const conf = $("np-conf");
+  if (!conf) return;
+  const pack = forgePacks.find((p) => p.name === "lieutenant") || forgePacks[0];
+  if (pack) conf.value = pack.conf || "";
 }
 
 async function refreshForgePacks() {
@@ -1098,7 +1110,7 @@ async function submitNewProject() {
     return;
   }
   if (!pack) {
-    alert("No pack is available. Run get-swarm-forge so packs/ has two-pack, four-pack, or six-pack.");
+    alert("Lieutenant pack template is missing (.swarmforge/project-pack).");
     return;
   }
   const btn = $("np-ok");
@@ -1166,7 +1178,7 @@ async function submitNewTask() {
   const name = $("nt-name").value.trim();
   const text = $("nt-text").value;
   if (!name) return;
-  const payload = {name, text};
+  const payload = {name, text, type: selectedType()};
   if (taskProject) payload.project = taskProject;
   const res = await fetch("/api/tasks", {
     method: "POST",
@@ -1185,6 +1197,7 @@ async function submitNewTask() {
   }
   $("nt-name").value = "";
   $("nt-text").value = "";
+  resetTypeRadios();
   closeNewTask();
   loadState();
 }

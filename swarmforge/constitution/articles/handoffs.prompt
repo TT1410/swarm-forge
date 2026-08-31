@@ -26,7 +26,8 @@ task: <short-stable-task-name>
 ```
 
 - After completing a forward inbound task, always send a `git_handoff` to the
-  next role in the chain, regardless of what changed. Formatting-only,
+  next role in **this card's** chain (`CARD_TYPE` from `ready_for_next`).
+  If you are last on that chain, send the terminal handoff. Formatting-only,
   manifest-only, audit-only, generated metadata, and other non-functional churn
   still require a forward down the chain.
 - A reverse (`non-forwarding`) inbound `git_handoff` is merge-only. Merge it,
