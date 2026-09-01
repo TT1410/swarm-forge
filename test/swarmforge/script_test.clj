@@ -1233,33 +1233,24 @@
         (fs/delete-tree base)
         (fs/delete-tree git-dir)))))
 
-(deftest get-swarm-forge-project-manager-uses-main-host-when-that-branch-is-missing
+(deftest get-swarm-forge-project-manager-fails-when-that-branch-is-missing
   (let [host (tmp-dir)
-        packs (tmp-dir)
         git-dir (tmp-dir)]
     (try
-      (write-file (fs/path host "README.md") "host-readme\n")
       (init-repo! git-dir)
       (seed-installer-host! git-dir)
-      (write-file (fs/path git-dir "swarmforge/swarmforge.conf") "HOST-FROM-MAIN\n")
       (run {:dir git-dir} "git" "checkout" "-q" "-B" "main")
       (run {:dir git-dir} "git" "add" "-A")
       (run {:dir git-dir} "git" "commit" "-q" "-m" "main host")
-      (doseq [pack-name ["two-pack" "four-pack" "six-pack"]]
-        (seed-installer-pack! (fs/path packs pack-name)))
-      (let [result (run {:dir host
-                         :env {"SWARMFORGE_PACKS_DIR" (str packs)
-                               "SWARMFORGE_REPO_URL" "https://example.invalid/swarm-forge"
+      (let [result (run {:dir host :ok? false
+                         :env {"SWARMFORGE_REPO_URL" "https://example.invalid/swarm-forge"
                                "SWARMFORGE_GIT_DIR" (str git-dir)}}
                         (str (fs/path repo-root "get-swarm-forge"))
                         "project-manager")]
-        (is (zero? (:exit result)) (:err result))
-        (is (= "HOST-FROM-MAIN\n" (slurp (str (fs/path host "swarmforge/swarmforge.conf")))))
-        (is (fs/exists? (fs/path host "packs/six-pack/swarmforge/swarmforge.conf")))
-        (is (fs/directory? (fs/path host "projects"))))
+        (is (pos? (:exit result)))
+        (is (str/includes? (:err result) "branch 'project-manager' was not found")))
       (finally
         (fs/delete-tree host)
-        (fs/delete-tree packs)
         (fs/delete-tree git-dir)))))
 
 (deftest get-swarm-forge-lieutenant-installs-project-pack
