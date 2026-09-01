@@ -8,7 +8,14 @@ Do not spend any money on a bankrbot SWARM token.
 
 ## Intent
 
-This `main` branch is documentary: it explains the system and carries the shared operational scripts and default constitution articles. Pack branches (`two-pack`, `four-pack`, `six-pack`) are templates. `get-swarm-forge` installs all of them into a forge `packs/` directory; **New Project** instantiates one pack into `projects/<name>/`.
+This `project-manager` branch is the multi-pack forge: dashboard, host
+lieutenant (concierge), and choosable `two-pack` / `four-pack` / `six-pack`
+templates. Pack-only checkouts use those pack branches directly. The
+`lieutenant` branch is a different forge (one pipeline, planner lieutenant).
+`main` is documentary and the source of pack-only scripts.
+
+`get-swarm-forge` requires a product name: `two-pack`, `four-pack`, `six-pack`,
+`project-manager`, or `lieutenant`.
 
 SwarmForge is an agent coordination system that facilitates communication between agents working in different git worktrees.
 
@@ -16,7 +23,7 @@ It provides a shared structure for role-specific prompts, worktree assignment, t
 
 ## Branches
 
-Pack templates live on dedicated branches. Each branch contains the `swarmforge/swarmforge.conf`, local constitution articles, and role prompts for one workflow. `get-swarm-forge` copies all of them into `packs/` along with host scripts from `main`.
+Pack templates live on dedicated branches. Each branch contains the `swarmforge/swarmforge.conf`, local constitution articles, and role prompts for one workflow. `get-swarm-forge project-manager` copies all three under `packs/` for New Project. `get-swarm-forge <pack>` composes one pack into `.`.
 
 ### `two-pack`
 
@@ -66,7 +73,7 @@ Or download that snapshot:
 curl -L "https://github.com/unclebob/swarm-forge/archive/refs/tags/simple-windows.tar.gz" | tar -xz --strip-components=1
 ```
 
-Do not use `simple-windows` as `BRANCH=` in the pack getting-started command below; that command is for `two-pack`, `four-pack`, and `six-pack`.
+`simple-windows` is not a `get-swarm-forge` product. Pack-only installs are `get-swarm-forge two-pack` (or `four-pack` / `six-pack`).
 
 ## Prerequisites
 
@@ -92,13 +99,13 @@ Make sure that utility directory is on your shell `PATH`, then run the helper in
 the directory that will be the **forge** (not a single project):
 
 ```sh
-get-swarm-forge
+get-swarm-forge project-manager
 ```
 
-`get-swarm-forge` downloads `main` and every pack branch (`two-pack`,
-`four-pack`, `six-pack`). It installs host scripts under `swarmforge/`, pack
-templates under `packs/`, and an empty `projects/` directory. It does not
-turn the current directory into one pack.
+That installs this host, `packs/two-pack`, `packs/four-pack`, `packs/six-pack`,
+and an empty `projects/` directory. For a pack-only checkout use
+`get-swarm-forge six-pack` (or `two-pack` / `four-pack`). For the lieutenant
+host use `get-swarm-forge lieutenant`.
 
 Start the host dashboard:
 

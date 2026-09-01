@@ -5,9 +5,9 @@ default_repo_url="https://github.com/unclebob/swarm-forge"
 pack_names=(two-pack four-pack six-pack)
 
 usage() {
-  echo "usage: get-swarm-forge" >&2
-  echo "  Installs SwarmForge as a forge: host scripts from main, every pack" >&2
-  echo "  under packs/, and an empty projects/ directory." >&2
+  echo "usage: get-swarm-forge <two-pack|four-pack|six-pack|project-manager|lieutenant>" >&2
+  echo "  Packs (two-pack, four-pack, six-pack) compose into the current directory." >&2
+  echo "  project-manager and lieutenant are forges (projects/, dashboard, host lieutenant)." >&2
 }
 
 if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
@@ -15,8 +15,22 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
+if [[ $# -ne 1 || "$1" == -* ]]; then
+  usage
+  exit 1
+fi
+
+product="$1"
+case "$product" in
+  two-pack|four-pack|six-pack|project-manager|lieutenant) ;;
+  *)
+    echo "get-swarm-forge: unknown product '$product'" >&2
+    usage
+    exit 1
+    ;;
+esac
+
 repo_url="${SWARMFORGE_REPO_URL:-$default_repo_url}"
-base_branch="${SWARMFORGE_BASE_BRANCH:-main}"
 tmp_dir="$(mktemp -d)"
 
 cleanup() {
@@ -24,17 +38,89 @@ cleanup() {
 }
 trap cleanup EXIT
 
+local_git_dir() {
+  if [[ -v SWARMFORGE_GIT_DIR ]]; then
+    echo "$SWARMFORGE_GIT_DIR"
+  elif [[ -d "$HOME/projects/swarm-forge/.git" ]]; then
+    echo "$HOME/projects/swarm-forge"
+  fi
+}
+
+try_download_branch() {
+  local ref="$1"
+  local dest="$2"
+  local url="${repo_url}/archive/refs/heads/${ref}.tar.gz"
+  local tar_path="$tmp_dir/${ref}.tgz"
+  local git_dir
+  mkdir -p "$dest"
+  if curl -fsSL "$url" -o "$tar_path"; then
+    tar -xz --strip-components=1 -C "$dest" -f "$tar_path"
+    return 0
+  fi
+  git_dir="$(local_git_dir)"
+  if [[ -n "$git_dir" && -d "$git_dir/.git" ]] \
+       && git -C "$git_dir" show-ref --verify --quiet "refs/heads/$ref"; then
+    echo "get-swarm-forge: GitHub has no branch '$ref'; using $git_dir" >&2
+    git -C "$git_dir" archive --format=tar "$ref" | tar -x -C "$dest"
+    return 0
+  fi
+  return 1
+}
+
 download_branch() {
   local ref="$1"
   local dest="$2"
-  mkdir -p "$dest"
-  curl -fsSL "${repo_url}/archive/refs/heads/${ref}.tar.gz" | tar -xz --strip-components=1 -C "$dest"
+  if try_download_branch "$ref" "$dest"; then
+    return
+  fi
+  echo "get-swarm-forge: branch '$ref' was not found at ${repo_url}/archive/refs/heads/${ref}.tar.gz" >&2
+  echo "Push the branch, or set SWARMFORGE_GIT_DIR to a local checkout that has it." >&2
+  exit 1
 }
 
 fail_missing() {
   local missing_path="$1"
   echo "get-swarm-forge: missing required file after composing swarm: $missing_path" >&2
   exit 1
+}
+
+copy_shared_scripts_and_articles() {
+  local src="$1"
+  [[ -d "$src/swarmforge/scripts" ]] || fail_missing "swarmforge/scripts from $src"
+  [[ -d "$src/swarmforge/constitution/articles" ]] || fail_missing "swarmforge/constitution/articles from $src"
+  mkdir -p swarmforge/constitution/articles
+  rm -rf swarmforge/scripts
+  cp -R "$src/swarmforge/scripts" swarmforge/scripts
+  local shared_article
+  for shared_article in engineering.prompt workflow.prompt handoffs.prompt; do
+    [[ -f "$src/swarmforge/constitution/articles/$shared_article" ]] \
+      && cp "$src/swarmforge/constitution/articles/$shared_article" \
+           "swarmforge/constitution/articles/$shared_article"
+  done
+}
+
+copy_host_files() {
+  local src="$1"
+  copy_shared_scripts_and_articles "$src"
+  [[ -f "$src/swarmforge/constitution.prompt" ]] \
+    && cp "$src/swarmforge/constitution.prompt" swarmforge/constitution.prompt
+  mkdir -p swarmforge/roles
+  [[ -f "$src/swarmforge/roles/lieutenant.prompt" ]] \
+    && cp "$src/swarmforge/roles/lieutenant.prompt" swarmforge/roles/lieutenant.prompt
+  if [[ ! -f swarmforge/swarmforge.conf && -f "$src/swarmforge/swarmforge.conf" ]]; then
+    cp "$src/swarmforge/swarmforge.conf" swarmforge/swarmforge.conf
+  fi
+  if [[ -f "$src/swarm" ]]; then
+    cp "$src/swarm" swarm
+  elif [[ ! -f swarm ]]; then
+    cat > swarm <<'WRAP'
+#!/bin/zsh
+set -euo pipefail
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+exec "$SCRIPT_DIR/swarmforge/scripts/swarmforge.sh" "$@"
+WRAP
+  fi
+  chmod +x swarm
 }
 
 copy_pack_template() {
@@ -62,60 +148,116 @@ copy_pack_template() {
   fi
 }
 
-base_dir="${SWARMFORGE_BASE_DIR:-$tmp_dir/base}"
+verify_pack_roles() {
+  local dest="$1"
+  [[ -f "$dest/swarmforge/swarmforge.conf" ]] || fail_missing "$dest/swarmforge/swarmforge.conf"
+  while IFS= read -r role; do
+    [[ -f "$dest/swarmforge/roles/${role}.prompt" ]] \
+      || fail_missing "$dest/swarmforge/roles/${role}.prompt"
+  done < <(awk '/^window/ { print $2 }' "$dest/swarmforge/swarmforge.conf")
+}
+
+pack_tree() {
+  local name="$1"
+  if [[ -n "$packs_src" && -d "$packs_src/$name" ]]; then
+    echo "$packs_src/$name"
+  elif [[ -n "$packs_src" && -f "$packs_src/swarmforge/swarmforge.conf" ]]; then
+    echo "$packs_src"
+  else
+    echo ""
+  fi
+}
+
+install_project_pack() {
+  local pack_src
+  pack_src="$(pack_tree "$product")"
+  if [[ -z "$pack_src" && -d "$host_dir/.swarmforge/project-pack" ]]; then
+    pack_src="$host_dir/.swarmforge/project-pack"
+  fi
+  [[ -n "$pack_src" && -d "$pack_src" ]] || fail_missing ".swarmforge/project-pack"
+  mkdir -p .swarmforge/project-pack
+  copy_pack_template "$pack_src" ".swarmforge/project-pack"
+  verify_pack_roles ".swarmforge/project-pack"
+}
+
+install_named_packs() {
+  mkdir -p packs
+  local pack_name pack_src
+  for pack_name in "${pack_names[@]}"; do
+    pack_src="$(pack_tree "$pack_name")"
+    if [[ -z "$pack_src" ]]; then
+      pack_src="$tmp_dir/packs/$pack_name"
+      download_branch "$pack_name" "$pack_src"
+    fi
+    [[ -n "$pack_src" && -d "$pack_src" ]] || fail_missing "pack $pack_name"
+    copy_pack_template "$pack_src" "packs/$pack_name"
+    verify_pack_roles "packs/$pack_name"
+  done
+}
+
+require_files() {
+  local required_path
+  for required_path in "$@"; do
+    [[ -e "$required_path" ]] || fail_missing "$required_path"
+  done
+}
+
+host_dir="${SWARMFORGE_BASE_DIR:-$tmp_dir/host}"
+host_from="$product"
 packs_src="${SWARMFORGE_PACKS_DIR:-}"
+main_dir="$tmp_dir/main"
+
+if [[ "$product" == two-pack || "$product" == four-pack || "$product" == six-pack ]]; then
+  if [[ -z "${SWARMFORGE_BASE_DIR:-}" ]]; then
+    download_branch "main" "$main_dir"
+    host_dir="$main_dir"
+  fi
+  pack_src="$(pack_tree "$product")"
+  if [[ -z "$pack_src" ]]; then
+    pack_src="$tmp_dir/pack"
+    download_branch "$product" "$pack_src"
+  fi
+  [[ -n "$pack_src" && -d "$pack_src" ]] || fail_missing "pack $product"
+  copy_shared_scripts_and_articles "$host_dir"
+  copy_pack_template "$pack_src" "."
+  [[ -f swarm ]] || fail_missing "swarm from pack $product"
+  chmod +x swarm
+  verify_pack_roles "."
+  require_files \
+    swarm \
+    swarmforge/scripts/swarmforge.sh \
+    swarmforge/scripts/handoffd.bb \
+    swarmforge/scripts/done_with_current.sh \
+    swarmforge/constitution/articles/handoffs.prompt \
+    swarmforge/constitution/articles/workflow.prompt \
+    swarmforge/constitution/articles/engineering.prompt \
+    swarmforge/swarmforge.conf \
+    swarmforge/constitution.prompt
+  echo "SwarmForge pack installed from $product. Run ./swarm to start the pack."
+  exit 0
+fi
 
 if [[ -z "${SWARMFORGE_BASE_DIR:-}" ]]; then
-  download_branch "$base_branch" "$base_dir"
-fi
-
-[[ -d "$base_dir/swarmforge/scripts" ]] || fail_missing "swarmforge/scripts from $base_branch"
-[[ -d "$base_dir/swarmforge/constitution/articles" ]] || fail_missing "swarmforge/constitution/articles from $base_branch"
-
-mkdir -p swarmforge/constitution/articles packs projects
-rm -rf swarmforge/scripts
-cp -R "$base_dir/swarmforge/scripts" swarmforge/scripts
-for shared_article in engineering.prompt workflow.prompt handoffs.prompt; do
-  [[ -f "$base_dir/swarmforge/constitution/articles/$shared_article" ]] \
-    && cp "$base_dir/swarmforge/constitution/articles/$shared_article" \
-         "swarmforge/constitution/articles/$shared_article"
-done
-[[ -f "$base_dir/swarmforge/constitution.prompt" ]] \
-  && cp "$base_dir/swarmforge/constitution.prompt" swarmforge/constitution.prompt
-mkdir -p swarmforge/roles
-[[ -f "$base_dir/swarmforge/roles/lieutenant.prompt" ]] \
-  && cp "$base_dir/swarmforge/roles/lieutenant.prompt" swarmforge/roles/lieutenant.prompt
-if [[ ! -f swarmforge/swarmforge.conf && -f "$base_dir/swarmforge/swarmforge.conf" ]]; then
-  cp "$base_dir/swarmforge/swarmforge.conf" swarmforge/swarmforge.conf
-fi
-if [[ -f "$base_dir/swarm" ]]; then
-  cp "$base_dir/swarm" swarm
-elif [[ ! -f swarm ]]; then
-  cat > swarm <<'WRAP'
-#!/bin/zsh
-set -euo pipefail
-SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-exec "$SCRIPT_DIR/swarmforge/scripts/swarmforge.sh" "$@"
-WRAP
-fi
-chmod +x swarm
-
-for pack_name in "${pack_names[@]}"; do
-  pack_src=""
-  if [[ -n "$packs_src" && -d "$packs_src/$pack_name" ]]; then
-    pack_src="$packs_src/$pack_name"
-  elif [[ -z "$packs_src" && -z "${SWARMFORGE_BASE_DIR:-}" ]]; then
-    pack_src="$tmp_dir/packs/$pack_name"
-    download_branch "$pack_name" "$pack_src"
+  if [[ "$product" == "project-manager" ]]; then
+    if try_download_branch "project-manager" "$host_dir"; then
+      host_from="project-manager"
+    else
+      download_branch "main" "$host_dir"
+      host_from="main"
+    fi
+  else
+    download_branch "$product" "$host_dir"
   fi
-  [[ -n "$pack_src" && -d "$pack_src" ]] || fail_missing "pack $pack_name"
-  copy_pack_template "$pack_src" "packs/$pack_name"
-  [[ -f "packs/$pack_name/swarmforge/swarmforge.conf" ]] || fail_missing "packs/$pack_name/swarmforge/swarmforge.conf"
-  while IFS= read -r role; do
-    [[ -f "packs/$pack_name/swarmforge/roles/${role}.prompt" ]] \
-      || fail_missing "packs/$pack_name/swarmforge/roles/${role}.prompt"
-  done < <(awk '/^window/ { print $2 }' "packs/$pack_name/swarmforge/swarmforge.conf")
-done
+fi
+
+mkdir -p projects
+copy_host_files "$host_dir"
+
+if [[ "$product" == "lieutenant" ]]; then
+  install_project_pack
+else
+  install_named_packs
+fi
 
 required_files=(
   swarm
@@ -126,13 +268,18 @@ required_files=(
   swarmforge/constitution/articles/workflow.prompt
   swarmforge/constitution/articles/engineering.prompt
   swarmforge/roles/lieutenant.prompt
-  packs/two-pack/swarmforge/swarmforge.conf
-  packs/four-pack/swarmforge/swarmforge.conf
-  packs/six-pack/swarmforge/swarmforge.conf
 )
 
-for required_path in "${required_files[@]}"; do
-  [[ -e "$required_path" ]] || fail_missing "$required_path"
-done
+if [[ "$product" == "lieutenant" ]]; then
+  required_files+=(.swarmforge/project-pack/swarmforge/swarmforge.conf)
+else
+  required_files+=(
+    packs/two-pack/swarmforge/swarmforge.conf
+    packs/four-pack/swarmforge/swarmforge.conf
+    packs/six-pack/swarmforge/swarmforge.conf
+  )
+fi
 
-echo "SwarmForge forge installed. Run ./swarm to start the dashboard."
+require_files "${required_files[@]}"
+
+echo "SwarmForge forge installed from $host_from. Run ./swarm to start the dashboard."
