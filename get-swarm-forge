@@ -238,16 +238,7 @@ if [[ "$product" == two-pack || "$product" == four-pack || "$product" == six-pac
 fi
 
 if [[ -z "${SWARMFORGE_BASE_DIR:-}" ]]; then
-  if [[ "$product" == "project-manager" ]]; then
-    if try_download_branch "project-manager" "$host_dir"; then
-      host_from="project-manager"
-    else
-      download_branch "main" "$host_dir"
-      host_from="main"
-    fi
-  else
-    download_branch "$product" "$host_dir"
-  fi
+  download_branch "$product" "$host_dir"
 fi
 
 mkdir -p projects
