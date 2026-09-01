@@ -108,6 +108,13 @@
   (let [cols (str/split (or (task-row (:out (list-tasks root)) name) "") #"\t")]
     (nth cols 1 nil)))
 
+(defn drop-new-task-notes! [root]
+  (let [dir (fs/path root ".swarmforge/handoffs/outbox")]
+    (when (fs/directory? dir)
+      (doseq [file (fs/list-dir dir)]
+        (when (str/includes? (fs/file-name file) "New_Task")
+          (fs/delete-if-exists file))))))
+
 (defn create-task
   ([root name lane] (create-task root name lane true))
   ([root name lane ok?]
@@ -123,6 +130,7 @@
                              "--type" card-type
                              "--text" "Integrate HTW stories")]
      (when (and ok? (zero? (:exit created)))
+       (drop-new-task-notes! root)
        (let [now (task-lane root name)]
          (when (and now (not= now lane))
            (pack-board root true
@@ -271,6 +279,81 @@
       (is (= (str "# htw-console-app\n\nType: component\n\n" text "\n")
              (slurp (str (fs/path root "tasks/htw-console-app.md"))))))))
 
+(deftest pack-board-waiting-create-skips-start-note
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)
+        created (pack-board root true
+                            "create" "--root" (str root)
+                            "--name" "UiShim" "--type" "component"
+                            "--waiting" "--merge-from" "coder"
+                            "--text" "Shim the cave UI")
+        notes (handoff-names (fs/path root ".swarmforge/handoffs/outbox"))
+        doc (slurp (str (fs/path root "tasks/UiShim.md")))]
+    (is (zero? (:exit created)))
+    (is (= "waiting" (task-lane root "UiShim")))
+    (is (empty? notes))
+    (is (str/includes? doc "Merge-from: coder"))
+    (pack-board root true
+                "move" "--root" (str root)
+                "--name" "UiShim" "--lane" "specifier"
+                "--caller" "handoffd")
+    (is (= "specifier" (task-lane root "UiShim")))
+    (is (seq (filter #(str/includes? % "New_Task")
+                     (handoff-names (fs/path root ".swarmforge/handoffs/outbox")))))))
+
+(deftest pack-web-waiting-lane-lists-waiting-cards
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)
+        _ (pack-board root true
+                      "create" "--root" (str root)
+                      "--name" "UiShim" "--type" "component" "--waiting")
+        state (web-state root)
+        card (first (filter #(= "UiShim" (:name %)) (:tasks state)))]
+    (is (= "waiting" (first (:lanes state))))
+    (is (= "done" (last (:lanes state))))
+    (is (= "waiting" (:lane card)))
+    (is (= "Waiting to start" (:status card)))
+    (is (not (contains? card :activity)))))
+
+(deftest pack-web-in-process-card-has-heat
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "HTW" "coder")
+        _ (create-task root "Grenade" "coder")
+        _ (put-in-process! root roles "coder" {:from "specifier" :task "HTW"})
+        state (web-state root)
+        by-name (into {} (map (juxt :name identity) (:tasks state)))]
+    (is (contains? (get by-name "HTW") :activity))
+    (is (not (contains? (get by-name "Grenade") :activity)))))
+
+(deftest pack-board-increment-audit-writes-durable-files
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (create-task root "HTW" "specifier")
+        task-id (:id (task-card root "HTW"))]
+    (increment-audit! root task-id)
+    (increment-audit! root task-id)
+    (let [dir (fs/path root ".swarmforge/board/audits" task-id)
+          files (mapv fs/file-name (fs/list-dir dir))]
+      (is (= ["1.md" "2.md"] (vec (sort files))))
+      (is (str/includes? (slurp (str (fs/path dir "1.md"))) "Audit 1")))))
+
+(deftest pack-web-task-window-includes-audits-and-directory
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (create-task root "HTW" "specifier")
+        task-id (:id (task-card root "HTW"))
+        _ (increment-audit! root task-id)
+        page (:out (pack-web root false "--test-task" (str root) "HTW"))
+        tree (json/parse-string
+              (:out (pack-web root false "--test-tree" (str root) "HTW"))
+              true)]
+    (is (str/includes? page "HTW"))
+    (is (str/includes? page "Audit 1"))
+    (is (str/includes? page "Directory"))
+    (is (some #(= "tasks" (:name %)) (:entries tree)))))
+
 (deftest pack-board-create-type-sets-lane-and-rejects-lane-flag
   (let [root (tmp-dir)
         _ (setup-pack! root six-pack-roles)]
@@ -404,6 +487,32 @@
       (is (= "done" (task-lane root "htw-console-app")))
       (finally
         (stop-tmux! sock)))))
+
+(deftest handoffd-writes-forge-notify-on-coder-handoff
+  (let [forge (tmp-dir)
+        project (fs/path forge "projects" "cave")
+        roles ["coder" "cleaner"]
+        lt-sock (str (fs/path forge "tmux.sock"))]
+    (fs/create-dirs project)
+    (setup-pack! project roles)
+    (create-task project "HTW" "coder")
+    (queue-handoff! project {:from "coder" :to "cleaner" :task "HTW"})
+    (write-file (fs/path forge ".swarmforge/tmux-socket") (str lt-sock "\n"))
+    (run {:dir forge} "tmux" "-S" lt-sock "new-session" "-d" "-s" "swarmforge-lieutenant" "sleep" "120")
+    (let [sock (start-tmux! project roles (str (fs/path forge "proj.sock")))]
+      (try
+        (handoffd-once project)
+        (let [notes (vec (fs/glob (fs/path forge ".swarmforge/notify") "*.notify"))]
+          (is (seq notes))
+          (let [text (slurp (str (first notes)))
+                pane (:out (run {:dir forge}
+                                "tmux" "-S" lt-sock "capture-pane" "-p" "-t" "swarmforge-lieutenant"))]
+            (is (str/includes? (fs/file-name (first notes)) "coder-handoff"))
+            (is (str/includes? text "event: coder-handoff\n"))
+            (is (str/includes? pane "Notify: coder-handoff"))))
+        (finally
+          (stop-tmux! sock)
+          (stop-tmux! lt-sock))))))
 
 (deftest handoffd-writes-forge-notify-on-specifier-handoff
   (let [forge (tmp-dir)
@@ -606,7 +715,7 @@
     (is (zero? (:exit result)))
     (is (= "specifier" (:master_role state)))
     (is (= "Specifier" (:master_display state)))
-    (is (= six-pack-roles (:lanes state)))
+    (is (= (vec (concat ["waiting"] six-pack-roles ["done"])) (:lanes state)))
     (let [card (first (:tasks state))]
       (is (= "htw-console-app" (:name card)))
       (is (str/starts-with? (:id card) "20"))
@@ -626,21 +735,25 @@
 (deftest pack-web-post-task-creates-a-card-in-the-master-lane
   ;; Given a six-role pack
   ;; When POST /api/tasks records name and text with no type
-  ;; Then the card is component in specifier
+  ;; Then the card is component in waiting with no start note
   (let [root (tmp-dir)
         text "Integrate HTW stories"]
     (setup-pack! root six-pack-roles)
     (let [result (pack-web root true "--test-post-task" (str root) "htw-console-app" text)
-          body (slurp (str (fs/path root ".swarmforge/board/htw-console-app.txt")))]
+          body (slurp (str (fs/path root ".swarmforge/board/htw-console-app.txt")))
+          notes (handoff-names (fs/path root ".swarmforge/handoffs/outbox"))]
       (is (zero? (:exit result)))
-      (is (= "specifier" (task-lane root "htw-console-app")))
+      (is (= "waiting" (task-lane root "htw-console-app")))
       (is (= "component" (:type (task-card root "htw-console-app"))))
-      (is (= text body)))))
+      (is (= "Waiting to start" (:status (task-card root "htw-console-app"))))
+      (is (= text body))
+      (is (empty? (filter #(str/includes? % "New_Task") notes)))
+      (is (seq (fs/glob (fs/path root ".swarmforge/notify") "*.notify"))))))
 
 (deftest handoffd-delivers-new-task-note-without-moving-the-card
-  ;; Given a New Task note in the project outbox
+  ;; Given a waiting New Task card
   ;; When handoffd --once
-  ;; Then specifier inbox has it, the card stays in specifier, and sent is on master
+  ;; Then no start note is delivered; the card stays in waiting
   (let [root (tmp-dir)
         roles six-pack-roles
         sock (do (setup-pack! root roles)
@@ -648,12 +761,9 @@
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
-      (is (= "specifier" (task-lane root "HTW")))
+      (is (= "waiting" (task-lane root "HTW")))
       (is (= [] (pending-names root)))
-      (is (seq (inbox-names root roles "specifier")))
-      (is (seq (handoff-names (fs/path root ".swarmforge/handoffs/sent"))))
-      (is (empty? (handoff-names (fs/path (pack-worktree root roles "coder")
-                                         ".swarmforge/handoffs/sent"))))
+      (is (empty? (inbox-names root roles "specifier")))
       (finally
         (stop-tmux! sock)))))
 
@@ -999,7 +1109,7 @@
     (let [result (pack-web root false "--test-post-task" (str root) "htw-console-app" text)
           body (slurp (str (fs/path root ".swarmforge/board/htw-console-app.txt")))]
       (is (zero? (:exit result)))
-      (is (= "specifier" (task-lane root "htw-console-app")))
+      (is (= "waiting" (task-lane root "htw-console-app")))
       (is (= text body))
       (is (str/includes? (slurp (str (fs/path root "tasks/htw-console-app.md")))
                          text)))))
@@ -1037,7 +1147,7 @@
 (deftest pack-web-post-task-queues-a-note-for-master
   ;; Given a specifier pack and a tmux argv stub
   ;; When POST /api/tasks records name and text
-  ;; Then the card is in specifier, a (New Task) note is in the outbox, and the pane is not injected
+  ;; Then the card is waiting, no start note is queued, and the lieutenant is notified
   (let [root (tmp-dir)
         argv-file (str (fs/path root "tmux.argv"))
         sock (str (fs/path root "tmux.sock"))
@@ -1047,17 +1157,12 @@
     (let [result (pack-web-env root {"SWARMFORGE_TMUX_STUB" argv-file}
                                "--test-post-task" (str root) "htw-console-app" text)
           queued (handoff-names (fs/path root ".swarmforge/handoffs/outbox"))
-          content (when (seq queued)
-                    (slurp (str (fs/path root ".swarmforge/handoffs/outbox" (first queued)))))]
+          argv (read-argv argv-file)]
       (is (zero? (:exit result)))
-      (is (= "specifier" (task-lane root "htw-console-app")))
-      (is (= 1 (count queued)))
-      (is (str/includes? (str content) "from: (New Task)\n"))
-      (is (str/includes? (str content) "to: specifier\n"))
-      (is (str/includes? (str content) "type: note\n"))
-      (is (str/includes? (str content) "task: htw-console-app\n"))
-      (is (str/includes? (str content) text))
-      (is (empty? (read-argv argv-file))))))
+      (is (= "waiting" (task-lane root "htw-console-app")))
+      (is (empty? queued))
+      (is (seq (fs/glob (fs/path root ".swarmforge/notify") "*.notify")))
+      (is (str/includes? (str (last (first argv))) "Notify: new-task")))))
 
 (deftest pack-web-post-chat-injects-text-as-is
   ;; Given a tmux argv stub
@@ -1560,7 +1665,12 @@
                     "The HHG rules are now settled."
                     "The operator resolved the throw messages."
                     "Completed extras and queued the coder handoff."
-                    "The exact-commit audit found no remaining gaps."]]
+                    "The exact-commit audit found no remaining gaps."
+                    "The instruction graph is loaded."
+                    "The first draft is complete."
+                    "All six final feature files parse successfully."
+                    "The audit corrections are committed."
+                    "I'm tightening those final cases."]]
     (let [root (tmp-dir)
           _ (setup-pack! root)
           _ (create-task root "HTW" "specifier")
@@ -1569,6 +1679,25 @@
           card (first (:tasks (json/parse-string (:out result) true)))]
       (is (zero? (:exit result)))
       (is (str/includes? (str (:status card)) sentence)))))
+
+(deftest pack-web-codex-status-keeps-work-bullet-after-edit-dump
+  ;; Given a Codex work bullet, then a long Edited dump and Working
+  ;; When --test-status-pane
+  ;; Then status is still that work bullet
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (create-task root "HTW" "specifier")
+        dump (apply str (repeat 30 "    12 +| Pit, bat, and Wumpus room resolution\n"))
+        result (pack-web-env root {} "--test-status-pane" (str root)
+                             (str "• The audit corrections are committed. I'm repeating the audit.\n"
+                                  "• Edited tmp/behavior-audit.md (+4 -4)\n"
+                                  dump
+                                  "• Working (31s • esc to interrupt)\n"))
+        card (first (:tasks (json/parse-string (:out result) true)))]
+    (is (zero? (:exit result)))
+    (is (str/includes? (str (:status card)) "audit corrections are committed"))
+    (is (not (str/includes? (str (:status card)) "Working")))
+    (is (not (str/includes? (str (:status card)) "Edited")))))
 
 (deftest pack-web-card-status-ignores-tool-trace-lines
   (let [root (tmp-dir)
@@ -2701,6 +2830,189 @@
       (is (true? (:forge state)))
       (is (= ["I'm listing the open projects." "I'll summarize HTW next."]
              (:lieutenant_status state))))))
+
+(deftest pack-web-in-process-card-heat-rises
+  (let [root (tmp-dir)
+        roles ["specifier"]
+        _ (setup-pack! root roles)
+        _ (create-task root "HTW" "specifier")
+        _ (create-task root "Grenade" "specifier")
+        _ (put-in-process! root roles "specifier" {:from "(New Task)" :task "HTW"})
+        body (json/parse-string
+              (:out (pack-web root false "--test-card-heat" (str root)))
+              true)]
+    (is (< (:before body) (:after body)))
+    (is (false? (get-in body [:other :Grenade])))))
+
+(defn plant-live-card-for-halt! [root roles]
+  (setup-pack! root roles)
+  (run {:dir root} "git" "init" "-q")
+  (run {:dir root} "git" "config" "user.email" "test@example.com")
+  (run {:dir root} "git" "config" "user.name" "Test")
+  (write-file (fs/path root "README.md") "base\n")
+  (run {:dir root} "git" "add" "README.md")
+  (run {:dir root} "git" "commit" "-q" "-m" "base")
+  (create-task root "HTW" "specifier")
+  (let [task-id (:id (task-card root "HTW"))
+        base (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))
+        in-process (fs/path (in-process-dir root roles "specifier") "50_htw.handoff")
+        outbox (fs/path root ".swarmforge/handoffs/outbox/50_from_New_Task_to_specifier.handoff")
+        inbox (fs/path root ".swarmforge/handoffs/inbox/new/50_htw.handoff")]
+    (write-file in-process
+                (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                     "task: HTW\ntask_id: " task-id "\ntask_base_commit: " base "\n\nGo\n"))
+    (write-file outbox
+                (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                     "task: HTW\ntask_id: " task-id "\n\nGo\n"))
+    (write-file inbox
+                (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                     "task: HTW\ntask_id: " task-id "\n\nGo\n"))
+    (write-pending-approval! root {:id "50_htw" :task "HTW" :task-id task-id})
+    (write-pending-approval! root {:id "50_other" :task "Other" :task-id "other-id"})
+    (write-pending-audit! root task-id)
+    (write-pending-audit! root "unrelated-id")
+    (write-file (fs/path root "extra.md") "card work\n")
+    (run {:dir root} "git" "add" "extra.md")
+    (run {:dir root} "git" "commit" "-q" "-m" "card")
+    {:task-id task-id
+     :in-process in-process
+     :outbox outbox
+     :inbox inbox
+     :pending (fs/path root ".swarmforge/handoffs/pending_approval/50_htw.handoff")
+     :other-pending (fs/path root ".swarmforge/handoffs/pending_approval/50_other.handoff")}))
+
+(defn assert-card-halted! [root roles {:keys [in-process outbox inbox pending other-pending]}]
+  (is (= "waiting" (task-lane root "HTW")))
+  (is (not (fs/exists? (fs/path root "extra.md"))))
+  (is (not (fs/exists? in-process)))
+  (is (not (fs/exists? outbox)))
+  (is (not (fs/exists? inbox)))
+  (is (not (fs/exists? pending)))
+  (is (fs/exists? other-pending))
+  (is (= #{"unrelated-id"} (pending-audit-task-ids root)))
+  (is (empty? (handoff-names (in-process-dir root roles "specifier")))))
+
+(deftest pack-board-stop-returns-card-to-waiting-and-resets
+  ;; Given a live card with in_process, start mail, and Attention files
+  ;; When pack_board stop
+  ;; Then the card is waiting, the tree is reset, and that card's mail is gone
+  (let [root (tmp-dir)
+        roles ["specifier"]
+        planted (plant-live-card-for-halt! root roles)]
+    (is (fs/exists? (fs/path root "extra.md")))
+    (pack-board root true "stop" "--root" (str root) "--name" "HTW" "--caller" "handoffd")
+    (assert-card-halted! root roles planted)))
+
+(deftest pack-board-move-to-waiting-is-stop
+  ;; Given a live card with in_process, start mail, and Attention files
+  ;; When pack_board move --lane waiting
+  ;; Then the halt is the same as stop
+  (let [root (tmp-dir)
+        roles ["specifier"]
+        planted (plant-live-card-for-halt! root roles)]
+    (pack-board root true "move" "--root" (str root) "--name" "HTW"
+                "--lane" "waiting" "--caller" "handoffd")
+    (assert-card-halted! root roles planted)))
+
+(deftest pack-board-stop-reports-failed-reset-to-lieutenant
+  ;; Given a live card whose task_base_commit will not reset
+  ;; When pack_board stop
+  ;; Then the card is waiting, the tree is left, and the lieutenant is told
+  (let [forge (tmp-dir)
+        project (fs/path forge "projects" "cave")
+        roles ["specifier"]
+        argv (str (fs/path forge "tmux.argv"))]
+    (fs/create-dirs project)
+    (write-file (fs/path forge ".swarmforge/roles.tsv")
+                (format "lieutenant\tmaster\t%s\tswarmforge-lieutenant\tLieutenant\tgrok\ttask\tforward-only\n"
+                        forge))
+    (write-file (fs/path forge ".swarmforge/tmux-socket")
+                (str (fs/path forge "tmux.sock") "\n"))
+    (let [planted (plant-live-card-for-halt! project roles)]
+      (write-file (:in-process planted)
+                  (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                       "task: HTW\ntask_id: " (:task-id planted) "\n"
+                       "task_base_commit: deadbeefdead\n\nGo\n"))
+      (run {:dir project :env {"SWARMFORGE_TMUX_STUB" argv}}
+           (script "pack_board.sh")
+           "stop" "--root" (str project) "--name" "HTW" "--caller" "handoffd")
+      (is (= "waiting" (task-lane project "HTW")))
+      (is (fs/exists? (fs/path project "extra.md")))
+      (is (not (fs/exists? (:in-process planted))))
+      (let [notes (vec (fs/glob (fs/path forge ".swarmforge/notify") "*reset-failed*.notify"))]
+        (is (seq notes))
+        (is (str/includes? (slurp (str (first notes))) "event: reset-failed"))
+        (is (str/includes? (slurp (str (first notes))) "task: HTW")))
+      (let [argv-text (slurp argv)]
+        (is (str/includes? argv-text "swarmforge-lieutenant"))
+        (is (str/includes? argv-text "git reset failed for HTW"))))))
+
+(deftest pack-board-move-to-other-lane-does-not-halt
+  ;; Given a live card on specifier
+  ;; When pack_board move --lane coder
+  ;; Then the tree and Attention files stay
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        planted (plant-live-card-for-halt! root roles)]
+    (pack-board root true "move" "--root" (str root) "--name" "HTW"
+                "--lane" "coder" "--caller" "handoffd")
+    (is (= "coder" (task-lane root "HTW")))
+    (is (fs/exists? (fs/path root "extra.md")))
+    (is (fs/exists? (:in-process planted)))
+    (is (fs/exists? (:pending planted)))
+    (is (fs/exists? (:outbox planted)))))
+
+(deftest pack-web-file-viewer-kinds
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (create-task root "HTW" "specifier")]
+    (write-file (fs/path root "src/x.clj") "(def x :k) ; c\n")
+    (write-file (fs/path root "data.json") "{\"a\":1}")
+    (write-file (fs/path root "tasks/Ui.md") "# Ui\n\nHello\n")
+    (write-file (fs/path root "features/console.feature")
+                (str "@wip\n"
+                     "Feature: console\n"
+                     "  # hunt\n"
+                     "  Scenario: start\n"
+                     "    Given a cave named \"pit\"\n"
+                     "    When I go to <room>\n"
+                     "    | name |\n"
+                     "    | pit  |\n"))
+    (write-file (fs/path root "blob.bin") (str (char 0) (char 1) "Hi"))
+    (let [clj (json/parse-string
+               (:out (pack-web root false "--test-file" (str root) "HTW" "src/x.clj"))
+               true)
+          json-body (json/parse-string
+                     (:out (pack-web root false "--test-file" (str root) "HTW" "data.json"))
+                     true)
+          md (json/parse-string
+              (:out (pack-web root false "--test-file" (str root) "HTW" "tasks/Ui.md"))
+              true)
+          feature (json/parse-string
+                   (:out (pack-web root false "--test-file" (str root) "HTW"
+                                   "features/console.feature"))
+                   true)
+          bin (json/parse-string
+               (:out (pack-web root false "--test-file" (str root) "HTW" "blob.bin"))
+               true)]
+      (is (= "code" (:kind clj)))
+      (is (str/includes? (str (:html clj)) "class='kw'"))
+      (is (str/includes? (str (:html clj)) "class='cmt'"))
+      (is (= "code" (:kind json-body)))
+      (is (str/includes? (str (:html json-body)) "class='str'"))
+      (is (= "text" (:kind md)))
+      (is (str/includes? (:text md) "# Ui"))
+      (is (nil? (:html md)))
+      (is (= "code" (:kind feature)))
+      (is (str/includes? (str (:html feature)) "class='kw'"))
+      (is (str/includes? (str (:html feature)) "class='tag'"))
+      (is (str/includes? (str (:html feature)) "class='cmt'"))
+      (is (str/includes? (str (:html feature)) "class='str'"))
+      (is (str/includes? (str (:html feature)) "class='ph'"))
+      (is (str/includes? (str (:html feature)) "class='tbl'"))
+      (is (= "binary" (:kind bin)))
+      (is (str/includes? (:text bin) "00000000"))
+      (is (str/includes? (:text bin) "|")))))
 
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.pack-ui-test)]

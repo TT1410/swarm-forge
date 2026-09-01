@@ -114,8 +114,9 @@
   (fs/path (:worktree-path role-info)
            ".swarmforge" "handoffs" "inbox" "new" filename))
 
-(defn notify! [socket session]
-  (let [send-text (sh "tmux" "-S" socket "send-keys" "-t" session "-l" wake-message)
+(defn notify! [socket session & [message]]
+  (let [text (or message wake-message)
+        send-text (sh "tmux" "-S" socket "send-keys" "-t" session "-l" text)
         _ (Thread/sleep 150)
         send-carriage-return (sh "tmux" "-S" socket "send-keys" "-t" session "C-m")
         _ (Thread/sleep 50)
@@ -180,6 +181,11 @@
 
 (defn non-forwarding? [headers]
   (= "true" (get headers "non-forwarding")))
+
+(defn reverse-git-mail? [headers]
+  (and (= "git_handoff" (get headers "type"))
+       (or (non-forwarding? headers)
+           (= "00" (get headers "priority")))))
 
 (defn pack-role-names []
   (->> (read-lines roles-file)
@@ -286,13 +292,14 @@
                (fs/directory? (fs/path grand "projects")))
       (str grand))))
 
+(defn notify-event [headers]
+  (if (terminal-handoff? nil headers)
+    "card-done"
+    (str (or (not-empty (get headers "from")) "unknown") "-handoff")))
+
 (defn notify-lieutenant! [headers]
   (when-let [forge (forge-root)]
-    (let [event (if (terminal-handoff? nil headers) "card-done"
-                    (if (and (= "specifier" (get headers "from"))
-                             (= "git_handoff" (get headers "type")))
-                      "specifier-handoff"
-                      "handoff"))
+    (let [event (notify-event headers)
           dir (fs/path forge ".swarmforge" "notify")
           stamp (str/replace (now) #"[^0-9A-Za-z]" "")
           file (fs/path dir (str stamp "-" event ".notify"))

@@ -419,6 +419,7 @@
          "- Write scratch files and handoff drafts in `./tmp/` in the assigned worktree.\n"
          "- Do not use `/tmp` or `.swarmforge/handoffs/outbox/tmp/` as scratch.\n"
          "- Receive with `ready_for_next.sh`. Send with `swarm_handoff.sh ./tmp/<draft>`.\n"
+         "- If the pane says the lieutenant stopped this card, stop executing it immediately. That overrides a busy window.\n"
          "- Do not search the tree or `$HOME` for those scripts.\n"
          "- Do not invoke helpers as `./swarmforge/scripts/...`. They are already on PATH.\n"
          "- Board cards live in `.swarmforge/board/tasks.tsv`. Use that card name as `task:`.\n"

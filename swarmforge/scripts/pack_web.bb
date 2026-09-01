@@ -4,7 +4,9 @@
   (:require [babashka.fs :as fs]
             [cheshire.core :as json]
             [clojure.edn :as edn]
+            [clojure.java.io :as io]
             [clojure.java.shell :refer [sh]]
+            [clojure.pprint :as pprint]
             [clojure.string :as str]
             [org.httpkit.server :as http]))
 
@@ -26,6 +28,7 @@
        "  pack_web.sh --test-pane <root> <role>\n"
        "  pack_web.sh --test-agent-page [role]\n"
        "  pack_web.sh --test-heat <root>\n"
+       "  pack_web.sh --test-card-heat <root>\n"
        "  pack_web.sh --test-heat-isolation <root-a> <root-b>\n"
        "  pack_web.sh --test-heat-codex <root>\n"
        "  pack_web.sh --test-heat-reorder <root>\n"
@@ -37,6 +40,8 @@
        "  pack_web.sh --test-status-persist <root> <first> <second>\n"
        "  pack_web.sh --test-answer-clarification <root> <id> <text>\n"
        "  pack_web.sh --test-task <root> <name>\n"
+       "  pack_web.sh --test-tree <root> <name> [path]\n"
+       "  pack_web.sh --test-file <root> <name> <path>\n"
        "  pack_web.sh --test-delete-task <root> <name>\n"
        "  pack_web.sh --test-delete-approval <root> <id>\n"
        "  pack_web.sh --test-retry-task <root> <id> <comments>\n"
@@ -67,7 +72,8 @@
          in-process-for-row in-process-task-names approvals
          handoff-files batch-dirs in-process-dir allowed-doc?
          delete-approval! retry-approval! parse-message pane-status-for role-rows
-         recorded-pane)
+         recorded-pane html-escape worktree-for-role project-query master-role
+         session-alive? work-entry)
 
 (defn usage []
   (binding [*out* *err*]
@@ -157,6 +163,38 @@
   (when-let [row (master-row root)]
     (inject-role! root (first row) text)))
 
+(defn write-notify-file! [dir event kvs]
+  (let [stamp (str/replace (str (java.time.Instant/now)) #"[^0-9A-Za-z]" "")
+        file (fs/path dir (str stamp "-" event ".notify"))]
+    (fs/create-dirs dir)
+    (spit (str file)
+          (str (str/join "\n" (for [[k v] kvs] (str k ": " v)))
+               "\n"))
+    file))
+
+(defn notify-new-task! [forge-or-pack project-root name]
+  (let [forge (if (forge/forge? forge-or-pack)
+                forge-or-pack
+                (let [parent (fs/parent project-root)
+                      grand (when parent (fs/parent parent))]
+                  (when (and parent grand
+                             (= "projects" (fs/file-name parent))
+                             (fs/directory? (fs/path grand "projects")))
+                    (str grand))))
+        project (if forge (fs/file-name project-root) "")]
+    (if forge
+      (do
+        (write-notify-file! (fs/path forge ".swarmforge" "notify") "new-task"
+                            [["event" "new-task"]
+                             ["project" project]
+                             ["task" name]])
+        (inject-role! forge "lieutenant" (str "Notify: new-task " project "/" name)))
+      (do
+        (write-notify-file! (fs/path project-root ".swarmforge" "notify") "new-task"
+                            [["event" "new-task"]
+                             ["task" name]])
+        (inject-master! project-root (str "Notify: new-task " name))))))
+
 (defn pack-board-result [root & args]
   (let [script (str (fs/path script-dir "pack_board.sh"))]
     (apply sh (concat [script] args ["--root" (str root)]))))
@@ -176,6 +214,9 @@
 
 (defn lanes [root]
   (lines (pack-board root "lanes")))
+
+(defn display-lanes [root]
+  (vec (concat ["waiting"] (lanes root) ["done"])))
 
 (defn master-role [root]
   (str/trim (pack-board root "master-lane")))
@@ -216,9 +257,26 @@
                  (re-find #"handoff" n)
                  (re-find #"continue" n)
                  (re-find #"\breceived\b" n)
+                 (re-find #"\breceiving\b" n)
                  (re-find #"\bsettled\b" n)
                  (re-find #"\bresolved\b" n)
                  (re-find #"\bcompleted\b" n)
+                 (re-find #"\bcomplete\b" n)
+                 (re-find #"\bcommitted\b" n)
+                 (re-find #"\bloaded\b" n)
+                 (re-find #"\bprepared\b" n)
+                 (re-find #"\bconfirming\b" n)
+                 (re-find #"\brepeating\b" n)
+                 (re-find #"\btightening\b" n)
+                 (re-find #"\buncovered\b" n)
+                 (re-find #"\bcorrections\b" n)
+                 (re-find #"\bparse(?:s|d)?\b" n)
+                 (re-find #"\breview(?:ing|ed)?\b" n)
+                 (re-find #"\bwriting\b" n)
+                 (re-find #"\bdefining\b" n)
+                 (re-find #"\bspecifying\b" n)
+                 (re-find #"\bchecking\b" n)
+                 (re-find #"\breading\b" n)
                  (re-find #"\bfound\b" n)))))
 
 (defn tool-trace? [sentence]
@@ -228,6 +286,7 @@
 (defn mail-banner? [sentence]
   (let [n (str/lower-case (fold-apostrophe sentence))]
     (boolean (or (re-find #"you have new handoff mail" n)
+                 (re-find #"you have a reverse merge" n)
                  (re-find #"if idle, run ready_for_next" n)
                  (re-find #"rejected:" n)))))
 
@@ -275,11 +334,14 @@
   [(str root) (str role)])
 
 (defn matching-status-sentences [text backend]
-  (let [tail (last-n-lines (pane-sample text backend) 20)
-        joined (str/join "\n" tail)
-        from-sentences (filterv status-sentence? (pane-sentences joined))]
+  (let [sample (pane-sample text backend)
+        tail (last-n-lines sample 20)
+        joined-tail (str/join "\n" tail)
+        from-sentences (filterv status-sentence? (pane-sentences joined-tail))]
     (if (= "codex" backend)
-      (let [bullets (vec (remove codex-throwaway-bullet? (codex-bullets joined)))]
+      (let [bullets (->> (codex-bullets sample)
+                         (remove codex-throwaway-bullet?)
+                         vec)]
         (if (seq bullets) bullets from-sentences))
       from-sentences)))
 
@@ -345,6 +407,7 @@
              (rejected-task? root name) "REJECTED"
              (or (contains? (pending-approval-ids root) task-id)
                  (contains? (pending-approval-names root) name)) "Waiting for approval"
+             (= "waiting" role) "Waiting to start"
              (contains? (active-card-names root role) name)
              (pane-status-for root role)
              :else "waiting in queue"))))
@@ -664,7 +727,17 @@
       (in-process-task-names (handoff-files (first batches)))
       [])))
 
-(defn work-row-for-role [root socket row all-tasks]
+(defn role-heats [root]
+  (let [socket (tmux-socket root)]
+    (into {}
+          (for [row (role-rows root)
+                :let [role (first row)
+                      alive? (or (session-alive? socket (session-name row))
+                                 (some? *pane-text*))
+                      text (live-pane-text root role)]]
+            [role (role-heat root role alive? text (backend-name row))]))))
+
+(defn work-row-for-role [root socket row all-tasks heats]
   (let [role (first row)
         files (in-process-for-row row)
         path (first files)
@@ -673,17 +746,34 @@
         card (first cards)
         busy? (boolean (or path card))
         alive? (session-alive? socket (session-name row))
-        text (live-pane-text root role)
         names (work-task-names files cards)
         batch-names (in-process-batch-task-names row)]
     (queue-row role names batch-names busy? alive?
-               (role-heat root role (or alive? (some? *pane-text*)) text (backend-name row))
+               (get heats role 0)
                (or (:updated_at from-file) (:updated_at card) ""))))
 
-(defn work-in-flight [root]
-  (let [socket (tmux-socket root)
-        all-tasks (tasks root)]
-    (mapv #(work-row-for-role root socket % all-tasks) (role-rows root))))
+(defn work-in-flight
+  ([root] (work-in-flight root (role-heats root)))
+  ([root heats]
+   (let [socket (tmux-socket root)
+         all-tasks (tasks root)]
+     (mapv #(work-row-for-role root socket % all-tasks heats) (role-rows root)))))
+
+(defn executing-task? [root task]
+  (let [role (:lane task)]
+    (boolean
+     (and (not (#{"waiting" "done"} role))
+          (when-let [row (role-row root role)]
+            (contains? (set (in-process-task-names (in-process-for-row row)))
+                       (:name task)))))))
+
+(defn task-with-heat [root heats task]
+  (if (executing-task? root task)
+    (assoc task :activity (get heats (:lane task) 0))
+    task))
+
+(defn tasks-with-heat [root heats]
+  (mapv #(task-with-heat root heats %) (tasks root)))
 
 (defn chat-pending-dir [root]
   (fs/path root ".swarmforge" "dashboard" "requests" "pending"))
@@ -771,14 +861,15 @@
     id))
 
 (defn dashboard-state [root]
-  (let [master (master-role root)]
+  (let [master (master-role root)
+        heats (role-heats root)]
     {:master_role master
      :master_display (display-name-for-role master)
-     :lanes (lanes root)
-     :tasks (tasks root)
+     :lanes (display-lanes root)
+     :tasks (tasks-with-heat root heats)
      :approvals (approvals root)
      :board_allows (board-allows root)
-     :work_in_flight (work-in-flight root)
+     :work_in_flight (work-in-flight root heats)
      :chat (list-chat root)
      :clarifications (list-clarifications root)}))
 
@@ -791,11 +882,12 @@
 (defn project-slice [forge name]
   (let [root (open-project-root forge name)]
     (try
-      {:name name
-       :open true
-       :lanes (lanes root)
-       :tasks (tagged name (tasks root))
-       :work_in_flight (tagged name (work-in-flight root))}
+      (let [heats (role-heats root)]
+        {:name name
+         :open true
+         :lanes (display-lanes root)
+         :tasks (tagged name (tasks-with-heat root heats))
+         :work_in_flight (tagged name (work-in-flight root heats))})
       (catch Exception _
         {:name name
          :open true
@@ -864,29 +956,6 @@
 
 (defn new-task-id [name]
   (str (id-timestamp) "-" (id-slug name)))
-
-(defn queue-new-task-note! [root task-id name text card-type]
-  (let [to (card-type/starting-lane card-type)
-        now (.format java.time.format.DateTimeFormatter/ISO_INSTANT
-                     (java.time.Instant/now))
-        stamp (str/replace now #"[^0-9A-Za-z]" "")
-        body (or text "")
-        filename (str "50_" stamp "_from_New_Task_to_" (slug to) ".handoff")
-        outbox (fs/path root ".swarmforge" "handoffs" "outbox")
-        file (fs/path outbox filename)]
-    (fs/create-dirs outbox)
-    (spit (str file)
-          (str "id: " stamp "_from_New_Task\n"
-               "from: (New Task)\n"
-               "to: " to "\n"
-               "priority: 50\n"
-               "type: note\n"
-               "task_id: " task-id "\n"
-               "task: " name "\n"
-               "created_at: " now "\n"
-               "\n"
-               body
-               (when-not (str/ends-with? body "\n") "\n")))))
 
 (defn json-ok []
   {:status 200
@@ -1016,9 +1085,10 @@
       (pack-board root "create"
                   "--name" name
                   "--type" card-type
+                  "--waiting"
                   "--task-id" task-id
                   "--text" (or text ""))
-      (queue-new-task-note! root task-id name (or text "") card-type))))
+      task-id)))
 
 (defn post-tasks [root body]
   (let [{:keys [name text project type]} (json/parse-string (or body "{}") true)
@@ -1029,6 +1099,7 @@
       (when (and (forge/forge? root) (str/blank? project))
         (throw (ex-info "Missing project" {:http-status 400})))
       (create-task! dest name text type)
+      (notify-new-task! root dest name)
       (json-ok)
       (catch Exception e
         (http-error (or (:http-status (ex-data e)) 400) (.getMessage e))))))
@@ -1403,16 +1474,390 @@
   (when (str/starts-with? (or uri "") "/task")
     (query-value uri "name")))
 
+(defn board-task-named [root name]
+  (some #(when (= name (:name %)) %) (board-tasks root)))
+
+(defn task-document [root name]
+  (let [md (fs/path root "tasks" (str name ".md"))
+        txt (fs/path root ".swarmforge" "board" (str name ".txt"))]
+    (cond
+      (fs/regular-file? md) (slurp (str md))
+      (fs/regular-file? txt) (slurp (str txt))
+      :else "")))
+
+(defn list-card-audits [root task-id]
+  (let [dir (fs/path root ".swarmforge" "board" "audits" task-id)]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter #(re-matches #"[0-9]+\.md" (fs/file-name %)))
+           (sort-by #(Long/parseLong (str/replace (fs/file-name %) #"\.md$" "")))
+           (mapv (fn [file]
+                   (let [n (Long/parseLong (str/replace (fs/file-name file) #"\.md$" ""))]
+                     {:n n
+                      :label (str "Audit " n)
+                      :text (slurp (str file))}))))
+      [])))
+
+(defn card-worktree [root task]
+  (let [lane (:lane task)
+        master (master-role root)]
+    (if (#{"waiting" "done" nil} lane)
+      (or (worktree-for-role root master) (str root))
+      (or (worktree-for-role root lane) (str root)))))
+
+(defn resolve-under [root rel]
+  (let [base (try (fs/canonicalize root) (catch Exception _ (fs/absolutize root)))
+        target (try
+                 (fs/canonicalize (if (str/blank? rel) root (fs/path root rel)))
+                 (catch Exception _ nil))]
+    (when (and target (fs/starts-with? target base))
+      target)))
+
+(defn tree-entries [dir]
+  (if (fs/directory? dir)
+    (->> (fs/list-dir dir)
+         (remove #(= ".git" (fs/file-name %)))
+         (sort-by (juxt #(if (fs/directory? %) 0 1) #(str/lower-case (fs/file-name %))))
+         (mapv (fn [p]
+                 {:name (fs/file-name p)
+                  :dir (boolean (fs/directory? p))})))
+    []))
+
+(defn pretty-json [text]
+  (try (json/generate-string (json/parse-string text) {:pretty true})
+       (catch Exception _ text)))
+
+(defn pretty-edn [text]
+  (try (let [sw (java.io.StringWriter.)]
+         (pprint/pprint (edn/read-string text) sw)
+         (str sw))
+       (catch Exception _ text)))
+
+(defn code-escape [s]
+  (-> (or s "")
+      (str/replace "&" "&amp;")
+      (str/replace "<" "&lt;")
+      (str/replace ">" "&gt;")))
+
+(defn apply-style [text pattern class-name]
+  (let [matcher (.matcher pattern text)]
+    (loop [last 0 out ""]
+      (if (.find matcher)
+        (let [start (.start matcher)
+              end (.end matcher)
+              piece (.group matcher)]
+          (recur end (str out (subs text last start)
+                          "<span class='" class-name "'>"
+                          piece "</span>")))
+        (str out (subs text last))))))
+
+(defn colorize-code [source]
+  (let [split-comment (fn [line]
+                        (loop [idx 0 in-string? false escaped? false]
+                          (if (>= idx (count line))
+                            [line nil]
+                            (let [ch (.charAt line idx)]
+                              (cond
+                                (and (not in-string?) (= ch \;))
+                                [(subs line 0 idx) (subs line idx)]
+                                escaped? (recur (inc idx) in-string? false)
+                                (and in-string? (= ch \\)) (recur (inc idx) in-string? true)
+                                (= ch \") (recur (inc idx) (not in-string?) false)
+                                :else (recur (inc idx) in-string? false))))))
+        [code-part comment-part] (split-comment (or source ""))
+        escaped (code-escape code-part)
+        string-pattern (java.util.regex.Pattern/compile "\"([^\"\\\\]|\\\\.)*\"")
+        keyword-pattern (java.util.regex.Pattern/compile ":[a-zA-Z0-9\\-\\?!_\\./]+")]
+    (str (-> escaped
+             (apply-style string-pattern "str")
+             (apply-style keyword-pattern "kw"))
+         (when comment-part
+           (str "<span class='cmt'>" (code-escape comment-part) "</span>")))))
+
+(def gherkin-keywords
+  ["Scenario Outline" "Feature" "Background" "Rule" "Scenario" "Examples"
+   "Given" "When" "Then" "And" "But"])
+
+(def gherkin-string-pattern
+  (java.util.regex.Pattern/compile "\"([^\"\\\\]|\\\\.)*\""))
+
+(def gherkin-placeholder-pattern
+  (java.util.regex.Pattern/compile "&lt;[^&]+&gt;"))
+
+(defn colorize-gherkin-rest [s]
+  (-> (code-escape s)
+      (apply-style gherkin-string-pattern "str")
+      (apply-style gherkin-placeholder-pattern "ph")))
+
+(defn gherkin-keyword-at [trimmed]
+  (or (when (or (= trimmed "*") (str/starts-with? trimmed "* ")) "*")
+      (some (fn [kw]
+              (when (or (= trimmed kw)
+                        (str/starts-with? trimmed (str kw " "))
+                        (str/starts-with? trimmed (str kw ":")))
+                kw))
+            gherkin-keywords)))
+
+(defn colorize-gherkin-line [source]
+  (let [line (str/replace (or source "") "\t" "  ")
+        trimmed (str/triml line)
+        indent (subs line 0 (- (count line) (count trimmed)))]
+    (cond
+      (str/blank? trimmed) ""
+      (str/starts-with? trimmed "#")
+      (str (code-escape indent) "<span class='cmt'>" (code-escape trimmed) "</span>")
+      (or (str/starts-with? trimmed "\"\"\"") (str/starts-with? trimmed "'''"))
+      (str (code-escape indent) "<span class='str'>" (code-escape trimmed) "</span>")
+      (str/starts-with? trimmed "@")
+      (str (code-escape indent)
+           (->> (str/split trimmed #"\s+")
+                (map #(str "<span class='tag'>" (code-escape %) "</span>"))
+                (str/join " ")))
+      (str/starts-with? trimmed "|")
+      (str (code-escape indent)
+           (-> (code-escape trimmed)
+               (apply-style gherkin-string-pattern "str")
+               (str/replace "|" "<span class='tbl'>|</span>")))
+      :else
+      (if-let [kw (gherkin-keyword-at trimmed)]
+        (str (code-escape indent)
+             "<span class='kw'>" (code-escape kw) "</span>"
+             (colorize-gherkin-rest (subs trimmed (count kw))))
+        (colorize-gherkin-rest line)))))
+
+(defn source-lines-html
+  ([source] (source-lines-html source colorize-code))
+  ([source colorize]
+   (let [lines (str/split (or source "") #"\r?\n" -1)]
+     (->> lines
+          (map-indexed
+           (fn [idx line]
+             (let [line-html (colorize (str/replace (or line "") "\t" "  "))
+                   visible (if (str/blank? line-html) "&nbsp;" line-html)]
+               (str "<tr><td class='ln'>" (inc idx)
+                    "</td><td class='code'><pre>" visible "</pre></td></tr>"))))
+          (apply str)))))
+
+(defn code-html [source]
+  (str "<table class='src'>" (source-lines-html source) "</table>"))
+
+(defn gherkin-html [source]
+  (str "<table class='src'>" (source-lines-html source colorize-gherkin-line) "</table>"))
+
+(defn printable-byte? [b]
+  (let [n (bit-and (int b) 0xff)]
+    (or (= n 9) (= n 10) (= n 13) (and (>= n 32) (<= n 126)))))
+
+(defn binary-bytes? [bytes]
+  (boolean (some (fn [b]
+                   (let [n (bit-and (int b) 0xff)]
+                     (or (zero? n) (and (< n 32) (not (#{9 10 13} n))))))
+                 bytes)))
+
+(defn hex-dump [bytes]
+  (let [len (count bytes)]
+    (str/join
+     "\n"
+     (map (fn [off]
+            (let [chunk (subvec (vec bytes) off (min len (+ off 16)))
+                  hex (str/join " " (map #(format "%02x" (bit-and (int %) 0xff)) chunk))
+                  pad (apply str (repeat (* 3 (- 16 (count chunk))) " "))
+                  chars (apply str (map (fn [b]
+                                          (let [n (bit-and (int b) 0xff)]
+                                            (if (and (>= n 32) (<= n 126))
+                                              (char n)
+                                              \.)))
+                                        chunk))]
+              (format "%08x  %s%s |%s|" off hex pad chars)))
+          (range 0 len 16)))))
+
+(defn read-file-bytes [path n]
+  (with-open [in (io/input-stream (str path))]
+    (let [buf (byte-array n)
+          got (.read in buf)]
+      (if (neg? got) (byte-array 0) (byte-array (take got buf))))))
+
+(defn read-all-bytes [path]
+  (with-open [in (io/input-stream (str path))]
+    (let [out (java.io.ByteArrayOutputStream.)]
+      (io/copy in out)
+      (.toByteArray out))))
+
+(def code-exts #{".clj" ".cljs" ".cljc" ".bb" ".edn" ".json"})
+
+(defn file-view [path file]
+  (let [name (str/lower-case (or path ""))]
+    (cond
+      (or (str/ends-with? name ".json") (str/ends-with? name ".edn")
+          (str/ends-with? name ".clj") (str/ends-with? name ".cljs")
+          (str/ends-with? name ".cljc") (str/ends-with? name ".bb"))
+      (let [raw (slurp (str file))
+            body (cond
+                   (str/ends-with? name ".json") (pretty-json raw)
+                   (str/ends-with? name ".edn") (pretty-edn raw)
+                   :else raw)]
+        {:kind "code" :html (code-html body)})
+
+      (str/ends-with? name ".feature")
+      {:kind "code" :html (gherkin-html (slurp (str file)))}
+
+      (or (str/ends-with? name ".md") (str/ends-with? name ".txt"))
+      {:kind "text" :text (slurp (str file))}
+
+      :else
+      (let [head (read-file-bytes file 8192)]
+        (if (binary-bytes? head)
+          {:kind "binary" :text (hex-dump (vec (read-all-bytes file)))}
+          {:kind "text" :text (try (slurp (str file))
+                                   (catch Exception _ (hex-dump (vec (read-all-bytes file)))))})))))
+
+(defn task-page [name text audits project]
+  (let [name-html (html-escape name)
+        qs (str "name=" (java.net.URLEncoder/encode (str name) "UTF-8")
+                (when-not (str/blank? project)
+                  (str "&project=" (java.net.URLEncoder/encode (str project) "UTF-8"))))
+        audit-html (if (seq audits)
+                     (str/join
+                      (map (fn [item]
+                             (str "<section class=\"audit\"><h2>"
+                                  (html-escape (:label item))
+                                  "</h2><pre>"
+                                  (html-escape (:text item))
+                                  "</pre></section>"))
+                           audits))
+                     "<p class=\"note\">No audits yet.</p>")]
+    (str "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+         "<title>" name-html "</title>"
+         "<style>html,body{height:100%;margin:0;display:flex;flex-direction:column;"
+         "background:#f8f8f5;color:#1e221f;font-family:ui-sans-serif,system-ui,sans-serif}"
+         "header{display:flex;align-items:center;gap:8px;padding:8px 10px;"
+         "background:linear-gradient(180deg,#eceee8,#e0e3dc);border-bottom:1px solid #d5d9d2}"
+         "h1{margin:0;font-size:14px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}"
+         "h2{margin:0 0 6px;font-size:11px;text-transform:uppercase;letter-spacing:.04em;color:#68726c}"
+         "button{border:1px solid #9aa59e;background:#fff;padding:5px 10px;border-radius:7px;"
+         "font-size:12px;cursor:pointer}"
+         "main{flex:1;min-height:0;overflow:auto;padding:12px;display:flex;flex-direction:column;gap:12px}"
+         "pre{margin:0;padding:10px;background:#fffef9;border:1px solid #d5d9d2;border-radius:8px;"
+         "white-space:pre-wrap;overflow:auto;font:12px/1.4 ui-monospace,Menlo,monospace}"
+         ".note{color:#68726c;font-size:12px}"
+         "#tree{font:12px/1.4 ui-sans-serif,system-ui,sans-serif}"
+         ".dir-row{display:flex;align-items:center;gap:6px;padding:2px 0}"
+         ".dir-row button.toggle{padding:0 6px;min-width:1.6em}"
+         ".dir-row button.leaf{border:0;background:none;text-decoration:underline;color:#3d5a45;padding:0}"
+         ".children{margin-left:1.2rem}"
+         "#file-view{display:none}"
+         "#file-view.open{display:block}"
+         "#file-body{margin:0;padding:10px;overflow:auto;white-space:pre-wrap;"
+         "font:12px/1.4 ui-monospace,Menlo,monospace;background:#fffef9;border:1px solid #d5d9d2;border-radius:8px}"
+         ".src{border-collapse:collapse;width:100%;font:12px/1.35 ui-monospace,Menlo,monospace}"
+         ".ln{width:52px;padding:0 8px;background:#eef2f7;color:#6b7280;text-align:right;vertical-align:top;border-right:1px solid #d1d5db;user-select:none}"
+         ".code{padding:0 10px;vertical-align:top}"
+         ".code pre{margin:0;white-space:pre}"
+         ".cmt{color:#6b7280}.str{color:#b45309}.kw{color:#1d4ed8}"
+         ".tag{color:#7c3aed}.tbl{color:#0f766e}.ph{color:#0e7490}"
+         "</style></head><body>"
+         "<header><h1>" name-html "</h1>"
+         "<button type=\"button\" id=\"dir-btn\">Directory</button></header>"
+         "<main>"
+         "<section><h2>Task</h2><pre id=\"task-body\">" (html-escape text) "</pre></section>"
+         "<section><h2>Audits</h2>" audit-html "</section>"
+         "<section id=\"dir-panel\" hidden><h2>Directory</h2>"
+         "<div id=\"tree\"></div>"
+         "<div id=\"file-view\"><h2 id=\"file-name\"></h2>"
+         "<div id=\"file-body\"></div></div></section>"
+         "</main>"
+         "<script>"
+         "const qs=" (json/generate-string qs) ";"
+         "function el(tag, attrs, kids){"
+         "const n=document.createElement(tag);"
+         "Object.keys(attrs||{}).forEach(k=>n.setAttribute(k, attrs[k]));"
+         "(kids||[]).forEach(c=>n.appendChild(typeof c===\"string\"?document.createTextNode(c):c));"
+         "return n;}"
+         "async function loadTree(path, host){"
+         "const r=await fetch(\"/api/tree?\"+qs+\"&path=\"+encodeURIComponent(path||\"\"));"
+         "const data=r.ok?await r.json():{entries:[]};"
+         "host.replaceChildren();"
+         "(data.entries||[]).forEach(item=>{"
+         "const row=el(\"div\",{class:\"dir-row\"});"
+         "if(item.dir){"
+         "const btn=el(\"button\",{type:\"button\",class:\"toggle\"},[\"+\"]);"
+         "const kids=el(\"div\",{class:\"children\"});"
+         "kids.hidden=true;"
+         "btn.onclick=async()=>{"
+         "if(kids.hidden){btn.textContent=\"−\";kids.hidden=false;"
+         "if(!kids.dataset.loaded){await loadTree(item.path, kids);kids.dataset.loaded=\"1\";}}"
+         "else{btn.textContent=\"+\";kids.hidden=true;}};"
+         "row.append(btn, document.createTextNode(item.name));"
+         "host.append(row, kids);"
+         "}else{"
+         "const btn=el(\"button\",{type:\"button\",class:\"leaf\"},[item.name]);"
+         "btn.onclick=async()=>{"
+         "const f=await fetch(\"/api/file?\"+qs+\"&path=\"+encodeURIComponent(item.path));"
+         "const body=f.ok?await f.json():{text:\"Not found\",path:item.path};"
+         "document.getElementById(\"file-name\").textContent=body.path||item.path;"
+         "const pre=document.getElementById(\"file-body\");"
+         "pre.setAttribute(\"contenteditable\",\"false\");"
+         "if(body.html){pre.innerHTML=body.html;}else{pre.textContent=body.text||\"\";}"
+         "document.getElementById(\"file-view\").classList.add(\"open\");"
+         "};"
+         "row.appendChild(btn);host.appendChild(row);}"
+         "});}"
+         "document.getElementById(\"dir-btn\").onclick=async()=>{"
+         "const panel=document.getElementById(\"dir-panel\");"
+         "panel.hidden=!panel.hidden;"
+         "if(!panel.hidden && !panel.dataset.loaded){"
+         "await loadTree(\"\", document.getElementById(\"tree\"));"
+         "panel.dataset.loaded=\"1\";}"
+         "};"
+         "</script></body></html>")))
+
 (defn get-task [root uri]
   (let [name (task-query-name uri)
-        file (when (and (not (str/blank? name))
+        project (query-value uri "project")
+        task (when (and (not (str/blank? name))
                         (not (str/includes? name "/"))
                         (not (str/includes? name "..")))
-               (fs/path root ".swarmforge" "board" (str name ".txt")))]
+               (or (board-task-named root name)
+                   (when (or (fs/regular-file? (fs/path root "tasks" (str name ".md")))
+                             (fs/regular-file? (fs/path root ".swarmforge" "board" (str name ".txt"))))
+                     {:name name :id name :lane "waiting"})))]
+    (if task
+      (let [text (task-document root name)
+            audits (list-card-audits root (or (:id task) name))]
+        {:status 200
+         :headers {"Content-Type" "text/html; charset=utf-8"}
+         :body (task-page name (if (str/blank? text) (str name "\n") text) audits project)})
+      {:status 404 :body "Not found"})))
+
+(defn get-api-tree [root uri]
+  (let [name (query-value uri "name")
+        rel (or (query-value uri "path") "")
+        task (board-task-named root name)
+        wt (when task (card-worktree root task))
+        dir (when wt (resolve-under wt rel))]
+    (if (and dir (fs/directory? dir))
+      {:status 200
+       :headers {"Content-Type" "application/json; charset=utf-8"}
+       :body (json/generate-string
+              {:path rel
+               :entries (mapv (fn [item]
+                                (assoc item :path
+                                       (str/replace
+                                        (str (fs/path (or rel "") (:name item)))
+                                        #"^/" "")))
+                              (tree-entries dir))})}
+      {:status 404 :body "Not found"})))
+
+(defn get-api-file [root uri]
+  (let [name (query-value uri "name")
+        rel (query-value uri "path")
+        task (board-task-named root name)
+        wt (when task (card-worktree root task))
+        file (when (and wt (not (str/blank? rel))) (resolve-under wt rel))]
     (if (and file (fs/regular-file? file))
       {:status 200
-       :headers {"Content-Type" "text/plain; charset=utf-8"}
-       :body (str name "\n\n" (slurp (str file)))}
+       :headers {"Content-Type" "application/json; charset=utf-8"}
+       :body (json/generate-string (merge {:path rel} (file-view rel file)))}
       {:status 404 :body "Not found"})))
 
 (defn html-escape [value]
@@ -1604,6 +2049,12 @@
 
     (task-query-name uri)
     (get-task (request-project-root root uri) uri)
+
+    (str/starts-with? (first (str/split (or uri "") #"\?")) "/api/tree")
+    (get-api-tree (request-project-root root uri) uri)
+
+    (str/starts-with? (first (str/split (or uri "") #"\?")) "/api/file")
+    (get-api-file (request-project-root root uri) uri)
 
     (str/starts-with? (first (str/split (or uri "") #"\?")) "/api/doc")
     (get-api-doc (request-project-root root uri) uri)
@@ -1926,6 +2377,26 @@
 (defn test-heat! [root]
   (print-heat-pair! root "alpha\nline two\n" "beta\nline two\nchanged output\n"))
 
+(defn test-card-heat! [root]
+  (require-root! root)
+  (reset! pane-heat {})
+  (let [before-text "alpha\nline two\n"
+        after-text "beta\nline two\nchanged output\n"]
+    (binding [*pane-text* before-text]
+      (let [by (into {} (map (juxt :name identity) (:tasks (dashboard-state root))))]
+        (binding [*pane-text* after-text]
+          (let [by2 (into {} (map (juxt :name identity) (:tasks (dashboard-state root))))
+                hot (first (filter #(contains? (val %) :activity) by2))]
+            (println (json/generate-string
+                      {:before (get-in by [(key hot) :activity])
+                       :after (get-in by2 [(key hot) :activity])
+                       :other (into {}
+                                    (keep (fn [[k v]]
+                                            (when (and (not= k (key hot))
+                                                       (not (#{"waiting" "done"} (:lane v))))
+                                              [k (contains? v :activity)]))
+                                          by2))}))))))))
+
 (defn print-heat-isolation! [root-a root-b]
   (reset! pane-heat {})
   (binding [*pane-text* "stable-a\n"]
@@ -2026,6 +2497,24 @@
   (print (:body (handle-request (require-root! root)
                                 {:method "GET"
                                  :uri (str "/task?name=" name)})))
+  (flush))
+
+(defn test-tree! [root name path]
+  (when (str/blank? name)
+    (exit! 1 "Missing task name"))
+  (print (:body (handle-request (require-root! root)
+                                {:method "GET"
+                                 :uri (str "/api/tree?name=" name
+                                           (when-not (str/blank? path)
+                                             (str "&path=" path)))})))
+  (flush))
+
+(defn test-file! [root name path]
+  (when (or (str/blank? name) (str/blank? path))
+    (exit! 1 "Missing task name or path"))
+  (print (:body (handle-request (require-root! root)
+                                {:method "GET"
+                                 :uri (str "/api/file?name=" name "&path=" path)})))
   (flush))
 
 (defn test-mission! [root & [project]]

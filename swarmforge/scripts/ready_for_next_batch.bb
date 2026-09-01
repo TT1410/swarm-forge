@@ -126,9 +126,21 @@
           (when-not (zero? (:exit result))
             (fail! 1 (str/trim (str (:err result) "\n" (:out result))))))))))
 
+(defn apply-merge-from! [file]
+  (when (not= "git_handoff" (header-field file "type"))
+    (when-let [role (ready-for-next-guard/merge-from-role (header-field file "task"))]
+      (when-let [sha (ready-for-next-guard/role-head role)]
+        (let [result (sh/sh (str (fs/path script-dir "merge_and_process.sh")) role sha)]
+          (when-not (zero? (:exit result))
+            (fail! 1 (str/trim (str (:err result) "\n" (:out result))))))))))
+
 (defn merge-batch! [batch-dir]
   (doseq [file (handoff-files batch-dir)]
     (merge-git-handoff! file)))
+
+(defn apply-batch-merge-from! [batch-dir]
+  (doseq [file (handoff-files batch-dir)]
+    (apply-merge-from! file)))
 
 (defn new-batch-dir [in-process-dir]
   (loop [suffix 1]
@@ -178,6 +190,7 @@
               (when (empty? selected-files)
                 (fail! 2 (str "AMBIGUOUS_TASK_STATE: no tasks selected for batch priority " batch-priority ".")))
               (merge-batch! batch-dir)
+              (apply-batch-merge-from! batch-dir)
               (print-batch batch-dir))))))))
 
 (when (= (str *file*) (System/getProperty "babashka.file"))

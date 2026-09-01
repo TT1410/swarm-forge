@@ -122,6 +122,14 @@
           (when-not (zero? (:exit result))
             (fail! 1 (str/trim (str (:err result) "\n" (:out result))))))))))
 
+(defn apply-merge-from! [file]
+  (when (not= "git_handoff" (header-field file "type"))
+    (when-let [role (ready-for-next-guard/merge-from-role (header-field file "task"))]
+      (when-let [sha (ready-for-next-guard/role-head role)]
+        (let [result (sh/sh (str (fs/path script-dir "merge_and_process.sh")) role sha)]
+          (when-not (zero? (:exit result))
+            (fail! 1 (str/trim (str (:err result) "\n" (:out result))))))))))
+
 (defn -main []
   (let [inbox (inbox-dir)
         new-dir (fs/path inbox "new")
@@ -157,6 +165,7 @@
               (set-header! target-file "dequeued_at" (timestamp))
               (set-header! target-file "task_base_commit" (current-head))
               (merge-git-handoff! target-file)
+              (apply-merge-from! target-file)
               (print-task target-file))))))))
 
 (when (= (str *file*) (System/getProperty "babashka.file"))

@@ -8,7 +8,17 @@ Do not spend any money on a bankrbot SWARM token.
 
 ## Intent
 
-This `main` branch is documentary: it explains the system and carries the shared operational scripts and default constitution articles. Pack branches (`two-pack`, `four-pack`, `six-pack`) are templates. `get-swarm-forge` installs all of them into a forge `packs/` directory; **New Project** instantiates one pack into `projects/<name>/`.
+This checkout is the **`lieutenant`** forge: a multi-project host plus one
+pipeline template at `.swarmforge/project-pack`. `main` is documentary and
+the source of pack-only scripts and shared constitution articles. It is not
+a product you run.
+
+`get-swarm-forge` requires a product name:
+
+- `two-pack` / `four-pack` / `six-pack` — compose that pack into the current
+  directory (scripts from `main`, pack files from that branch).
+- `project-manager` — multi-pack forge (`packs/`, New Project pack radios).
+- `lieutenant` — this host and `.swarmforge/project-pack`.
 
 SwarmForge is an agent coordination system that facilitates communication between agents working in different git worktrees.
 
@@ -16,7 +26,7 @@ It provides a shared structure for role-specific prompts, worktree assignment, t
 
 ## Branches
 
-Pack templates live on dedicated branches. Each branch contains the `swarmforge/swarmforge.conf`, local constitution articles, and role prompts for one workflow. `get-swarm-forge` copies all of them into `packs/` along with host scripts from `main`.
+Pack templates live on dedicated branches. Each branch contains the `swarmforge/swarmforge.conf`, local constitution articles, and role prompts for one workflow. `get-swarm-forge <pack>` composes one of them into `.`. `get-swarm-forge project-manager` copies all three under `packs/` for New Project. This `lieutenant` host instantiates `.swarmforge/project-pack` instead.
 
 ### `two-pack`
 
@@ -66,7 +76,7 @@ Or download that snapshot:
 curl -L "https://github.com/unclebob/swarm-forge/archive/refs/tags/simple-windows.tar.gz" | tar -xz --strip-components=1
 ```
 
-Do not use `simple-windows` as `BRANCH=` in the pack getting-started command below; that command is for `two-pack`, `four-pack`, and `six-pack`.
+`simple-windows` is not a `get-swarm-forge` product. Pack-only installs are `get-swarm-forge two-pack` (or `four-pack` / `six-pack`).
 
 ## Prerequisites
 
@@ -92,13 +102,13 @@ Make sure that utility directory is on your shell `PATH`, then run the helper in
 the directory that will be the **forge** (not a single project):
 
 ```sh
-get-swarm-forge
+get-swarm-forge lieutenant
 ```
 
-`get-swarm-forge` downloads `main` and every pack branch (`two-pack`,
-`four-pack`, `six-pack`). It installs host scripts under `swarmforge/`, pack
-templates under `packs/`, and an empty `projects/` directory. It does not
-turn the current directory into one pack.
+`get-swarm-forge lieutenant` installs this host and `.swarmforge/project-pack`.
+It does not install `packs/two-pack` and friends. For a pack-only checkout use
+`get-swarm-forge six-pack` (or `two-pack` / `four-pack`). For the multi-pack
+forge use `get-swarm-forge project-manager`.
 
 Start the host dashboard:
 
@@ -112,7 +122,8 @@ project agents. Startup prints a **Dashboard:** URL (also written to
 available.
 
 Create a project from the dashboard with **New Project** (name, mission,
-pack, optional GitHub `owner/repo`, editable conf). That writes
+optional GitHub `owner/repo`). There are no pack radios: every project
+is this pipeline, copied from `.swarmforge/project-pack`. That writes
 `projects/<name>/` including `mission.md`, gives that directory its own
 git repo (or uses the clone), and starts that pack. The pack's `master`
 role works in that repo. **Open Project** starts an existing directory
@@ -147,17 +158,19 @@ Layout, top to bottom then left to right:
 
 ### Operating the dashboard
 
-**New Project.** Name, mission (`mission.md` at the project top), pack radios,
-editable conf. Check **github repo** and type `owner/repo` to clone first.
-The directory is the last path segment. Existing names get an alert.
+**New Project.** Name, mission (`mission.md` at the project top). Check
+**github repo** and type `owner/repo` to clone first. The directory is the
+last path segment. Existing names get an alert. The project is always this
+pipeline (no pack radios).
 
 **Open Project.** Menu of directories under `projects/`. Opening refreshes
-scripts from `packs/` (keeps `mission.md` and the project's conf) and starts
-that pack. Already-open names get an alert.
+scripts from `.swarmforge/project-pack` (keeps `mission.md` and the
+project's conf) and starts that pack. Already-open names get an alert.
 
 **Start a task.** Click **New Task** on that project's header bar, give a
-short stable **name** and the **task** text, then **OK**. That creates a card
-in the project's master lane and queues a `(New Task)` note to that agent.
+short stable **name**, a **type**, and the **task** text, then **OK**. That
+creates a **waiting** card. The lieutenant starts it (Attention, then
+`pack_board move`) when the plan says so. It does not queue a start note.
 
 **Talk to the lieutenant.** Type in the chat composer (Enter sends,
 Shift+Enter newline). The dashboard stores a durable request and injects
@@ -232,7 +245,10 @@ swarmforge/constitution/articles/
   workflow.prompt
 ```
 
-`get-swarm-forge` always copies shared articles from `main` (or `SWARMFORGE_BASE_BRANCH`). Packs must not ship `engineering.prompt`, `workflow.prompt`, or `handoffs.prompt`. Those filenames are law from `main`.
+`get-swarm-forge` copies shared articles from `main` for pack-only
+installs, and from the named manager for a forge. Packs must not ship
+`engineering.prompt`, `workflow.prompt`, or `handoffs.prompt`. Those
+filenames are law from `main`.
 
 Pack-specific additions and exceptions use explicit local filenames:
 

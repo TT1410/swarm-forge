@@ -112,3 +112,33 @@
 (defn wait-message [active]
   ["WAITING_FOR_APPROVAL: current git handoff is still active"
    (str/join "\n" (map #(str "- " %) active))])
+
+(defn reverse-git-handoff? [headers]
+  (and (= "git_handoff" (get headers "type"))
+       (or (= "true" (get headers "non-forwarding"))
+           (= "00" (get headers "priority")))))
+
+(defn reverse-git-file? [file]
+  (reverse-git-handoff? (header-map file)))
+
+(defn merge-from-role [task-name]
+  (when-not (str/blank? task-name)
+    (when-let [root (project-root)]
+      (let [file (fs/path root "tasks" (str task-name ".md"))]
+        (when (fs/regular-file? file)
+          (some (fn [line]
+                  (when-let [[_ role] (re-matches #"Merge-from:\s*(\S+)" line)]
+                    role))
+                (str/split-lines (slurp (str file)))))))))
+
+(defn role-worktree [role]
+  (some (fn [cols]
+          (when (= role (first cols))
+            (not-empty (nth cols 2 nil))))
+        (role-rows)))
+
+(defn role-head [role]
+  (when-let [wt (role-worktree role)]
+    (let [result (command "git" "-C" wt "rev-parse" "HEAD")]
+      (when (zero? (:exit result))
+        (not-empty (str/trim (:out result)))))))

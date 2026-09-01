@@ -485,6 +485,52 @@
     (when-not (zero? (:exit result))
       (exit! 1 (str/trim (str (:err result) "\n" (:out result)))))))
 
+(defn latest-durable-audit-n [task-id]
+  (let [dir (fs/path (project-root) ".swarmforge" "board" "audits" task-id)]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (map fs/file-name)
+           (keep #(when-let [[_ n] (re-matches #"([0-9]+)\.md" %)]
+                    (Long/parseLong n)))
+           (cons 0)
+           (apply max))
+      0)))
+
+(defn tmp-audit-notes []
+  (let [dir (fs/path (or (git-root) ".") "tmp")]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (filter fs/regular-file?)
+           (filter #(re-find #"(?i)audit" (fs/file-name %)))
+           (sort-by str)
+           (map #(str "## " (fs/file-name %) "\n\n" (slurp (str %))
+                      (when-not (str/ends-with? (slurp (str %)) "\n") "\n")))
+           (str/join "\n"))
+      "")))
+
+(defn persist-durable-audit! [candidate]
+  (let [task-id (:task-id candidate)
+        n (latest-durable-audit-n task-id)
+        file (fs/path (project-root) ".swarmforge" "board" "audits" task-id (str n ".md"))
+        notes (tmp-audit-notes)]
+    (when (pos? n)
+      (fs/create-dirs (fs/parent file))
+      (spit (str file)
+            (str "# Audit " n "\n\n"
+                 "Refused at: " (timestamp) "\n"
+                 "Sender: " (:sender candidate) "\n"
+                 "Commit: " (:commit candidate) "\n"
+                 "Task: " (:task candidate) "\n"
+                 "Type: " (:type candidate) "\n"
+                 (when (seq (:recipients candidate))
+                   (str "Recipients: " (str/join ", " (:recipients candidate)) "\n"))
+                 "\n"
+                 "## Candidate\n\n"
+                 (pr-str candidate)
+                 "\n"
+                 (when-not (str/blank? notes)
+                   (str "\n## Notes\n\n" notes)))))))
+
 (defn submit-after-audit! [candidate submit!]
   (with-audit-lock
     (fn []
@@ -498,6 +544,7 @@
             (delete-sender-audits! (:sender candidate))
             (write-audit! path candidate)
             (increment-audit-count! (:task-id candidate))
+            (persist-durable-audit! candidate)
             (print-audit-required! candidate)
             nil))))))
 

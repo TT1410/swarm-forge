@@ -2,6 +2,7 @@
 
 (ns pack-board
   (:require [babashka.fs :as fs]
+            [clojure.edn :as edn]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str])
   (:import [java.nio.channels FileChannel]
@@ -9,9 +10,9 @@
 
 (def usage-text
   (str "Usage:\n"
-       "  pack_board.sh create --name <name> --type <utility|component|QA|review> [--root <dir>] [--text <text>]\n"
-       "  pack_board.sh create <name> --type <utility|component|QA|review>\n"
-       "  pack_board.sh move --name <name> --lane <lane> [--root <dir>]\n"
+       "  pack_board.sh create --name <name> --type <utility|component|QA|review> [--waiting] [--merge-from <role>] [--root <dir>] [--text <text>]\n"
+       "  pack_board.sh create <name> --type <utility|component|QA|review> [--waiting]\n"
+       "  pack_board.sh move --name <name> --lane <lane> [--merge-from <role>] [--root <dir>]\n"
        "  pack_board.sh move <name> <lane>\n"
        "  pack_board.sh done --name <name> [--root <dir>]\n"
        "  pack_board.sh done <name>\n"
@@ -25,11 +26,14 @@
        "  pack_board.sh request-allow --name <name> --act <move|done|increment-audit> [--root <dir>]\n"
        "  pack_board.sh allow --name <name> --act <move|done|increment-audit> [--root <dir>]\n"
        "  pack_board.sh delete --name <name> [--root <dir>]\n"
-       "  pack_board.sh delete <name>"))
+       "  pack_board.sh delete <name>\n"
+       "  pack_board.sh stop --name <name> [--root <dir>]"))
 
 (def flags {"--root" :root "--name" :name "--lane" :lane "--text" :text
             "--role" :role "--task-id" :task-id "--type" :type
-            "--caller" :caller "--archive" :archive "--act" :act})
+            "--caller" :caller "--archive" :archive "--act" :act
+            "--merge-from" :merge-from "--waiting" :waiting})
+(def bool-flags #{"--waiting"})
 (def script-dir (fs/parent *file*))
 (try
   (require 'handoff-lib)
@@ -39,6 +43,8 @@
   (require 'card-type)
   (catch Exception _
     (load-file (str (fs/path script-dir "card_type.bb")))))
+
+(declare role-rows halt-live-card!)
 
 (defn usage []
   (binding [*out* *err*]
@@ -78,6 +84,9 @@
           (nil? flag)
           (recur (rest args) opts (conj positionals head))
 
+          (contains? bool-flags head)
+          (recur (rest args) (assoc opts flag true) positionals)
+
           (nil? (second args))
           (exit! 1 (str "Missing value for " head))
 
@@ -115,20 +124,66 @@
       (fs/create-dirs (fs/parent file))
       (spit (str file) text))))
 
-(defn write-task-doc! [root name text card-type]
+(defn write-task-doc! [root name text card-type merge-from]
   (when (some? name)
     (let [file (task-doc-file root name)
           body (or text "")]
       (fs/create-dirs (fs/parent file))
       (spit (str file)
             (str "# " name "\n\n"
-                 "Type: " (card-type/normalize card-type) "\n\n"
+                 "Type: " (card-type/normalize card-type) "\n"
+                 (when-not (str/blank? merge-from)
+                   (str "Merge-from: " merge-from "\n"))
+                 "\n"
                  body
                  (when-not (str/ends-with? body "\n") "\n"))))))
+
+(defn task-text [root name]
+  (let [body (task-body-file root name)]
+    (if (fs/regular-file? body)
+      (slurp (str body))
+      "")))
+
+(defn set-merge-from-line [text role]
+  (let [lines (str/split-lines (or text ""))
+        prefix "Merge-from: "
+        without (remove #(str/starts-with? % prefix) lines)
+        insert-at (or (first (keep-indexed
+                              (fn [i line]
+                                (when (str/starts-with? line "Type: ") (inc i)))
+                              without))
+                      (count without))
+        [before after] (split-at insert-at without)
+        next (concat before
+                     (when-not (str/blank? role) [(str prefix role)])
+                     after)]
+    (str (str/join "\n" next)
+         (when-not (str/ends-with? (or text "") "\n") "\n")
+         (when (and (str/ends-with? (or text "") "\n")
+                    (not (str/ends-with? (str/join "\n" next) "\n")))
+           "\n"))))
+
+(defn update-task-doc-merge-from! [root name role]
+  (let [file (task-doc-file root name)]
+    (when (fs/regular-file? file)
+      (spit (str file) (set-merge-from-line (slurp (str file)) role)))))
 
 (defn timestamp []
   (.format java.time.format.DateTimeFormatter/ISO_INSTANT
            (java.time.Instant/now)))
+
+(defn durable-audit-file [root task-id n]
+  (fs/path root ".swarmforge" "board" "audits" task-id (str n ".md")))
+
+(defn write-durable-audit! [root task-id n text]
+  (when (and (not (str/blank? task-id)) (pos? n))
+    (let [file (durable-audit-file root task-id n)]
+      (fs/create-dirs (fs/parent file))
+      (spit (str file)
+            (or text
+                (str "# Audit " n "\n\n"
+                     "Refused at: " (timestamp) "\n"
+                     "Task-id: " task-id "\n"))))))
 
 (defn id-timestamp []
   (.format (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd'T'HHmmssSSSSSS'Z'")
@@ -191,18 +246,54 @@
   (when (str/blank? value)
     (exit! 1 (str "Missing " label))))
 
+(defn pack-role-names [root]
+  (mapv first (role-rows root)))
+
+(defn require-merge-from! [root role]
+  (when-not (str/blank? role)
+    (when-not (some #{role} (pack-role-names root))
+      (exit! 1 (str "Unknown merge-from role: " role)))))
+
+(defn slug-role [s]
+  (str/replace (or s "") #"[^A-Za-z0-9]+" "_"))
+
+(defn queue-start-note! [root name lane task-id text]
+  (when-not (or (str/blank? lane) (#{"waiting" "done"} lane))
+    (let [now (timestamp)
+          stamp (str/replace now #"[^0-9A-Za-z]" "")
+          body (or text "")
+          filename (str "50_" stamp "_from_New_Task_to_" (slug-role lane) ".handoff")
+          outbox (fs/path root ".swarmforge" "handoffs" "outbox")
+          file (fs/path outbox filename)]
+      (fs/create-dirs outbox)
+      (spit (str file)
+            (str "id: " stamp "_from_New_Task\n"
+                 "from: (New Task)\n"
+                 "to: " lane "\n"
+                 "priority: 50\n"
+                 "type: note\n"
+                 "task_id: " task-id "\n"
+                 "task: " name "\n"
+                 "created_at: " now "\n"
+                 "\n"
+                 body
+                 (when-not (str/ends-with? body "\n") "\n"))))))
+
 (defn create! [opts]
   (when (contains? opts :lane)
     (exit! 1 "create rejects --lane; lane is computed from --type"))
   (let [name (task-name opts)
         card-type (:type opts)
         root (resolve-root opts)
-        file (tasks-file root)]
+        file (tasks-file root)
+        merge-from (:merge-from opts)]
     (require-value! name "task name")
     (require-value! card-type "type")
     (when-not (card-type/known? card-type)
       (exit! 1 (str "Unknown type: " card-type)))
-    (let [lane (card-type/starting-lane card-type)]
+    (require-merge-from! root merge-from)
+    (let [lane (if (:waiting opts) "waiting" (card-type/starting-lane card-type))
+          task-id (or (:task-id opts) (new-task-id name))]
       (with-board-lock
         root
         (fn []
@@ -210,10 +301,12 @@
             (when (find-task rows name)
               (exit! 1 (str "Duplicate task name: " name)))
             (write-rows file (conj rows (task-row name lane (timestamp)
-                                                 (or (:task-id opts) (new-task-id name))
+                                                 task-id
                                                  card-type)))
             (write-body! root name (:text opts))
-            (write-task-doc! root name (:text opts) card-type)))))))
+            (write-task-doc! root name (:text opts) card-type merge-from)
+            (when-not (:waiting opts)
+              (queue-start-note! root name lane task-id (:text opts)))))))))
 
 (defn rewrite-lane [line name lane]
   (let [row (card-type/parse-row line)]
@@ -221,7 +314,7 @@
       (card-type/format-row (assoc row :lane lane :updated (timestamp)))
       line)))
 
-(def allow-acts #{"move" "done" "increment-audit"})
+(def allow-acts #{"move" "done" "increment-audit" "stop"})
 
 (defn lt-allow-file [root name act]
   (fs/path root ".swarmforge" "board" "lt-allow" (str name "-" act)))
@@ -290,20 +383,40 @@
   (let [act (if (= "done" lane) "done" "move")]
     (require-caller! opts act)
     (let [name (task-name opts)
-          file (tasks-file (resolve-root opts))]
+          root (resolve-root opts)
+          file (tasks-file root)]
       (require-value! name "task name")
       (require-value! lane "lane")
-      (with-board-lock
-        (resolve-root opts)
-        (fn []
-          (let [rows (read-rows file)]
-            (when-not (find-task rows name)
-              (exit! 1 (str "Unknown task name: " name)))
-            (write-rows file (mapv #(rewrite-lane % name lane) rows)))))
-      (consume-allow! opts act))))
+      (let [before (atom nil)]
+        (with-board-lock
+          root
+          (fn []
+            (let [rows (read-rows file)
+                  line (find-task rows name)]
+              (when-not line
+                (exit! 1 (str "Unknown task name: " name)))
+              (reset! before (card-type/parse-row line))
+              (write-rows file (mapv #(rewrite-lane % name lane) rows)))))
+        (consume-allow! opts act)
+        @before))))
 
 (defn move! [opts]
-  (set-lane! opts (task-lane opts)))
+  (let [root (resolve-root opts)
+        name (task-name opts)
+        lane (task-lane opts)
+        merge-from (:merge-from opts)
+        before (set-lane! opts lane)]
+    (require-merge-from! root merge-from)
+    (when-not (str/blank? merge-from)
+      (update-task-doc-merge-from! root name merge-from))
+    (when (and before
+               (= "waiting" (:lane before))
+               (not (#{"waiting" "done"} lane)))
+      (queue-start-note! root name lane (:id before) (task-text root name)))
+    (when (and before
+               (= "waiting" lane)
+               (not (#{"waiting" "done"} (:lane before))))
+      (halt-live-card! root before))))
 
 (defn done! [opts]
   (set-lane! opts "done"))
@@ -335,12 +448,44 @@
     (when (fs/exists? file)
       (not-empty (str/trim (slurp (str file)))))))
 
+(defn tmux-stub []
+  (System/getenv "SWARMFORGE_TMUX_STUB"))
+
+(defn send-keys! [socket session & keys]
+  (let [argv (into ["tmux" "-S" socket "send-keys" "-t" session] keys)]
+    (if-let [stub (tmux-stub)]
+      (do (fs/create-dirs (fs/parent stub))
+          (spit (str stub) (str (pr-str (vec argv)) "\n") :append true))
+      (apply sh argv))))
+
 (defn session-for-role [root role]
   (when-let [row (some #(when (= role (first %)) %) (role-rows root))]
     (let [session (nth row 3 nil)]
       (if (str/blank? session)
         (str "swarmforge-" role)
         session))))
+
+(defn master-role-name [root]
+  (some (fn [cols]
+          (when (= "master" (second cols))
+            (first cols)))
+        (role-rows root)))
+
+(defn forge-root [root]
+  (let [parent (fs/parent root)
+        grand (when parent (fs/parent parent))]
+    (when (and parent grand
+               (= "projects" (fs/file-name parent))
+               (fs/directory? (fs/path grand "projects")))
+      (str grand))))
+
+(defn inject-pane! [root role text]
+  (when-not (or (str/blank? role) (str/blank? text))
+    (when-let [socket (tmux-socket root)]
+      (when-let [session (session-for-role root role)]
+        (send-keys! socket session "-l" text)
+        (send-keys! socket session "C-m")
+        (send-keys! socket session "C-j")))))
 
 (defn tmux-pane [root role]
   (let [socket (tmux-socket root)
@@ -414,7 +559,15 @@
                                rows)]
             (when-not present?
               (exit! 1 (str "Unknown task ID: " task-id)))
-            (write-rows file (mapv #(rewrite-audit-count % task-id) rows)))))))
+            (write-rows file (mapv #(rewrite-audit-count % task-id) rows))
+            (let [n (some (fn [line]
+                            (let [row (card-type/parse-row line)
+                                  row-key (or (not-empty (:id row)) (:name row))]
+                              (when (= task-id row-key)
+                                (:audit-count row))))
+                          (read-rows file))]
+              (when n
+                (write-durable-audit! root task-id n nil))))))))
   (consume-allow! opts "increment-audit"))
 
 (defn delete! [opts]
@@ -433,10 +586,160 @@
                                     rows))
           (fs/delete-if-exists (task-body-file root name)))))))
 
+(defn handoff-headers [file]
+  (into {}
+        (for [line (take-while (complement str/blank?)
+                               (str/split-lines (slurp (str file))))
+              :let [[k v] (str/split line #": " 2)]
+              :when (and k v)]
+          [k v])))
+
+(defn handoff-for-card? [file name task-id]
+  (let [h (handoff-headers file)
+        task (get h "task")
+        id (get h "task_id")]
+    (or (= name task)
+        (and (not (str/blank? task-id))
+             (or (= task-id id) (= task-id task))))))
+
+(defn drop-card-handoffs-in! [dir name task-id]
+  (when (fs/directory? dir)
+    (doseq [file (->> (fs/list-dir dir)
+                      (filter #(and (fs/regular-file? %)
+                                    (str/ends-with? (fs/file-name %) ".handoff"))))]
+      (when (handoff-for-card? file name task-id)
+        (fs/delete-if-exists file)))
+    (doseq [batch (->> (fs/list-dir dir)
+                       (filter #(and (fs/directory? %)
+                                     (str/starts-with? (fs/file-name %) "batch_"))))]
+      (drop-card-handoffs-in! batch name task-id)
+      (when (empty? (filter #(str/ends-with? (fs/file-name %) ".handoff")
+                            (if (fs/directory? batch) (fs/list-dir batch) [])))
+        (fs/delete-tree batch)))))
+
+(defn worktree-for-lane [root lane]
+  (some (fn [cols]
+          (when (= lane (first cols))
+            (not-empty (nth cols 2 nil))))
+        (role-rows root)))
+
+(defn tell-agent-stopped! [root role]
+  (inject-pane! root role "The lieutenant stopped this card. Stop executing it."))
+
+(defn write-reset-failed-notify! [root name lane message]
+  (let [dest (or (forge-root root) (str root))
+        dir (fs/path dest ".swarmforge" "notify")
+        stamp (str/replace (str (java.time.Instant/now)) #"[^0-9A-Za-z]" "")
+        file (fs/path dir (str stamp "-reset-failed.notify"))]
+    (fs/create-dirs dir)
+    (spit (str file)
+          (str "event: reset-failed\n"
+               "task: " name "\n"
+               "lane: " lane "\n"
+               "error: " message "\n"))))
+
+(defn report-reset-failure! [root name lane message]
+  (write-reset-failed-notify! root name lane message)
+  (let [text (str "git reset failed for " name " on " lane ": " message)]
+    (if-let [forge (forge-root root)]
+      (inject-pane! forge "lieutenant" text)
+      (inject-pane! root (or (master-role-name root) lane) text))))
+
+(defn drop-card-pending-approval! [root name task-id]
+  (drop-card-handoffs-in! (fs/path root ".swarmforge" "handoffs" "pending_approval")
+                          name task-id))
+
+(defn audit-matches-card? [path name task-id]
+  (try
+    (let [cand (:candidate (edn/read-string (slurp (str path))))
+          id (or (:task-id cand) (:task cand))]
+      (or (= name id) (= task-id id) (= name (:task cand))))
+    (catch Exception _
+      false)))
+
+(defn drop-card-audits! [root name task-id]
+  (let [dir (fs/path root ".swarmforge" "handoffs" "audit_pending")]
+    (when (fs/directory? dir)
+      (doseq [file (->> (concat (fs/glob dir "*.edn")
+                                (fs/glob dir "**/*.edn"))
+                        (filter fs/regular-file?)
+                        distinct)]
+        (when (audit-matches-card? file name task-id)
+          (fs/delete-if-exists file))))))
+
+(defn in-process-handoffs [in-process name task-id]
+  (->> (concat
+        (filter #(and (fs/regular-file? %)
+                      (str/ends-with? (fs/file-name %) ".handoff"))
+                (fs/list-dir in-process))
+        (mapcat (fn [batch]
+                  (if (fs/directory? batch)
+                    (filter #(str/ends-with? (fs/file-name %) ".handoff")
+                            (fs/list-dir batch))
+                    []))
+                (filter #(and (fs/directory? %)
+                              (str/starts-with? (fs/file-name %) "batch_"))
+                        (fs/list-dir in-process))))
+       (filter #(handoff-for-card? % name task-id))))
+
+(defn git-reset-failure [wt base name]
+  (cond
+    (str/blank? base) (str "no task_base_commit for " name)
+    :else
+    (let [result (command wt "git" "reset" "--hard" base)]
+      (when-not (zero? (:exit result))
+        (str "git reset --hard " base " failed: "
+             (str/trim (str (:err result) " " (:out result))))))))
+
+(defn reset-in-process! [root lane name task-id]
+  (when-let [wt (worktree-for-lane root lane)]
+    (let [in-process (fs/path wt ".swarmforge" "handoffs" "inbox" "in_process")]
+      (when (fs/directory? in-process)
+        (let [files (in-process-handoffs in-process name task-id)
+              base (some #(not-empty (get (handoff-headers %) "task_base_commit")) files)
+              msg (when (seq files) (git-reset-failure wt base name))]
+          (drop-card-handoffs-in! in-process name task-id)
+          msg)))))
+
+(defn halt-live-card! [root before]
+  (when (and before (not (#{"waiting" "done"} (:lane before))))
+    (let [name (:name before)
+          lane (:lane before)
+          task-id (:id before)]
+      (doseq [wt (cons (str root)
+                       (keep #(nth % 2 nil) (role-rows root)))]
+        (drop-card-handoffs-in! (fs/path wt ".swarmforge" "handoffs" "outbox") name task-id)
+        (drop-card-handoffs-in! (fs/path wt ".swarmforge" "handoffs" "inbox" "new") name task-id))
+      (drop-card-pending-approval! root name task-id)
+      (drop-card-audits! root name task-id)
+      (when-let [msg (reset-in-process! root lane name task-id)]
+        (report-reset-failure! root name lane msg))
+      (tell-agent-stopped! root lane))))
+
+(defn stop! [opts]
+  (require-caller! opts "stop")
+  (let [name (task-name opts)
+        root (resolve-root opts)
+        file (tasks-file root)]
+    (require-value! name "task name")
+    (let [row (atom nil)]
+      (with-board-lock
+        root
+        (fn []
+          (let [rows (read-rows file)
+                line (find-task rows name)]
+            (when-not line
+              (exit! 1 (str "Unknown task name: " name)))
+            (reset! row (card-type/parse-row line))
+            (write-rows file (mapv #(rewrite-lane % name "waiting") rows)))))
+      (halt-live-card! root @row)
+      (consume-allow! opts "stop"))))
+
 (def commands
   {"create" create!
    "move" move!
    "done" done!
+   "stop" stop!
    "list" list!
    "lanes" lanes!
    "master-lane" master-lane!

@@ -20,7 +20,8 @@ function seedProject(project) {
   );
   writeFile(
     path.join(project, ".swarmforge/board/tasks.tsv"),
-    "HTW\tspecifier\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-htw\t0\tQA\n"
+    "HTW\tspecifier\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-htw\t0\tQA\n" +
+      "UiShim\twaiting\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-uishim\t0\tcomponent\n"
   );
   writeFile(path.join(project, ".swarmforge/board/HTW.txt"), "Integrate the cave.\n");
   writeFile(path.join(project, "mission.md"), "Hunt the wumpus from the cave.\n");
@@ -133,23 +134,44 @@ test.describe("pack dashboard", () => {
     await expect(win.locator("#mission-body")).toContainText("Hunt the wumpus from the cave.");
   });
 
-  test("Work Queue / lieutenant split is draggable", async ({ page }) => {
+  test("has no Work Queue and shows a waiting lane", async ({ page }) => {
     await page.goto(handle.url);
-    const work = page.locator(".work-sec");
-    const chat = page.locator(".ts");
-    const split = page.locator(".rail-splitter");
-    await expect(split).toBeVisible();
-    const beforeWork = await work.boundingBox();
-    const beforeChat = await chat.boundingBox();
-    const box = await split.boundingBox();
-    await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
-    await page.mouse.down();
-    await page.mouse.move(box.x + box.width / 2, box.y + 80, { steps: 5 });
-    await page.mouse.up();
-    const afterWork = await work.boundingBox();
-    const afterChat = await chat.boundingBox();
-    expect(afterWork.height).toBeGreaterThan(beforeWork.height);
-    expect(afterChat.height).toBeLessThan(beforeChat.height);
+    await expect(page.locator(".work-sec")).toHaveCount(0);
+    await expect(page.getByRole("heading", { name: "Work Queue" })).toHaveCount(0);
+    await expect(page.locator('.col[data-lane="waiting"] h3')).toHaveText("Waiting");
+    await expect(page.locator('.col[data-lane="waiting"] .card .name')).toHaveText("UiShim");
+    await expect(page.locator('.col[data-lane="waiting"] .lane-title')).toHaveCount(0);
+  });
+
+  test("role lane title opens the agent session", async ({ page, context }) => {
+    await page.goto(handle.url);
+    const popupPromise = context.waitForEvent("page");
+    await page.locator('.col[data-lane="specifier"] .lane-title').click();
+    const win = await popupPromise;
+    await win.waitForLoadState("domcontentloaded");
+    await expect(win.locator("h1")).toContainText("specifier");
+  });
+
+  test("card window shows the task, audits, and Directory", async ({ page, context }) => {
+    const project = path.join(handle.root, "projects/htw");
+    writeFile(
+      path.join(project, ".swarmforge/board/audits/20260101T000000Z-htw/1.md"),
+      "# Audit 1\n\nRefused candidate.\n"
+    );
+    await page.goto(handle.url);
+    const popupPromise = context.waitForEvent("page");
+    await page.locator('.col[data-lane="specifier"] .card .name', { hasText: "HTW" }).click();
+    const win = await popupPromise;
+    await win.waitForLoadState("domcontentloaded");
+    await expect(win.locator("#task-body")).toContainText("Integrate the cave.");
+    await expect(win.locator(".audit")).toContainText("Audit 1");
+    await expect(win.locator("#dir-btn")).toHaveText("Directory");
+    await win.locator("#dir-btn").click();
+    await expect(win.locator("#tree")).toContainText("tasks");
+    await win.locator(".dir-row", { hasText: "tasks" }).locator("button.toggle").click();
+    await win.locator("button.leaf", { hasText: "HTW.md" }).click();
+    await expect(win.locator("#file-body")).toContainText("Integrate the cave.");
+    await expect(win.locator("#file-body")).toHaveAttribute("contenteditable", "false");
   });
 
   test("New Task focuses the name field", async ({ page }) => {
@@ -430,5 +452,159 @@ test.describe("pack dashboard", () => {
     } finally {
       await stopDashboard(local);
     }
+  });
+});
+
+function mockForgeState(tasks) {
+  return {
+    forge: true,
+    master_role: "lieutenant",
+    master_display: "Lieutenant",
+    packs: [{ name: "lieutenant", conf: "" }],
+    all_projects: ["htw"],
+    open_projects: ["htw"],
+    projects: [{
+      name: "htw",
+      open: true,
+      lanes: ["waiting", "specifier", "coder", "done"],
+      tasks: tasks || [],
+      work_in_flight: []
+    }],
+    approvals: [],
+    board_allows: [],
+    clarifications: [],
+    chat: [],
+    lieutenant_status: [],
+    lanes: [],
+    tasks: [],
+    work_in_flight: []
+  };
+}
+
+test.describe("mocked dashboard buttons", () => {
+  let handle;
+
+  test.beforeAll(async () => {
+    handle = await startDashboard();
+  });
+
+  test.afterAll(async () => {
+    await stopDashboard(handle);
+  });
+
+  test("New Task OK parks the card in waiting", async ({ page }) => {
+    let created = null;
+    await page.route("**/api/state", (route) => {
+      const tasks = [
+        { name: "HTW", lane: "specifier", type: "QA", status: "working", audit_count: 0, project: "htw" }
+      ];
+      if (created) {
+        tasks.push({
+          name: created.name,
+          lane: "waiting",
+          type: created.type || "component",
+          status: "Waiting to start",
+          audit_count: 0,
+          project: "htw"
+        });
+      }
+      route.fulfill({ json: mockForgeState(tasks) });
+    });
+    await page.route("**/api/tasks", async (route) => {
+      if (route.request().method() === "POST") {
+        created = JSON.parse(route.request().postData() || "{}");
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: true })
+        });
+      }
+      return route.continue();
+    });
+    await page.goto(handle.url);
+    await page.locator(".project-header button", { hasText: "New Task" }).click();
+    await page.locator("input[name=nt-type][value=QA]").check();
+    await page.locator("#nt-name").fill("UiFromMock");
+    await page.locator("#nt-text").fill("Build the shim.");
+    await page.locator("#nt-ok").click();
+    await expect(page.locator("#new-task-layer")).not.toHaveClass(/open/);
+    const card = page.locator('.col[data-lane="waiting"] .card', { hasText: "UiFromMock" });
+    await expect(card).toBeVisible();
+    await expect(card.locator(".status")).toHaveText("Waiting to start");
+    await expect(card.locator(".pill")).toHaveText("QA");
+    expect(created).toMatchObject({ name: "UiFromMock", type: "QA", project: "htw" });
+  });
+
+  test("Directory leaves show clj, gherkin, and binary", async ({ page, context }) => {
+    await context.route("**/api/tree**", async (route) => {
+      const url = new URL(route.request().url());
+      const rel = url.searchParams.get("path") || "";
+      const entries =
+        rel === ""
+          ? [
+              { name: "src", dir: true, path: "src" },
+              { name: "features", dir: true, path: "features" },
+              { name: "blob.bin", dir: false, path: "blob.bin" }
+            ]
+          : rel === "src"
+            ? [{ name: "x.clj", dir: false, path: "src/x.clj" }]
+            : rel === "features"
+              ? [{ name: "console.feature", dir: false, path: "features/console.feature" }]
+              : [];
+      await route.fulfill({ json: { path: rel, entries } });
+    });
+    await context.route("**/api/file**", async (route) => {
+      const url = new URL(route.request().url());
+      const rel = url.searchParams.get("path") || "";
+      const body = rel.endsWith(".clj")
+        ? {
+            path: rel,
+            kind: "code",
+            html: "<table class='src'><tr><td class='ln'>1</td><td class='code'><pre><span class='kw'>:k</span></pre></td></tr></table>"
+          }
+        : rel.endsWith(".feature")
+          ? {
+              path: rel,
+              kind: "code",
+              html: "<table class='src'><tr><td class='ln'>1</td><td class='code'><pre><span class='kw'>Feature</span>: console</pre></td></tr></table>"
+            }
+          : rel.endsWith(".bin")
+            ? { path: rel, kind: "binary", text: "00000000  00 01 48 69                                      |.Hi|" }
+            : { path: rel, kind: "text", text: "not found" };
+      await route.fulfill({ json: body });
+    });
+    await page.goto(handle.url);
+    const popupPromise = context.waitForEvent("page");
+    await page.locator('.col[data-lane="specifier"] .card .name', { hasText: "HTW" }).click();
+    const win = await popupPromise;
+    await win.waitForLoadState("domcontentloaded");
+    await win.locator("#dir-btn").click();
+    await win.locator(".dir-row", { hasText: "src" }).locator("button.toggle").click();
+    await win.locator("button.leaf", { hasText: "x.clj" }).click();
+    await expect(win.locator("#file-body")).toContainText(":k");
+    await expect(win.locator("#file-body .kw")).toHaveCount(1);
+    await win.locator(".dir-row", { hasText: "features" }).locator("button.toggle").click();
+    await win.locator("button.leaf", { hasText: "console.feature" }).click();
+    await expect(win.locator("#file-body .kw")).toHaveText("Feature");
+    await win.locator("button.leaf", { hasText: "blob.bin" }).click();
+    await expect(win.locator("#file-body")).toContainText("00000000");
+    await expect(win.locator("#file-body")).toContainText("|");
+  });
+
+  test("Teardown confirm posts teardown", async ({ page }) => {
+    let posted = false;
+    await page.route("**/api/teardown", async (route) => {
+      posted = true;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ ok: true })
+      });
+    });
+    await page.goto(handle.url);
+    page.once("dialog", (dialog) => dialog.accept());
+    await page.locator("#teardown-btn").click();
+    await expect.poll(() => posted).toBe(true);
+    await expect(page.locator("#pack-meta")).toContainText("teardown started");
   });
 });

@@ -74,7 +74,10 @@ message: <one line, max 80 chars>
 - If it prints `BATCH: <path>`, treat each printed `BATCH_ITEM` as part of the
   current batch in helper-delivered order.
 - Use only the task information printed by the helper scripts.
-- If a tmux wake-up arrives while already working on a task, ignore it.
+- If a tmux wake-up arrives while already working on a task, ignore it,
+  except a lieutenant stop. If the pane says the lieutenant stopped
+  this card, stop executing it immediately. Do not `git_handoff` that
+  card. Do not keep editing. A stop overrides being busy.
 - When the task or batch is fully complete, run `done_with_current.sh`. After a
   reverse (`non-forwarding`) merge, that is the completion; do not queue a
   `git_handoff` for that inbound.

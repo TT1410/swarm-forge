@@ -1045,7 +1045,7 @@
                         (script "swarm_handoff.sh") (str draft))]
         (is (= 2 (:exit result)))
         (is (str/includes? (:err result) "must not add features"))
-        (is (empty? (outbox-handoffs root)))))
+        (is (empty? (remove #(str/includes? (str %) "New_Task") (outbox-handoffs root))))))
     (pack-board root true "create" "--root" (str root) "--name" "rev" "--type" "review")
     (write-file (fs/path root "qa/headed.md") "# headed\n")
     (run {:dir root} "git" "add" "qa/headed.md")
@@ -1056,7 +1056,7 @@
                         (script "swarm_handoff.sh") (str draft))]
         (is (= 2 (:exit result)))
         (is (str/includes? (:err result) "must not add QA procedures"))
-        (is (empty? (outbox-handoffs root)))))))
+        (is (empty? (remove #(str/includes? (str %) "New_Task") (outbox-handoffs root))))))))
 
 (deftest swarm-handoff-fills-artifacts-from-the-commit
   ;; Given a git_handoff of a commit that added a file
@@ -1280,6 +1280,96 @@
       (is (str/includes? (:out ready) "TASK_NAME: merge-on-receive"))
       (is (zero? (:exit merged?)))
       (is (fs/exists? (fs/path receiver "slice.md"))))))
+
+(deftest merge-and-process-takes-inbound-task-docs
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        sender (add-worktree! root "sender")
+        receiver (add-worktree! root "receiver")
+        _ (setup-project! root)
+        _ (write-file (fs/path root ".swarmforge/roles.tsv")
+                      (format "sender\tsender\t%s\tsession\tSender\tcodex\ttask\nreceiver\treceiver\t%s\tsession\tReceiver\tcodex\ttask\n"
+                              sender receiver))
+        _ (write-file (fs/path sender "tasks/UiShim.md") "from sender\n")
+        _ (run {:dir sender} "git" "add" "tasks/UiShim.md")
+        _ (run {:dir sender} "git" "commit" "-q" "-m" "Sender task doc")
+        sha (str/trim (:out (run {:dir sender} "git" "rev-parse" "--short=10" "HEAD")))
+        _ (write-file (fs/path receiver "tasks/UiShim.md") "untracked local\n")
+        result (run {:dir receiver :ok? false}
+                    (script "merge_and_process.sh") "sender" sha)]
+    (is (zero? (:exit result)))
+    (is (str/includes? (str (:out result) (:err result)) "MERGED:"))
+    (is (= "from sender\n" (slurp (str (fs/path receiver "tasks/UiShim.md")))))))
+
+(deftest ready-for-next-leaves-handback-while-in-process
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        sender (add-worktree! root "sender")
+        receiver (add-worktree! root "receiver")
+        _ (setup-project! root)
+        _ (write-file (fs/path root ".swarmforge/roles.tsv")
+                      (format "sender\tsender\t%s\tsession\tSender\tcodex\ttask\nreceiver\treceiver\t%s\tsession\tReceiver\tcodex\ttask\n"
+                              sender receiver))]
+    (doseq [dir [".swarmforge/handoffs/inbox/new"
+                 ".swarmforge/handoffs/inbox/in_process"
+                 ".swarmforge/handoffs/inbox/completed"]]
+      (fs/create-dirs (fs/path receiver dir)))
+    (write-file (fs/path sender "slice.md") "from sender\n")
+    (run {:dir sender} "git" "add" "slice.md")
+    (run {:dir sender} "git" "commit" "-q" "-m" "Sender slice")
+    (let [sha (str/trim (:out (run {:dir sender} "git" "rev-parse" "--short=10" "HEAD")))]
+      (write-file
+       (fs/path receiver ".swarmforge/handoffs/inbox/in_process/50_ui.handoff")
+       (str "from: (New Task)\nto: receiver\npriority: 50\ntype: note\n"
+            "task: Ui\ntask_id: ui-1\n\nBuild Ui\n"))
+      (write-file
+       (fs/path receiver ".swarmforge/handoffs/inbox/new/00_from_sender_to_receiver.handoff")
+       (str "from: sender\nto: receiver\npriority: 00\ntype: git_handoff\n"
+            "non-forwarding: true\ncommit: " sha "\ntask: UiShim\n\nmerge\n"))
+      (let [ready (run {:dir receiver :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                       (script "ready_for_next.sh"))]
+        (is (zero? (:exit ready)))
+        (is (str/includes? (:out ready) "TASK_NAME: Ui"))
+        (is (not (str/includes? (:out ready) "TASK_NAME: UiShim")))
+        (is (fs/exists? (fs/path receiver ".swarmforge/handoffs/inbox/new/00_from_sender_to_receiver.handoff")))
+        (is (not (fs/exists? (fs/path receiver "slice.md"))))
+        (is (fs/exists? (fs/path receiver ".swarmforge/handoffs/inbox/in_process/50_ui.handoff"))))
+      (run {:dir receiver :env {"SWARMFORGE_ROLE" "receiver"}}
+           (script "done_with_current.sh"))
+      (let [ready (run {:dir receiver :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                       (script "ready_for_next.sh"))]
+        (is (zero? (:exit ready)))
+        (is (str/includes? (:out ready) "TASK_NAME: UiShim"))
+        (is (fs/exists? (fs/path receiver "slice.md")))
+        (is (not (fs/exists? (fs/path receiver ".swarmforge/handoffs/inbox/new/00_from_sender_to_receiver.handoff"))))))))
+
+(deftest ready-for-next-merges-from-named-role-head
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        sender (add-worktree! root "sender")
+        receiver (add-worktree! root "receiver")
+        _ (setup-project! root)
+        _ (write-file (fs/path root ".swarmforge/roles.tsv")
+                      (format "sender\tsender\t%s\tsession\tSender\tcodex\ttask\nreceiver\treceiver\t%s\tsession\tReceiver\tcodex\ttask\n"
+                              sender receiver))]
+    (doseq [dir [".swarmforge/handoffs/inbox/new"
+                 ".swarmforge/handoffs/inbox/in_process"
+                 ".swarmforge/handoffs/inbox/completed"]]
+      (fs/create-dirs (fs/path receiver dir)))
+    (write-file (fs/path sender "api.md") "coder api\n")
+    (run {:dir sender} "git" "add" "api.md")
+    (run {:dir sender} "git" "commit" "-q" "-m" "Coder API")
+    (write-file (fs/path root "tasks/UiShim.md")
+                "# UiShim\n\nType: component\nMerge-from: sender\n\nBuild it\n")
+    (write-file
+     (fs/path receiver ".swarmforge/handoffs/inbox/new/50_from_New_Task.handoff")
+     (str "from: (New Task)\nto: receiver\npriority: 50\ntype: note\n"
+          "task: UiShim\n\nBuild it\n"))
+    (let [ready (run {:dir receiver :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                     (script "ready_for_next.sh"))]
+      (is (zero? (:exit ready)))
+      (is (str/includes? (:out ready) "TASK_NAME: UiShim"))
+      (is (fs/exists? (fs/path receiver "api.md"))))))
 
 (deftest swarm-handoff-rejects-evidence-headers
   ;; Given a git draft with coverage: or a note with an extra header

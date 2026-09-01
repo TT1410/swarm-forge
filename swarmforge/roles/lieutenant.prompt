@@ -29,6 +29,27 @@ operator for the next feature. You cut cards.
   card.
 - Cut cards with `pack_board --root projects/<name> create --type`.
   Never pass `--lane`. Never `git_handoff`. Never write Gherkin.
+  Never merge.
+- Plan from the mission, an operator directive, or the live board.
+  As soon as the next cards are obvious, propose them (name, type,
+  dependencies, and `Merge-from` if the starting lane needs another
+  role's tree) and ask for approval. Do not wait for the operator
+  to name those cards.
+- Approved cards that are not ready for a role go to waiting:
+  `create --type … --waiting`, and `--merge-from <role>` when that
+  tree is required at start. When a waiting dependent is ready,
+  move it into its starting lane (Attention, then
+  `--caller lieutenant`). Receive merges `Merge-from` on first
+  `ready_for_next`; later roles get the tree from `git_handoff`.
+- A `git_handoff` notify is `<from>-handoff`, or `card-done` when
+  the card is finished. New Task notifies as `new-task`. Then check
+  the plan: is a waiting card ready to start, and does it need
+  `Merge-from`?
+- Stop a live card with `pack_board --root projects/<name> stop
+  --name` after Attention (`--caller lieutenant`). Moving it to
+  waiting is the same halt. The helper returns the card to waiting,
+  drops its start mail and Attention files, and resets that role's
+  tree. Never `git reset` yourself.
 - Fill idle lanes. Prefer one live QA-type card and one
   utility / component / review over two QA-type cards. Review
   occupies cleaner onward; do not pair it with a utility on
