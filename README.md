@@ -8,7 +8,10 @@ Do not spend any money on a bankrbot SWARM token.
 
 ## Intent
 
-This `main` branch is documentary: it explains the system and carries the shared operational scripts and default constitution articles. The runnable workflow branches carry the project-facing configurations, role prompts, and local constitution articles that define specific workflows.
+This `two-pack` branch is a pack-only workflow. `get-swarm-forge two-pack`
+composes it into the current directory. `main` carries shared scripts and
+constitution articles. `project-manager` and `lieutenant` are forges, not
+this pack.
 
 SwarmForge is an agent coordination system that facilitates communication between agents working in different git worktrees.
 
@@ -16,7 +19,7 @@ It provides a shared structure for role-specific prompts, worktree assignment, t
 
 ## Branches
 
-The runnable SwarmForge configurations live on dedicated branches. Each branch contains the `swarmforge/swarmforge.conf`, local constitution articles, and role prompts for one workflow. At startup, its `./swarm` wrapper copies the shared operational scripts and shared constitution articles from `main` when they are not already present, then launches that branch's local configuration.
+The runnable pack configurations live on dedicated branches. Each branch contains the `swarmforge/swarmforge.conf`, local constitution articles, and role prompts for one workflow. `get-swarm-forge <pack>` composes that pack into `.` (scripts from `main`, pack files from the pack branch).
 
 ### `four-pack`
 
@@ -54,22 +57,22 @@ SwarmForge runs locally. Before starting a runnable branch, make sure the target
 
 ## Getting Started
 
-In the directory where you want to use SwarmForge, choose a runnable branch and pull its contents without creating a Git remote:
+Install `get-swarm-forge` on your `PATH` from the swarm-forge repo, then in the
+project directory:
 
 ```sh
-BRANCH=four-pack
-curl -L "https://github.com/unclebob/swarm-forge/archive/refs/heads/${BRANCH}.tar.gz" | tar -xz --strip-components=1
-```
-
-Use `BRANCH=six-pack` instead when you want the six-agent workflow. Do not use `main` for this command; `main` is documentary and stores the shared operational scripts, while the runnable branches provide the configurations and prompts intended for projects.
-
-After copying a runnable branch, start the swarm from the target project:
-
-```sh
+get-swarm-forge two-pack
 ./swarm
 ```
 
-The `./swarm` wrapper keeps the runnable branch small. On first use, if `swarmforge/scripts/` is missing, it downloads the `main` branch archive, copies the shared operational scripts from `swarmforge/scripts/`, stages shared constitution articles from `swarmforge/constitution/articles/`, and then launches `swarmforge/scripts/swarmforge.sh`. Later runs reuse the existing local scripts directory instead of overwriting it.
+That composes this pack into `.` (scripts and shared articles from `main`,
+conf and roles from this branch). It is not a forge. Use `four-pack` or
+`six-pack` for those workflows. For the multi-pack dashboard use
+`get-swarm-forge project-manager`. For the lieutenant host use
+`get-swarm-forge lieutenant`.
+
+If `swarmforge/scripts/` is still missing, `./swarm` downloads them from
+`main` and then launches the pack. Later runs reuse the local scripts.
 
 The windows should open automatically.
 
