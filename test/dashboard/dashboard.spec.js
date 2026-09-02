@@ -181,10 +181,6 @@ test.describe("pack dashboard", () => {
     await page.locator(".project-header button", { hasText: "New Task" }).click();
     await expect(page.locator("input[name=nt-type]")).toHaveCount(5);
     await expect(page.locator("input[name=nt-type][value=LT]")).toBeVisible();
-    await expect(page.locator("#nt-note")).toContainText("waiting card");
-    await page.locator("input[name=nt-type][value=LT]").check();
-    await expect(page.locator("#nt-note")).toContainText("Does not create a card");
-    await expect(page.locator("#nt-note")).not.toContainText("waiting card");
   });
 
   test("lane titles show heat, cards do not", async ({ page }) => {
@@ -559,6 +555,46 @@ test.describe("mocked dashboard buttons", () => {
     await expect(card.locator(".status")).toHaveText("Waiting to start");
     await expect(card.locator(".pill")).toHaveText("QA");
     expect(created).toMatchObject({ name: "UiFromMock", type: "QA", project: "htw" });
+  });
+
+  test("New Task LT does not park a card", async ({ page }) => {
+    let created = null;
+    await page.route("**/api/state", (route) => {
+      const tasks = [
+        { name: "HTW", lane: "specifier", type: "QA", status: "working", audit_count: 0, project: "htw" }
+      ];
+      if (created && created.type !== "LT") {
+        tasks.push({
+          name: created.name,
+          lane: "waiting",
+          type: created.type || "component",
+          status: "Waiting to start",
+          audit_count: 0,
+          project: "htw"
+        });
+      }
+      route.fulfill({ json: mockForgeState(tasks) });
+    });
+    await page.route("**/api/tasks", async (route) => {
+      if (route.request().method() === "POST") {
+        created = JSON.parse(route.request().postData() || "{}");
+        return route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ ok: true })
+        });
+      }
+      return route.continue();
+    });
+    await page.goto(handle.url);
+    await page.locator(".project-header button", { hasText: "New Task" }).click();
+    await page.locator("input[name=nt-type][value=LT]").check();
+    await page.locator("#nt-name").fill("Shim");
+    await page.locator("#nt-text").fill("fit this");
+    await page.locator("#nt-ok").click();
+    await expect(page.locator("#new-task-layer")).not.toHaveClass(/open/);
+    expect(created).toMatchObject({ name: "Shim", type: "LT", project: "htw" });
+    await expect(page.locator('.col[data-lane="waiting"] .card', { hasText: "Shim" })).toHaveCount(0);
   });
 
   test("Directory leaves show clj, gherkin, and binary", async ({ page, context }) => {

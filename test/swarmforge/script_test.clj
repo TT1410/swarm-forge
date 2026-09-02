@@ -1096,12 +1096,13 @@
         (fs/delete-tree root)))))
 
 (deftest pack-web-production-main-does-not-run-test-flags
-  (let [result (run {:dir repo-root :ok? false}
-                    "bb" (script "pack_web.bb") "--test-html")]
-    (is (not (zero? (:exit result))))
-    (is (str/includes? (slurp (script "pack_web.bb")) "--serve"))
-    (is (not (re-find #"--test-state\" \(test-state!" (slurp (script "pack_web.bb")))))
-    (is (str/includes? (slurp (str (fs/path repo-root "test/swarmforge/pack_web_test.bb"))) "--test-state"))))
+  (let [via-bb (run {:dir repo-root :ok? false}
+                    "bb" (script "pack_web.bb") "--test-html")
+        via-sh (run {:dir repo-root :ok? false}
+                    (script "pack_web.sh") "--test-html")]
+    (is (not (zero? (:exit via-bb))))
+    (is (zero? (:exit via-sh)))
+    (is (str/includes? (:out via-sh) "<!doctype html"))))
 
 (defn seed-installer-host! [base]
   (doseq [name ["swarmforge.sh" "handoffd.bb" "done_with_current.sh"]]

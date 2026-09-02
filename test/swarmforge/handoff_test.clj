@@ -42,6 +42,33 @@
 (defn read-file [path]
   (slurp (str path)))
 
+(defn read-argv [path]
+  (when (fs/exists? path)
+    (->> (str/split-lines (slurp (str path)))
+         (remove str/blank?)
+         (mapv read-string))))
+
+(defn inject-target [argv-vec]
+  (second (drop-while #(not= "-t" %) argv-vec)))
+
+(defn inject-literal [argv-vec]
+  (second (drop-while #(not= "-l" %) argv-vec)))
+
+(defn submitted-texts
+  ([argv] (submitted-texts argv nil))
+  ([argv target]
+   (loop [calls argv pending nil acc []]
+     (if-let [call (first calls)]
+       (let [tgt (inject-target call)
+             lit (inject-literal call)
+             match? (or (nil? target) (= target tgt))]
+         (cond
+           (not match?) (recur (next calls) pending acc)
+           lit (recur (next calls) lit acc)
+           pending (recur (next calls) nil (conj acc pending))
+           :else (recur (next calls) nil acc)))
+       acc))))
+
 (defn init-repo! [root]
   (run {:dir root} "git" "init" "-q")
   (run {:dir root} "git" "config" "user.email" "test@example.com")
@@ -568,9 +595,9 @@
     (setup-project! root)
     (fs/create-dirs bin)
     (write-file fake-tmux
-                (str "#!/usr/bin/env sh\n"
-                     "printf '%s\\n' \"$*\" >> \"$TMUX_LOG\"\n"
-                     "exit 0\n"))
+                (str "#!/usr/bin/env bb\n"
+                     "(when-let [log (System/getenv \"TMUX_LOG\")]\n"
+                     "  (spit log (str (pr-str *command-line-args*) \"\\n\") :append true))\n"))
     (run {:dir root} "chmod" "+x" (str fake-tmux))
     (write-file (fs/path root ".swarmforge/roles.tsv")
                 (format "sender\tmaster\t%s\tsender-session\tSender\tcodex\ttask\nreceiver\treceiver\t%s\treceiver-session\tReceiver\tcodex\ttask\n"
@@ -591,15 +618,12 @@
     (let [result (run {:dir root
                        :env {"PATH" (str bin ":" (System/getenv "PATH"))
                              "TMUX_LOG" (str tmux-log)}}
-                      "bb" (script "handoffd.bb") "--once" (str root))
-          log-text (read-file tmux-log)]
+                      "bb" (script "handoffd.bb") "--once" (str root))]
       (is (zero? (:exit result)))
       (is (fs/exists? (fs/path receiver ".swarmforge/handoffs/inbox/new/50_approved.handoff")))
       (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_next.handoff")))
-      (is (str/includes? log-text "-t receiver-session"))
-      (is (str/includes? log-text "-t sender-session"))
-      (is (str/includes? log-text "C-m"))
-      (is (str/includes? log-text "C-j"))
+      (is (seq (submitted-texts (read-argv tmux-log) "receiver-session")))
+      (is (seq (submitted-texts (read-argv tmux-log) "sender-session")))
       (is (str/includes? (read-file (fs/path root ".swarmforge/daemon/handoffd.log"))
                          "notified-unblocked-sender sender")))))
 

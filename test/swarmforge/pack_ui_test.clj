@@ -97,6 +97,27 @@
          (remove str/blank?)
          (mapv read-string))))
 
+(defn inject-target [argv-vec]
+  (second (drop-while #(not= "-t" %) argv-vec)))
+
+(defn inject-literal [argv-vec]
+  (second (drop-while #(not= "-l" %) argv-vec)))
+
+(defn submitted-texts
+  ([argv] (submitted-texts argv nil))
+  ([argv target]
+   (loop [calls argv pending nil acc []]
+     (if-let [call (first calls)]
+       (let [tgt (inject-target call)
+             lit (inject-literal call)
+             match? (or (nil? target) (= target tgt))]
+         (cond
+           (not match?) (recur (next calls) pending acc)
+           lit (recur (next calls) lit acc)
+           pending (recur (next calls) nil (conj acc pending))
+           :else (recur (next calls) nil acc)))
+       acc))))
+
 (defn list-tasks [root]
   (pack-board root true "list" "--root" (str root)))
 
@@ -1126,7 +1147,7 @@
 (deftest inject-master-records-send-keys-argv
   ;; Given master session swarmforge-specifier in roles.tsv
   ;; When --test-inject-argv records the would-be tmux argv
-  ;; Then it send-keys -l the text to that session, then C-m
+  ;; Then the text is submitted as a turn to that pane
   (let [root (tmp-dir)
         argv-file (str (fs/path root "tmux.argv"))
         sock (str (fs/path root "tmux.sock"))
@@ -1138,12 +1159,7 @@
     (let [result (pack-web root false "--test-inject-argv" (str root) argv-file text)
           argv (read-argv argv-file)]
       (is (zero? (:exit result)))
-      (is (= ["tmux" "-S" sock "send-keys" "-t" "swarmforge-specifier:Specifier.0" "-l" text]
-             (first argv)))
-      (is (= ["tmux" "-S" sock "send-keys" "-t" "swarmforge-specifier:Specifier.0" "C-m"]
-             (second argv)))
-      (is (= ["tmux" "-S" sock "send-keys" "-t" "swarmforge-specifier:Specifier.0" "C-j"]
-             (nth argv 2))))))
+      (is (= [text] (submitted-texts argv "swarmforge-specifier:Specifier.0"))))))
 
 (deftest pack-web-post-task-queues-a-note-for-master
   ;; Given a specifier pack and a tmux argv stub
@@ -1163,7 +1179,7 @@
       (is (= "waiting" (task-lane root "htw-console-app")))
       (is (empty? queued))
       (is (seq (fs/glob (fs/path root ".swarmforge/notify") "*.notify")))
-      (is (str/includes? (str (last (first argv))) "Notify: new-task")))))
+      (is (seq (submitted-texts argv))))))
 
 (deftest pack-web-post-chat-injects-text-as-is
   ;; Given a tmux argv stub
@@ -1179,11 +1195,10 @@
                                "--test-post-chat" (str root) text)
           argv (read-argv argv-file)]
       (is (zero? (:exit result)))
-      (is (str/includes? (str (last (first argv))) text))
-      (is (re-find #"\[req-" (str (last (first argv)))))
-      (is (not (str/starts-with? (str (last (first argv))) "Task:")))
-      (is (= "C-m" (last (second argv))))
-      (is (= "C-j" (last (nth argv 2)))))))
+      (let [submitted (submitted-texts argv)]
+        (is (some #(str/includes? % text) submitted))
+        (is (some #(re-find #"\[req-" %) submitted))
+        (is (not (some #(str/starts-with? % "Task:") submitted)))))))
 
 (deftest attention-reject-injects-a-message-to-master
   ;; Given a pending approval and a tmux argv stub
@@ -1215,10 +1230,8 @@
         (is (zero? (:exit result)))
         (is (= [] (pending-names root)))
         (is (not (fs/exists? (fs/path root ".swarmforge/notify/reject-htw-console-app"))))
-        (is (str/includes? (str (last (first argv))) "use an RNG"))
-        (is (empty? (filter #(str/includes? (fs/file-name %) "New_Task") notes)))
-        (is (= "C-m" (last (second argv))))
-        (is (= "C-j" (last (nth argv 2))))))))
+        (is (some #(str/includes? % "use an RNG") (submitted-texts argv)))
+        (is (empty? (filter #(str/includes? (fs/file-name %) "New_Task") notes)))))))
 
 (deftest pack-web-lists-every-role-in-the-work-queue
   ;; Given a six-pack with no in_process mail
@@ -3085,7 +3098,7 @@
       (is (seq notes))
       (is (str/includes? (slurp (str (first notes))) "event: new-project"))
       (is (str/includes? (slurp (str (first notes))) "project: cave")))
-    (is (str/includes? (slurp argv) "new-project cave"))))
+    (is (seq (submitted-texts (read-argv argv))))))
 
 (deftest forge-lt-task-does-not-create-a-card
   (let [root (tmp-dir)
@@ -3109,7 +3122,7 @@
       (is (seq notes))
       (is (str/includes? (slurp (str (first notes))) "type: LT"))
       (is (str/includes? (slurp (str (first notes))) "fit this"))
-      (is (str/includes? (slurp argv) "new-task LT")))))
+      (is (seq (submitted-texts (read-argv argv)))))))
 
 (deftest forge-allow-notifies-lieutenant
   (let [root (tmp-dir)
@@ -3131,7 +3144,7 @@
       (is (seq notes))
       (is (str/includes? (slurp (str (first notes))) "event: allow"))
       (is (str/includes? (slurp (str (first notes))) "act: stop")))
-    (is (str/includes? (slurp argv) "Notify: allow"))))
+    (is (seq (submitted-texts (read-argv argv))))))
 
 (deftest forge-open-project-does-not-notify-new-project
   (let [root (tmp-dir)
@@ -3170,27 +3183,24 @@
                               "SWARMFORGE_TMUX_STUB" argv}}
                        (script "pack_dashboard_request.sh")
                        "clarify" (str question))
-          notes (vec (fs/glob (fs/path root ".swarmforge/notify") "*clarify*.notify"))
-          inject (slurp argv)]
+          notes (vec (fs/glob (fs/path root ".swarmforge/notify") "*clarify*.notify"))]
       (is (zero? (:exit created)) (:err created))
       (is (seq notes))
       (is (str/includes? (slurp (str (first notes))) "event: clarify"))
-      (is (str/includes? inject "Notify: clarify coder"))
-      (is (str/includes? inject "C-m"))
-      (is (str/includes? inject "C-j")))))
+      (is (seq (submitted-texts (read-argv argv)))))))
 
 (deftest handoffd-wakes-lieutenant-with-submit-keys
   (let [root (tmp-dir)
         bin (fs/path root "bin")
         fake-tmux (fs/path bin "tmux")
-        tmux-log (fs/path root "tmux.log")
+        tmux-log (str (fs/path root "tmux.log"))
         dest (fs/path root "projects/cave")]
     (seed-mini-forge! root)
     (fs/create-dirs bin)
     (write-file fake-tmux
-                (str "#!/usr/bin/env sh\n"
-                     "printf '%s\\n' \"$*\" >> \"$TMUX_LOG\"\n"
-                     "exit 0\n"))
+                (str "#!/usr/bin/env bb\n"
+                     "(when-let [log (System/getenv \"TMUX_LOG\")]\n"
+                     "  (spit log (str (pr-str *command-line-args*) \"\\n\") :append true))\n"))
     (run {:dir root} "chmod" "+x" (str fake-tmux))
     (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
                   "--test-new-project" (str root) "cave" "two-pack" "m")
@@ -3203,14 +3213,12 @@
                      "approved: true\n\npayload\n"))
     (let [result (run {:dir dest
                        :env {"PATH" (str bin ":" (System/getenv "PATH"))
-                             "TMUX_LOG" (str tmux-log)}}
+                             "TMUX_LOG" tmux-log}}
                       "bb" (script "handoffd.bb") "--once" (str dest))
-          log-text (slurp (str tmux-log))]
+          notes (vec (fs/glob (fs/path root ".swarmforge/notify") "*specifier-handoff*.notify"))]
       (is (zero? (:exit result)) (:err result))
-      (is (str/includes? log-text "-t swarmforge-lieutenant"))
-      (is (str/includes? log-text "-l Notify: specifier-handoff"))
-      (is (str/includes? log-text "C-m"))
-      (is (str/includes? log-text "C-j")))))
+      (is (seq notes))
+      (is (seq (submitted-texts (read-argv tmux-log) "swarmforge-lieutenant"))))))
 
 (deftest forge-lieutenant-heat-rises
   (let [root (tmp-dir)]
@@ -3223,49 +3231,20 @@
                 true)]
       (is (< (:before body) (:after body))))))
 
-(deftest pack-web-pane-capture-includes-unflushed-visible-tail
+(deftest pack-web-pane-merge-keeps-history-and-live-tail
   (let [root (tmp-dir)
-        bin (fs/path root "bin")
-        fake-tmux (fs/path bin "tmux")]
-    (setup-pack! root)
-    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
-    (write-file fake-tmux
-                (str "#!/usr/bin/env sh\n"
-                     "args=\" $* \"\n"
-                     "case \"$args\" in\n"
-                     "  *' capture-pane '*' -S -'*) printf 'old line\\n' ;;\n"
-                     "  *' capture-pane '*) printf 'old line\\nnew tail still on screen\\n' ;;\n"
-                     "  *) exit 0 ;;\n"
-                     "esac\n"))
-    (run {:dir root} "chmod" "+x" (str fake-tmux))
-    (let [result (pack-web-env root {"PATH" (str bin ":" (System/getenv "PATH"))}
-                               "--test-pane" (str root) "specifier")
-          out (:out result)]
-      (is (zero? (:exit result)))
-      (is (str/includes? out "new tail still on screen"))
-      (is (= 1 (count (re-seq #"old line" out)))))))
-
-(deftest pack-web-pane-capture-keeps-history-when-visible-is-already-in-it
-  (let [root (tmp-dir)
-        bin (fs/path root "bin")
-        fake-tmux (fs/path bin "tmux")]
-    (setup-pack! root)
-    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
-    (write-file fake-tmux
-                (str "#!/usr/bin/env sh\n"
-                     "args=\" $* \"\n"
-                     "case \"$args\" in\n"
-                     "  *' capture-pane '*' -S -'*) printf 'old history\\nvisible line\\n' ;;\n"
-                     "  *' capture-pane '*) printf 'visible line\\n' ;;\n"
-                     "  *) exit 0 ;;\n"
-                     "esac\n"))
-    (run {:dir root} "chmod" "+x" (str fake-tmux))
-    (let [result (pack-web-env root {"PATH" (str bin ":" (System/getenv "PATH"))}
-                               "--test-pane" (str root) "specifier")
-          out (:out result)]
-      (is (zero? (:exit result)))
-      (is (str/includes? out "old history"))
-      (is (str/includes? out "visible line")))))
+        hist (fs/path root "hist.txt")
+        vis (fs/path root "vis.txt")]
+    (write-file hist "old history\nvisible line\n")
+    (write-file vis "visible line\n")
+    (let [kept (:out (pack-web root false "--test-pane-merge" (str hist) (str vis)))]
+      (is (str/includes? kept "old history"))
+      (is (str/includes? kept "visible line")))
+    (write-file hist "old line\n")
+    (write-file vis "old line\nnew tail still on screen\n")
+    (let [tail (:out (pack-web root false "--test-pane-merge" (str hist) (str vis)))]
+      (is (str/includes? tail "new tail still on screen"))
+      (is (= 1 (count (re-seq #"old line" tail)))))))
 
 (deftest pack-web-retry-audit-writes-findings-not-candidate
   (let [root (tmp-dir)

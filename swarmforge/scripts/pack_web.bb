@@ -54,7 +54,8 @@
        "  pack_web.sh --test-inferred-name <input> [github]\n"
        "  pack_web.sh --test-mission <root> [project]\n"
        "  pack_web.sh --test-allow <root> <name> <act> [project]\n"
-       "  pack_web.sh --test-lieutenant-heat <root>"))
+       "  pack_web.sh --test-lieutenant-heat <root>\n"
+       "  pack_web.sh --test-pane-merge <history-file> <visible-file>"))
 
 (def example-task-name "htw-console-app")
 (def example-task-text
@@ -2520,6 +2521,12 @@
                                 {:method "GET"
                                  :uri (str "/api/agents/" role "/pane"
                                           (or (project-query project) ""))})))
+  (flush))
+
+(defn test-pane-merge! [history-file visible-file]
+  (when (or (str/blank? history-file) (str/blank? visible-file))
+    (exit! 1 "Missing history or visible file"))
+  (print (merge-pane-capture (slurp history-file) (slurp visible-file)))
   (flush))
 
 (defn test-agent-page! [role & [project]]

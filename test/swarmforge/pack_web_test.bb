@@ -57,6 +57,7 @@
     "--test-mission" (test-mission! (second args) (nth args 2 nil))
     "--test-allow" (test-allow! (second args) (nth args 2 nil) (nth args 3 nil) (nth args 4 nil))
     "--test-lieutenant-heat" (test-lieutenant-heat! (second args))
+    "--test-pane-merge" (test-pane-merge! (second args) (nth args 2 nil))
     (do (usage)
         (exit! 1 nil))))
 
