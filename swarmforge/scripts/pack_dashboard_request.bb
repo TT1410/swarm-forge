@@ -156,13 +156,68 @@
                                       "created_at" now}))
     id))
 
+(defn forge-root [project]
+  (let [parent (fs/parent project)
+        grand (when parent (fs/parent parent))]
+    (cond
+      (fs/directory? (fs/path project "projects")) (str project)
+      (and parent grand
+           (= "projects" (fs/file-name parent))
+           (fs/directory? (fs/path grand "projects")))
+      (str grand)
+      :else nil)))
+
+(defn notify-dir [root]
+  (fs/path root ".swarmforge" "notify"))
+
+(defn write-notify! [root event kvs]
+  (let [stamp (str/replace (timestamp) #"[^0-9A-Za-z]" "")
+        file (fs/path (notify-dir root) (str stamp "-" event ".notify"))]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file)
+          (str (str/join "\n" (for [[k v] kvs] (str k ": " v))) "\n"))))
+
+(defn tmux-socket [root]
+  (let [file (fs/path root ".swarmforge" "tmux-socket")]
+    (when (fs/exists? file)
+      (not-empty (str/trim (slurp (str file)))))))
+
+(defn inject-lieutenant! [forge text]
+  (when-let [socket (tmux-socket forge)]
+    (let [stub (System/getenv "SWARMFORGE_TMUX_STUB")]
+      (if stub
+        (do
+          (when-let [dir (fs/parent stub)]
+            (fs/create-dirs dir))
+          (spit stub (str (pr-str ["tmux" "-S" socket "send-keys" "-t"
+                                   "swarmforge-lieutenant" "-l" text])
+                          "\n")
+                :append true)
+          (spit stub (str (pr-str ["tmux" "-S" socket "send-keys" "-t"
+                                   "swarmforge-lieutenant" "C-m"])
+                          "\n")
+                :append true))
+        (do
+          (sh "tmux" "-S" socket "send-keys" "-t" "swarmforge-lieutenant" "-l" text)
+          (sh "tmux" "-S" socket "send-keys" "-t" "swarmforge-lieutenant" "C-m"))))))
+
+(defn notify-clarify! [root role body]
+  (when-let [forge (forge-root root)]
+    (write-notify! forge "clarify"
+                   [["event" "clarify"]
+                    ["project" (if (= (str forge) (str root)) ""
+                                   (fs/file-name root))]
+                    ["role" role]])
+    (inject-lieutenant! forge (str "Notify: clarify " role))))
+
 (defn clarify! [question-file]
   (when-not (fs/regular-file? question-file)
     (exit! 1 (str "Question file not found: " question-file)))
   (let [root (project-root)
         role (sender-role)
         body (slurp (str question-file))]
-    (println (create-clarification! root role body))))
+    (println (create-clarification! root role body))
+    (notify-clarify! root role body)))
 
 (defn list-requests [root]
   (vec (concat (map request-entry (list-files (pending-dir root)))

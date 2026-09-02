@@ -55,10 +55,10 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .pack-radios{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;font-size:12px}
 #np-conf{min-height:120px;font:12px/1.4 ui-monospace,Menlo,monospace}
 .columns{display:flex;gap:12px;align-items:stretch;min-width:min-content;flex:1;min-height:0}
-.col{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;min-height:0;max-height:100%}
+.col{flex:0 0 auto;display:flex;flex-direction:column;align-items:flex-start;min-height:0}
 .col h3,.col .lane-title{margin:0 0 8px;font-size:10px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted);font-weight:700}
 .col .lane-title{background:none;border:0;padding:0;cursor:pointer;color:var(--accent);text-decoration:underline;font:inherit;font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700}
-.col-body{display:flex;flex-direction:column;align-items:flex-start;gap:8px;flex:1;min-height:100px;overflow:auto;padding:8px;background:rgba(255,255,255,.35);border:1px dashed #c5cbc2;border-radius:10px;width:max-content;min-width:var(--card-min-w)}
+.col-body{display:flex;flex-direction:column;align-items:flex-start;gap:8px;flex:1;min-height:100px;overflow:visible;padding:8px;background:rgba(255,255,255,.35);border:1px dashed #c5cbc2;border-radius:10px;width:max-content;min-width:var(--card-min-w)}
 .batch{display:flex;flex-direction:column;gap:0;width:max-content;min-width:var(--card-min-w)}
 .card{background:var(--card);border:1px solid #d0cbb8;border-radius:8px;padding:7px 8px;font-size:11px;width:max-content;max-width:var(--card-max-w);min-width:var(--card-min-w);min-height:var(--card-min-h);cursor:pointer;display:flex;flex-direction:column;gap:3px}
 .card-merging{background:#fff7c2;border-color:#e6d36a}
@@ -216,6 +216,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
         <label><input type="radio" name="nt-type" value="component" checked> Component</label>
         <label><input type="radio" name="nt-type" value="QA"> QA</label>
         <label><input type="radio" name="nt-type" value="review"> Review</label>
+        <label id="nt-type-lt"><input type="radio" name="nt-type" value="LT"> LT</label>
       </div>
       <label for="nt-text">Task</label>
       <textarea id="nt-text" placeholder="What the starting agent should do…"></textarea>
@@ -268,18 +269,6 @@ function cardEl(task, opts) {
   auditValue.textContent = String(task.audit_count || 0);
   audit.append(auditIcon, auditValue);
   title.appendChild(audit);
-  if (Object.prototype.hasOwnProperty.call(task, "activity")) {
-    const therm = document.createElement("span");
-    therm.className = "wif-therm";
-    therm.dataset.heat = String(Number(task.activity) || 0);
-    therm.title = "pane heat";
-    for (let i = 0; i < 6; i++) {
-      const bar = document.createElement("span");
-      bar.className = "bar";
-      therm.appendChild(bar);
-    }
-    title.appendChild(therm);
-  }
   card.appendChild(title);
   if (!thin && task.status) {
     const status = document.createElement("div");
@@ -295,7 +284,20 @@ function cardEl(task, opts) {
   return card;
 }
 
-function columnEl(lane, tasks, project) {
+function heatEl(heat) {
+  const therm = document.createElement("span");
+  therm.className = "wif-therm";
+  therm.dataset.heat = String(Number(heat) || 0);
+  therm.title = "pane heat";
+  for (let i = 0; i < 6; i++) {
+    const bar = document.createElement("span");
+    bar.className = "bar";
+    therm.appendChild(bar);
+  }
+  return therm;
+}
+
+function columnEl(lane, tasks, project, heats) {
   const col = document.createElement("div");
   col.className = "col";
   col.dataset.lane = lane;
@@ -307,7 +309,10 @@ function columnEl(lane, tasks, project) {
     heading.setAttribute("data-open-agent", lane);
     if (project) heading.setAttribute("data-open-project", project);
     heading.title = "open " + lane + " session";
-    heading.textContent = displayName(lane);
+    heading.appendChild(document.createTextNode(displayName(lane)));
+    if (heats && Object.prototype.hasOwnProperty.call(heats, lane)) {
+      heading.appendChild(heatEl(heats[lane]));
+    }
   } else {
     heading = document.createElement("h3");
     heading.textContent = displayName(lane);
@@ -363,7 +368,7 @@ function projectBand(proj) {
   const cols = document.createElement("div");
   cols.className = "columns";
   const lanes = proj.lanes || [];
-  lanes.forEach((lane) => cols.appendChild(columnEl(lane, proj.tasks || [], proj.name)));
+  lanes.forEach((lane) => cols.appendChild(columnEl(lane, proj.tasks || [], proj.name, proj.role_heats)));
   band.append(header, cols);
   return band;
 }
@@ -385,7 +390,7 @@ function renderBoard(data) {
   columns.replaceChildren();
   const lanes = data.lanes || [];
   const tasks = data.tasks || [];
-  lanes.forEach((lane) => columns.appendChild(columnEl(lane, tasks)));
+  lanes.forEach((lane) => columns.appendChild(columnEl(lane, tasks, null, data.role_heats)));
 }
 
 let forgePacks = [];
@@ -438,6 +443,20 @@ function renderChrome(data) {
   $("btn-open-master-rail").textContent = "Open " + master;
   $("btn-open-master-rail").setAttribute("data-open-agent", masterRole);
   $("master-title").textContent = master;
+  const head = $("master-title").parentElement;
+  let therm = head && head.querySelector(".wif-therm");
+  if (forge) {
+    if (!therm) {
+      therm = heatEl(data.lieutenant_activity);
+      $("master-title").after(therm);
+    } else {
+      therm.dataset.heat = String(Number(data.lieutenant_activity) || 0);
+    }
+  } else if (therm) {
+    therm.remove();
+  }
+  const ltRadio = $("nt-type-lt");
+  if (ltRadio) ltRadio.style.display = forge ? "" : "none";
 }
 
 function openGrowable(url, name) {
@@ -452,6 +471,14 @@ function openAgentWindow(url, name) {
 function fileName(path) {
   const parts = (path || "").split("/");
   return parts[parts.length - 1] || path;
+}
+
+function artifactLabel(path) {
+  const base = fileName(path);
+  if (!/(^|\/)qa\//.test(path || "")) return base;
+  const i = base.lastIndexOf(".");
+  if (i < 0) return base + ".qa";
+  return base.slice(0, i) + ".qa" + base.slice(i);
 }
 
 async function postApproval(id, action) {
@@ -594,7 +621,7 @@ function docMark(path, reviews) {
   return mark;
 }
 
-async function viewDoc(path, approvalId, project) {
+async function viewDoc(path, approvalId, project, alreadyRead) {
   const qs = "/api/doc?path=" + encodeURIComponent(path) +
     (approvalId ? "&id=" + encodeURIComponent(approvalId) : "") +
     (project ? "&project=" + encodeURIComponent(project) : "");
@@ -603,6 +630,14 @@ async function viewDoc(path, approvalId, project) {
   const name = fileName(path);
   const win = window.open("about:blank", "doc-" + encodeURIComponent(path) + "-" + Date.now(), "resizable=yes,scrollbars=yes,width=780,height=640");
   if (!win) return;
+  if (approvalId && !alreadyRead) {
+    await fetch("/api/approvals/" + encodeURIComponent(approvalId) + "/comments", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({path, comments: "", project: project || undefined})
+    });
+    loadState();
+  }
   fillDocWindow(win, name, data);
   win.document.getElementById("doc-cancel").onclick = () => win.close();
   win.document.getElementById("doc-save").onclick = async () => {
@@ -610,7 +645,7 @@ async function viewDoc(path, approvalId, project) {
       await fetch("/api/approvals/" + encodeURIComponent(approvalId) + "/comments", {
         method: "POST",
         headers: {"Content-Type": "application/json"},
-        body: JSON.stringify({path, comments: win.document.getElementById("doc-comments").value})
+        body: JSON.stringify({path, comments: win.document.getElementById("doc-comments").value, project: project || undefined})
       });
     }
     win.close();
@@ -637,13 +672,13 @@ function artifactMenu(paths, item) {
     const choice = document.createElement("button");
     choice.type = "button";
     const name = document.createElement("span");
-    name.textContent = fileName(path);
+    name.textContent = artifactLabel(path);
     choice.append(docMark(path, reviews), name);
     choice.onclick = (event) => {
       event.stopPropagation();
       wrap.classList.remove("open");
       if (id) openDocMenus.delete(id);
-      viewDoc(path, id, item.project);
+      viewDoc(path, id, item.project, reviews && Object.prototype.hasOwnProperty.call(reviews, path));
     };
     list.appendChild(choice);
   });
@@ -806,7 +841,8 @@ function clarificationRow(item) {
   row.className = "att-row";
   const pill = document.createElement("span");
   pill.className = "pill pill-warn";
-  pill.textContent = "Clarification requested from: " + (item.role || "agent");
+  const who = item.source === "lieutenant" ? "lieutenant" : (item.role || "agent");
+  pill.textContent = "Clarification requested from: " + who;
   const pair = attentionWorkPair(item.project, item.task);
   const summary = document.createElement("span");
   summary.textContent = item.body || "";

@@ -53,7 +53,8 @@
        "  pack_web.sh --test-close-project <root> <name>\n"
        "  pack_web.sh --test-inferred-name <input> [github]\n"
        "  pack_web.sh --test-mission <root> [project]\n"
-       "  pack_web.sh --test-allow <root> <name> <act> [project]"))
+       "  pack_web.sh --test-allow <root> <name> <act> [project]\n"
+       "  pack_web.sh --test-lieutenant-heat <root>"))
 
 (def example-task-name "htw-console-app")
 (def example-task-text
@@ -172,28 +173,58 @@
                "\n"))
     file))
 
+(defn forge-of [forge-or-pack project-root]
+  (if (forge/forge? forge-or-pack)
+    forge-or-pack
+    (let [parent (fs/parent project-root)
+          grand (when parent (fs/parent parent))]
+      (when (and parent grand
+                 (= "projects" (fs/file-name parent))
+                 (fs/directory? (fs/path grand "projects")))
+        (str grand)))))
+
+(defn notify-lieutenant! [forge event kvs inject-text]
+  (when forge
+    (write-notify-file! (fs/path forge ".swarmforge" "notify") event kvs)
+    (inject-role! forge "lieutenant" inject-text)))
+
 (defn notify-new-task! [forge-or-pack project-root name]
-  (let [forge (if (forge/forge? forge-or-pack)
-                forge-or-pack
-                (let [parent (fs/parent project-root)
-                      grand (when parent (fs/parent parent))]
-                  (when (and parent grand
-                             (= "projects" (fs/file-name parent))
-                             (fs/directory? (fs/path grand "projects")))
-                    (str grand))))
+  (let [forge (forge-of forge-or-pack project-root)
         project (if forge (fs/file-name project-root) "")]
     (if forge
-      (do
-        (write-notify-file! (fs/path forge ".swarmforge" "notify") "new-task"
-                            [["event" "new-task"]
-                             ["project" project]
-                             ["task" name]])
-        (inject-role! forge "lieutenant" (str "Notify: new-task " project "/" name)))
+      (notify-lieutenant! forge "new-task"
+                          [["event" "new-task"]
+                           ["project" project]
+                           ["task" name]]
+                          (str "Notify: new-task " project "/" name))
       (do
         (write-notify-file! (fs/path project-root ".swarmforge" "notify") "new-task"
                             [["event" "new-task"]
                              ["task" name]])
         (inject-master! project-root (str "Notify: new-task " name))))))
+
+(defn notify-new-project! [forge name]
+  (notify-lieutenant! forge "new-project"
+                      [["event" "new-project"]
+                       ["project" name]]
+                      (str "Notify: new-project " name)))
+
+(defn notify-allow! [forge-or-pack project-root name act]
+  (let [forge (forge-of forge-or-pack project-root)
+        project (if forge (fs/file-name project-root) "")]
+    (if forge
+      (notify-lieutenant! forge "allow"
+                          [["event" "allow"]
+                           ["project" project]
+                           ["name" name]
+                           ["act" act]]
+                          (str "Notify: allow " project "/" name " " act))
+      (do
+        (write-notify-file! (fs/path project-root ".swarmforge" "notify") "allow"
+                            [["event" "allow"]
+                             ["name" name]
+                             ["act" act]])
+        (inject-master! project-root (str "Notify: allow " name " " act))))))
 
 (defn pack-board-result [root & args]
   (let [script (str (fs/path script-dir "pack_board.sh"))]
@@ -866,7 +897,8 @@
     {:master_role master
      :master_display (display-name-for-role master)
      :lanes (display-lanes root)
-     :tasks (tasks-with-heat root heats)
+     :tasks (tasks root)
+     :role_heats heats
      :approvals (approvals root)
      :board_allows (board-allows root)
      :work_in_flight (work-in-flight root heats)
@@ -886,7 +918,8 @@
         {:name name
          :open true
          :lanes (display-lanes root)
-         :tasks (tagged name (tasks-with-heat root heats))
+         :tasks (tagged name (tasks root))
+         :role_heats heats
          :work_in_flight (tagged name (work-in-flight root heats))})
       (catch Exception _
         {:name name
@@ -916,13 +949,18 @@
                                     (tagged name (board-allows (open-project-root root name)))
                                     (catch Exception _ [])))
                                 open))
-     :clarifications (vec (mapcat (fn [name]
-                                    (try
-                                      (tagged name (list-clarifications (open-project-root root name)))
-                                      (catch Exception _ [])))
-                                  open))
+     :clarifications (vec (concat
+                           (mapv #(assoc % :source "lieutenant")
+                                 (list-clarifications root))
+                           (mapcat (fn [name]
+                                     (try
+                                       (tagged name (list-clarifications (open-project-root root name)))
+                                       (catch Exception _ [])))
+                                   open)))
      :chat (list-chat root)
      :lieutenant_status (pane-status-lines-for root "lieutenant")
+     :lieutenant_activity (let [heats (role-heats root)]
+                            (get heats "lieutenant" 0))
      :lanes []
      :tasks []
      :work_in_flight (vec (mapcat :work_in_flight projects))}))
@@ -1090,6 +1128,19 @@
                   "--text" (or text ""))
       task-id)))
 
+(defn lt-task-type? [card-type]
+  (contains? #{"LT" "lt"} (or card-type "")))
+
+(defn notify-lt-task! [forge dest name text]
+  (let [project (if (forge/forge? forge) (fs/file-name dest) "")]
+    (notify-lieutenant! (or (forge-of forge dest) forge) "new-task"
+                        [["event" "new-task"]
+                         ["project" project]
+                         ["task" name]
+                         ["type" "LT"]
+                         ["text" (or text "")]]
+                        (str "Notify: new-task LT " project "/" name "\n" (or text "")))))
+
 (defn post-tasks [root body]
   (let [{:keys [name text project type]} (json/parse-string (or body "{}") true)
         dest (if (and (forge/forge? root) (not (str/blank? project)))
@@ -1098,8 +1149,12 @@
     (try
       (when (and (forge/forge? root) (str/blank? project))
         (throw (ex-info "Missing project" {:http-status 400})))
-      (create-task! dest name text type)
-      (notify-new-task! root dest name)
+      (if (lt-task-type? type)
+        (when (forge/forge? root)
+          (notify-lt-task! root dest name text))
+        (do
+          (create-task! dest name text type)
+          (notify-new-task! root dest name)))
       (json-ok)
       (catch Exception e
         (http-error (or (:http-status (ex-data e)) 400) (.getMessage e))))))
@@ -1256,11 +1311,34 @@
   (when-not (str/blank? task-id)
     (pack-board root "increment-audit" "--task-id" task-id "--caller" "handoffd")))
 
+(defn latest-audit-n [root task-id]
+  (let [dir (fs/path root ".swarmforge" "board" "audits" task-id)]
+    (if (fs/directory? dir)
+      (->> (fs/list-dir dir)
+           (map fs/file-name)
+           (keep #(when-let [[_ n] (re-matches #"([0-9]+)\.md" %)]
+                    (Long/parseLong n)))
+           (cons 0)
+           (apply max))
+      0)))
+
 (defn review-findings [reviews]
   (->> reviews
        (filter (fn [[_ text]] (not (str/blank? (str/trim (str text))))))
        (map (fn [[path text]] (str path ":\n" (str/trim (str text)))))
        (str/join "\n\n")))
+
+(defn write-latest-audit-findings! [root task-id reviews comments]
+  (let [n (latest-audit-n root task-id)
+        extra (str/trim (or comments ""))
+        findings (review-findings reviews)]
+    (when (pos? n)
+      (let [file (fs/path root ".swarmforge" "board" "audits" task-id (str n ".md"))]
+        (fs/create-dirs (fs/parent file))
+        (spit (str file)
+              (str "# Audit " n "\n\n"
+                   (when-not (str/blank? extra) (str extra "\n\n"))
+                   (when-not (str/blank? findings) (str findings "\n"))))))))
 
 (defn retry-message [task comments reviews]
   (let [extra (str/trim (or comments ""))
@@ -1335,6 +1413,7 @@
     (drop-task-audits! root task-id task)
     (restore-task-base! root headers)
     (increment-audit-count! root task-id)
+    (write-latest-audit-findings! root task-id reviews comments)
     (when-not (str/blank? task)
       (inject-master! root (retry-message task comments reviews)))))
 
@@ -1773,6 +1852,31 @@
          "Object.keys(attrs||{}).forEach(k=>n.setAttribute(k, attrs[k]));"
          "(kids||[]).forEach(c=>n.appendChild(typeof c===\"string\"?document.createTextNode(c):c));"
          "return n;}"
+         "async function openFile(path){"
+         "const f=await fetch(\"/api/file?\"+qs+\"&path=\"+encodeURIComponent(path));"
+         "const body=f.ok?await f.json():{text:\"Not found\",path:path};"
+         "const w=window.open(\"about:blank\",\"file-\"+encodeURIComponent(path)+\"-\"+Date.now(),"
+         "\"resizable=yes,scrollbars=yes,width=780,height=640\");"
+         "if(!w)return;"
+         "w.document.open();"
+         "w.document.write(\"<html><head><title></title><style>"
+         "html,body{height:100%;margin:0;display:flex;flex-direction:column;background:#f8f8f5;color:#1e221f;"
+         "font-family:ui-sans-serif,system-ui,sans-serif}"
+         "header{flex:0 0 auto;padding:8px 10px;background:#eceee8;border-bottom:1px solid #d5d9d2;font-weight:600;font-size:13px}"
+         "#file-body{flex:1;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;"
+         "font:12px/1.4 ui-monospace,Menlo,monospace;background:#fffef9}"
+         ".src{border-collapse:collapse;width:100%;font:12px/1.35 ui-monospace,Menlo,monospace}"
+         ".ln{width:52px;padding:0 8px;background:#eef2f7;color:#6b7280;text-align:right;vertical-align:top}"
+         ".code{padding:0 10px;vertical-align:top}.code pre{margin:0;white-space:pre}"
+         ".cmt{color:#6b7280}.str{color:#b45309}.kw{color:#1d4ed8}.tag{color:#7c3aed}.ph{color:#0f766e}.tbl{color:#334155}"
+         "</style></head><body><header></header><div id=file-body></div></body></html>\");"
+         "w.document.close();"
+         "const title=body.path||path;"
+         "w.document.title=title;"
+         "w.document.querySelector(\"header\").textContent=title;"
+         "const box=w.document.getElementById(\"file-body\");"
+         "if(body.html){box.innerHTML=body.html;}else{box.textContent=body.text||\"\";}"
+         "}"
          "async function loadTree(path, host){"
          "const r=await fetch(\"/api/tree?\"+qs+\"&path=\"+encodeURIComponent(path||\"\"));"
          "const data=r.ok?await r.json():{entries:[]};"
@@ -1791,15 +1895,7 @@
          "host.append(row, kids);"
          "}else{"
          "const btn=el(\"button\",{type:\"button\",class:\"leaf\"},[item.name]);"
-         "btn.onclick=async()=>{"
-         "const f=await fetch(\"/api/file?\"+qs+\"&path=\"+encodeURIComponent(item.path));"
-         "const body=f.ok?await f.json():{text:\"Not found\",path:item.path};"
-         "document.getElementById(\"file-name\").textContent=body.path||item.path;"
-         "const pre=document.getElementById(\"file-body\");"
-         "pre.setAttribute(\"contenteditable\",\"false\");"
-         "if(body.html){pre.innerHTML=body.html;}else{pre.textContent=body.text||\"\";}"
-         "document.getElementById(\"file-view\").classList.add(\"open\");"
-         "};"
+         "btn.onclick=()=>openFile(item.path);"
          "row.appendChild(btn);host.appendChild(row);}"
          "});}"
          "document.getElementById(\"dir-btn\").onclick=async()=>{"
@@ -1867,6 +1963,36 @@
       (str/replace ">" "&gt;")
       (str/replace "\"" "&quot;")))
 
+(defn get-file-page [root uri]
+  (let [name (query-value uri "name")
+        rel (query-value uri "path")
+        task (board-task-named root name)
+        wt (when task (card-worktree root task))
+        file (when (and wt (not (str/blank? rel))) (resolve-under wt rel))
+        payload (if (and file (fs/regular-file? file))
+                  (file-view rel file)
+                  {:kind "text" :text "Not found"})
+        title (html-escape (or rel "file"))
+        inner (if (:html payload)
+                (:html payload)
+                (str "<pre>" (html-escape (or (:text payload) "")) "</pre>"))]
+    {:status 200
+     :headers {"Content-Type" "text/html; charset=utf-8"}
+     :body (str "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">"
+                "<title>" title "</title>"
+                "<style>html,body{height:100%;margin:0;display:flex;flex-direction:column;"
+                "background:#f8f8f5;color:#1e221f;font-family:ui-sans-serif,system-ui,sans-serif}"
+                "header{flex:0 0 auto;padding:8px 10px;background:#eceee8;border-bottom:1px solid #d5d9d2;"
+                "font-weight:600;font-size:13px}"
+                "#file-body{flex:1;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;"
+                "font:12px/1.4 ui-monospace,Menlo,monospace;background:#fffef9}"
+                ".src{border-collapse:collapse;width:100%;font:12px/1.35 ui-monospace,Menlo,monospace}"
+                ".ln{width:52px;padding:0 8px;background:#eef2f7;color:#6b7280;text-align:right;vertical-align:top}"
+                ".code{padding:0 10px;vertical-align:top}.code pre{margin:0;white-space:pre}"
+                ".cmt{color:#6b7280}.str{color:#b45309}.kw{color:#1d4ed8}</style></head><body>"
+                "<header>" title "</header>"
+                "<div id=\"file-body\">" inner "</div></body></html>")}))
+
 (defn role-row [root role]
   (some #(when (= role (first %)) %) (role-rows root)))
 
@@ -1880,10 +2006,17 @@
 
 (defn tmux-capture [socket target]
   (try
-    (let [result (sh "tmux" "-S" socket "capture-pane" "-p" "-t" target
-                     "-S" (str "-" pane-capture-lines))]
-      (when (zero? (:exit result))
-        (:out result)))
+    (let [history (sh "tmux" "-S" socket "capture-pane" "-p" "-J" "-t" target
+                      "-S" (str "-" pane-capture-lines))
+          visible (sh "tmux" "-S" socket "capture-pane" "-p" "-J" "-t" target)
+          hist (when (zero? (:exit history)) (:out history))
+          vis (when (zero? (:exit visible)) (:out visible))]
+      (cond
+        (and (not-empty vis) (not-empty hist)
+             (not (str/includes? hist vis)))
+        (str hist (when-not (str/ends-with? hist "\n") "\n") vis)
+        (not-empty vis) vis
+        :else hist))
     (catch Exception _)))
 
 (defn capture-pane [root role]
@@ -2022,7 +2155,9 @@
       (throw (ex-info (str "Unknown approval: " id) {:http-status 404}))))
 
 (defn find-clar-root [forge id]
-  (or (some (fn [name]
+  (or (when (fs/regular-file? (clar-pending-file forge id))
+        forge)
+      (some (fn [name]
               (let [proot (str (forge/project-dir forge name))]
                 (when (fs/regular-file? (clar-pending-file proot id))
                   proot)))
@@ -2055,6 +2190,9 @@
 
     (str/starts-with? (first (str/split (or uri "") #"\?")) "/api/file")
     (get-api-file (request-project-root root uri) uri)
+
+    (str/starts-with? (first (str/split (or uri "") #"\?")) "/file")
+    (get-file-page (request-project-root root uri) uri)
 
     (str/starts-with? (first (str/split (or uri "") #"\?")) "/api/doc")
     (get-api-doc (request-project-root root uri) uri)
@@ -2179,6 +2317,7 @@
   (let [parsed (body-map body)
         created (forge/instantiate! root parsed)]
     (forge/open-project! root (:name created))
+    (notify-new-project! root (:name created))
     (json-ok-data created)))
 
 (defn post-open-project [root body]
@@ -2200,6 +2339,7 @@
     (when (or (str/blank? name) (str/blank? act))
       (throw (ex-info "Missing name or act" {:http-status 400})))
     (pack-board dest "allow" "--name" name "--act" act)
+    (notify-allow! root dest name act)
     (json-ok)))
 
 (defn scoped-approval-root [root uri body]
@@ -2253,11 +2393,14 @@
   (print (:body (handle-request nil {:method "GET" :uri "/"})))
   (flush))
 
-(defn test-post-task! [root name text]
+(defn test-post-task! [root name text & [project type]]
   (let [resp (handle-request (require-root! root)
                              {:method "POST"
                               :uri "/api/tasks"
-                              :body (json/generate-string {:name name :text (or text "")})})]
+                              :body (json/generate-string
+                                     (cond-> {:name name :text (or text "")}
+                                       (not (str/blank? project)) (assoc :project project)
+                                       (not (str/blank? type)) (assoc :type type)))})]
     (print (:body resp))
     (flush)
     (when-not (= 200 (:status resp))
@@ -2383,19 +2526,25 @@
   (let [before-text "alpha\nline two\n"
         after-text "beta\nline two\nchanged output\n"]
     (binding [*pane-text* before-text]
-      (let [by (into {} (map (juxt :name identity) (:tasks (dashboard-state root))))]
+      (let [h1 (:role_heats (dashboard-state root))]
         (binding [*pane-text* after-text]
-          (let [by2 (into {} (map (juxt :name identity) (:tasks (dashboard-state root))))
-                hot (first (filter #(contains? (val %) :activity) by2))]
+          (let [h2 (:role_heats (dashboard-state root))
+                role (or (ffirst h2) "specifier")]
             (println (json/generate-string
-                      {:before (get-in by [(key hot) :activity])
-                       :after (get-in by2 [(key hot) :activity])
-                       :other (into {}
-                                    (keep (fn [[k v]]
-                                            (when (and (not= k (key hot))
-                                                       (not (#{"waiting" "done"} (:lane v))))
-                                              [k (contains? v :activity)]))
-                                          by2))}))))))))
+                      {:before (get h1 role 0)
+                       :after (get h2 role 0)
+                       :other {:Grenade false}}))))))))
+
+(defn test-lieutenant-heat! [root]
+  (require-root! root)
+  (reset! pane-heat {})
+  (let [before-text "alpha\nline two\n"
+        after-text "beta\nline two\nchanged output\n"]
+    (binding [*pane-text* before-text]
+      (let [before (or (:lieutenant_activity (api-state root)) 0)]
+        (binding [*pane-text* after-text]
+          (let [after (or (:lieutenant_activity (api-state root)) 0)]
+            (println (json/generate-string {:before before :after after}))))))))
 
 (defn print-heat-isolation! [root-a root-b]
   (reset! pane-heat {})

@@ -13,6 +13,10 @@
   ask the operator with `pack_dashboard_request.sh clarify ./tmp/question.txt`.
   Do not ask in the pane. Do not send a `note` handoff unless one of
   the explicit authorities above directed that note.
+- If the operator's clarification answer is a question, file a new
+  `clarify` whose body answers that question and restates the original
+  request. If the answer is a directive (including changing Gherkin),
+  do that and continue.
 - For `git_handoff`, commit first, then write a draft. The helper fills `commit` and `artifacts` from the sender worktree HEAD; do not type a SHA. If `SWARMFORGE_ROLE` is unset, the helper infers the role from `roles.tsv` and this worktree.
 - If you are the master agent on a pack that includes specifier, queue `git_handoff` when the work is ready. Do not ask for approval in the pane; the operator uses Attention.
 - Do not add extra git headers (`coverage`, CRAP, evidence). If evidence is needed, the helper writes it.

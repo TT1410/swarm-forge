@@ -18,7 +18,8 @@
   (case (first args)
     "--test-state" (test-state! (second args))
     "--test-html" (test-html!)
-    "--test-post-task" (test-post-task! (second args) (nth args 2 nil) (nth args 3 nil))
+    "--test-post-task" (test-post-task! (second args) (nth args 2 nil) (nth args 3 nil)
+                                        (nth args 4 nil) (nth args 5 nil))
     "--test-post-chat" (test-post-chat! (second args) (nth args 2 nil))
     "--test-inject-payload" (test-inject-payload! (second args) (nth args 2 nil))
     "--test-inject-argv" (test-inject-argv! (second args) (nth args 2 nil) (nth args 3 nil))
@@ -55,6 +56,7 @@
     "--test-inferred-name" (test-inferred-name! (second args) (nth args 2 nil))
     "--test-mission" (test-mission! (second args) (nth args 2 nil))
     "--test-allow" (test-allow! (second args) (nth args 2 nil) (nth args 3 nil) (nth args 4 nil))
+    "--test-lieutenant-heat" (test-lieutenant-heat! (second args))
     (do (usage)
         (exit! 1 nil))))
 

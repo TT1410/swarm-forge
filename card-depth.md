@@ -568,12 +568,13 @@ still last in the pipeline. If those helpers stay "last window in
 `roles.tsv`," cleaner still forwards to architect and the card does
 not go Done.
 
-Terminal `to:` is the other roles **on this card**, not the whole
-pack. The helper copies `card_type:` from the board into the handoff
-header, refuses a `to:` that is not on this card's chain (no
-`to: hardender` on utility, no `to: QA` on component, no
-`to: specifier` on review), and refuses the wrong artifacts (see
-Agents must not shapeshift). Roles must not change the header.
+Terminal `to:` is every pack role **upstream of last-on-card**,
+including roles before the card's starting lane. The helper copies
+`card_type:` from the board into the handoff header, refuses a
+`to:` that is downstream of last (no `to: QA` on component, no
+`to: hardender` on utility), requires specifier and coder on
+review, and refuses the wrong artifacts (see Agents must not
+shapeshift). Roles must not change the header.
 
 `ready_for_next` prints `CARD_TYPE:` (and the next role / this-card
 in-out list) so the agent does not infer the path from the task
@@ -642,15 +643,15 @@ proves two cards do not conflict.
 - `pack_board create --type utility --lane specifier` is rejected
 - default create → component
 - `POST /api/tasks` with `type: utility` same as CLI
-- dashboard New Task: four radios, default component; submitted
-  utility shows on the card; New Project has no type radios and no
-  pack radios
+- dashboard New Task: five radios on the forge (including LT),
+  default component; submitted utility shows on the card; New
+  Project has no type radios and no pack radios
 - component: hardender `git_handoff` → Done, not the QA role
 - component: architect `git_handoff` → hardender
 - QA type: hardender `git_handoff` → QA role (today's full path)
 - utility: cleaner `git_handoff` → Done, not architect
 - helper rejects `to: QA` on a component card; `to: architect` on a
-  utility card; `to: specifier` on a review card
+  utility card; review terminal includes specifier and coder
 - helper rejects `features/*.feature` on a utility or review commit
 - `pack_board create --type review` → cleaner lane; QA role
   `git_handoff` → Done

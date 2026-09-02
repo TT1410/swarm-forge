@@ -169,9 +169,25 @@ test.describe("pack dashboard", () => {
     await win.locator("#dir-btn").click();
     await expect(win.locator("#tree")).toContainText("tasks");
     await win.locator(".dir-row", { hasText: "tasks" }).locator("button.toggle").click();
+    const filePromise = context.waitForEvent("page");
     await win.locator("button.leaf", { hasText: "HTW.md" }).click();
-    await expect(win.locator("#file-body")).toContainText("Integrate the cave.");
-    await expect(win.locator("#file-body")).toHaveAttribute("contenteditable", "false");
+    const fileWin = await filePromise;
+    await fileWin.waitForLoadState("domcontentloaded");
+    await expect(fileWin.locator("#file-body")).toContainText("Integrate the cave.");
+  });
+
+  test("New Task has five type radios including LT", async ({ page }) => {
+    await page.goto(handle.url);
+    await page.locator(".project-header button", { hasText: "New Task" }).click();
+    await expect(page.locator("input[name=nt-type]")).toHaveCount(5);
+    await expect(page.locator("input[name=nt-type][value=LT]")).toBeVisible();
+  });
+
+  test("lane titles show heat, cards do not", async ({ page }) => {
+    await page.goto(handle.url);
+    await expect(page.locator('.col[data-lane="specifier"] .lane-title .wif-therm')).toHaveCount(1);
+    await expect(page.locator(".card .wif-therm")).toHaveCount(0);
+    await expect(page.locator('.col[data-lane="waiting"] .wif-therm')).toHaveCount(0);
   });
 
   test("New Task focuses the name field", async ({ page }) => {
@@ -179,7 +195,7 @@ test.describe("pack dashboard", () => {
     await page.locator(".project-header button", { hasText: "New Task" }).click();
     await expect(page.locator("#nt-name")).toBeFocused();
     await expect(page.locator("input[name=nt-type][value=component]")).toBeChecked();
-    await expect(page.locator("input[name=nt-type]")).toHaveCount(4);
+    await expect(page.locator("input[name=nt-type]")).toHaveCount(5);
   });
 
   test("New Project has no pack radios", async ({ page }) => {
@@ -250,7 +266,10 @@ test.describe("pack dashboard", () => {
     await doc.locator("#doc-cancel").click();
     await expect(doc.isClosed()).toBeTruthy();
     const reviewsPath = path.join(handle.root, "projects/htw/.swarmforge/handoffs/pending_approval/50_hello.reviews.json");
-    expect(fs.existsSync(reviewsPath)).toBeFalsy();
+    await expect.poll(() => fs.existsSync(reviewsPath)).toBeTruthy();
+    expect(JSON.parse(fs.readFileSync(reviewsPath, "utf8"))["features/console.feature"]).toBe("");
+    await page.reload();
+    await expect(page.locator("#attention-approvals .doc-mark-ok")).toHaveCount(1);
 
     await page.locator("#attention-approvals .menu > button").click();
     const savedPromise = context.waitForEvent("page");
@@ -455,26 +474,29 @@ test.describe("pack dashboard", () => {
   });
 });
 
-function mockForgeState(tasks) {
+function mockForgeState(tasks, extras) {
+  extras = extras || {};
   return {
     forge: true,
     master_role: "lieutenant",
     master_display: "Lieutenant",
     packs: [{ name: "lieutenant", conf: "" }],
-    all_projects: ["htw"],
-    open_projects: ["htw"],
-    projects: [{
+    all_projects: extras.all_projects || ["htw"],
+    open_projects: extras.open_projects || ["htw"],
+    projects: extras.projects || [{
       name: "htw",
       open: true,
       lanes: ["waiting", "specifier", "coder", "done"],
       tasks: tasks || [],
+      role_heats: extras.role_heats || { specifier: 0, coder: 0 },
       work_in_flight: []
     }],
-    approvals: [],
+    approvals: extras.approvals || [],
     board_allows: [],
     clarifications: [],
     chat: [],
     lieutenant_status: [],
+    lieutenant_activity: extras.lieutenant_activity || 0,
     lanes: [],
     tasks: [],
     work_in_flight: []
@@ -580,15 +602,26 @@ test.describe("mocked dashboard buttons", () => {
     await win.waitForLoadState("domcontentloaded");
     await win.locator("#dir-btn").click();
     await win.locator(".dir-row", { hasText: "src" }).locator("button.toggle").click();
+    const cljPromise = context.waitForEvent("page");
     await win.locator("button.leaf", { hasText: "x.clj" }).click();
-    await expect(win.locator("#file-body")).toContainText(":k");
-    await expect(win.locator("#file-body .kw")).toHaveCount(1);
+    const cljWin = await cljPromise;
+    await cljWin.waitForLoadState("domcontentloaded");
+    await expect(cljWin.locator("#file-body")).toContainText(":k");
+    await expect(cljWin.locator("#file-body .kw")).toHaveCount(1);
+    await cljWin.close();
     await win.locator(".dir-row", { hasText: "features" }).locator("button.toggle").click();
+    const featPromise = context.waitForEvent("page");
     await win.locator("button.leaf", { hasText: "console.feature" }).click();
-    await expect(win.locator("#file-body .kw")).toHaveText("Feature");
+    const featWin = await featPromise;
+    await featWin.waitForLoadState("domcontentloaded");
+    await expect(featWin.locator("#file-body .kw")).toHaveText("Feature");
+    await featWin.close();
+    const binPromise = context.waitForEvent("page");
     await win.locator("button.leaf", { hasText: "blob.bin" }).click();
-    await expect(win.locator("#file-body")).toContainText("00000000");
-    await expect(win.locator("#file-body")).toContainText("|");
+    const binWin = await binPromise;
+    await binWin.waitForLoadState("domcontentloaded");
+    await expect(binWin.locator("#file-body")).toContainText("00000000");
+    await expect(binWin.locator("#file-body")).toContainText("|");
   });
 
   test("Teardown confirm posts teardown", async ({ page }) => {
@@ -606,5 +639,140 @@ test.describe("mocked dashboard buttons", () => {
     await page.locator("#teardown-btn").click();
     await expect.poll(() => posted).toBe(true);
     await expect(page.locator("#pack-meta")).toContainText("teardown started");
+  });
+
+  test("Lieutenant title has a thermometer", async ({ page }) => {
+    await page.route("**/api/state", (route) => {
+      route.fulfill({ json: mockForgeState([], { lieutenant_activity: 4 }) });
+    });
+    await page.goto(handle.url);
+    await expect(page.locator("#master-title")).toHaveText("Lieutenant");
+    const therm = page.locator(".ts-head .wif-therm");
+    await expect(therm).toHaveCount(1);
+    await expect(therm).toHaveAttribute("data-heat", "4");
+  });
+
+  test("lane heat is per project and not on cards", async ({ page }) => {
+    await page.route("**/api/state", (route) => {
+      route.fulfill({
+        json: mockForgeState([], {
+          all_projects: ["htw", "empire"],
+          open_projects: ["htw", "empire"],
+          projects: [
+            {
+              name: "htw",
+              open: true,
+              lanes: ["waiting", "specifier", "coder", "done"],
+              tasks: [{ name: "HTW", lane: "specifier", type: "QA", project: "htw" }],
+              role_heats: { specifier: 5, coder: 0 },
+              work_in_flight: []
+            },
+            {
+              name: "empire",
+              open: true,
+              lanes: ["waiting", "specifier", "coder", "done"],
+              tasks: [{ name: "Review", lane: "coder", type: "review", project: "empire" }],
+              role_heats: { specifier: 0, coder: 2 },
+              work_in_flight: []
+            }
+          ]
+        })
+      });
+    });
+    await page.goto(handle.url);
+    const htw = page.locator('.project-band[data-project="htw"]');
+    const empire = page.locator('.project-band[data-project="empire"]');
+    await expect(htw.locator('.col[data-lane="specifier"] .lane-title .wif-therm')).toHaveAttribute("data-heat", "5");
+    await expect(empire.locator('.col[data-lane="specifier"] .lane-title .wif-therm')).toHaveAttribute("data-heat", "0");
+    await expect(empire.locator('.col[data-lane="coder"] .lane-title .wif-therm')).toHaveAttribute("data-heat", "2");
+    await expect(page.locator(".card .wif-therm")).toHaveCount(0);
+    await expect(htw.locator('.col[data-lane="waiting"] .wif-therm')).toHaveCount(0);
+  });
+
+  test("QA documents get a qa suffix", async ({ page }) => {
+    await page.route("**/api/state", (route) => {
+      route.fulfill({
+        json: mockForgeState([], {
+          approvals: [{
+            id: "50_hello",
+            task: "HTW",
+            project: "htw",
+            artifacts: ["features/yob-console.feature", "qa/yob-console.feature"],
+            reviews: {}
+          }]
+        })
+      });
+    });
+    await page.goto(handle.url);
+    await page.locator("#attention-approvals .menu > button").click();
+    const labels = page.locator("#attention-approvals .menu-list button");
+    await expect(labels).toHaveCount(2);
+    await expect(labels.nth(0)).toContainText("yob-console.feature");
+    await expect(labels.nth(0)).not.toContainText(".qa");
+    await expect(labels.nth(1)).toContainText("yob-console.qa.feature");
+  });
+
+  test("board scrolls as one pane across projects", async ({ page }) => {
+    const waiting = [];
+    for (let i = 0; i < 18; i++) {
+      waiting.push({ name: "Wait" + i, lane: "waiting", type: "component", project: "htw" });
+    }
+    const lanes = ["waiting", "specifier", "coder", "cleaner", "architect", "hardender", "QA", "done"];
+    await page.route("**/api/state", (route) => {
+      route.fulfill({
+        json: mockForgeState([], {
+          all_projects: ["htw", "empire"],
+          open_projects: ["htw", "empire"],
+          projects: [
+            {
+              name: "htw",
+              open: true,
+              lanes,
+              tasks: waiting,
+              role_heats: {},
+              work_in_flight: []
+            },
+            {
+              name: "empire",
+              open: true,
+              lanes,
+              tasks: [{ name: "Review", lane: "specifier", type: "review", project: "empire" }],
+              role_heats: {},
+              work_in_flight: []
+            }
+          ]
+        })
+      });
+    });
+    await page.goto(handle.url);
+    const board = page.locator(".board");
+    await board.evaluate((el) => {
+      el.style.height = "220px";
+      el.style.width = "420px";
+      el.style.maxHeight = "220px";
+      el.style.maxWidth = "420px";
+    });
+    const size = await board.evaluate((el) => ({
+      sw: el.scrollWidth,
+      sh: el.scrollHeight,
+      cw: el.clientWidth,
+      ch: el.clientHeight
+    }));
+    expect(size.sw).toBeGreaterThan(size.cw);
+    expect(size.sh).toBeGreaterThan(size.ch);
+    const before = await page.locator(".project-band").evaluateAll((els) =>
+      els.map((el) => ({ left: el.getBoundingClientRect().left, top: el.getBoundingClientRect().top }))
+    );
+    expect(before[0].left).toBe(before[1].left);
+    await board.evaluate((el) => {
+      el.scrollLeft = 80;
+      el.scrollTop = 40;
+    });
+    const after = await page.locator(".project-band").evaluateAll((els) =>
+      els.map((el) => ({ left: el.getBoundingClientRect().left, top: el.getBoundingClientRect().top }))
+    );
+    expect(after[0].left).toBe(after[1].left);
+    expect(after[0].left).toBeLessThan(before[0].left);
+    expect(after[1].top - after[0].top).toBeCloseTo(before[1].top - before[0].top, 0);
   });
 });

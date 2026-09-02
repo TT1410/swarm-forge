@@ -50,6 +50,14 @@
 (defn last-on-card? [card-type sender]
   (= sender (last-role card-type)))
 
+(defn terminal-upstream [pack-roles card-type]
+  (let [last (last-role card-type)
+        names (vec pack-roles)
+        idx (.indexOf names last)]
+    (if (neg? idx)
+      []
+      (vec (take idx names)))))
+
 (defn on-chain? [card-type role]
   (boolean (some #{role} (chain card-type))))
 

@@ -358,12 +358,27 @@
     (spit (str allow) (str "name: " name "\nact: " act "\n"))
     (fs/delete-if-exists pending)))
 
+(defn waiting-start? [opts]
+  (let [root (resolve-root opts)
+        name (task-name opts)
+        lane (task-lane opts)
+        line (when (and name lane) (find-task (read-rows (tasks-file root)) name))
+        row (when line (card-type/parse-row line))]
+    (and row
+         (= "waiting" (:lane row))
+         (= lane (card-type/starting-lane (:type row)))
+         (not (#{"waiting" "done"} lane)))))
+
 (defn caller-allowed? [opts act]
   (let [caller (:caller opts)
         root (resolve-root opts)
         name (caller-task-name opts)]
     (cond
       (= "handoffd" caller) true
+      (and (= "lieutenant" caller)
+           (= "move" act)
+           (waiting-start? opts))
+      true
       (and (= "lieutenant" caller)
            (not (str/blank? name))
            (fs/regular-file? (lt-allow-file root name act)))

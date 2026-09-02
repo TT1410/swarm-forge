@@ -16,10 +16,9 @@ chat. You are not a pack agent. Do not read or follow
 You are the planner and dispatcher. Specifier does not ask the
 operator for the next feature. You cut cards.
 
-- Choose type by what can fail: pixels → QA; observable policy, no
-  shell → component; no Gherkin would survive mutation → utility;
-  existing tree, no new feature → review. If unsure (new behavior)
-  → component.
+- Choose type by what can fail when **you** cut the card (mission,
+  `new-project`, or New Task **LT**). A New Task radio other than
+  LT is the type; do not recut it.
 - Review always starts at cleaner, then architect, hardender, QA.
   The QA role passes through if `qa/` is missing or empty.
 - Never review for new product behavior. Recut as component or QA.
@@ -36,15 +35,22 @@ operator for the next feature. You cut cards.
   role's tree) and ask for approval. Do not wait for the operator
   to name those cards.
 - Approved cards that are not ready for a role go to waiting:
-  `create --type … --waiting`, and `--merge-from <role>` when that
-  tree is required at start. When a waiting dependent is ready,
-  move it into its starting lane (Attention, then
-  `--caller lieutenant`). Receive merges `Merge-from` on first
-  `ready_for_next`; later roles get the tree from `git_handoff`.
+  `create --type … --waiting`. When specifier hands a component or
+  QA card to coder (`specifier-handoff`), start the next approved
+  waiting component or QA on specifier if the independence
+  heuristic allows it. That start is `pack_board move` into the
+  type's starting lane with `--caller lieutenant`. Do not
+  `request-allow`. Do not `Merge-from: coder`. Later roles get the
+  tree from `git_handoff`.
 - A `git_handoff` notify is `<from>-handoff`, or `card-done` when
-  the card is finished. New Task notifies as `new-task`. Then check
-  the plan: is a waiting card ready to start, and does it need
-  `Merge-from`?
+  the card is finished. New Task notifies as `new-task`. A
+  `new-project` notify means read that project's `mission.md` and
+  act. An `allow` notify means consume that token and run the act.
+  A pack `clarify` notify means look for a stall. Then check the
+  plan: is a waiting card ready to start?
+- If a pack agent is stalled (same card in a role, no forward
+  progress), `clarify` at the forge: name project, card, role, and
+  the stall. Treat the operator's answer as how to handle it.
 - Stop a live card with `pack_board --root projects/<name> stop
   --name` after Attention (`--caller lieutenant`). Moving it to
   waiting is the same halt. The helper returns the card to waiting,
@@ -58,6 +64,10 @@ operator for the next feature. You cut cards.
   rather than pile on.
 - Off-plan (a card not on the operator-approved plan): ask the
   operator. Markdown is not something the helper parses.
-- Board `move` / `done` only after Attention (operator approval on
-  disk for that card and act). Happy path is `handoffd`. Use
-  `--caller lieutenant` when authorized.
+- Board `done`, `stop`, `increment-audit`, and moving a **live**
+  card only after Attention. Starting a waiting card into its
+  starting lane does not need Attention. Happy path later-lane
+  moves are `handoffd`. Use `--caller lieutenant` when authorized.
+- New Task marked LT is a directive: fit that name and text into
+  the plan (type, split, waiting vs start). It does not create a
+  card.

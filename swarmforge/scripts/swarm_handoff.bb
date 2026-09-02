@@ -4,6 +4,7 @@
   (:require [babashka.fs :as fs]
             [clojure.edn :as edn]
             [clojure.java.shell :refer [sh]]
+            [clojure.set :as set]
             [clojure.string :as str])
   (:import [java.nio.channels FileChannel]
            [java.nio.file OpenOption StandardOpenOption]
@@ -525,11 +526,8 @@
                  (when (seq (:recipients candidate))
                    (str "Recipients: " (str/join ", " (:recipients candidate)) "\n"))
                  "\n"
-                 "## Candidate\n\n"
-                 (pr-str candidate)
-                 "\n"
                  (when-not (str/blank? notes)
-                   (str "\n## Notes\n\n" notes)))))))
+                   (str "## Notes\n\n" notes)))))))
 
 (defn submit-after-audit! [candidate submit!]
   (with-audit-lock
@@ -729,6 +727,9 @@
               (recur (next lines) line-no body-seen? (assoc headers field value) (conj ordered field) errors)))))
       {:headers headers :ordered ordered :errors errors})))
 
+(defn pack-role-names []
+  (mapv first (handoff-lib/role-rows)))
+
 (defn chain-recipient-errors [headers recipients]
   (let [card-type (get headers "card_type")
         sender (sender-role)]
@@ -740,8 +741,18 @@
             last? (card-type/last-on-card? card-type sender)]
         (cond
           last?
-          (mapv #(format "Recipient '%s' is not on this card's chain." %)
-                (filter #(not (card-type/on-chain? card-type %)) recipients))
+          (let [want (set (card-type/terminal-upstream (pack-role-names) card-type))
+                got (set recipients)
+                extra (set/difference got want)
+                missing (set/difference want got)]
+            (cond-> []
+              (seq extra)
+              (conj (format "Recipient '%s' is not upstream of last on this card."
+                            (str/join "," (sort extra))))
+              (seq missing)
+              (conj (format "Terminal to: must include all upstream roles (%s)."
+                            (str/join "," (card-type/terminal-upstream
+                                           (pack-role-names) card-type))))))
           :else
           (cond-> []
             (some #(not= % next) recipients)

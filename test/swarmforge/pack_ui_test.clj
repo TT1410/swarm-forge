@@ -324,7 +324,8 @@
         _ (put-in-process! root roles "coder" {:from "specifier" :task "HTW"})
         state (web-state root)
         by-name (into {} (map (juxt :name identity) (:tasks state)))]
-    (is (contains? (get by-name "HTW") :activity))
+    (is (not (contains? (get by-name "HTW") :activity)))
+    (is (contains? (:role_heats state) :coder))
     (is (not (contains? (get by-name "Grenade") :activity)))))
 
 (deftest pack-board-increment-audit-writes-durable-files
@@ -3014,6 +3015,207 @@
       (is (str/includes? (:text bin) "00000000"))
       (is (str/includes? (:text bin) "|")))))
 
+(deftest pack-board-lieutenant-starts-waiting-without-allow
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)]
+    (pack-board root true "create" "--root" (str root)
+                "--name" "place-hunter" "--type" "component" "--waiting")
+    (let [moved (pack-board root true "move" "--root" (str root)
+                            "--name" "place-hunter" "--lane" "specifier"
+                            "--caller" "lieutenant")]
+      (is (zero? (:exit moved)))
+      (is (= "specifier" (task-lane root "place-hunter")))
+      (is (not (fs/exists? (fs/path root ".swarmforge/board/lt-allow-pending/place-hunter-move"))))
+      (is (not (str/includes? (slurp (str (fs/path root "tasks/place-hunter.md")))
+                              "Merge-from:")))
+      (let [state (json/parse-string
+                   (:out (pack-web root true "--test-state" (str root)))
+                   true)]
+        (is (empty? (:board_allows state)))))))
+
+(deftest pack-board-lieutenant-live-move-needs-allow
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)]
+    (create-task root "HTW" "specifier")
+    (let [moved (pack-board root false "move" "--root" (str root)
+                            "--name" "HTW" "--lane" "coder"
+                            "--caller" "lieutenant")]
+      (is (not (zero? (:exit moved))))
+      (is (= "specifier" (task-lane root "HTW"))))))
+
+(deftest forge-state-includes-lieutenant-clarifications
+  (let [root (tmp-dir)]
+    (seed-mini-forge! root)
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
+                  "--test-new-project" (str root) "cave" "two-pack" "m")
+    (fs/create-dirs (fs/path root ".swarmforge/dashboard/clarifications/pending"))
+    (write-file (fs/path root ".swarmforge/dashboard/clarifications/pending/clar-lt.request")
+                (str "id: clar-lt\nstatus: pending\nrole: lieutenant\n"
+                     "created_at: 2026-01-01T00:00:00Z\n\n"
+                     "coder is stalled on cave\n"))
+    (let [state (json/parse-string
+                 (:out (pack-web root true "--test-state" (str root)))
+                 true)
+          item (first (filter #(= "clar-lt" (:id %)) (:clarifications state)))]
+      (is (= "lieutenant" (:source item)))
+      (is (str/includes? (:body item) "stalled")))))
+
+(deftest forge-new-project-notifies-lieutenant
+  (let [root (tmp-dir)
+        argv (str (fs/path root "tmux.argv"))]
+    (seed-mini-forge! root)
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "lieutenant\tmaster\t%s\tswarmforge-lieutenant\tLieutenant\tgrok\ttask\tforward-only\n"
+                        root))
+    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1" "SWARMFORGE_TMUX_STUB" argv}
+                  "--test-new-project" (str root) "cave" "two-pack" "a mission")
+    (let [notes (vec (fs/glob (fs/path root ".swarmforge/notify") "*new-project*.notify"))]
+      (is (seq notes))
+      (is (str/includes? (slurp (str (first notes))) "event: new-project"))
+      (is (str/includes? (slurp (str (first notes))) "project: cave")))
+    (is (str/includes? (slurp argv) "new-project cave"))))
+
+(deftest forge-lt-task-does-not-create-a-card
+  (let [root (tmp-dir)
+        argv (str (fs/path root "tmux.argv"))]
+    (seed-mini-forge! root)
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "lieutenant\tmaster\t%s\tswarmforge-lieutenant\tLieutenant\tgrok\ttask\tforward-only\n"
+                        root))
+    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
+                  "--test-new-project" (str root) "cave" "two-pack" "m")
+    (let [resp (pack-web-env root {"SWARMFORGE_TMUX_STUB" argv}
+                             "--test-post-task" (str root) "Shim" "fit this" "cave" "LT")
+          state (json/parse-string
+                 (:out (pack-web root true "--test-state" (str root)))
+                 true)
+          cave (first (filter #(= "cave" (:name %)) (:projects state)))
+          notes (vec (fs/glob (fs/path root ".swarmforge/notify") "*new-task*.notify"))]
+      (is (zero? (:exit resp)))
+      (is (empty? (filter #(= "Shim" (:name %)) (or (:tasks cave) []))))
+      (is (seq notes))
+      (is (str/includes? (slurp (str (first notes))) "type: LT"))
+      (is (str/includes? (slurp (str (first notes))) "fit this"))
+      (is (str/includes? (slurp argv) "new-task LT")))))
+
+(deftest forge-allow-notifies-lieutenant
+  (let [root (tmp-dir)
+        project (fs/path root "projects/cave")
+        argv (str (fs/path root "tmux.argv"))]
+    (seed-mini-forge! root)
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "lieutenant\tmaster\t%s\tswarmforge-lieutenant\tLieutenant\tgrok\ttask\tforward-only\n"
+                        root))
+    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
+                  "--test-new-project" (str root) "cave" "two-pack" "m")
+    (create-task project "HTW" "specifier")
+    (pack-board project true "request-allow" "--root" (str project)
+                "--name" "HTW" "--act" "stop")
+    (pack-web-env root {"SWARMFORGE_TMUX_STUB" argv}
+                  "--test-allow" (str root) "HTW" "stop" "cave")
+    (let [notes (vec (fs/glob (fs/path root ".swarmforge/notify") "*allow*.notify"))]
+      (is (seq notes))
+      (is (str/includes? (slurp (str (first notes))) "event: allow"))
+      (is (str/includes? (slurp (str (first notes))) "act: stop")))
+    (is (str/includes? (slurp argv) "Notify: allow"))))
+
+(deftest forge-open-project-does-not-notify-new-project
+  (let [root (tmp-dir)
+        argv (str (fs/path root "tmux.argv"))]
+    (seed-mini-forge! root)
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "lieutenant\tmaster\t%s\tswarmforge-lieutenant\tLieutenant\tgrok\ttask\tforward-only\n"
+                        root))
+    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1" "SWARMFORGE_TMUX_STUB" argv}
+                  "--test-new-project" (str root) "cave" "two-pack" "m")
+    (pack-web root true "--test-close-project" (str root) "cave")
+    (doseq [file (fs/glob (fs/path root ".swarmforge/notify") "*.notify")]
+      (fs/delete-if-exists file))
+    (pack-web-env root {"SWARMFORGE_TMUX_STUB" argv}
+                  "--test-open-project" (str root) "cave")
+    (is (empty? (vec (fs/glob (fs/path root ".swarmforge/notify") "*new-project*.notify"))))))
+
+(deftest forge-pack-clarify-notifies-lieutenant
+  (let [root (tmp-dir)
+        argv (str (fs/path root "tmux.argv"))
+        question (fs/path root "tmp" "question.txt")]
+    (seed-mini-forge! root)
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "lieutenant\tmaster\t%s\tswarmforge-lieutenant\tLieutenant\tgrok\ttask\tforward-only\n"
+                        root))
+    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
+                  "--test-new-project" (str root) "cave" "two-pack" "m")
+    (write-file question "coder is blocked on bats_nearby\n")
+    (let [dest (fs/path root "projects/cave")
+          _ (write-file (fs/path dest ".swarmforge/roles.tsv")
+                        (format "coder\tcoder\t%s\tcoder\tCoder\tcodex\ttask\n" dest))
+          created (run {:dir dest
+                        :env {"SWARMFORGE_ROLE" "coder"
+                              "SWARMFORGE_TMUX_STUB" argv}}
+                       (script "pack_dashboard_request.sh")
+                       "clarify" (str question))
+          notes (vec (fs/glob (fs/path root ".swarmforge/notify") "*clarify*.notify"))]
+      (is (zero? (:exit created)) (:err created))
+      (is (seq notes))
+      (is (str/includes? (slurp (str (first notes))) "event: clarify"))
+      (is (str/includes? (slurp argv) "Notify: clarify coder")))))
+
+(deftest forge-lieutenant-heat-rises
+  (let [root (tmp-dir)]
+    (seed-mini-forge! root)
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "lieutenant\tmaster\t%s\tswarmforge-lieutenant\tLieutenant\tgrok\ttask\tforward-only\n"
+                        root))
+    (let [body (json/parse-string
+                (:out (pack-web root false "--test-lieutenant-heat" (str root)))
+                true)]
+      (is (< (:before body) (:after body))))))
+
+(deftest pack-web-pane-capture-includes-unflushed-visible-tail
+  (let [root (tmp-dir)
+        bin (fs/path root "bin")
+        fake-tmux (fs/path bin "tmux")]
+    (setup-pack! root)
+    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (write-file fake-tmux
+                (str "#!/usr/bin/env sh\n"
+                     "args=\" $* \"\n"
+                     "case \"$args\" in\n"
+                     "  *' capture-pane '*' -S -'*) printf 'old line\\n' ;;\n"
+                     "  *' capture-pane '*) printf 'old line\\nnew tail still on screen\\n' ;;\n"
+                     "  *) exit 0 ;;\n"
+                     "esac\n"))
+    (run {:dir root} "chmod" "+x" (str fake-tmux))
+    (let [result (pack-web-env root {"PATH" (str bin ":" (System/getenv "PATH"))}
+                               "--test-pane" (str root) "specifier")]
+      (is (zero? (:exit result)))
+      (is (str/includes? (:out result) "new tail still on screen")))))
+
+(deftest pack-web-retry-audit-writes-findings-not-candidate
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (create-task root "HTW" "specifier")
+        task-id (:id (task-card root "HTW"))]
+    (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_hello.handoff")
+                (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                     "task_id: " task-id "\ntask: HTW\n"
+                     "artifacts: features/console.feature\n\npayload\n"))
+    (pack-web root true "--test-save-comments" (str root)
+              "50_hello" "features/console.feature" "use an RNG")
+    (pack-web root true "--test-retry-task" (str root) "50_hello" "retry note")
+    (let [page (:out (pack-web root false "--test-task" (str root) "HTW"))]
+      (is (str/includes? page "use an RNG"))
+      (is (str/includes? page "retry note"))
+      (is (not (str/includes? page ":candidate"))))))
+
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.pack-ui-test)]
     (System/exit (+ fail error))))
+
+(when (= (str *file*) (System/getProperty "babashka.file"))
+  (apply -main *command-line-args*))

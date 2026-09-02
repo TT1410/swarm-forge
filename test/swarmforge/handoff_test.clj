@@ -598,6 +598,7 @@
       (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_next.handoff")))
       (is (str/includes? log-text "-t receiver-session"))
       (is (str/includes? log-text "-t sender-session"))
+      (is (str/includes? log-text "C-m"))
       (is (str/includes? (read-file (fs/path root ".swarmforge/daemon/handoffd.log"))
                          "notified-unblocked-sender sender")))))
 
@@ -1844,6 +1845,57 @@
         (is (= 2 (:exit done)))
         (is (str/includes? (:err done) "CURRENT_WORK_IS_BATCH"))))))
 
+(deftest swarm-handoff-review-terminal-includes-upstream-including-before-start
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        _ (setup-project! root [["specifier" "task" "forward-only"]
+                                ["coder" "task" "forward-only"]
+                                ["cleaner" "task" "back-one"]
+                                ["architect" "batch" "back-all"]
+                                ["hardender" "batch" "forward-only"]
+                                ["QA" "batch" "back-all"]])
+        _ (pack-board root true "create" "--root" (str root) "--name" "rev" "--type" "review")
+        _ (write-file (fs/path root "slice.md") "work\n")
+        _ (run {:dir root} "git" "add" "slice.md")
+        _ (run {:dir root} "git" "commit" "-q" "-m" "Review work")
+        ok (fs/path root "tmp" "rev-ok.handoff")
+        bad (fs/path root "tmp" "rev-bad.handoff")]
+    (write-file ok (str "type: git_handoff\n"
+                        "to: specifier,coder,cleaner,architect,hardender\n"
+                        "priority: 50\ntask: rev\n"))
+    (let [result (audit-and-submit-git-handoff
+                  {:dir root :env {"SWARMFORGE_ROLE" "QA"}} ok)]
+      (is (zero? (:exit result))))
+    (write-file bad "type: git_handoff\nto: architect\npriority: 50\ntask: rev\n")
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "QA"} :ok? false}
+                      (script "swarm_handoff.sh") (str bad))]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "upstream")))))
+
+(deftest swarm-handoff-component-hardender-refuses-qa
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        _ (setup-project! root [["specifier" "task" "forward-only"]
+                                ["coder" "task" "forward-only"]
+                                ["cleaner" "task" "back-one"]
+                                ["architect" "batch" "back-all"]
+                                ["hardender" "batch" "forward-only"]
+                                ["QA" "batch" "back-all"]])
+        _ (pack-board root true "create" "--root" (str root)
+                      "--name" "comp" "--type" "component")
+        _ (write-file (fs/path root "slice.md") "work\n")
+        _ (run {:dir root} "git" "add" "slice.md")
+        _ (run {:dir root} "git" "commit" "-q" "-m" "Component work")
+        draft (fs/path root "tmp" "comp.handoff")]
+    (write-file draft "type: git_handoff\nto: QA\npriority: 50\ntask: comp\n")
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "hardender"} :ok? false}
+                      (script "swarm_handoff.sh") (str draft))]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "upstream")))))
+
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.handoff-test)]
     (System/exit (+ fail error))))
+
+(when (= (str *file*) (System/getProperty "babashka.file"))
+  (apply -main *command-line-args*))

@@ -29,12 +29,20 @@ here. **component:** you are last; terminal handoff. **QA** and
 - Ignore the specifier's end-to-end QA suite; do not implement, run, or maintain QA-suite checks.
 
 ## Gherkin Mutation
+- If there are no `features/*.feature` files, skip `gherkin-mutator`.
+  Do not fail. Do not add a worker just to run Gherkin mutation on
+  an empty tree. If features exist and the mutator needs a project
+  runner adapter, build or keep that.
 - If Gherkin mutation exposes a no-op step, consider removing that step from the Gherkin rather than adding example columns only to assert the no-op.
+- Language mutation is always differential against the source
+  manifest. Manifest edits still forward.
 
 ## Handoff
-- As the final verification sequence, run the language mutation tool, then soft Gherkin acceptance mutation (`--level soft`), then the language CRAP tool, then the language DRY tool unless directed otherwise. Fix any issues each tool finds before running the next one.
+- As the final verification sequence, run the language mutation tool, then soft Gherkin acceptance mutation (`--level soft`) when `features/` exist, then the language CRAP tool, then the language DRY tool unless directed otherwise. CRAP gate is 10 or below on **changed** files. A single `cond` or `case` that answers one question may stay above 10; do not split it into helpers that take booleans the caller already knew. Nested or mixed-duty functions over 10 must split, and an extract must own its inputs. Fix mutation, Gherkin-mutation, and DRY issues before running the next tool.
 - On notify or restart, run `ready_for_next.sh`. It merges inbound `git_handoff`. Do not invent `git merge`.
-- If the inbound `git_handoff` is from QA, run unit tests and acceptance tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`.
-- When the current architect task or batch of architect tasks is complete, commit hardening changes and send a `git_handoff` to `QA` before taking another queued architect task or batch.
+- If the inbound `git_handoff` is from QA, run unit tests and acceptance tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`. That is a handback; do not re-forward.
+- **component:** you are last. Terminal `git_handoff` `to:` specifier,coder,cleaner,architect.
+- **QA** type and **review:** `git_handoff` to `QA`.
+- When the current architect task or batch of architect tasks is complete, commit hardening changes and send that `git_handoff` before taking another queued architect task or batch.
 - Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task` only. Do not type a SHA or `SWARMFORGE_ROLE`.
 - Then run `done_with_current.sh`.
