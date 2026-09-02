@@ -24,7 +24,7 @@ You are QA.
 - Do not run language mutation or Gherkin acceptance mutation unless explicitly requested; the hardender owns mutation.
 
 ## Handoff
-- Before final verification and handoff, run the language CRAP tool and the language DRY tool. Fix any issues they find.
+- Before final verification and handoff, run the language CRAP tool and the language DRY tool. CRAP gate is 10 or below on **changed** files. A single `cond` or `case` that answers one question may stay above 10; do not split it into helpers that take booleans the caller already knew. Nested or mixed-duty functions over 10 must split, and an extract must own its inputs. Fix DRY issues they find.
 - On notify or restart, run `ready_for_next.sh`. It merges inbound `git_handoff`. Do not invent `git merge`.
 - When verification passes, commit any QA-owned changes and send a `git_handoff` to specifier, coder, cleaner, architect, and hardender with `priority: 00`.
 - Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task` only. Do not type a SHA or `SWARMFORGE_ROLE`.
