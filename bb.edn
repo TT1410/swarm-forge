@@ -3,13 +3,27 @@
  {test {:doc "Run helper tests and dashboard Playwright tests"
         :task (do
                 (require 'clojure.test)
-                (require 'swarmforge.handoff-test)
-                (require 'swarmforge.script-test)
-                (require 'swarmforge.pack-ui-test)
+                (require 'swarmforge.swarm-handoff-test)
+                (require 'swarmforge.ready-handoff-test)
+                (require 'swarmforge.script-misc-test)
+                (require 'swarmforge.swarmforge-script-test)
+                (require 'swarmforge.installer-test)
+                (require 'swarmforge.pack-board-test)
+                (require 'swarmforge.pack-web-status-test)
+                (require 'swarmforge.pack-web-ui-test)
+                (require 'swarmforge.pack-pipeline-test)
+                (require 'swarmforge.pack-forge-test)
                 (require 'swarmforge.coverage-in-process-test)
-                (let [{:keys [fail error]} (clojure.test/run-tests 'swarmforge.handoff-test
-                                                                    'swarmforge.script-test
-                                                                    'swarmforge.pack-ui-test
+                (let [{:keys [fail error]} (clojure.test/run-tests 'swarmforge.swarm-handoff-test
+                                                                    'swarmforge.ready-handoff-test
+                                                                    'swarmforge.script-misc-test
+                                                                    'swarmforge.swarmforge-script-test
+                                                                    'swarmforge.installer-test
+                                                                    'swarmforge.pack-board-test
+                                                                    'swarmforge.pack-web-status-test
+                                                                    'swarmforge.pack-web-ui-test
+                                                                    'swarmforge.pack-pipeline-test
+                                                                    'swarmforge.pack-forge-test
                                                                     'swarmforge.coverage-in-process-test)]
                   (when (pos? (+ fail error))
                     (System/exit (+ fail error))))

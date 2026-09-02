@@ -459,7 +459,16 @@
   root)
 
 (defn dashboard-page []
-  (slurp (str (fs/path script-dir "pack" "dashboard.html"))))
+  (let [dir (fs/path script-dir "pack")
+        html (slurp (str (fs/path dir "dashboard.html")))
+        css (str/trim (slurp (str (fs/path dir "dashboard.css"))))
+        js (str/join "\n"
+                     [(slurp (str (fs/path dir "dashboard_board.js")))
+                      (slurp (str (fs/path dir "dashboard_attention.js")))
+                      (slurp (str (fs/path dir "dashboard_ui.js")))])]
+    (-> html
+        (str/replace "/*DASHBOARD_CSS*/" css)
+        (str/replace "/*DASHBOARD_JS*/" js))))
 
 (defn slug [s]
   (str/replace (or s "") #"[^A-Za-z0-9]+" "_"))
