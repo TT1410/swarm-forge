@@ -75,7 +75,7 @@
          handoff-files batch-dirs in-process-dir allowed-doc?
          delete-approval! retry-approval! parse-message pane-status-for role-rows
          recorded-pane html-escape worktree-for-role project-query master-role
-         session-alive? work-entry)
+         session-alive? work-entry file-view)
 
 (defn usage []
   (binding [*out* *err*]
@@ -165,7 +165,10 @@
         id (query-value uri "id")]
     (if-not (allowed-doc? root rel)
       {:status 404 :body "Not found"}
-      (let [text (slurp (str (existing-path root rel)))
+      (let [file (existing-path root rel)
+            view (file-view rel file)
+            text (or (:text view)
+                     (try (slurp (str file)) (catch Exception _ "")))
             headers (pending-headers root id)
             task-id (or (not-empty (get headers "task_id")) (get headers "task"))
             commit (not-empty (get headers "commit"))
@@ -180,11 +183,12 @@
                           (path-review-history root task-id rel))]
         {:status 200
          :headers {"Content-Type" "application/json; charset=utf-8"}
-         :body (json/generate-string {:path rel
-                                      :text text
-                                      :has_diff has-diff
-                                      :lines (or lines [])
-                                      :history history})}))))
+         :body (json/generate-string (merge view
+                                            {:path rel
+                                             :text text
+                                             :has_diff has-diff
+                                             :lines (or lines [])
+                                             :history history}))}))))
 
 (defn task-query-name [uri]
   (when (str/starts-with? (or uri "") "/task")

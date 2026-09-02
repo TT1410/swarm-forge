@@ -45,8 +45,7 @@
     <aside class="rail">
       <section class="ts">
         <div class="ts-head">
-          <h2 id="master-title">Master</h2>
-          <button class="btn btn-sm" type="button" id="btn-open-master-rail">Open</button>
+          <button type="button" id="master-title">Master</button>
         </div>
         <div class="history" id="chat-history"></div>
         <div class="composer">
@@ -65,7 +64,7 @@
       <textarea id="rt-text" placeholder="Audit comments for retry…"></textarea>
       <div class="actions">
         <button type="button" class="btn btn-danger" id="rt-delete">Delete</button>
-        <button type="button" class="btn btn-primary" id="rt-retry">Retry</button>
+        <button type="button" class="btn btn-primary" id="rt-retry">Try Again</button>
         <button type="button" class="btn btn-approve" id="rt-accept">Accept Unchanged</button>
       </div>
     </div>
@@ -102,10 +101,10 @@
       <label>Type</label>
       <div class="pack-radios" id="nt-types">
         <label><input type="radio" name="nt-type" value="utility"> Utility</label>
-        <label><input type="radio" name="nt-type" value="component" checked> Component</label>
+        <label><input type="radio" name="nt-type" value="component"> Component</label>
         <label><input type="radio" name="nt-type" value="QA"> QA</label>
         <label><input type="radio" name="nt-type" value="review"> Review</label>
-        <label id="nt-type-lt"><input type="radio" name="nt-type" value="LT"> LT</label>
+        <label id="nt-type-lt"><input type="radio" name="nt-type" value="LT" checked> LT</label>
       </div>
       <label for="nt-text">Task</label>
       <textarea id="nt-text" placeholder="What the starting agent should do…"></textarea>

@@ -18,9 +18,15 @@ function closeNewTask() {
   taskProject = "";
 }
 
+function defaultTaskType() {
+  const wrap = $("nt-type-lt");
+  if (wrap && wrap.style.display !== "none") return "LT";
+  return "component";
+}
+
 function selectedType() {
   const box = document.querySelector("input[name=nt-type]:checked");
-  return box ? box.value : "component";
+  return box ? box.value : defaultTaskType();
 }
 
 function updateNewTaskNote() {
@@ -32,8 +38,9 @@ function updateNewTaskNote() {
 }
 
 function resetTypeRadios() {
+  const def = defaultTaskType();
   document.querySelectorAll("input[name=nt-type]").forEach((el) => {
-    el.checked = el.value === "component";
+    el.checked = el.value === def;
   });
 }
 

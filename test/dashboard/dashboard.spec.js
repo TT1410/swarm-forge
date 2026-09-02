@@ -165,8 +165,7 @@ test.describe("pack dashboard", () => {
     await win.waitForLoadState("domcontentloaded");
     await expect(win.locator("#task-body")).toContainText("Integrate the cave.");
     await expect(win.locator(".audit")).toContainText("Audit 1");
-    await expect(win.locator("#dir-btn")).toHaveText("Directory");
-    await win.locator("#dir-btn").click();
+    await expect(win.locator("#dir-btn")).toHaveCount(0);
     await expect(win.locator("#tree")).toContainText("tasks");
     await win.locator(".dir-row", { hasText: "tasks" }).locator("button.toggle").click();
     const filePromise = context.waitForEvent("page");
@@ -194,7 +193,7 @@ test.describe("pack dashboard", () => {
     await page.goto(handle.url);
     await page.locator(".project-header button", { hasText: "New Task" }).click();
     await expect(page.locator("#nt-name")).toBeFocused();
-    await expect(page.locator("input[name=nt-type][value=component]")).toBeChecked();
+    await expect(page.locator("input[name=nt-type][value=LT]")).toBeChecked();
     await expect(page.locator("input[name=nt-type]")).toHaveCount(5);
   });
 
@@ -214,7 +213,7 @@ test.describe("pack dashboard", () => {
     await page.goto(handle.url);
     await expect(page.locator("#attention-approvals .att-row")).toContainText("HTW");
     await expect(page.locator("#attention-approvals .att-row")).toContainText("Approve");
-    await expect(page.locator("#attention-approvals .att-row")).toContainText("Reject");
+    await expect(page.locator("#attention-approvals .att-row")).toContainText("Add comment");
     await expect(page.locator("#attention-approvals .att-row")).toContainText("Documents");
     await expect(page.locator("#attention-clarifications .att-row")).toContainText(
       "Clarification requested from: specifier"
@@ -241,7 +240,8 @@ test.describe("pack dashboard", () => {
     await page.locator("#attention-approvals .menu-list button", { hasText: "console.feature" }).click();
     const doc = await popupPromise;
     await doc.waitForLoadState("domcontentloaded");
-    await expect(doc.locator("pre")).toContainText("Feature: console");
+    await expect(doc.locator("#doc-body .kw")).toHaveText("Feature");
+    await expect(doc.locator("#doc-body")).toContainText("Feature: console");
     await expect(doc.locator("#doc-history")).toBeVisible();
     await expect(doc.locator("#doc-history")).toHaveClass(/empty/);
     const histBox = await doc.locator("#doc-history").boundingBox();
@@ -294,12 +294,12 @@ test.describe("pack dashboard", () => {
     fs.unlinkSync(reviewsPath);
   });
 
-  test("Reject opens the retry dialog", async ({ page }) => {
+  test("Add comment opens the retry dialog", async ({ page }) => {
     await page.goto(handle.url);
-    await page.locator("#attention-approvals button", { hasText: "Reject" }).click();
+    await page.locator("#attention-approvals button", { hasText: "Add comment" }).click();
     await expect(page.locator("#reject-layer")).toHaveClass(/open/);
     await expect(page.locator("#rt-title")).toHaveText("HTW");
-    await expect(page.locator("#rt-retry")).toHaveText("Retry");
+    await expect(page.locator("#rt-retry")).toHaveText("Try Again");
     await expect(page.locator("#rt-accept")).toHaveText("Accept Unchanged");
     await expect(page.locator("#rt-delete")).toHaveText("Delete");
   });
@@ -315,7 +315,7 @@ test.describe("pack dashboard", () => {
       await doc.waitForLoadState("domcontentloaded");
       await doc.locator("#doc-comments").fill("needs an RNG");
       await doc.locator("#doc-save").click();
-      await page.locator("#attention-approvals button", { hasText: "Reject" }).click();
+      await page.locator("#attention-approvals button", { hasText: "Add comment" }).click();
       await page.locator("#rt-text").fill("dialog note");
       await page.locator("#rt-retry").click();
       await expect(page.locator("#attention-approvals .att-row")).toHaveCount(0);
@@ -406,18 +406,36 @@ test.describe("pack dashboard", () => {
     }
   });
 
-  test("Clarification Open posts the answer", async ({ page, context }) => {
+  test("Clarification expand icon OK posts the answer and closes attention", async ({ page, context }) => {
     const local = await startDashboard();
     try {
       await page.goto(local.url);
       const popupPromise = context.waitForEvent("page");
-      await page.locator("#attention-clarifications button", { hasText: "Open" }).click();
+      await page.locator("#attention-clarifications .att-expand").click();
       const clar = await popupPromise;
       await clar.waitForLoadState("domcontentloaded");
       await expect(clar.locator("#clar-request")).toContainText("Does the bat drop to any of 20 rooms?");
       await clar.locator("#clar-response").fill("Yes, any of the 20 rooms.");
       await clar.locator("#clar-ok").click();
       await expect(page.locator("#attention-clarifications .att-row")).toHaveCount(0);
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("Clarification Dismiss closes the window and leaves attention", async ({ page, context }) => {
+    const local = await startDashboard();
+    try {
+      await page.goto(local.url);
+      const popupPromise = context.waitForEvent("page");
+      await page.locator("#attention-clarifications .att-expand").click();
+      const clar = await popupPromise;
+      await clar.waitForLoadState("domcontentloaded");
+      await clar.locator("#clar-response").fill("draft only");
+      await clar.locator("#clar-dismiss").click();
+      await expect(clar.isClosed()).toBeTruthy();
+      await expect(page.locator("#attention-clarifications .att-row")).toHaveCount(1);
+      await expect(page.locator("#attention-clarifications [data-clar-id]")).toHaveValue("draft only");
     } finally {
       await stopDashboard(local);
     }
@@ -512,6 +530,24 @@ test.describe("mocked dashboard buttons", () => {
 
   test.afterAll(async () => {
     await stopDashboard(handle);
+  });
+
+  test("swimlane shows the active card above queued cards", async ({ page }) => {
+    await page.route("**/api/state", (route) => {
+      route.fulfill({
+        json: mockForgeState([
+          { name: "Newer", lane: "specifier", type: "QA", status: "waiting in queue",
+            updated_at: "2026-01-03T00:00:00Z", project: "htw" },
+          { name: "Older", lane: "specifier", type: "QA", status: "waiting in queue",
+            updated_at: "2026-01-01T00:00:00Z", project: "htw" },
+          { name: "Active", lane: "specifier", type: "QA", status: "I'm writing the spec.",
+            updated_at: "2026-01-02T00:00:00Z", project: "htw" }
+        ])
+      });
+    });
+    await page.goto(handle.url);
+    const names = page.locator('.col[data-lane="specifier"] .card .name');
+    await expect(names).toHaveText(["Active", "Older", "Newer"]);
   });
 
   test("New Task OK parks the card in waiting", async ({ page }) => {
@@ -640,7 +676,6 @@ test.describe("mocked dashboard buttons", () => {
     await page.locator('.col[data-lane="specifier"] .card .name', { hasText: "HTW" }).click();
     const win = await popupPromise;
     await win.waitForLoadState("domcontentloaded");
-    await win.locator("#dir-btn").click();
     await win.locator(".dir-row", { hasText: "src" }).locator("button.toggle").click();
     const cljPromise = context.waitForEvent("page");
     await win.locator("button.leaf", { hasText: "x.clj" }).click();
@@ -690,6 +725,24 @@ test.describe("mocked dashboard buttons", () => {
     const therm = page.locator(".ts-head .wif-therm");
     await expect(therm).toHaveCount(1);
     await expect(therm).toHaveAttribute("data-heat", "4");
+  });
+
+  test("Lieutenant title opens the session and there is no Open button", async ({ page }) => {
+    await page.route("**/api/state", (route) => {
+      route.fulfill({ json: mockForgeState([]) });
+    });
+    await page.route("**/agent/lieutenant**", (route) => {
+      route.fulfill({ status: 200, contentType: "text/html", body: "<html><body>lt</body></html>" });
+    });
+    await page.goto(handle.url);
+    await expect(page.locator("#btn-open-master-rail")).toHaveCount(0);
+    const title = page.locator("#master-title");
+    await expect(title).toHaveAttribute("data-open-agent", "lieutenant");
+    const popupPromise = page.waitForEvent("popup");
+    await title.click();
+    const popup = await popupPromise;
+    await expect(popup).toHaveURL(/\/agent\/lieutenant/);
+    await popup.close();
   });
 
   test("lane heat is per project and not on cards", async ({ page }) => {

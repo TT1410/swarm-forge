@@ -713,6 +713,8 @@
     (is (false? (:has_diff first-doc)))
     (is (= [] (:history first-doc)))
     (is (str/includes? (:text first-doc) "Feature: cave"))
+    (is (= "code" (:kind first-doc)))
+    (is (str/includes? (str (:html first-doc)) "class='kw'"))
     (pack-web root true "--test-save-comments" (str root)
               "50_first" "features/console.feature" "needs an RNG")
     (is (zero? (:exit (pack-web root false "--test-retry-task" (str root)

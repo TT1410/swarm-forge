@@ -66,6 +66,61 @@ function heatEl(heat) {
   return therm;
 }
 
+function isActiveCard(task) {
+  if (!task) return false;
+  if (task.merging) return true;
+  if (task.lane === "waiting" || task.lane === "done") return false;
+  return task.status !== "waiting in queue";
+}
+
+function cardTime(task) {
+  return task.updated_at || "";
+}
+
+function compareLaneItems(aActive, aTime, bActive, bTime, lane) {
+  if (aActive !== bActive) return aActive ? -1 : 1;
+  if (lane === "done") {
+    if (bTime < aTime) return -1;
+    if (bTime > aTime) return 1;
+    return 0;
+  }
+  if (aTime < bTime) return -1;
+  if (aTime > bTime) return 1;
+  return 0;
+}
+
+function orderedLaneGroups(tasks, lane) {
+  const mine = tasks.filter((task) => task.lane === lane);
+  const groups = [];
+  const batches = new Map();
+  mine.forEach((task) => {
+    if (task.batch) {
+      let group = batches.get(task.batch);
+      if (!group) {
+        group = [];
+        batches.set(task.batch, group);
+        groups.push(group);
+      }
+      group.push(task);
+    } else {
+      groups.push([task]);
+    }
+  });
+  groups.forEach((group) => {
+    group.sort((a, b) => compareLaneItems(isActiveCard(a), cardTime(a),
+                                          isActiveCard(b), cardTime(b), lane)
+      || (a.name || "").localeCompare(b.name || ""));
+  });
+  groups.sort((a, b) => {
+    const aTimes = a.map(cardTime).filter(Boolean).sort();
+    const bTimes = b.map(cardTime).filter(Boolean).sort();
+    const aStamp = lane === "done" ? (aTimes[aTimes.length - 1] || "") : (aTimes[0] || "");
+    const bStamp = lane === "done" ? (bTimes[bTimes.length - 1] || "") : (bTimes[0] || "");
+    return compareLaneItems(a.some(isActiveCard), aStamp, b.some(isActiveCard), bStamp, lane);
+  });
+  return groups;
+}
+
 function columnEl(lane, tasks, project, heats) {
   const col = document.createElement("div");
   col.className = "col";
@@ -89,25 +144,16 @@ function columnEl(lane, tasks, project, heats) {
   const body = document.createElement("div");
   body.className = "col-body";
   body.id = "lane-" + (project ? project + "-" : "") + lane;
-  const mine = tasks.filter((task) => task.lane === lane);
-  let i = 0;
-  while (i < mine.length) {
-    const id = mine[i].batch;
-    if (id) {
-      const group = [];
-      while (i < mine.length && mine[i].batch === id) group.push(mine[i++]);
-      if (group.length > 1) {
-        const wrap = document.createElement("div");
-        wrap.className = "batch";
-        group.forEach((task, idx) => wrap.appendChild(cardEl(task, {thin: idx > 0})));
-        body.appendChild(wrap);
-      } else {
-        body.appendChild(cardEl(group[0]));
-      }
+  orderedLaneGroups(tasks, lane).forEach((group) => {
+    if (group.length > 1) {
+      const wrap = document.createElement("div");
+      wrap.className = "batch";
+      group.forEach((task, idx) => wrap.appendChild(cardEl(task, {thin: idx > 0})));
+      body.appendChild(wrap);
     } else {
-      body.appendChild(cardEl(mine[i++]));
+      body.appendChild(cardEl(group[0]));
     }
-  }
+  });
   col.append(heading, body);
   return col;
 }
@@ -209,9 +255,14 @@ function renderChrome(data) {
   dot.className = "dot";
   dot.textContent = "●";
   $("pack-meta").append(dot, " live · master = " + master);
-  $("btn-open-master-rail").textContent = "Open " + master;
-  $("btn-open-master-rail").setAttribute("data-open-agent", masterRole);
   $("master-title").textContent = master;
+  if (masterRole) {
+    $("master-title").setAttribute("data-open-agent", masterRole);
+    $("master-title").title = "open " + masterRole + " session";
+  } else {
+    $("master-title").removeAttribute("data-open-agent");
+    $("master-title").removeAttribute("title");
+  }
   const head = $("master-title").parentElement;
   let therm = head && head.querySelector(".wif-therm");
   if (forge) {

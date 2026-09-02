@@ -83,7 +83,11 @@ function fillDocWindow(win, name, data) {
     "header{display:flex;align-items:center;gap:8px;padding:8px 10px;background:linear-gradient(180deg,#eceee8,#e0e3dc);border-bottom:1px solid #d5d9d2;flex:0 0 auto}" +
     "h1{margin:0;font-size:14px;flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}" +
     "label.toggle{display:flex;align-items:center;gap:6px;font-size:11px;font-weight:600;color:#68726c;white-space:nowrap}" +
-    "pre{flex:1 1 auto;min-height:4rem;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;font:12px/1.4 ui-monospace,Menlo,monospace}" +
+    "#doc-body{flex:1 1 auto;min-height:4rem;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;font:12px/1.4 ui-monospace,Menlo,monospace;background:#fffef9}" +
+    ".src{border-collapse:collapse;width:100%;font:12px/1.35 ui-monospace,Menlo,monospace}" +
+    ".ln{width:52px;padding:0 8px;background:#eef2f7;color:#6b7280;text-align:right;vertical-align:top}" +
+    ".code{padding:0 10px;vertical-align:top}.code pre{margin:0;white-space:pre}" +
+    ".cmt{color:#6b7280}.str{color:#b45309}.kw{color:#1d4ed8}.tag{color:#7c3aed}.ph{color:#0f766e}.tbl{color:#334155}" +
     ".diff-add{color:#1a7f37;background:#e6ffed}.diff-del{color:#9b1c1c;background:#ffebe9}.diff-same{color:#1e221f}" +
     ".doc-split{flex:0 0 6px;cursor:row-resize;background:#d5d9d2}" +
     ".doc-split:hover{background:#b8bfb6}" +
@@ -102,7 +106,7 @@ function fillDocWindow(win, name, data) {
     "<header><h1>" + escapeHtml(name) + "</h1>" +
     "<label class=\"toggle\"><input type=\"checkbox\" id=\"doc-diff\"" +
     (hasDiff ? "" : " disabled") + "> Diff</label></header>" +
-    "<pre id=\"doc-body\">" + escapeHtml(text) + "</pre>" +
+    "<div id=\"doc-body\"></div>" +
     "<div class=\"doc-split\" id=\"doc-split-body\" title=\"Drag to resize\"></div>" +
     "<div id=\"doc-history\"" + (emptyHist ? " class=\"empty\"" : "") + ">" +
     renderHistory(history) + "</div>" +
@@ -119,11 +123,17 @@ function fillDocWindow(win, name, data) {
   const body = win.document.getElementById("doc-body");
   const hist = win.document.getElementById("doc-history");
   const comments = win.document.getElementById("doc-comments-pane");
+  const paintPretty = () => {
+    if (data && data.html) body.innerHTML = data.html;
+    else body.textContent = (data && data.text) || text || "";
+  };
+  paintPretty();
   bindVSplit(win, win.document.getElementById("doc-split-body"), body, hist);
   bindVSplit(win, win.document.getElementById("doc-split-hist"), hist, comments);
   if (box && body && hasDiff) {
     box.onchange = () => {
-      body.innerHTML = box.checked ? renderDiffLines(data.lines) : escapeHtml(text);
+      if (box.checked) body.innerHTML = renderDiffLines(data.lines);
+      else paintPretty();
     };
   }
 }
@@ -313,7 +323,7 @@ function attentionRow(item) {
   const reject = document.createElement("button");
   reject.type = "button";
   reject.className = "btn btn-sm";
-  reject.textContent = "Reject";
+  reject.textContent = "Add comment";
   reject.onclick = () => openRejectDialog(item);
   const approve = approvalButton(item, "approve", "Approve", "btn btn-sm btn-approve");
   approve.disabled = hasRemedialComments(item);
@@ -335,15 +345,18 @@ function fillClarWindow(win, item) {
     "#clar-response-pane{flex:1 1 50%;min-height:4rem;display:flex;flex-direction:column;padding:10px 12px;background:#fff;gap:6px}" +
     "label{font-size:10px;text-transform:uppercase;font-weight:700;color:#68726c}" +
     "textarea{flex:1;min-height:4rem;width:100%;border:1px solid #c6cbc5;border-radius:6px;padding:8px;font:13px/1.45 ui-sans-serif,system-ui,sans-serif;resize:none}" +
-    ".actions{display:flex;justify-content:flex-end}" +
-    "button{border:1px solid #9aa59e;background:#3d5a45;border-color:#3d5a45;color:#fff;padding:5px 12px;border-radius:7px;font-size:12px;cursor:pointer}" +
+    ".actions{display:flex;gap:8px;justify-content:flex-end}" +
+    "button{border:1px solid #9aa59e;background:#fff;padding:5px 12px;border-radius:7px;font-size:12px;cursor:pointer}" +
+    "#clar-ok{background:#3d5a45;border-color:#3d5a45;color:#fff}" +
     "</style></head><body>" +
     "<header>Clarification requested from: " + escapeHtml(item.role || "agent") + "</header>" +
     "<pre id=\"clar-request\">" + escapeHtml(request) + "</pre>" +
     "<div class=\"doc-split\" id=\"clar-split\" title=\"Drag to resize\"></div>" +
     "<div id=\"clar-response-pane\"><label for=\"clar-response\">Response</label>" +
     "<textarea id=\"clar-response\">" + escapeHtml(draft) + "</textarea>" +
-    "<div class=\"actions\"><button type=\"button\" id=\"clar-ok\">OK</button></div></div>" +
+    "<div class=\"actions\">" +
+    "<button type=\"button\" id=\"clar-dismiss\">Dismiss</button>" +
+    "<button type=\"button\" id=\"clar-ok\">OK</button></div></div>" +
     "</body></html>"
   );
   win.document.close();
@@ -358,10 +371,19 @@ function openClarification(item) {
   if (!win) return;
   fillClarWindow(win, item);
   const box = win.document.getElementById("clar-response");
-  win.document.getElementById("clar-ok").onclick = async () => {
+  const syncDraft = () => {
     const text = box.value;
     clarDrafts[item.id] = text;
-    await postClarification(item.id, text);
+    const live = document.querySelector("[data-clar-id=\"" + item.id + "\"]");
+    if (live) live.value = text;
+  };
+  win.document.getElementById("clar-ok").onclick = async () => {
+    syncDraft();
+    await postClarification(item.id, box.value);
+    win.close();
+  };
+  win.document.getElementById("clar-dismiss").onclick = () => {
+    syncDraft();
     win.close();
   };
 }
@@ -375,7 +397,9 @@ function clarificationRow(item) {
   pill.textContent = "Clarification requested from: " + who;
   const pair = attentionWorkPair(item.project, item.task);
   const summary = document.createElement("span");
+  summary.className = "att-summary";
   summary.textContent = item.body || "";
+  summary.title = item.body || "";
   const input = document.createElement("input");
   input.type = "text";
   input.placeholder = "Answer…";
@@ -386,8 +410,10 @@ function clarificationRow(item) {
   });
   const open = document.createElement("button");
   open.type = "button";
-  open.className = "btn btn-sm";
-  open.textContent = "Open";
+  open.className = "att-expand";
+  open.title = "Open full window";
+  open.setAttribute("aria-label", "Open full window");
+  open.textContent = "\u2922";
   open.onclick = (event) => {
     event.preventDefault();
     openClarification(item);
