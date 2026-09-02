@@ -33,7 +33,7 @@ Pack templates live on dedicated branches. Each branch contains the `swarmforge/
 `two-pack` is the quick backend workflow. Use it for small tasks that benefit from fast coding without the overhead of Gherkin and acceptance testing, while still preserving backend refactoring and hardening.
 
 - `coder` implements requested behavior with TDD and unit tests.
-- `cleaner` batches coder handoffs and performs cleanup, CRAP and DRY review, architectural review, encapsulation and separation-of-concerns fixes, and language mutation hardening.
+- `cleaner` batches coder handoffs and performs cleanup, CRAP and DRY review, architectural review, encapsulation and separation-of-concerns fixes, mutation-site scans, and language mutation hardening.
 
 The card moves `coder` -> `cleaner`, then to Done. Cleaner also sends a merge-only copy back to coder. Use this branch when you want a tight implementation/refinement loop without specification, QA, property-test, or acceptance-test roles.
 
@@ -44,7 +44,7 @@ The card moves `coder` -> `cleaner`, then to Done. Cleaner also sends a merge-on
 - `specifier` turns user intent into precise Gherkin acceptance specifications and asks for approval before handoff.
 - `coder` implements approved behavior slices with TDD, unit tests, and generated acceptance tests.
 - `refactorer` performs behavior-preserving cleanup, coverage improvement, CRAP and DRY review, mutation-site scans, and property-test support.
-- `architect` owns high-level structure, dependency direction, mutation hardening, DRY review, soft Gherkin mutation, and final completion notification.
+- `architect` owns high-level structure, dependency direction, mutation-site scans, mutation hardening, DRY review, soft Gherkin mutation, and final completion notification.
 
 The card moves `specifier` -> `coder` -> `refactorer` -> `architect`, then to Done. Refactorer also sends a merge-only copy back to coder. Architect also sends merge-only copies to every earlier role. Use this branch when you want disciplined development without splitting cleanup, architecture, hardening, and QA into separate agents.
 
@@ -56,7 +56,7 @@ The card moves `specifier` -> `coder` -> `refactorer` -> `architect`, then to Do
 - `coder` implements approved behavior slices with TDD, unit tests, and generated acceptance tests.
 - `cleaner` performs local behavior-preserving cleanup, coverage improvement, CRAP and DRY review, and mutation-site scans.
 - `architect` reviews module structure, boundaries, dependency direction, and property-test coverage.
-- `hardender` performs mutation hardening, language mutation, CRAP and DRY verification, and soft Gherkin mutation.
+- `hardender` performs mutation-site scans, mutation hardening, language mutation, CRAP and DRY verification, and soft Gherkin mutation.
 - `QA` converts the specifier's QA procedures into executable scripts, runs final user-interface verification, checks handoff consistency, and sends completion notifications.
 
 The card moves `specifier` -> `coder` -> `cleaner` -> `architect` -> `hardender` -> `QA`, then to Done. Cleaner also sends a merge-only copy back to coder. Architect and QA also send merge-only copies to every earlier role. Use this branch when you want each review and verification concern owned by a separate agent.
