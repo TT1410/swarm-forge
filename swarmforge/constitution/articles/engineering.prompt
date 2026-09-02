@@ -42,7 +42,7 @@
 - Run constitution tools one at a time. Do not run CRAP, DRY, coverage, language mutation, Gherkin mutation, or structure-check concurrently.
 - Tools that take a worker limit must use `--max-workers 4` or `--workers 4`.
 - Function mutation is differential against the source manifest. Do not pass `--mutate-all`.
-- Scan changed and new source files with the language mutation tool's scan/count mode. If a file has more than 100 mutation sites, split it before mutating it or handing it off. Preserve mutation manifests across the split; do not hand-edit them.
+- Scan changed and new source files with the language mutation tool's scan/count mode as a hint that a module may mix jobs. Split a source file when it has more than one job. Do not split a one-job module to chase a mutation-site count. Preserve mutation manifests across the split; do not hand-edit them.
 - Gherkin mutation is differential against the feature manifest (`--level hard`). Do not pass `--level full`.
 - Run acceptance generation and acceptance tests sequentially.
 - Avoid running whole-suite language test commands concurrently with acceptance generation.
