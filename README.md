@@ -28,7 +28,7 @@ The runnable pack configurations live on dedicated branches. Each branch contain
 - `specifier` turns user intent into precise Gherkin acceptance specifications and asks for approval before handoff.
 - `coder` implements approved behavior slices with TDD, unit tests, and generated acceptance tests.
 - `refactorer` performs behavior-preserving cleanup, coverage improvement, CRAP and DRY review, mutation-site scans, and property-test support.
-- `architect` owns high-level structure, dependency direction, mutation hardening, DRY review, soft Gherkin mutation, and final completion notification.
+- `architect` owns high-level structure, dependency direction, mutation-site scans, mutation hardening, DRY review, soft Gherkin mutation, and final completion notification.
 
 The normal flow is `specifier` -> `coder` -> `refactorer` -> `architect` -> `specifier`. Use this branch when you want disciplined development without splitting cleanup, architecture, hardening, and QA into separate agents.
 
@@ -40,7 +40,7 @@ The normal flow is `specifier` -> `coder` -> `refactorer` -> `architect` -> `spe
 - `coder` implements approved behavior slices with TDD, unit tests, and generated acceptance tests.
 - `cleaner` performs local behavior-preserving cleanup, coverage improvement, CRAP and DRY review, and mutation-site scans.
 - `architect` reviews module structure, boundaries, dependency direction, and property-test coverage.
-- `hardender` performs mutation hardening, language mutation, CRAP and DRY verification, and soft Gherkin mutation.
+- `hardender` performs mutation-site scans, mutation hardening, language mutation, CRAP and DRY verification, and soft Gherkin mutation.
 - `QA` converts the specifier's QA procedures into executable scripts, runs final user-interface verification, checks handoff consistency, and sends completion notifications.
 
 The normal flow is `specifier` -> `coder` -> `cleaner` -> `architect` -> `hardender` -> `QA` -> completion. Use this branch when you want each review and verification concern owned by a separate agent.

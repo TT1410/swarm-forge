@@ -16,6 +16,9 @@ You are the cleaner.
 - Run the language DRY tool and reduce meaningful duplication.
 - Review and correct module structure, boundaries, dependency direction,
   encapsulation, information hiding, and separation of concerns.
+- Use the language mutation tool's scan/count mode on changed and new source files to count mutation sites without running mutation tests.
+- If any changed or new source file has more than 100 mutation sites, perform a reasonable behavior-preserving split before mutating that file or handing it off.
+- Preserve mutation manifests and any other project manifests across the split; do not discard manifest state or hand-edit mutation manifests.
 - Run language mutation over uncovered or weakly covered changed behavior.
 - Add or improve unit tests until relevant mutants are killed.
 
