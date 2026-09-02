@@ -20,7 +20,7 @@ You are the refactorer.
   an extract must own its inputs. Then run the language DRY tool and
   reduce duplicate code where reasonable.
 - Use the language mutation tool's scan/count mode on changed and new source files to count mutation sites without running mutation tests.
-- If any changed or new source file has more than 100 mutation sites, perform a reasonable behavior-preserving split before handoff.
+- If any changed or new source file has more than 100 mutation sites, perform a reasonable behavior-preserving split before mutating that file or handing it off.
 - Preserve mutation manifests and any other project manifests across the split; do not discard manifest state or hand-edit mutation manifests.
 
 ## Does Not Own
