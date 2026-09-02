@@ -313,7 +313,10 @@
                  "from: " (get headers "from") "\n"
                  "task: " (or (get headers "task") "") "\n"))
       (when socket
-        (sh "tmux" "-S" socket "send-keys" "-t" "swarmforge-lieutenant" (str "Notify: " event) "Enter")))))
+        (try
+          (notify! socket "swarmforge-lieutenant" (str "Notify: " event))
+          (catch Exception e
+            (log! "lieutenant-notify-failed" (.getMessage e))))))))
 
 (defn update-board! [roles headers]
   (when (and (fs/exists? (board-file))

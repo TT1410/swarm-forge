@@ -2004,6 +2004,29 @@
   (when-let [row (role-row root role)]
     (nth row 2 nil)))
 
+(defn merge-pane-capture [hist vis]
+  (let [h (or hist "")
+        v (or vis "")]
+    (cond
+      (str/blank? v) (not-empty h)
+      (str/blank? h) v
+      (str/includes? h v) h
+      (str/starts-with? v h) v
+      :else
+      (let [h-trim (str/replace h #"\n+\z" "")
+            v-lines (str/split-lines v)
+            overlap (loop [n (count v-lines)]
+                      (cond
+                        (zero? n) nil
+                        (str/ends-with? h-trim (str/join "\n" (take n v-lines))) n
+                        :else (recur (dec n))))]
+        (if overlap
+          (let [rest (str/join "\n" (drop overlap v-lines))]
+            (if (str/blank? rest)
+              h
+              (str h-trim "\n" rest (when (str/ends-with? v "\n") "\n"))))
+          (str h-trim "\n" v))))))
+
 (defn tmux-capture [socket target]
   (try
     (let [history (sh "tmux" "-S" socket "capture-pane" "-p" "-J" "-t" target
@@ -2011,12 +2034,7 @@
           visible (sh "tmux" "-S" socket "capture-pane" "-p" "-J" "-t" target)
           hist (when (zero? (:exit history)) (:out history))
           vis (when (zero? (:exit visible)) (:out visible))]
-      (cond
-        (and (not-empty vis) (not-empty hist)
-             (not (str/includes? hist vis)))
-        (str hist (when-not (str/ends-with? hist "\n") "\n") vis)
-        (not-empty vis) vis
-        :else hist))
+      (merge-pane-capture hist vis))
     (catch Exception _)))
 
 (defn capture-pane [root role]

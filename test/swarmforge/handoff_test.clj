@@ -599,6 +599,7 @@
       (is (str/includes? log-text "-t receiver-session"))
       (is (str/includes? log-text "-t sender-session"))
       (is (str/includes? log-text "C-m"))
+      (is (str/includes? log-text "C-j"))
       (is (str/includes? (read-file (fs/path root ".swarmforge/daemon/handoffd.log"))
                          "notified-unblocked-sender sender")))))
 
@@ -1890,6 +1891,42 @@
     (write-file draft "type: git_handoff\nto: QA\npriority: 50\ntask: comp\n")
     (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "hardender"} :ok? false}
                       (script "swarm_handoff.sh") (str draft))]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "upstream")))))
+
+(deftest swarm-handoff-utility-cleaner-terminal-includes-specifier-and-coder
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        _ (setup-project! root [["specifier" "task" "forward-only"]
+                                ["coder" "task" "forward-only"]
+                                ["cleaner" "task" "back-one"]
+                                ["architect" "batch" "back-all"]
+                                ["hardender" "batch" "forward-only"]
+                                ["QA" "batch" "back-all"]])
+        _ (pack-board root true "create" "--root" (str root)
+                      "--name" "shim" "--type" "utility")
+        _ (pack-board root true "move" "--root" (str root)
+                      "--name" "shim" "--lane" "cleaner" "--caller" "handoffd")
+        _ (write-file (fs/path root "slice.md") "work\n")
+        _ (run {:dir root} "git" "add" "slice.md")
+        _ (run {:dir root} "git" "commit" "-q" "-m" "Utility work")
+        ok (fs/path root "tmp" "util-ok.handoff")
+        architect (fs/path root "tmp" "util-architect.handoff")
+        coder-only (fs/path root "tmp" "util-coder.handoff")]
+    (write-file ok (str "type: git_handoff\n"
+                        "to: specifier,coder\n"
+                        "priority: 50\ntask: shim\n"))
+    (let [result (audit-and-submit-git-handoff
+                  {:dir root :env {"SWARMFORGE_ROLE" "cleaner"}} ok)]
+      (is (zero? (:exit result))))
+    (write-file architect "type: git_handoff\nto: architect\npriority: 50\ntask: shim\n")
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "cleaner"} :ok? false}
+                      (script "swarm_handoff.sh") (str architect))]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "upstream")))
+    (write-file coder-only "type: git_handoff\nto: coder\npriority: 50\ntask: shim\n")
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "cleaner"} :ok? false}
+                      (script "swarm_handoff.sh") (str coder-only))]
       (is (= 2 (:exit result)))
       (is (str/includes? (:err result) "upstream")))))
 

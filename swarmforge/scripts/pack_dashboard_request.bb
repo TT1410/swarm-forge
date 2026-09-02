@@ -196,10 +196,15 @@
           (spit stub (str (pr-str ["tmux" "-S" socket "send-keys" "-t"
                                    "swarmforge-lieutenant" "C-m"])
                           "\n")
+                :append true)
+          (spit stub (str (pr-str ["tmux" "-S" socket "send-keys" "-t"
+                                   "swarmforge-lieutenant" "C-j"])
+                          "\n")
                 :append true))
         (do
           (sh "tmux" "-S" socket "send-keys" "-t" "swarmforge-lieutenant" "-l" text)
-          (sh "tmux" "-S" socket "send-keys" "-t" "swarmforge-lieutenant" "C-m"))))))
+          (sh "tmux" "-S" socket "send-keys" "-t" "swarmforge-lieutenant" "C-m")
+          (sh "tmux" "-S" socket "send-keys" "-t" "swarmforge-lieutenant" "C-j"))))))
 
 (defn notify-clarify! [root role body]
   (when-let [forge (forge-root root)]

@@ -172,10 +172,12 @@ and agents must see it without opening `tasks/<name>.md`.
 Badge is the type name: `utility` / `component` / `QA` / `review`.
 The name must be present.
 
-The **New Task** dialog has four radio buttons: Utility, Component,
-QA, Review. Default **component**. The operator picks it there the
-same way the lieutenant picks it on `pack_board create --type`.
-Either path stores the same field on the card.
+The **New Task** dialog has five radio buttons: Utility, Component,
+QA, Review, and **LT**. Default **component**. Utility through
+review store that type on a waiting card. **LT** does not create a
+card; it sends the name and text to the lieutenant. The operator
+picks a type the same way the lieutenant picks it on
+`pack_board create --type`.
 
 **New Project** does not have those radios, and on this branch it
 does not have pack radios either. Task type is per card. Every
@@ -319,8 +321,10 @@ not helper if-trees. Do not pin the wording with tests.
   Recut rather than pile on.
 - Off-plan (a card not on the operator-approved plan): ask the
   operator. Do not treat markdown as something the helper parses.
-- Board `move` / `done` only after Attention (operator approval on
-  disk for that card and act). Happy path is `handoffd`.
+- Board `done`, `stop`, `increment-audit`, and moving a **live**
+  card only after Attention. Starting a waiting card into its
+  starting lane does not need Attention. Happy path later-lane
+  moves are `handoffd`.
 
 ### Gates
 
@@ -335,13 +339,14 @@ and urgent still does not mean implement.
 - Not a pack agent. `swarm_handoff`, `merge_and_process`,
   `done_with_current` refuse `SWARMFORGE_ROLE=lieutenant`. The
   lieutenant does not sit on a pack worktree.
-- `pack_board move`, `done`, and `increment-audit` take **`--caller`**
-  (`handoffd` or `lieutenant`). They succeed only for
-  `--caller handoffd`, or for `--caller lieutenant` **after an
-  Attention check** (operator approval on disk for that card and
-  act). Chat does not count. Any other caller is refused.
-  Happy-path cards still move only because `handoffd` delivered a
-  `git_handoff`.
+- `pack_board move`, `done`, `stop`, and `increment-audit` take
+  **`--caller`** (`handoffd` or `lieutenant`). They succeed for
+  `--caller handoffd`, for `--caller lieutenant` starting a
+  **waiting** card into that type's starting lane (no Attention),
+  or for `--caller lieutenant` **after an Attention check** on
+  any other act. Chat does not count. Any other caller is refused.
+  Happy-path later-lane cards still move only because `handoffd`
+  delivered a `git_handoff`.
 - `pack_board archive` takes **`--archive <window>`** (which pane to
   capture), not `--role`. Do not reuse `--role` for caller.
 - Does not change type on a live card. Close or recut (new card).
@@ -524,10 +529,11 @@ Starting lane comes from type, not from "always master":
 Today the dialog is name + text; `POST /api/tasks` is
 `{name, text, project}`; `create-task!` always uses `master-role`.
 
-Add four radio buttons next to Name and Task: Utility, Component,
-QA, Review. Default **component**. Submit
-`{name, text, type, project}`. Same create path as
-`pack_board --type`.
+Add five radio buttons next to Name and Task: Utility, Component,
+QA, Review, LT. Default **component**. Submit
+`{name, text, type, project}`. Utility through review use the same
+create path as `pack_board --type`. **LT** skips create and notifies
+the lieutenant.
 
 On success, clear the radios back to component.
 
@@ -598,16 +604,16 @@ Per-role `to:` and work, six-pack names:
   type: implement Gherkin. Review: does not run. Always cleaner
   next when they run.
 - **Cleaner** — same cleanup. **utility: they are last** (terminal
-  to coder, not architect). Component, QA type, and **review:
+  `to:` specifier,coder). Component, QA type, and **review:
   they are first on review**; architect next.
 - **Architect** — utility: skipped. Component, QA type, and review:
   hardender next. Not last.
 - **Hardender** — utility: skipped. **component: they are last**.
   QA type and review: QA role next.
-- **QA role** — last on QA type and on review. On review, if there
-  are no files under `qa/` (missing or empty), pass through
-  (terminal handoff, no suite invented). If `qa/` has files, run
-  them; do not add new ones.
+- **QA role** — last on QA type and on review. Terminal `to:`
+  specifier,coder,cleaner,architect,hardender, including
+  pass-through when `qa/` is missing or empty (no suite invented).
+  If `qa/` has files, run them; do not add new ones.
 
 Do not pin prompt wording with automated tests (`Agents.md`). Tests
 hit the board, helper, `handoffd`, artifacts, and the dialog.
@@ -649,9 +655,10 @@ proves two cards do not conflict.
 - component: hardender `git_handoff` → Done, not the QA role
 - component: architect `git_handoff` → hardender
 - QA type: hardender `git_handoff` → QA role (today's full path)
-- utility: cleaner `git_handoff` → Done, not architect
+- utility: cleaner `git_handoff` `to:` specifier,coder → Done, not architect
 - helper rejects `to: QA` on a component card; `to: architect` on a
-  utility card; review terminal includes specifier and coder
+  utility card; review terminal includes specifier and coder;
+  utility terminal includes specifier and coder
 - helper rejects `features/*.feature` on a utility or review commit
 - `pack_board create --type review` → cleaner lane; QA role
   `git_handoff` → Done
@@ -666,8 +673,9 @@ proves two cards do not conflict.
   tmux-wake the lieutenant; same for card Done
 - lieutenant `swarm_handoff` is rejected
 - `pack_board move` / `done --caller handoffd` succeeds; `--caller
-  lieutenant` succeeds only with Attention approval for that card
-  and act; any other caller is rejected
+  lieutenant` waiting→starting-lane succeeds with no Attention;
+  other lieutenant `move` / `done` / `stop` / `increment-audit`
+  need Attention; any other caller is rejected
 - `pack_board archive --archive <window>` (not `--role`)
 - `pack_board create` while that project has a pending clarify is
   rejected except recut or operator override

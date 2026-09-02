@@ -207,7 +207,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
   <div class="float" role="dialog" aria-labelledby="nt-title">
     <div class="titlebar" id="nt-title">New Task</div>
     <div class="body-pad">
-      <p class="note">Creates a waiting card. The lieutenant starts it when the plan is ready.</p>
+      <p class="note" id="nt-note">Creates a waiting card. The lieutenant starts it when the plan is ready.</p>
       <label for="nt-name">Name</label>
       <input id="nt-name" type="text" placeholder="task-name">
       <label>Type</label>
@@ -969,6 +969,14 @@ function selectedType() {
   return box ? box.value : "component";
 }
 
+function updateNewTaskNote() {
+  const note = $("nt-note");
+  if (!note) return;
+  note.textContent = selectedType() === "LT"
+    ? "Sends the name and text to the lieutenant. Does not create a card."
+    : "Creates a waiting card. The lieutenant starts it when the plan is ready.";
+}
+
 function resetTypeRadios() {
   document.querySelectorAll("input[name=nt-type]").forEach((el) => {
     el.checked = el.value === "component";
@@ -978,6 +986,7 @@ function resetTypeRadios() {
 function openNewTask(project) {
   taskProject = project || "";
   resetTypeRadios();
+  updateNewTaskNote();
   $("new-task-layer").classList.add("open");
   $("nt-name").focus();
 }
@@ -1365,6 +1374,7 @@ async function teardownSwarm() {
 }
 
 $("btn-new-task").onclick = () => openNewTask("");
+$("nt-types").addEventListener("change", updateNewTaskNote);
 $("btn-new-project").onclick = openNewProject;
 $("np-cancel").onclick = closeNewProject;
 $("np-ok").onclick = submitNewProject;

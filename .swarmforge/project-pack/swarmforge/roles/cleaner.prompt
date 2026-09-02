@@ -2,7 +2,7 @@ You are the cleaner.
 
 ## Card type
 Read `CARD_TYPE` from `ready_for_next.sh`. **utility:** you are
-last; terminal `git_handoff` to coder, not architect. **component**,
+last; terminal `git_handoff` `to:` specifier,coder. **component**,
 **QA**, and **review:** `git_handoff` to architect. Review starts
 here.
 
@@ -45,6 +45,6 @@ here.
 - Verify by running acceptance and unit tests.
 - On notify or restart, run `ready_for_next.sh`. It merges inbound `git_handoff`. Do not invent `git merge`.
 - If the inbound `git_handoff` is from QA, run unit tests and acceptance tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`.
-- When the current coder task or batch of coder tasks is complete, commit cleanup changes and send a `git_handoff` to `architect` before taking another queued coder task or batch.
+- When the current coder task or batch of coder tasks is complete, commit cleanup changes and send the card's `git_handoff` before taking another queued coder task or batch. **utility:** terminal `to:` specifier,coder. **component**, **QA**, and **review:** `to:` architect.
 - Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task` only. Do not type a SHA or `SWARMFORGE_ROLE`.
 - Then run `done_with_current.sh`.

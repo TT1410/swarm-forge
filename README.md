@@ -169,8 +169,10 @@ project's conf) and starts that pack. Already-open names get an alert.
 
 **Start a task.** Click **New Task** on that project's header bar, give a
 short stable **name**, a **type**, and the **task** text, then **OK**. That
-creates a **waiting** card. The lieutenant starts it (Attention, then
-`pack_board move`) when the plan says so. It does not queue a start note.
+creates a **waiting** card. The lieutenant starts it with
+`pack_board move` into the type's starting lane (no Attention) when
+the plan says so. It does not queue a start note. **LT** does not
+create a card.
 
 **Talk to the lieutenant.** Type in the chat composer (Enter sends,
 Shift+Enter newline). The dashboard stores a durable request and injects

@@ -3043,6 +3043,17 @@
       (is (not (zero? (:exit moved))))
       (is (= "specifier" (task-lane root "HTW"))))))
 
+(deftest pack-board-lieutenant-waiting-wrong-lane-needs-allow
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)]
+    (pack-board root true "create" "--root" (str root)
+                "--name" "place-hunter" "--type" "component" "--waiting")
+    (let [moved (pack-board root false "move" "--root" (str root)
+                            "--name" "place-hunter" "--lane" "coder"
+                            "--caller" "lieutenant")]
+      (is (not (zero? (:exit moved))))
+      (is (= "waiting" (task-lane root "place-hunter"))))))
+
 (deftest forge-state-includes-lieutenant-clarifications
   (let [root (tmp-dir)]
     (seed-mini-forge! root)
@@ -3159,11 +3170,47 @@
                               "SWARMFORGE_TMUX_STUB" argv}}
                        (script "pack_dashboard_request.sh")
                        "clarify" (str question))
-          notes (vec (fs/glob (fs/path root ".swarmforge/notify") "*clarify*.notify"))]
+          notes (vec (fs/glob (fs/path root ".swarmforge/notify") "*clarify*.notify"))
+          inject (slurp argv)]
       (is (zero? (:exit created)) (:err created))
       (is (seq notes))
       (is (str/includes? (slurp (str (first notes))) "event: clarify"))
-      (is (str/includes? (slurp argv) "Notify: clarify coder")))))
+      (is (str/includes? inject "Notify: clarify coder"))
+      (is (str/includes? inject "C-m"))
+      (is (str/includes? inject "C-j")))))
+
+(deftest handoffd-wakes-lieutenant-with-submit-keys
+  (let [root (tmp-dir)
+        bin (fs/path root "bin")
+        fake-tmux (fs/path bin "tmux")
+        tmux-log (fs/path root "tmux.log")
+        dest (fs/path root "projects/cave")]
+    (seed-mini-forge! root)
+    (fs/create-dirs bin)
+    (write-file fake-tmux
+                (str "#!/usr/bin/env sh\n"
+                     "printf '%s\\n' \"$*\" >> \"$TMUX_LOG\"\n"
+                     "exit 0\n"))
+    (run {:dir root} "chmod" "+x" (str fake-tmux))
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
+                  "--test-new-project" (str root) "cave" "two-pack" "m")
+    (setup-pack! dest ["specifier" "coder"])
+    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (write-file (fs/path dest ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (write-file (fs/path dest ".swarmforge/handoffs/outbox/50_approved.handoff")
+                (str "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\n"
+                     "task_id: cave\ntask: cave\ncommit: 1234567890\n"
+                     "approved: true\n\npayload\n"))
+    (let [result (run {:dir dest
+                       :env {"PATH" (str bin ":" (System/getenv "PATH"))
+                             "TMUX_LOG" (str tmux-log)}}
+                      "bb" (script "handoffd.bb") "--once" (str dest))
+          log-text (slurp (str tmux-log))]
+      (is (zero? (:exit result)) (:err result))
+      (is (str/includes? log-text "-t swarmforge-lieutenant"))
+      (is (str/includes? log-text "-l Notify: specifier-handoff"))
+      (is (str/includes? log-text "C-m"))
+      (is (str/includes? log-text "C-j")))))
 
 (deftest forge-lieutenant-heat-rises
   (let [root (tmp-dir)]
@@ -3192,9 +3239,33 @@
                      "esac\n"))
     (run {:dir root} "chmod" "+x" (str fake-tmux))
     (let [result (pack-web-env root {"PATH" (str bin ":" (System/getenv "PATH"))}
-                               "--test-pane" (str root) "specifier")]
+                               "--test-pane" (str root) "specifier")
+          out (:out result)]
       (is (zero? (:exit result)))
-      (is (str/includes? (:out result) "new tail still on screen")))))
+      (is (str/includes? out "new tail still on screen"))
+      (is (= 1 (count (re-seq #"old line" out)))))))
+
+(deftest pack-web-pane-capture-keeps-history-when-visible-is-already-in-it
+  (let [root (tmp-dir)
+        bin (fs/path root "bin")
+        fake-tmux (fs/path bin "tmux")]
+    (setup-pack! root)
+    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (write-file fake-tmux
+                (str "#!/usr/bin/env sh\n"
+                     "args=\" $* \"\n"
+                     "case \"$args\" in\n"
+                     "  *' capture-pane '*' -S -'*) printf 'old history\\nvisible line\\n' ;;\n"
+                     "  *' capture-pane '*) printf 'visible line\\n' ;;\n"
+                     "  *) exit 0 ;;\n"
+                     "esac\n"))
+    (run {:dir root} "chmod" "+x" (str fake-tmux))
+    (let [result (pack-web-env root {"PATH" (str bin ":" (System/getenv "PATH"))}
+                               "--test-pane" (str root) "specifier")
+          out (:out result)]
+      (is (zero? (:exit result)))
+      (is (str/includes? out "old history"))
+      (is (str/includes? out "visible line")))))
 
 (deftest pack-web-retry-audit-writes-findings-not-candidate
   (let [root (tmp-dir)

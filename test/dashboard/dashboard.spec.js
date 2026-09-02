@@ -181,6 +181,10 @@ test.describe("pack dashboard", () => {
     await page.locator(".project-header button", { hasText: "New Task" }).click();
     await expect(page.locator("input[name=nt-type]")).toHaveCount(5);
     await expect(page.locator("input[name=nt-type][value=LT]")).toBeVisible();
+    await expect(page.locator("#nt-note")).toContainText("waiting card");
+    await page.locator("input[name=nt-type][value=LT]").check();
+    await expect(page.locator("#nt-note")).toContainText("Does not create a card");
+    await expect(page.locator("#nt-note")).not.toContainText("waiting card");
   });
 
   test("lane titles show heat, cards do not", async ({ page }) => {
