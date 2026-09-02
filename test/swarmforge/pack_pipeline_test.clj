@@ -374,11 +374,11 @@
       (is (seq (inbox-names root roles "specifier")))
       (finally
         (stop-tmux! sock)))))
-(deftest terminal-handoff-dones-finished-batch-cards-in-sender-lane
+(deftest terminal-handoff-dones-only-the-named-card
   ;; Given two-pack, Command syntax and validation in cleaner, those names in a
-  ;; completed cleaner batch, HTW still in cleaner but not in that batch
+  ;; completed cleaner batch, HTW still in cleaner
   ;; When cleaner queues a terminal git_handoff named HTW
-  ;; Then Command syntax and validation are done and HTW is done
+  ;; Then only HTW is done
   (let [root (tmp-dir)
         roles ["coder" "cleaner"]
         batch (fs/path (pack-worktree root roles "cleaner")
@@ -397,8 +397,8 @@
     (try
       (handoffd-once root)
       (is (= "done" (task-lane root "HTW")))
-      (is (= "done" (task-lane root "Command syntax")))
-      (is (= "done" (task-lane root "validation")))
+      (is (= "cleaner" (task-lane root "Command syntax")))
+      (is (= "cleaner" (task-lane root "validation")))
       (finally
         (stop-tmux! sock)))))
 (deftest terminal-handoff-leaves-unfinished-lane-cards
@@ -422,11 +422,11 @@
       (is (= "cleaner" (task-lane root "Command syntax")))
       (finally
         (stop-tmux! sock)))))
-(deftest terminal-handoff-dones-in-process-batch-cards
+(deftest terminal-handoff-dones-only-named-in-process-batch
   ;; Given two-pack, one liners/validate/HHG in an in-process cleaner batch,
   ;; and Command syntax in cleaner but not in that batch
   ;; When cleaner terminals with task one liners before done_with_current
-  ;; Then the three batch cards are done and Command syntax stays in cleaner
+  ;; Then only one liners is done
   (let [root (tmp-dir)
         roles ["coder" "cleaner"]
         batch (fs/path (in-process-dir root roles "cleaner")
@@ -447,8 +447,8 @@
     (try
       (handoffd-once root)
       (is (= "done" (task-lane root "one liners")))
-      (is (= "done" (task-lane root "validate")))
-      (is (= "done" (task-lane root "Holy Hand Grenade")))
+      (is (= "cleaner" (task-lane root "validate")))
+      (is (= "cleaner" (task-lane root "Holy Hand Grenade")))
       (is (= "cleaner" (task-lane root "Command syntax")))
       (finally
         (stop-tmux! sock)))))

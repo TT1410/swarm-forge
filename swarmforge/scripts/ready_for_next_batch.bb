@@ -149,6 +149,23 @@
         (recur (inc suffix))
         dir))))
 
+(defn reverse-mail? [file]
+  (or (= "true" (header-field file "non-forwarding"))
+      (= "00" (header-value file "priority" "50"))))
+
+(defn batch-card-type [file]
+  (or (not-empty (header-field file "card_type")) ""))
+
+(defn batch-key [file]
+  [(header-value file "priority" "50")
+   (batch-card-type file)
+   (boolean (reverse-mail? file))])
+
+(defn select-batch-files [new-files]
+  (when-let [first-file (first new-files)]
+    (let [key (batch-key first-file)]
+      (filterv #(= key (batch-key %)) new-files))))
+
 (defn -main []
   (let [inbox (inbox-dir)
         new-dir (fs/path inbox "new")
@@ -176,9 +193,8 @@
             (apply fail! 2 (ready-for-next-guard/wait-message active)))
           (if (empty? new-files)
             (println "NO_TASK")
-            (let [batch-priority (header-value (first new-files) "priority" "50")
-                  batch-dir (new-batch-dir in-process-dir)
-                  selected-files (filter #(= batch-priority (header-value % "priority" "50")) new-files)]
+            (let [selected-files (select-batch-files new-files)
+                  batch-dir (new-batch-dir in-process-dir)]
               (fs/create-dir batch-dir)
               (doseq [source-file selected-files]
                 (let [target-file (fs/path batch-dir (fs/file-name source-file))]
@@ -188,7 +204,7 @@
                   (set-header! target-file "dequeued_at" (timestamp))
                   (set-header! target-file "task_base_commit" (current-head))))
               (when (empty? selected-files)
-                (fail! 2 (str "AMBIGUOUS_TASK_STATE: no tasks selected for batch priority " batch-priority ".")))
+                (fail! 2 "AMBIGUOUS_TASK_STATE: no tasks selected for batch."))
               (merge-batch! batch-dir)
               (apply-batch-merge-from! batch-dir)
               (print-batch batch-dir))))))))

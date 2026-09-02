@@ -253,6 +253,55 @@
         (is (= "TASK_NAME: task-a" (nth lines name-i))))
       (is (= 2 (count (fs/glob batch-dir "*.handoff"))))
       (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/20_20260615T000003Z_000003_from_sender_to_receiver.handoff"))))))
+(deftest ready-for-next-batch-keeps-same-priority-of-one-card-type
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root {"receiver" "batch"})
+    (make-queued-handoff! root "50_20260615T000001Z_000001_from_sender_to_receiver.handoff"
+                          {:id "20260615T000001Z_000001_from_sender"
+                           :priority "50" :task "jump" :card-type "component"})
+    (make-queued-handoff! root "50_20260615T000002Z_000002_from_sender_to_receiver.handoff"
+                          {:id "20260615T000002Z_000002_from_sender"
+                           :priority "50" :task "input" :card-type "QA"})
+    (make-queued-handoff! root "50_20260615T000003Z_000003_from_sender_to_receiver.handoff"
+                          {:id "20260615T000003Z_000003_from_sender"
+                           :priority "50" :task "hhg" :card-type "component"})
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "receiver"}}
+                      (script "ready_for_next.sh"))
+          out (:out result)
+          batch-dir (->> (str/split-lines out)
+                         (filter #(str/starts-with? % "BATCH: "))
+                         first
+                         (#(subs % 7)))]
+      (is (str/includes? out "COUNT: 2"))
+      (is (str/includes? out "TASK_NAME: jump"))
+      (is (str/includes? out "TASK_NAME: hhg"))
+      (is (not (str/includes? out "TASK_NAME: input")))
+      (is (= 2 (count (fs/glob batch-dir "*.handoff"))))
+      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_20260615T000002Z_000002_from_sender_to_receiver.handoff"))))))
+(deftest ready-for-next-batch-does-not-mix-reverse-with-forward
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root {"receiver" "batch"})
+    (make-queued-handoff! root "50_20260615T000001Z_000001_from_sender_to_receiver.handoff"
+                          {:id "20260615T000001Z_000001_from_sender"
+                           :priority "50" :task "domain" :card-type "component"
+                           :non-forwarding true})
+    (make-queued-handoff! root "50_20260615T000002Z_000002_from_sender_to_receiver.handoff"
+                          {:id "20260615T000002Z_000002_from_sender"
+                           :priority "50" :task "jump" :card-type "component"})
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "receiver"}}
+                      (script "ready_for_next.sh"))
+          out (:out result)
+          batch-dir (->> (str/split-lines out)
+                         (filter #(str/starts-with? % "BATCH: "))
+                         first
+                         (#(subs % 7)))]
+      (is (str/includes? out "COUNT: 1"))
+      (is (str/includes? out "TASK_NAME: domain"))
+      (is (not (str/includes? out "TASK_NAME: jump")))
+      (is (= 1 (count (fs/glob batch-dir "*.handoff"))))
+      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_20260615T000002Z_000002_from_sender_to_receiver.handoff"))))))
 (deftest done-with-current-replaces-an-existing-completed-file
   (let [root (tmp-dir)
         name "50_retry_htw.handoff"]

@@ -239,42 +239,12 @@
       (card-type/last-on-card? (:type row) from)
       (last-pack-role? from))))
 
-(defn finished-task-keys [role-info]
-  (if-not role-info
-    #{}
-    (->> (concat (inbox-handoffs role-info "completed")
-                 (inbox-handoffs role-info "in_process"))
-         (map #(task-key (:headers (parse-message %))))
-         (remove str/blank?)
-         set)))
-
 (defn board-row-key [line]
   (let [[name _lane _created _updated task-id] (str/split line #"\t" -1)]
     (or (not-empty task-id) name)))
 
 (defn board-row-name [line]
   (first (str/split line #"\t" -1)))
-
-(defn keys-in-lane [lane]
-  (->> (read-lines (board-file))
-       (remove str/blank?)
-       (map #(str/split % #"\t" -1))
-       (filter #(= lane (second %)))
-       (mapcat (fn [cols]
-                 (let [line (str/join "\t" cols)
-                       name (first cols)
-                       key (board-row-key line)]
-                   (distinct [key name]))))))
-
-(defn terminal-task-keys [roles headers]
-  (let [from (get headers "from")
-        named (task-key headers)
-        finished (finished-task-keys (get roles from))
-        in-lane (set (keys-in-lane from))]
-    (->> (cons named (filter finished in-lane))
-         (remove str/blank?)
-         distinct
-         vec)))
 
 (defn board-name-for-key [task-key]
   (some (fn [line]
@@ -324,8 +294,7 @@
              (seq (recipient-list headers)))
     (cond
       (terminal-handoff? roles headers)
-      (doseq [key (terminal-task-keys roles headers)
-              :let [name (or (board-name-for-key key) (get headers "task"))]]
+      (let [name (or (board-name-for-key (task-key headers)) (get headers "task"))]
         (when-not (str/blank? name)
           (pack-board! "done" "--name" name)))
 

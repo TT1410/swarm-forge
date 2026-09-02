@@ -96,7 +96,8 @@
                      role root (str/capitalize role) mode prop))))))
 (defn handoff
   [{:keys [id from to recipient priority type task-id task commit body
-           task-base-commit enqueued-at dequeued-at completed-at]}]
+           task-base-commit enqueued-at dequeued-at completed-at
+           card-type non-forwarding]}]
   (str "id: " id "\n"
        "from: " from "\n"
        "to: " to "\n"
@@ -106,6 +107,8 @@
        (when task-id (str "task_id: " task-id "\n"))
        (when task (str "task: " task "\n"))
        (when commit (str "commit: " commit "\n"))
+       (when card-type (str "card_type: " card-type "\n"))
+       (when non-forwarding (str "non-forwarding: true\n"))
        (when task-base-commit (str "task_base_commit: " task-base-commit "\n"))
        (when enqueued-at (str "enqueued_at: " enqueued-at "\n"))
        (when dequeued-at (str "dequeued_at: " dequeued-at "\n"))
