@@ -26,6 +26,11 @@ You are the cleaner.
 - Keep high-level policy independent of IO, UI, framework, filesystem,
   database, network, and device details.
 - Make low-level adapters depend inward on stable high-level concepts.
+- Adapters must not reimplement a domain question. If a high-level module
+  already answers it, call that module and translate the result. Walking
+  the same facts again is a defect even when the dependency arrow already
+  points inward. A high-level module that exists only for tests while an
+  adapter reimplements it is a defect: wire it or delete it.
 - Split modules that mix unrelated responsibilities or leak implementation
   details across boundaries.
 - Prefer narrow interfaces and private representation.
