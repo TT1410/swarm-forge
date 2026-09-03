@@ -16,6 +16,7 @@
        "  pack_board.sh move <name> <lane>\n"
        "  pack_board.sh done --name <name> [--root <dir>]\n"
        "  pack_board.sh done <name>\n"
+       "  pack_board.sh transition-batch --task-ids <edn-vector> --lane <lane> --caller handoffd [--root <dir>]\n"
        "  pack_board.sh list [--root <dir>]\n"
        "  pack_board.sh lanes [--root <dir>]\n"
        "  pack_board.sh master-lane [--root <dir>]\n"
@@ -32,6 +33,7 @@
 
 (def flags {"--root" :root "--name" :name "--lane" :lane "--text" :text
             "--role" :role "--task-id" :task-id "--type" :type
+            "--task-ids" :task-ids
             "--caller" :caller "--archive" :archive "--act" :act
             "--merge-from" :merge-from "--waiting" :waiting})
 (def bool-flags #{"--waiting"})
@@ -135,6 +137,7 @@
   {"create" create!
    "move" move!
    "done" done!
+   "transition-batch" transition-batch!
    "stop" stop!
    "list" list!
    "lanes" lanes!

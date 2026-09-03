@@ -621,7 +621,7 @@ test.describe("mocked dashboard buttons", () => {
     await expect(names).toHaveText(["Active", "Older", "Newer"]);
   });
 
-  test("cards reserve five lines while batch children stay two lines", async ({ page }) => {
+  test("active cards reserve five lines while batch children and edge cards stay two lines", async ({ page }) => {
     const longStatus = "one two three four five six seven eight nine ten eleven twelve " +
       "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty " +
       "twenty-one twenty-two twenty-three twenty-four twenty-five";
@@ -652,6 +652,20 @@ test.describe("mocked dashboard buttons", () => {
             type: "component",
             status: "",
             project: "htw"
+          },
+          {
+            name: "Waiting card",
+            lane: "waiting",
+            type: "component",
+            status: "Waiting to start",
+            project: "htw"
+          },
+          {
+            name: "Done card",
+            lane: "done",
+            type: "component",
+            status: longStatus,
+            project: "htw"
           }
         ])
       });
@@ -660,12 +674,18 @@ test.describe("mocked dashboard buttons", () => {
     const primary = page.locator('.card[data-task-name="Primary"]');
     const child = page.locator('.card[data-task-name="Child"]');
     const empty = page.locator('.card[data-task-name="No status"]');
+    const waiting = page.locator('.card[data-task-name="Waiting card"]');
+    const done = page.locator('.card[data-task-name="Done card"]');
     await expect(primary).toHaveCSS("height", "96px");
     await expect(empty).toHaveCSS("height", "96px");
     await expect(child).toHaveCSS("height", "45px");
+    await expect(waiting).toHaveCSS("height", "45px");
+    await expect(done).toHaveCSS("height", "45px");
     await expect(primary.locator(".status")).toHaveCount(1);
     await expect(empty.locator(".status")).toHaveCount(1);
     await expect(child.locator(".status")).toHaveCount(0);
+    await expect(waiting.locator(".status")).toHaveCount(0);
+    await expect(done.locator(".status")).toHaveCount(0);
     const statusGeometry = await primary.locator(".status").evaluate((el) => ({
       height: el.clientHeight,
       lineHeight: parseFloat(getComputedStyle(el).lineHeight),
@@ -713,7 +733,7 @@ test.describe("mocked dashboard buttons", () => {
     await expect(page.locator("#new-task-layer")).not.toHaveClass(/open/);
     const card = page.locator('.col[data-lane="waiting"] .card', { hasText: "UiFromMock" });
     await expect(card).toBeVisible();
-    await expect(card.locator(".status")).toHaveText("Waiting to start");
+    await expect(card.locator(".status")).toHaveCount(0);
     await expect(card.locator(".pill")).toHaveText("QA");
     expect(created).toMatchObject({ name: "UiFromMock", type: "QA", project: "htw" });
     await page.locator(".project-header button", { hasText: "New Task" }).click();

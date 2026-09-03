@@ -151,7 +151,7 @@
 (defn task-inbox-files [worktree state task-id task]
   (let [wanted (set (remove str/blank? [task-id task]))]
     (->> (glob-handoffs (fs/path worktree ".swarmforge" "handoffs" "inbox" state))
-         (filter #(contains? wanted (handoff-task-id %)))
+         (filter #(some wanted (handoff-task-ids %)))
          vec)))
 
 (defn write-retry-in-process! [worktree headers]

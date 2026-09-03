@@ -102,7 +102,7 @@
 
 (defn render-message [headers body]
   (let [preferred ["id" "from" "to" "recipient" "priority" "type" "role" "task_id" "task" "commit"
-                   "artifacts" "task_base_commit" "message" "created_at" "enqueued_at" "dequeued_at" "completed_at"]
+                   "artifacts" "batch_task_ids" "task_base_commit" "message" "created_at" "enqueued_at" "dequeued_at" "completed_at"]
         remaining (->> (keys headers)
                        (remove (set preferred))
                        sort)
@@ -239,15 +239,40 @@
   (or (not-empty (get headers "task_id"))
       (get headers "task")))
 
+(defn parsed-batch-task-ids [headers]
+  (let [value (get headers "batch_task_ids")]
+    (if (str/blank? value)
+      []
+      (try
+        (let [parsed (edn/read-string value)]
+          (when (and (vector? parsed)
+                     (every? #(and (string? %) (not (str/blank? %))) parsed))
+            parsed))
+        (catch Exception _ nil)))))
+
+(defn valid-batch-task-ids? [headers]
+  (let [value (get headers "batch_task_ids")
+        parsed (parsed-batch-task-ids headers)]
+    (or (str/blank? value)
+        (and (next parsed)
+             (= parsed (vec (distinct parsed)))
+             (= (task-key headers) (first parsed))))))
+
+(defn batch-task-keys [headers]
+  (let [parsed (parsed-batch-task-ids headers)]
+    (if (seq parsed) parsed [(task-key headers)])))
+
+(defn board-row-for-key [key]
+  (some (fn [line]
+          (let [row (card-type/parse-row project-root line)]
+            (when (or (= key (:id row))
+                      (= (str/lower-case (or key ""))
+                         (str/lower-case (or (:name row) ""))))
+              row)))
+        (or (read-lines (board-file)) [])))
+
 (defn board-row-for-headers [headers]
-  (let [named (task-key headers)]
-    (some (fn [line]
-            (let [row (card-type/parse-row project-root line)]
-              (when (or (= named (:id row))
-                        (= (str/lower-case (or named ""))
-                           (str/lower-case (or (:name row) ""))))
-                row)))
-          (or (read-lines (board-file)) []))))
+  (board-row-for-key (task-key headers)))
 
 (defn terminal-handoff? [_roles headers]
   (let [from (get headers "from")
@@ -311,18 +336,24 @@
              (seq (recipient-list headers)))
     (cond
       (terminal-handoff? roles headers)
-      (let [name (or (board-name-for-key (task-key headers)) (get headers "task"))]
-        (when-not (str/blank? name)
-          (pack-board! "done" "--name" name)))
+      (let [keys (batch-task-keys headers)]
+        (if (next keys)
+          (pack-board! "transition-batch" "--task-ids" (pr-str keys) "--lane" "done")
+          (let [name (or (board-name-for-key (first keys)) (get headers "task"))]
+            (when-not (str/blank? name)
+              (pack-board! "done" "--name" name)))))
 
       (non-forwarding? headers)
       nil
 
       :else
-      (let [key (task-key headers)
-            task (or (board-name-for-key key) (get headers "task"))]
-        (when-not (str/blank? task)
-          (pack-board! "move" "--name" task "--lane" (first (recipient-list headers))))))))
+      (let [keys (batch-task-keys headers)
+            lane (first (recipient-list headers))]
+        (if (next keys)
+          (pack-board! "transition-batch" "--task-ids" (pr-str keys) "--lane" lane)
+          (let [task (or (board-name-for-key (first keys)) (get headers "task"))]
+            (when-not (str/blank? task)
+              (pack-board! "move" "--name" task "--lane" lane))))))))
 
 (defn single-recipient? [headers]
   (let [recipients (recipient-list headers)]
@@ -484,9 +515,15 @@
                (str/blank? (task-key headers)))
       (throw (permanent-error "missing task header")))
     (when (and (= "git_handoff" (get headers "type"))
-               (fs/regular-file? (board-file))
-               (nil? (board-row-for-headers headers)))
-      (throw (permanent-error "unknown board task")))
+               (not (valid-batch-task-ids? headers)))
+      (throw (permanent-error "invalid batch_task_ids header")))
+    (when (and (= "git_handoff" (get headers "type"))
+               (fs/regular-file? (board-file)))
+      (doseq [key (batch-task-keys headers)]
+        (when-not (safe-paths/state-key? key)
+          (throw (permanent-error "invalid board task key")))
+        (when-not (board-row-for-key key)
+          (throw (permanent-error (str "unknown board task " key))))))
     (when (or (empty? recipients) (some str/blank? recipients))
       (throw (permanent-error "missing or empty recipient")))
     (when-not (= (count recipients) (count (distinct recipients)))

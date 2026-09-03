@@ -483,11 +483,11 @@
       (is (= "cleaner" (task-lane root "Command syntax")))
       (finally
         (stop-tmux! sock)))))
-(deftest terminal-handoff-dones-only-named-in-process-batch
+(deftest terminal-handoff-dones-every-named-batch-card
   ;; Given two-pack, one liners/validate/HHG in an in-process cleaner batch,
   ;; and Command syntax in cleaner but not in that batch
   ;; When cleaner terminals with task one liners before done_with_current
-  ;; Then only one liners is done
+  ;; Then every named batch card is done and Command syntax is untouched
   (let [root (tmp-dir)
         roles ["coder" "cleaner"]
         batch (fs/path (in-process-dir root roles "cleaner")
@@ -503,14 +503,40 @@
                              "from: coder\nto: cleaner\npriority: 50\ntype: git_handoff\ntask: validate\n\npayload\n")
                  (write-file (fs/path batch "50_hhg.handoff")
                              "from: coder\nto: cleaner\npriority: 50\ntype: git_handoff\ntask: Holy Hand Grenade\n\npayload\n")
-                 (queue-handoff! root {:from "cleaner" :to "coder" :task "one liners"})
+                 (let [ids (mapv #(:id (task-card root %))
+                                 ["one liners" "validate" "Holy Hand Grenade"])]
+                   (queue-handoff! root {:from "cleaner" :to "coder"
+                                         :task "one liners"
+                                         :task-id (first ids)
+                                         :batch-task-ids ids}))
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
       (is (= "done" (task-lane root "one liners")))
-      (is (= "cleaner" (task-lane root "validate")))
-      (is (= "cleaner" (task-lane root "Holy Hand Grenade")))
+      (is (= "done" (task-lane root "validate")))
+      (is (= "done" (task-lane root "Holy Hand Grenade")))
       (is (= "cleaner" (task-lane root "Command syntax")))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest handoffd-moves-every-batch-card-and-leaves-unrelated-cards
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner"]
+        sock (do (setup-pack! root roles)
+                 (create-task root "pits" "coder")
+                 (create-task root "bats" "coder")
+                 (create-task root "unrelated" "coder")
+                 (let [ids (mapv #(:id (task-card root %)) ["pits" "bats"])]
+                   (queue-handoff! root {:from "coder" :to "cleaner"
+                                         :task "pits"
+                                         :task-id (first ids)
+                                         :batch-task-ids ids}))
+                 (start-tmux! root roles))]
+    (try
+      (handoffd-once root)
+      (is (= "cleaner" (task-lane root "pits")))
+      (is (= "cleaner" (task-lane root "bats")))
+      (is (= "coder" (task-lane root "unrelated")))
       (finally
         (stop-tmux! sock)))))
 (deftest six-pack-qa-broadcast-marks-the-card-done

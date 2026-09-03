@@ -30,6 +30,22 @@
   (or (not-empty (header-field file "task_id"))
       (header-field file "task")))
 
+(defn parsed-task-id-list [value]
+  (when-not (str/blank? value)
+    (try
+      (let [parsed (edn/read-string value)]
+        (when (and (vector? parsed)
+                   (every? #(and (string? %) (not (str/blank? %))) parsed))
+          parsed))
+      (catch Exception _ nil))))
+
+(defn handoff-task-ids [file]
+  (->> (cons (handoff-task-id file)
+             (or (parsed-task-id-list (header-field file "batch_task_ids")) []))
+       (remove str/blank?)
+       distinct
+       vec))
+
 (defn top-batch-task []
   (let [batches (batch-dirs (in-process-dir))]
     (when (= 1 (count batches))
@@ -45,6 +61,12 @@
 (defn in-process-task-files []
   (into (handoff-files (in-process-dir))
         (mapcat handoff-files (batch-dirs (in-process-dir)))))
+
+(defn current-work-task-ids []
+  (->> (in-process-task-files)
+       (mapcat handoff-task-ids)
+       distinct
+       vec))
 
 (defn current-in-process-task-id []
   (when-let [file (first (in-process-task-files))]
@@ -109,6 +131,14 @@
     (cond-> headers
       id (assoc "task_id" id)
       name (assoc "task" name))))
+
+(defn with-batch-task-ids [headers]
+  (if-not (= "git_handoff" (get headers "type"))
+    headers
+    (let [ids (current-work-task-ids)]
+      (if (next ids)
+        (assoc headers "batch_task_ids" (pr-str ids))
+        headers))))
 
 (defn with-board-task [headers sender]
   (if-not (= "git_handoff" (get headers "type"))

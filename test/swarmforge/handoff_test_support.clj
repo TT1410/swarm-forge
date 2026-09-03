@@ -111,7 +111,7 @@
 (defn handoff
   [{:keys [id from to recipient priority type task-id task commit body
            task-base-commit enqueued-at dequeued-at completed-at
-           card-type non-forwarding]}]
+           card-type non-forwarding batch-task-ids]}]
   (let [id (or id (str "test-" (System/nanoTime)))]
     (str "id: " id "\n"
        "from: " from "\n"
@@ -121,6 +121,7 @@
        "type: " type "\n"
        (when task-id (str "task_id: " task-id "\n"))
        (when task (str "task: " task "\n"))
+       (when batch-task-ids (str "batch_task_ids: " (pr-str batch-task-ids) "\n"))
        (when commit (str "commit: " commit "\n"))
        (when card-type (str "card_type: " card-type "\n"))
        (when non-forwarding (str "non-forwarding: true\n"))

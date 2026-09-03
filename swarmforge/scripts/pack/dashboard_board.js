@@ -164,14 +164,15 @@ function columnEl(lane, tasks, project, heats) {
   const body = document.createElement("div");
   body.className = "col-body";
   body.id = "lane-" + (project ? project + "-" : "") + lane;
+  const thinLane = lane === "waiting" || lane === "done";
   orderedLaneGroups(tasks, lane).forEach((group) => {
     if (group.length > 1) {
       const wrap = document.createElement("div");
       wrap.className = "batch";
-      group.forEach((task, idx) => wrap.appendChild(cardEl(task, {thin: idx > 0})));
+      group.forEach((task, idx) => wrap.appendChild(cardEl(task, {thin: thinLane || idx > 0})));
       body.appendChild(wrap);
     } else {
-      body.appendChild(cardEl(group[0]));
+      body.appendChild(cardEl(group[0], {thin: thinLane}));
     }
   });
   col.append(heading, body);

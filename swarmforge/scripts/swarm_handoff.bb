@@ -31,7 +31,7 @@
 
 (def reserved-fields #{"id" "from" "role" "recipient" "created_at" "enqueued_at"
                        "dequeued_at" "completed_at" "task_base_commit" "non-forwarding"
-                       "card_type"})
+                       "card_type" "batch_task_ids"})
 (def allowed-fields #{"type" "to" "priority" "task_id" "task" "commit" "message"})
 (def allowed-types #{"git_handoff" "note"})
 (def script-dir (fs/parent *file*))
@@ -140,6 +140,8 @@
                       (str "task: " (get headers "task"))
                       (str "commit: " canonical-commit)
                       (str "artifacts: " artifacts))
+                (and (= "git_handoff" type) (not (str/blank? (get headers "batch_task_ids"))))
+                (conj (str "batch_task_ids: " (get headers "batch_task_ids")))
                 (and (= "git_handoff" type) (not (str/blank? (get headers "card_type"))))
                 (conj (str "card_type: " (get headers "card_type")))
                 (and (= "git_handoff" type) (not (str/blank? (current-task-base))))

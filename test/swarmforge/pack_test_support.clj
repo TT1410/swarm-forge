@@ -160,7 +160,7 @@
 (defn increment-audit! [root task-id]
   (pack-board root true "increment-audit" "--root" (str root)
               "--task-id" task-id "--caller" "handoffd"))
-(defn queue-handoff! [root {:keys [from to task artifacts non-forwarding priority body]}]
+(defn queue-handoff! [root {:keys [from to task task-id batch-task-ids artifacts non-forwarding priority body]}]
   (let [priority (or priority "50")
         id (str "test-" (System/nanoTime))]
     (write-file
@@ -171,7 +171,9 @@
           "to: " to "\n"
           "priority: " priority "\n"
           "type: git_handoff\n"
+          (when task-id (str "task_id: " task-id "\n"))
           "task: " task "\n"
+          (when batch-task-ids (str "batch_task_ids: " (pr-str batch-task-ids) "\n"))
           (when artifacts (str "artifacts: " artifacts "\n"))
           (when non-forwarding "non-forwarding: true\n")
           "\n"
@@ -207,7 +209,7 @@
 (defn in-process-dir [root roles role]
   (fs/path (pack-worktree root roles role)
            ".swarmforge/handoffs/inbox/in_process"))
-(defn put-in-process! [root roles role {:keys [from task filename]}]
+(defn put-in-process! [root roles role {:keys [from task task-id batch-task-ids filename]}]
   (write-file
    (fs/path (in-process-dir root roles role)
             (or filename (str "50_from_" from "_to_" role ".handoff")))
@@ -215,7 +217,9 @@
         "to: " role "\n"
         "priority: 50\n"
         "type: git_handoff\n"
+        (when task-id (str "task_id: " task-id "\n"))
         "task: " task "\n"
+        (when batch-task-ids (str "batch_task_ids: " (pr-str batch-task-ids) "\n"))
         "\n"
         "payload\n")))
 (defn web-state [root]

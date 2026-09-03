@@ -106,6 +106,26 @@
           files (mapv fs/file-name (fs/list-dir dir))]
       (is (= ["1.md" "2.md"] (vec (sort files))))
       (is (str/includes? (slurp (str (fs/path dir "1.md"))) "Audit 1")))))
+
+(deftest pack-board-transitions-an-exact-batch-atomically
+  (let [root (tmp-dir)
+        _ (setup-pack! root ["specifier" "coder"])
+        _ (create-task root "pits" "specifier")
+        _ (create-task root "bats" "specifier")
+        ids (mapv #(:id (task-card root %)) ["pits" "bats"])
+        invalid (pack-board root false
+                            "transition-batch" "--root" (str root)
+                            "--task-ids" (pr-str [(first ids) "missing-id"])
+                            "--lane" "coder" "--caller" "handoffd")]
+    (is (pos? (:exit invalid)))
+    (is (= "specifier" (task-lane root "pits")))
+    (is (= "specifier" (task-lane root "bats")))
+    (is (zero? (:exit (pack-board root true
+                                  "transition-batch" "--root" (str root)
+                                  "--task-ids" (pr-str ids)
+                                  "--lane" "coder" "--caller" "handoffd"))))
+    (is (= "coder" (task-lane root "pits")))
+    (is (= "coder" (task-lane root "bats")))))
 (deftest pack-board-create-type-sets-lane-and-rejects-lane-flag
   (let [root (tmp-dir)
         _ (setup-pack! root six-pack-roles)]

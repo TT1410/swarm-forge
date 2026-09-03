@@ -1005,7 +1005,7 @@
       (is (zero? (:exit result)))
       (is (str/includes? (str content) "artifacts:"))
       (is (str/includes? (str content) "side.md")))))
-(deftest swarm-handoff-uses-top-in-process-batch-task-name
+(deftest swarm-handoff-carries-every-in-process-batch-task-id
   ;; Given an in-process batch whose first item is Command syntax, and HTW still in the sender lane
   ;; When swarm_handoff queues a git_handoff drafted as HTW
   ;; Then the queued file uses Command syntax
@@ -1017,17 +1017,19 @@
         _ (write-file (fs/path batch "50_20260824T181141Z_000002_from_coder_to_sender.handoff")
                       (handoff {:id "20260824T181141Z_000002_from_coder"
                                 :from "coder" :to "sender" :recipient "sender"
-                                :priority "50" :type "git_handoff" :task "Command syntax"
+                                :priority "50" :type "git_handoff"
+                                :task-id "command-id" :task "Command syntax"
                                 :commit (head-sha root)}))
         _ (write-file (fs/path batch "50_20260824T181302Z_000003_from_coder_to_sender.handoff")
                       (handoff {:id "20260824T181302Z_000003_from_coder"
                                 :from "coder" :to "sender" :recipient "sender"
-                                :priority "50" :type "git_handoff" :task "validate"
+                                :priority "50" :type "git_handoff"
+                                :task-id "validate-id" :task "validate"
                                 :commit (head-sha root)}))
         _ (write-file (fs/path root ".swarmforge" "board" "tasks.tsv")
                       (str "HTW\tsender\t2026-08-24T18:05:33Z\t2026-08-24T18:05:33Z\n"
-                           "Command syntax\tsender\t2026-08-24T18:06:05Z\t2026-08-24T18:06:05Z\n"
-                           "validate\tsender\t2026-08-24T18:06:45Z\t2026-08-24T18:06:45Z\n"))
+                           "Command syntax\tsender\t2026-08-24T18:06:05Z\t2026-08-24T18:06:05Z\tcommand-id\n"
+                           "validate\tsender\t2026-08-24T18:06:45Z\t2026-08-24T18:06:45Z\tvalidate-id\n"))
         _ (write-file (fs/path root "slice.md") "work\n")
         _ (run {:dir root} "git" "add" "slice.md")
         _ (run {:dir root} "git" "commit" "-q" "-m" "Add slice")
@@ -1039,7 +1041,43 @@
           content (when (zero? (:exit result)) (read-file queued))]
       (is (zero? (:exit result)))
       (is (str/includes? (str content) "task: Command syntax\n"))
+      (is (= "[\"command-id\" \"validate-id\"]"
+             (header queued "batch_task_ids")))
+      (is (= 1 (board-audit-count root "Command syntax")))
+      (is (= 1 (board-audit-count root "validate")))
       (is (not (str/includes? (str content) "task: HTW\n"))))))
+
+(deftest swarm-handoff-preserves-a-propagated-batch-through-task-mode
+  (let [root (tmp-dir)
+        base (init-repo! root)
+        _ (setup-project! root {"sender" "task" "receiver" "task"})
+        current (fs/path root ".swarmforge/handoffs/inbox/in_process/50_batch.handoff")
+        _ (write-file current
+                      (handoff {:id "batch-from-cleaner"
+                                :from "cleaner" :to "sender" :recipient "sender"
+                                :priority "50" :type "git_handoff"
+                                :task-id "pits-id" :task "pits"
+                                :batch-task-ids ["pits-id" "bats-id" "wumpus-id"]
+                                :task-base-commit base
+                                :commit (head-sha root)}))
+        _ (write-file (fs/path root ".swarmforge/board/tasks.tsv")
+                      (str "pits\tsender\tcreated\tupdated\tpits-id\n"
+                           "bats\tsender\tcreated\tupdated\tbats-id\n"
+                           "wumpus\tsender\tcreated\tupdated\twumpus-id\n"))
+        _ (write-file (fs/path root "slice.md") "work\n")
+        _ (run {:dir root} "git" "add" "slice.md")
+        _ (run {:dir root} "git" "commit" "-q" "-m" "Add slice")
+        draft (fs/path root "tmp" "batch.handoff")]
+    (write-file draft "type: git_handoff\nto: receiver\npriority: 50\ntask: pits\n")
+    (let [result (audit-and-submit-git-handoff
+                  {:dir root :env {"SWARMFORGE_ROLE" "sender"}} draft)
+          queued (queued-path (:out result))]
+      (is (zero? (:exit result)))
+      (is (= "[\"pits-id\" \"bats-id\" \"wumpus-id\"]"
+             (header queued "batch_task_ids")))
+      (is (= 1 (board-audit-count root "pits")))
+      (is (= 1 (board-audit-count root "bats")))
+      (is (= 1 (board-audit-count root "wumpus"))))))
 (deftest swarm-handoff-review-terminal-includes-upstream-including-before-start
   (let [root (tmp-dir)
         _ (init-repo! root)

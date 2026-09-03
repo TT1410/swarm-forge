@@ -219,7 +219,7 @@
 
 (defn active-card-names [root role]
   (let [row (role-row root role)
-        names (when row (in-process-task-names (in-process-for-row row)))
+        names (when row (in-process-task-names root (in-process-for-row row)))
         cards (filter #(= role (:lane %)) (board-tasks root))]
     (if (seq names)
       (set names)
@@ -259,14 +259,24 @@
              (pane-status-for root role)
              :else "waiting in queue"))))
 
-(defn batch-task-names [dir]
-  (in-process-task-names (handoff-files dir)))
+(defn batch-task-names [root dir]
+  (in-process-task-names root (handoff-files dir)))
 
-(defn multi-batches [dir]
+(defn multi-batches [root dir]
   (for [b (batch-dirs dir)
-        :let [names (batch-task-names b)]
+        :let [names (batch-task-names root b)]
         :when (next names)]
     [(fs/file-name b) names]))
+
+(defn propagated-batches [root dir]
+  (for [path (handoff-files dir)
+        :let [names (in-process-task-names root [path])]
+        :when (next names)]
+    [(str "handoff-" (fs/file-name path)) names]))
+
+(defn indexed-batches [root dir]
+  (concat (multi-batches root dir)
+          (propagated-batches root dir)))
 
 (defn index-batches [idx pairs]
   (reduce (fn [m [id names]]
@@ -280,8 +290,8 @@
               (if (str/blank? wt)
                 idx
                 (index-batches idx
-                               (concat (multi-batches (fs/path wt ".swarmforge" "handoffs" "inbox" "completed"))
-                                       (multi-batches (in-process-dir wt)))))))
+                               (concat (indexed-batches root (fs/path wt ".swarmforge" "handoffs" "inbox" "completed"))
+                                       (indexed-batches root (in-process-dir wt)))))))
           {}
           (role-rows root)))
 

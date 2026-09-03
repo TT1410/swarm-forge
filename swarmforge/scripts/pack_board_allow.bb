@@ -208,3 +208,47 @@
 
 (defn done! [opts]
   (set-lane! opts "done"))
+
+(defn parse-batch-task-ids! [value]
+  (let [parsed (try
+                 (edn/read-string (or value ""))
+                 (catch Exception _ nil))]
+    (when-not (and (vector? parsed)
+                   (next parsed)
+                   (every? #(and (string? %) (safe-paths/state-key? %)) parsed)
+                   (= parsed (vec (distinct parsed))))
+      (exit! 1 "--task-ids must be an EDN vector of at least two distinct task IDs"))
+    parsed))
+
+(defn row-key [root line]
+  (let [row (card-type/parse-row root line)]
+    (or (not-empty (:id row)) (:name row))))
+
+(defn transition-batch! [opts]
+  (let [lane (:lane opts)
+        act (if (= "done" lane) "done" "move")
+        root (resolve-root opts)
+        file (tasks-file root)
+        ids (parse-batch-task-ids! (:task-ids opts))
+        wanted (set ids)]
+    (require-caller! opts act)
+    (require-value! lane "lane")
+    (when-not (or (#{"waiting" "done"} lane)
+                  (some #{lane} (pack-role-names root)))
+      (exit! 1 (str "Unknown lane: " lane)))
+    (with-board-lock
+      root
+      (fn []
+        (let [rows (read-rows file)
+              present (set (map #(row-key root %) rows))
+              missing (remove present ids)]
+          (when (seq missing)
+            (exit! 1 (str "Unknown task IDs: " (pr-str (vec missing)))))
+          (write-rows file
+                      (mapv (fn [line]
+                              (if (contains? wanted (row-key root line))
+                                (let [row (card-type/parse-row root line)]
+                                  (card-type/format-row
+                                   (assoc row :lane lane :updated (timestamp))))
+                                line))
+                            rows)))))))

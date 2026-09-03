@@ -44,17 +44,24 @@
          vec)
     []))
 
-(defn handoff-task-id [path]
+(defn handoff-task-ids [path]
   (let [headers (:headers (parse-message path))]
-    (or (not-empty (get headers "task_id"))
-        (get headers "task"))))
+    (vec (distinct (remove str/blank?
+                           (let [batch (header-batch-task-ids headers)]
+                             (if (seq batch)
+                               batch
+                               [(or (not-empty (get headers "task_id"))
+                                    (get headers "task"))])))))))
+
+(defn handoff-task-id [path]
+  (first (handoff-task-ids path)))
 
 (defn task-handoffs [root task-id & aliases]
-  (->> (handoff-dirs root)
-       (mapcat glob-handoffs)
-       (filter #(contains? (set (remove str/blank? (cons task-id aliases)))
-                           (handoff-task-id %)))
-       vec))
+  (let [wanted (set (remove str/blank? (cons task-id aliases)))]
+    (->> (handoff-dirs root)
+         (mapcat glob-handoffs)
+         (filter #(some wanted (handoff-task-ids %)))
+         vec)))
 
 (defn copy-into [dir path]
   (when (fs/regular-file? path)

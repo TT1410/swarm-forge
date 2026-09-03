@@ -334,6 +334,25 @@
       (is (= (get-in by-name ["Command syntax" :batch])
              (get-in by-name ["validation" :batch])))
       (is (some? (get-in by-name ["Command syntax" :batch]))))))
+
+(deftest pack-web-state-groups-a-propagated-batch-in-task-mode
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner"]
+        _ (setup-pack! root roles)
+        _ (create-task root "pits" "cleaner")
+        _ (create-task root "bats" "cleaner")
+        ids (mapv #(:id (task-card root %)) ["pits" "bats"])
+        _ (put-in-process! root roles "cleaner"
+                           {:from "coder" :task "pits" :task-id (first ids)
+                            :batch-task-ids ids})
+        state (web-state root)
+        by-name (into {} (map (juxt :name identity) (:tasks state)))
+        row (some #(when (= "cleaner" (:role %)) %) (:work_in_flight state))]
+    (is (= (get-in by-name ["pits" :batch])
+           (get-in by-name ["bats" :batch])))
+    (is (some? (get-in by-name ["pits" :batch])))
+    (is (= ["pits" "bats"] (:tasks row)))
+    (is (= ["pits" "bats"] (:batch_tasks row)))))
 (deftest pack-web-non-codex-status-still-uses-ill
   (let [root (tmp-dir)
         _ (setup-pack! root)

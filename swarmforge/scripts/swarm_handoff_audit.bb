@@ -10,6 +10,11 @@
   (or (not-empty (get headers "task_id"))
       (get headers "task")))
 
+(defn audit-task-ids [headers]
+  (vec (distinct (remove str/blank?
+                         (cons (audit-task-id headers)
+                               (parsed-task-id-list (get headers "batch_task_ids")))))))
+
 (defn audit-file [sender task-id]
   (fs/path (sender-audit-dir sender)
            (str (sha256 task-id) ".edn")))
@@ -61,6 +66,7 @@
 (defn invocation-fingerprint [draft sender headers]
   {:sender sender
    :task-id (audit-task-id headers)
+   :batch-task-ids (audit-task-ids headers)
    :type (get headers "type")
    :recipients (vec (str/split (or (get headers "to") "") #"," -1))
    :priority (get headers "priority")
@@ -83,6 +89,7 @@
   {:version 1
    :sender sender
    :task-id (audit-task-id headers)
+   :batch-task-ids (audit-task-ids headers)
    :type (get headers "type")
    :recipients (vec recipients)
    :priority (get headers "priority")
@@ -144,9 +151,8 @@
            (str/join "\n"))
       "")))
 
-(defn persist-durable-audit! [candidate]
-  (let [task-id (:task-id candidate)
-        n (latest-durable-audit-n task-id)
+(defn persist-durable-audit! [candidate task-id]
+  (let [n (latest-durable-audit-n task-id)
         file (safe-paths/id-path!
               (safe-paths/state-key-path! (fs/path (project-root) ".swarmforge" "board" "audits")
                                           task-id "")
@@ -160,6 +166,8 @@
                  "Sender: " (:sender candidate) "\n"
                  "Commit: " (:commit candidate) "\n"
                  "Task: " (:task candidate) "\n"
+                 (when (next (:batch-task-ids candidate))
+                   (str "Batch task IDs: " (pr-str (:batch-task-ids candidate)) "\n"))
                  "Type: " (:type candidate) "\n"
                  (when (seq (:recipients candidate))
                    (str "Recipients: " (str/join ", " (:recipients candidate)) "\n"))
@@ -179,7 +187,8 @@
           (do
             (delete-sender-audits! (:sender candidate))
             (write-audit! path candidate)
-            (increment-audit-count! (:task-id candidate))
-            (persist-durable-audit! candidate)
+            (doseq [task-id (:batch-task-ids candidate)]
+              (increment-audit-count! task-id)
+              (persist-durable-audit! candidate task-id))
             (print-audit-required! candidate)
             nil))))))

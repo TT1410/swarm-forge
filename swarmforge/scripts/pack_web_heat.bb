@@ -129,25 +129,54 @@
    :updated_at (or updated "")
    :activity activity})
 
-(defn in-process-task-names [files]
+(defn header-batch-task-ids [headers]
+  (let [value (get headers "batch_task_ids")]
+    (if (str/blank? value)
+      []
+      (try
+        (let [parsed (edn/read-string value)]
+          (if (and (vector? parsed)
+                   (every? #(and (string? %) (not (str/blank? %))) parsed))
+            parsed
+            []))
+        (catch Exception _ [])))))
+
+(defn handoff-work-task-keys [path]
+  (let [headers (:headers (parse-message path))
+        primary (or (not-empty (get headers "task_id")) (get headers "task"))
+        batch (header-batch-task-ids headers)]
+    (vec (distinct (remove str/blank? (if (seq batch) batch [primary]))))))
+
+(defn board-task-for-key [root key]
+  (some #(when (or (= key (:id %)) (= key (:name %))) %) (board-tasks root)))
+
+(defn in-process-task-names [root files]
   (->> files
-       (map #(get-in (parse-message %) [:headers "task"]))
+       (mapcat handoff-work-task-keys)
+       (map #(or (:name (board-task-for-key root %)) %))
        (remove str/blank?)
        distinct
        vec))
 
-(defn work-task-names [files cards]
-  (let [from-files (in-process-task-names files)
+(defn work-task-names [root files cards]
+  (let [from-files (in-process-task-names root files)
         from-cards (mapv :name cards)]
     (vec (if (seq from-files) from-files from-cards))))
 
-(defn in-process-batch-task-names [row]
+(defn in-process-batch-task-names [root row]
   (let [worktree (nth row 2 nil)
         dir (when-not (str/blank? worktree) (in-process-dir worktree))
-        batches (when dir (batch-dirs dir))]
-    (if (= 1 (count batches))
-      (in-process-task-names (handoff-files (first batches)))
-      [])))
+        batches (when dir (batch-dirs dir))
+        files (when dir (handoff-files dir))
+        names (cond
+                (= 1 (count batches))
+                (in-process-task-names root (handoff-files (first batches)))
+
+                (some #(next (handoff-work-task-keys %)) files)
+                (in-process-task-names root files)
+
+                :else [])]
+    (if (next names) names [])))
 
 (defn role-heats [root]
   (let [socket (tmux-socket root)]
@@ -168,8 +197,8 @@
         card (first cards)
         busy? (boolean (or path card))
         alive? (session-alive? socket (session-name row))
-        names (work-task-names files cards)
-        batch-names (in-process-batch-task-names row)]
+        names (work-task-names root files cards)
+        batch-names (in-process-batch-task-names root row)]
     (queue-row role names batch-names busy? alive?
                (get heats role 0)
                (or (:updated_at from-file) (:updated_at card) ""))))
@@ -186,7 +215,7 @@
     (boolean
      (and (not (#{"waiting" "done"} role))
           (when-let [row (role-row root role)]
-            (contains? (set (in-process-task-names (in-process-for-row row)))
+            (contains? (set (in-process-task-names root (in-process-for-row row)))
                        (:name task)))))))
 
 (defn task-with-heat [root heats task]
