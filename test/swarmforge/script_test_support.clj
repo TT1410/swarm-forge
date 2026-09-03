@@ -29,6 +29,8 @@
   (run {:dir root} "git" "commit" "-q" "-m" "Initial commit"))
 (defn tmp-dir []
   (fs/create-temp-dir {:prefix "swarmforge-script-test."}))
+(defn tmp-tmux-socket []
+  (str "/tmp/swarmforge-test-" (System/nanoTime) ".sock"))
 (defn script [name]
   (str (fs/path scripts-dir name)))
 (defn write-pack-conf! [root conf]
@@ -80,4 +82,3 @@
   (is (not (fs/exists? (fs/path host "swarmforge/constitution/articles/project.prompt"))))
   (is (fs/directory? (fs/path host "projects")))
   (is (fs/exists? (fs/path host "swarm"))))
-

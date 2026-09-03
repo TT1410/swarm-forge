@@ -19,6 +19,13 @@ function seedProject(project) {
       `coder\tcoder\t${project}/.worktrees/coder\tcoder\tCoder\tcodex\ttask\n`
   );
   writeFile(
+    path.join(project, ".swarmforge/routes.tsv"),
+    "utility\tspecifier,coder\n" +
+      "component\tspecifier,coder\n" +
+      "QA\tspecifier,coder\n" +
+      "review\tspecifier,coder\n"
+  );
+  writeFile(
     path.join(project, ".swarmforge/board/tasks.tsv"),
     "HTW\tspecifier\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-htw\t0\tQA\n" +
       "UiShim\twaiting\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-uishim\t0\tcomponent\n"
@@ -75,7 +82,11 @@ async function startDashboard() {
   });
   const url = await new Promise((resolve, reject) => {
     let buf = "";
-    const timer = setTimeout(() => reject(new Error("pack_web --serve timed out")), 10000);
+    let errBuf = "";
+    const timer = setTimeout(
+      () => reject(new Error("pack_web --serve timed out\n" + errBuf)),
+      10000
+    );
     child.stdout.on("data", (chunk) => {
       buf += chunk.toString();
       const line = buf.split("\n").find((item) => item.startsWith("http://"));
@@ -84,10 +95,13 @@ async function startDashboard() {
         resolve(line.trim());
       }
     });
+    child.stderr.on("data", (chunk) => {
+      errBuf += chunk.toString();
+    });
     child.on("error", reject);
     child.on("exit", (code) => {
       clearTimeout(timer);
-      reject(new Error("pack_web exited " + code + " " + buf));
+      reject(new Error("pack_web exited " + code + "\n" + buf + errBuf));
     });
   });
   return { root, child, url };
@@ -505,6 +519,7 @@ function mockForgeState(tasks, extras) {
     projects: extras.projects || [{
       name: "htw",
       open: true,
+      card_types: extras.card_types || ["utility", "component", "QA", "review"],
       lanes: ["waiting", "specifier", "coder", "done"],
       tasks: tasks || [],
       role_heats: extras.role_heats || { specifier: 0, coder: 0 },

@@ -157,6 +157,32 @@ verify_pack_roles() {
   done < <(awk '/^window/ { print $2 }' "$dest/swarmforge/swarmforge.conf")
 }
 
+ensure_host_gitignore() {
+  local file=".gitignore"
+  local begin="# BEGIN SWARMFORGE FORGE"
+  local end="# END SWARMFORGE FORGE"
+  local tmp_file="$tmp_dir/host.gitignore"
+  touch "$file"
+  awk -v begin="$begin" -v end="$end" '
+    $0 == begin { inside=1; next }
+    $0 == end { inside=0; next }
+    !inside && $0 != "/projects/" &&
+      $0 != ".worktrees/" && $0 != "/.worktrees/" &&
+      $0 != ".swarmforge/*" && $0 != "/.swarmforge/*" &&
+      $0 != "!.swarmforge/project-pack/" && $0 != "!/.swarmforge/project-pack/" &&
+      $0 != "!.swarmforge/project-pack/**" && $0 != "!/.swarmforge/project-pack/**" { print }
+  ' "$file" > "$tmp_file"
+  [[ ! -s "$tmp_file" ]] || printf '\n' >> "$tmp_file"
+  printf '%s\n' "$begin" \
+    '/projects/' \
+    '/.worktrees/' \
+    '/.swarmforge/*' \
+    '!/.swarmforge/project-pack/' \
+    '!/.swarmforge/project-pack/**' \
+    "$end" >> "$tmp_file"
+  mv "$tmp_file" "$file"
+}
+
 pack_tree() {
   local name="$1"
   if [[ -n "$packs_src" && -d "$packs_src/$name" ]]; then
@@ -243,6 +269,7 @@ fi
 
 mkdir -p projects
 copy_host_files "$host_dir"
+ensure_host_gitignore
 
 if [[ "$product" == "lieutenant" ]]; then
   install_project_pack

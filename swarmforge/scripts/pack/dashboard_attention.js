@@ -300,6 +300,9 @@ function chimeNewAttention(data) {
   (data.board_allows || []).forEach((item) => {
     if (item && item.id) keys.push("b:" + (item.project || "") + ":" + item.id);
   });
+  (data.delivery_failures || []).forEach((item) => {
+    if (item && item.attention_id) keys.push("d:" + (item.project || "") + ":" + item.attention_id);
+  });
   let fresh = false;
   if (attentionPrimed) {
     keys.forEach((key) => {
@@ -446,6 +449,28 @@ function renderApprovals(items) {
   (items || []).forEach((item) => box.appendChild(attentionRow(item)));
 }
 
+function deliveryFailureRow(item) {
+  const row = document.createElement("div");
+  row.className = "att-row";
+  const pill = document.createElement("span");
+  pill.className = "pill pill-warn";
+  pill.textContent = "Delivery retry";
+  const summary = attentionWorkPair(item.project, item.task || item.id);
+  const detail = document.createElement("span");
+  detail.className = "att-summary";
+  detail.textContent = "Attempt " + (item.attempt || "?") + ": " + (item.error || "delivery failed");
+  detail.title = detail.textContent;
+  row.append(pill, summary, detail);
+  return row;
+}
+
+function renderDeliveryFailures(items) {
+  const box = $("attention-delivery");
+  if (!box) return;
+  box.replaceChildren();
+  (items || []).forEach((item) => box.appendChild(deliveryFailureRow(item)));
+}
+
 function boardAllowRow(item) {
   const row = document.createElement("div");
   row.className = "att-row";
@@ -495,8 +520,8 @@ function renderClarifications(items) {
 
 function renderAttention(data) {
   chimeNewAttention(data);
+  renderDeliveryFailures(data.delivery_failures);
   renderApprovals(data.approvals);
   renderBoardAllows(data.board_allows);
   renderClarifications(data.clarifications);
 }
-

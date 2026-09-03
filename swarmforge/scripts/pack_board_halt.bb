@@ -144,7 +144,7 @@
                 line (find-task rows name)]
             (when-not line
               (exit! 1 (str "Unknown task name: " name)))
-            (reset! row (card-type/parse-row line))
-            (write-rows file (mapv #(rewrite-lane % name "waiting") rows)))))
+            (reset! row (card-type/parse-row root line))
+            (write-rows file (mapv #(rewrite-lane root % name "waiting") rows)))))
       (halt-live-card! root @row)
       (consume-allow! opts "stop"))))

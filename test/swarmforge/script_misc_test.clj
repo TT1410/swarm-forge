@@ -251,6 +251,53 @@
       (is (str/includes? (commit-body root) "By specifier."))
       (finally
         (fs/delete-tree root)))))
+(deftest commit-msg-hook-composes-idempotently-and-restores-existing-hook
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (let [hook (fs/path root ".git/hooks/commit-msg")
+            saved (fs/path root ".git/hooks/commit-msg.before-swarmforge")
+            original (str "#!/bin/sh\n"
+                          "grep -q 'By specifier\\.' \"$1\" || exit 42\n"
+                          "printf 'called\\n' > .git/original-hook.called\n")]
+        (write-file hook original)
+        (run {:dir root} "chmod" "+x" (str hook))
+        (run {:dir root} (script "swarmforge.bb") "--test-install-hooks" (str root))
+        (run {:dir root} (script "swarmforge.bb") "--test-install-hooks" (str root))
+        (is (= original (slurp (str saved))))
+        (is (str/includes? (slurp (str hook)) "SWARMFORGE COMBINED COMMIT-MSG HOOK"))
+        (write-file (fs/path root "work.txt") "work\n")
+        (run {:dir root} "git" "add" "work.txt")
+        (let [commit (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"}}
+                          "git" "commit" "-q" "-m" "Compose hooks")]
+          (is (zero? (:exit commit))))
+        (is (= "called\n" (slurp (str (fs/path root ".git/original-hook.called")))))
+        (is (str/includes? (commit-body root) "By specifier."))
+        (run {:dir root} (script "swarmforge.bb") "--remove-hooks" (str root))
+        (is (= original (slurp (str hook))))
+        (is (not (fs/exists? saved))))
+      (finally
+        (fs/delete-tree root)))))
+(deftest commit-msg-hook-restores-an-existing-symbolic-link
+  (let [root (tmp-dir)]
+    (try
+      (init-repo! root)
+      (let [hooks (fs/path root ".git/hooks")
+            target (fs/path hooks "project-commit-msg")
+            hook (fs/path hooks "commit-msg")
+            saved (fs/path hooks "commit-msg.before-swarmforge")]
+        (write-file target "#!/bin/sh\nexit 0\n")
+        (run {:dir root} "chmod" "+x" (str target))
+        (run {:dir hooks} "ln" "-s" "project-commit-msg" "commit-msg")
+        (run {:dir root} (script "swarmforge.bb") "--test-install-hooks" (str root))
+        (is (fs/sym-link? saved))
+        (run {:dir root} (script "swarmforge.bb") "--remove-hooks" (str root))
+        (is (fs/sym-link? hook))
+        (is (not (fs/exists? saved))))
+      (finally
+        (fs/delete-tree root)))))
 (deftest window-watchdog-rewrites-window-state-and-id-list
   (let [root (tmp-dir)
         state-file (fs/path root "windows.tsv")
@@ -295,7 +342,7 @@
         (fs/delete-tree root)))))
 (deftest close-swarm-kills-tmux-sessions-and-stops-daemon
   (let [root (tmp-dir)
-        sock (str (fs/path root "swarm.sock"))
+        sock (tmp-tmux-socket)
         pid-file (fs/path root ".swarmforge/daemon/handoffd.pid")
         daemon (.start (java.lang.ProcessBuilder. ["sleep" "120"]))
         pid (str (.pid daemon))]

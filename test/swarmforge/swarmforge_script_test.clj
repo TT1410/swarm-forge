@@ -24,6 +24,65 @@
         (is (fs/exists? (fs/path root ".swarmforge/tmux-socket"))))
       (finally
         (fs/delete-tree root)))))
+(deftest swarmforge-writes-configured-card-routes
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root "swarmforge/constitution.prompt") "Read articles.\n")
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  (str "card quick coder reviewer\n"
+                       "window coder codex master\n"
+                       "window reviewer codex reviewer\n"))
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
+      (write-file (fs/path root "swarmforge/roles/reviewer.prompt") "reviewer\n")
+      (let [result (run {:dir root} (script "swarmforge.bb") "--test-parse" (str root))]
+        (is (zero? (:exit result)))
+        (is (= "quick\tcoder,reviewer\n"
+               (slurp (str (fs/path root ".swarmforge/routes.tsv"))))))
+      (finally
+        (fs/delete-tree root)))))
+(deftest swarmforge-rejects-card-routes-with-unknown-roles
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root "swarmforge/constitution.prompt") "Read articles.\n")
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  (str "card quick coder missing\n"
+                       "window coder codex master\n"))
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
+      (let [result (run {:dir root :ok? false}
+                        (script "swarmforge.bb") "--test-parse" (str root))]
+        (is (pos? (:exit result)))
+        (is (str/includes? (:err result) "Unknown role 'missing'")))
+      (finally
+        (fs/delete-tree root)))))
+(deftest swarmforge-exactly-mirrors-managed-worktree-trees
+  (let [root (tmp-dir)
+        worktree (fs/path root ".worktrees/coder")]
+    (try
+      (write-file (fs/path root "swarmforge/constitution.prompt") "current constitution\n")
+      (write-file (fs/path root "swarmforge/constitution/current.prompt") "current article\n")
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  (str "card quick master-role coder\n"
+                       "window master-role codex master\n"
+                       "window coder codex coder\n"))
+      (write-file (fs/path root "swarmforge/roles/master-role.prompt") "master\n")
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
+      (write-file (fs/path worktree "swarmforge/scripts/stale.bb") "stale\n")
+      (write-file (fs/path worktree "swarmforge/roles/stale.prompt") "stale\n")
+      (write-file (fs/path worktree "swarmforge/constitution/stale.prompt") "stale\n")
+      (write-file (fs/path worktree "product.txt") "keep\n")
+      (write-file (fs/path worktree ".swarmforge/keep.state") "keep\n")
+      (let [result (run {:dir root} (script "swarmforge.bb")
+                        "--test-sync-worktrees" (str root))]
+        (is (zero? (:exit result)) (:err result)))
+      (is (not (fs/exists? (fs/path worktree "swarmforge/scripts/stale.bb"))))
+      (is (not (fs/exists? (fs/path worktree "swarmforge/roles/stale.prompt"))))
+      (is (not (fs/exists? (fs/path worktree "swarmforge/constitution/stale.prompt"))))
+      (is (fs/regular-file? (fs/path worktree "swarmforge/scripts/safe_paths.bb")))
+      (is (fs/regular-file? (fs/path worktree "swarmforge/constitution/current.prompt")))
+      (is (= "keep\n" (slurp (str (fs/path worktree "product.txt")))))
+      (is (= "keep\n" (slurp (str (fs/path worktree ".swarmforge/keep.state")))))
+      (finally
+        (fs/delete-tree root)))))
 (deftest swarmforge-uses-portable-tmux-socket-dir
   (let [root (tmp-dir)]
     (try
@@ -498,7 +557,7 @@
         (fs/delete-tree root)))))
 (deftest swarmforge-detects-nonzero-pane-base-index
   (let [root (tmp-dir)
-        sock (str root "/test.sock")
+        sock (tmp-tmux-socket)
         conf (fs/path root "tmux.conf")]
     (try
       (write-file conf "set -g base-index 1\nset -g pane-base-index 1\n")
@@ -516,7 +575,7 @@
   ;; When SwarmForge creates a role session
   ;; Then history-limit keeps thousands of lines
   (let [root (tmp-dir)
-        sock (str root "/test.sock")
+        sock (tmp-tmux-socket)
         conf (fs/path root "tmux.conf")]
     (try
       (write-file conf "set -g history-limit 50\n")

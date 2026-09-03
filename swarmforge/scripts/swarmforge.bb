@@ -97,27 +97,42 @@
       (process/sh {:continue true} "tmux" "-S" (:tmux-socket ctx) "kill-session" "-t" probe-session))
     (assoc ctx :tmux-window-base-index window-base :tmux-pane-base-index pane-base)))
 
-(defn ensure-in-file! [file pattern]
+(def ignore-begin "# BEGIN SWARMFORGE RUNTIME")
+(def ignore-end "# END SWARMFORGE RUNTIME")
+(def old-runtime-ignore-lines #{".swarmforge/" ".worktrees/"
+                                "/.swarmforge/" "/.worktrees/"})
+
+(defn without-managed-ignore [text]
+  (loop [lines (str/split-lines (or text "")) inside? false out []]
+    (if-let [line (first lines)]
+      (cond
+        (= line ignore-begin) (recur (next lines) true out)
+        (= line ignore-end) (recur (next lines) false out)
+        inside? (recur (next lines) true out)
+        (old-runtime-ignore-lines line) (recur (next lines) false out)
+        :else (recur (next lines) false (conj out line)))
+      (->> out
+           (drop-while str/blank?)
+           reverse
+           (drop-while str/blank?)
+           reverse
+           vec))))
+
+(defn write-runtime-ignore-block! [file]
   (fs/create-dirs (fs/parent file))
-  (when-not (fs/exists? file)
-    (spit (str file) ""))
-  (let [lines (set (str/split-lines (slurp (str file))))]
-    (when-not (contains? lines pattern)
-      (spit (str file) (str pattern "\n") :append true))))
+  (let [prior (if (fs/regular-file? file) (slurp (str file)) "")
+        kept (without-managed-ignore prior)
+        lines (concat kept
+                      (when (seq kept) [""])
+                      [ignore-begin "/.swarmforge/" "/.worktrees/" ignore-end])]
+    (spit (str file) (str (str/join "\n" lines) "\n"))))
 
 (defn ensure-initial-gitignore! [ctx]
-  (let [gitignore (fs/path (:working-dir ctx) ".gitignore")]
-    (if-not (fs/exists? gitignore)
-      (spit (str gitignore) ".swarmforge/\n.worktrees/\n")
-      (do
-        (ensure-in-file! gitignore ".swarmforge/")
-        (ensure-in-file! gitignore ".worktrees/")))))
+  (write-runtime-ignore-block! (fs/path (:working-dir ctx) ".gitignore")))
 
 (defn ensure-runtime-git-excludes! [ctx]
   (let [exclude-file (fs/path (sh-out "git" "-C" (str (:working-dir ctx)) "rev-parse" "--git-path" "info/exclude"))]
-    (fs/create-dirs (fs/parent exclude-file))
-    (ensure-in-file! exclude-file ".swarmforge/")
-    (ensure-in-file! exclude-file ".worktrees/")))
+    (write-runtime-ignore-block! exclude-file)))
 
 (defn initialize-git-repo! [ctx]
   (when-not (fs/exists? (fs/path (:working-dir ctx) ".git"))
@@ -190,6 +205,7 @@
      :window-watchdog-log (fs/path state-dir "window-watchdog.log")
      :sessions-file (fs/path state-dir "sessions.tsv")
      :roles-file (fs/path state-dir "roles.tsv")
+     :routes-file (fs/path state-dir "routes.tsv")
      :prompts-dir (fs/path state-dir "prompts")
      :daemon-dir daemon-dir
      :handoff-daemon-log (fs/path daemon-dir "handoffd.log")
@@ -355,17 +371,7 @@
     (check-backend-dependencies! ctx)
     (fs/create-dirs (fs/path (:working-dir ctx) "projects"))
     (prepare-workspace! ctx)
-    (let [open-file (fs/path (:state-dir ctx) "open-projects")
-          lingering (if (fs/regular-file? open-file)
-                      (->> (str/split-lines (slurp (str open-file)))
-                           (map str/trim)
-                           (remove str/blank?)
-                           vec)
-                      [])]
-      (doseq [name lingering]
-        (run-stop-project! (str (fs/path (:working-dir ctx) "projects" name))))
-      (fs/create-dirs (:state-dir ctx))
-      (spit (str open-file) ""))
+    (fs/create-dirs (:state-dir ctx))
     (kill-existing-sessions! ctx)
     (boot-sessions! ctx)
     (start-pack-web! ctx)
@@ -438,6 +444,16 @@
     (install-commit-msg-hook! ctx)
     (println (str (fs/path (git-hooks-dir ctx) "commit-msg")))))
 
+(defn test-sync-worktrees! [root]
+  (let [ctx (prepare-ctx (context root))]
+    (prepare-workspace! ctx)
+    (when-not (fs/regular-file? (:tmux-env-file ctx))
+      (spit (str (:tmux-env-file ctx)) "test\n"))
+    (sync-worktree-scripts! ctx)))
+
+(defn remove-hooks! [root]
+  (remove-commit-msg-hook! (context root)))
+
 (defn test-sleep-inhibitor-prefix! []
   (println (str/join " " (or (sleep-inhibitor-prefix) []))))
 
@@ -464,6 +480,8 @@
     "--test-lieutenant-launch-command" (test-lieutenant-launch-command!
                                         (or (second args) (System/getProperty "user.dir")))
     "--test-install-hooks" (test-install-hooks! (second args))
+    "--test-sync-worktrees" (test-sync-worktrees! (second args))
+    "--remove-hooks" (remove-hooks! (second args))
     "--test-agent-start-delay" (println (env-long "SWARMFORGE_AGENT_START_DELAY_MS" 1500))
     "--test-sleep-inhibitor-prefix" (test-sleep-inhibitor-prefix!)
     "--test-ensure-codex-trust" (test-ensure-codex-trust! (second args))

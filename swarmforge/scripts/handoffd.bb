@@ -2,6 +2,7 @@
 
 (ns handoffd
   (:require [babashka.fs :as fs]
+            [clojure.edn :as edn]
             [clojure.java.io :as io]
             [clojure.java.shell :refer [sh]]
             [clojure.string :as str]))
@@ -22,6 +23,10 @@
   (require 'card-type)
   (catch Exception _
     (load-file (str (fs/path script-dir "card_type.bb")))))
+(try
+  (require 'safe-paths)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "safe_paths.bb")))))
 (def state-dir nil)
 (def daemon-dir nil)
 (def roles-file nil)
@@ -59,6 +64,11 @@
   (spit (str log-file)
         (str (now) " " (str/join " " parts) "\n")
         :append true))
+
+(defn safe-log! [& parts]
+  (try
+    (apply log! parts)
+    (catch Exception _ nil)))
 
 (defn read-lines [path]
   (when (fs/exists? path)
@@ -138,11 +148,16 @@
                {:replace-existing false})
       (fs/move source target {:replace-existing false}))))
 
+(declare clear-retry-state!)
+
 (defn fail! [path reason]
-  (let [failed-dir (fs/path (fs/parent (fs/parent path)) "failed")]
+  (let [headers (:headers (parse-message path))
+        failed-dir (fs/path (fs/parent (fs/parent path)) "failed")]
     (log! "failed" (str path) reason)
-    (spit (str path ".error") (str reason "\n"))
-    (move-with-collision path failed-dir)))
+    (clear-retry-state! headers path)
+    (let [moved (move-with-collision path failed-dir)]
+      (spit (str (fs/path failed-dir (str (fs/file-name moved) ".error")))
+            (str reason "\n")))))
 
 (defn recipient-list [headers]
   (some->> (get headers "to")
@@ -227,8 +242,10 @@
 (defn board-row-for-headers [headers]
   (let [named (task-key headers)]
     (some (fn [line]
-            (let [row (card-type/parse-row line)]
-              (when (or (= named (:id row)) (= named (:name row)))
+            (let [row (card-type/parse-row project-root line)]
+              (when (or (= named (:id row))
+                        (= (str/lower-case (or named ""))
+                           (str/lower-case (or (:name row) ""))))
                 row)))
           (or (read-lines (board-file)) []))))
 
@@ -236,7 +253,7 @@
   (let [from (get headers "from")
         row (board-row-for-headers headers)]
     (if row
-      (card-type/last-on-card? (:type row) from)
+      (card-type/last-on-card? project-root (:type row) from)
       (last-pack-role? from))))
 
 (defn board-row-key [line]
@@ -337,7 +354,7 @@
     (fs/path (get-in roles [sender-role :worktree-path])
              ".swarmforge" "handoffs" "sent")))
 
-(declare outbox-files)
+(declare outbox-files queue-wakeup!)
 
 (defn approved-git-handoff? [headers]
   (and (= "git_handoff" (get headers "type"))
@@ -369,32 +386,210 @@
   (when (and (approved-git-handoff? headers)
              (sender-ready-work? roles sender-role)
              (not (contains? (set (recipient-list headers)) sender-role)))
-    (notify! socket (get-in roles [sender-role :session]))
-    (log! "notified-unblocked-sender" sender-role)))
+    (try
+      (notify! socket (get-in roles [sender-role :session]))
+      (safe-log! "notified-unblocked-sender" sender-role)
+      (catch Exception e
+        (try
+          (queue-wakeup! headers sender-role (.getMessage e))
+          (catch Exception queue-error
+            (safe-log! "sender-wake-queue-failed" sender-role
+                       (.getMessage queue-error))))
+        (safe-log! "sender-wake-failed" sender-role (.getMessage e))))))
+
+(defn retry-file [path]
+  (fs/path (str path ".retry.edn")))
+
+(defn read-edn-file [path]
+  (when (fs/regular-file? path)
+    (try (edn/read-string (slurp (str path)))
+         (catch Exception _ nil))))
+
+(defn epoch-ms []
+  (.toEpochMilli (java.time.Instant/now)))
+
+(defn retry-delay-ms [attempt]
+  (min 60000 (* 1000 (long (Math/pow 2 (min 6 (max 0 (dec attempt))))))))
+
+(defn write-edn-atomic! [path value]
+  (fs/create-dirs (fs/parent path))
+  (let [tmp (fs/create-temp-file {:dir (fs/parent path) :prefix ".state."})]
+    (spit (str tmp) (str (pr-str value) "\n"))
+    (fs/move tmp path {:replace-existing true :atomic-move true})))
+
+(defn attention-dir []
+  (fs/path state-dir "handoffs" "delivery_attention"))
+
+(defn safe-stem [value]
+  (str/replace (or value "handoff") #"[^A-Za-z0-9._-]+" "_"))
+
+(defn attention-file [headers path]
+  (fs/path (attention-dir)
+           (str (safe-stem (or (get headers "id") (fs/file-name path))) ".edn")))
+
+(defn clear-retry-state! [headers path]
+  (fs/delete-if-exists (retry-file path))
+  (fs/delete-if-exists (attention-file headers path)))
+
+(defn record-retry! [path error]
+  (let [file (retry-file path)
+        prior (or (read-edn-file file) {})
+        attempt (inc (long (or (:attempt prior) 0)))
+        state {:attempt attempt
+               :error error
+               :updated-at (now)
+               :next-at (+ (epoch-ms) (retry-delay-ms attempt))}
+        headers (:headers (parse-message path))]
+    (write-edn-atomic! file state)
+    (when (>= attempt 3)
+      (write-edn-atomic! (attention-file headers path)
+                         (assoc state
+                                :id (get headers "id")
+                                :task (get headers "task")
+                                :from (get headers "from"))))
+    (log! "retry" (str path) (str "attempt=" attempt) error)))
+
+(defn retry-due? [path]
+  (let [state (read-edn-file (retry-file path))]
+    (or (nil? state) (<= (long (or (:next-at state) 0)) (epoch-ms)))))
+
+(defn permanent-error [message]
+  (ex-info message {:permanent true}))
+
+(defn raw-recipients [headers]
+  (mapv str/trim (str/split (or (get headers "to") "") #"," -1)))
+
+(defn same-delivery? [source-headers target recipient]
+  (let [target-headers (:headers (parse-message target))]
+    (and (= (get source-headers "id") (get target-headers "id"))
+         (= recipient (get target-headers "recipient")))))
+
+(defn preflight! [roles sender-role path message]
+  (let [headers (:headers message)
+        recipients (raw-recipients headers)
+        filename (fs/file-name path)]
+    (when (str/blank? (get headers "id"))
+      (throw (permanent-error "missing id header")))
+    (try
+      (safe-paths/require-internal-id! (get headers "id"))
+      (catch Exception _
+        (throw (permanent-error "invalid id header"))))
+    (when (str/blank? sender-role)
+      (throw (permanent-error "missing from header")))
+    (when-not (#{"git_handoff" "note"} (get headers "type"))
+      (throw (permanent-error "missing or invalid type header")))
+    (when-not (re-matches #"[0-9][0-9]" (or (get headers "priority") ""))
+      (throw (permanent-error "missing or invalid priority header")))
+    (when (and (= "git_handoff" (get headers "type"))
+               (str/blank? (task-key headers)))
+      (throw (permanent-error "missing task header")))
+    (when (and (= "git_handoff" (get headers "type"))
+               (fs/regular-file? (board-file))
+               (nil? (board-row-for-headers headers)))
+      (throw (permanent-error "unknown board task")))
+    (when (or (empty? recipients) (some str/blank? recipients))
+      (throw (permanent-error "missing or empty recipient")))
+    (when-not (= (count recipients) (count (distinct recipients)))
+      (throw (permanent-error "duplicate recipient")))
+    (when (and (not (phantom-sender? sender-role)) (nil? (get roles sender-role)))
+      (throw (permanent-error (str "unknown sender " sender-role))))
+    (doseq [recipient recipients]
+      (let [role-info (get roles recipient)]
+        (when-not role-info
+          (throw (permanent-error (str "unknown recipient " recipient))))
+        (when-not (fs/directory? (:worktree-path role-info))
+          (throw (ex-info (str "recipient worktree unavailable: " recipient) {})))
+        (let [target (target-path role-info filename)]
+          (when (and (fs/exists? target)
+                     (not (same-delivery? headers target recipient)))
+            (throw (permanent-error (str "conflicting recipient file " target)))))))
+    recipients))
+
+(defn store-recipient! [message role-info recipient filename]
+  (let [target (target-path role-info filename)]
+    (when-not (fs/exists? target)
+      (let [delivered (add-delivery-headers message recipient)
+            dir (fs/parent target)
+            tmp (do (fs/create-dirs dir)
+                    (fs/create-temp-file {:dir dir :prefix ".delivery."}))]
+        (try
+          (spit (str tmp) (render-message (:headers delivered) (:body delivered)))
+          (fs/move tmp target {:replace-existing false :atomic-move true})
+          (finally
+            (fs/delete-if-exists tmp)))))))
+
+(defn wakeup-dir []
+  (fs/path daemon-dir "wakeups"))
+
+(defn wakeup-file [handoff-id recipient]
+  (fs/path (wakeup-dir) (str (safe-stem handoff-id) "--" (safe-stem recipient) ".edn")))
+
+(defn queue-wakeup! [headers recipient error]
+  (write-edn-atomic! (wakeup-file (get headers "id") recipient)
+                     {:id (get headers "id")
+                      :recipient recipient
+                      :attempt 1
+                      :next-at (+ (epoch-ms) 1000)
+                      :error error}))
+
+(defn notify-or-queue! [roles socket headers recipient]
+  (try
+    (notify! socket (get-in roles [recipient :session]))
+    (catch Exception e
+      (try
+        (queue-wakeup! headers recipient (.getMessage e))
+        (safe-log! "wake-queued" recipient (.getMessage e))
+        (catch Exception queue-error
+          (safe-log! "wake-queue-failed" recipient
+                     (.getMessage queue-error)))))))
+
+(defn process-wakeups! [roles socket]
+  (when (fs/directory? (wakeup-dir))
+    (doseq [file (fs/list-dir (wakeup-dir))
+            :when (fs/regular-file? file)
+            :let [state (read-edn-file file)]
+            :when (and state (<= (long (or (:next-at state) 0)) (epoch-ms)))]
+      (let [recipient (:recipient state)
+            info (get roles recipient)]
+        (if-not info
+          (fs/delete-if-exists file)
+          (try
+            (notify! socket (:session info))
+            (fs/delete-if-exists file)
+            (catch Exception e
+              (let [attempt (inc (long (or (:attempt state) 0)))]
+                (write-edn-atomic! file (assoc state
+                                               :attempt attempt
+                                               :next-at (+ (epoch-ms) (retry-delay-ms attempt))
+                                               :error (.getMessage e)))))))))))
 
 (defn deliver! [roles socket sender-role path]
   (let [filename (fs/file-name path)
         message (parse-message path)
         headers (:headers message)
-        recipients (recipient-list headers)]
-    (if-not recipients
-      (fail! path "missing to header")
-      (do
-        (update-board! roles headers)
-        (doseq [recipient recipients]
-          (let [role-info (get roles recipient)]
-            (when-not role-info
-              (throw (ex-info (str "unknown recipient " recipient) {:recipient recipient})))
-            (let [target (target-path role-info filename)
-                  delivered (add-delivery-headers message recipient)]
-              (fs/create-dirs (fs/parent target))
-              (when-not (fs/exists? target)
-                (spit (str target) (render-message (:headers delivered) (:body delivered))))
-              (notify! socket (:session role-info)))))
-        (move-with-collision path (sent-dir roles sender-role))
-        (archive-sender! headers)
-        (maybe-notify-unblocked-sender! roles socket headers sender-role)
-        (log! "delivered" (str path))))))
+        recipients (preflight! roles sender-role path message)]
+    (doseq [recipient recipients]
+      (store-recipient! message (get roles recipient) recipient filename))
+    (update-board! roles headers)
+    (archive-sender! headers)
+    (move-with-collision path (sent-dir roles sender-role))
+    ;; Delivery is committed once the source reaches sent/. Nothing after this
+    ;; point is allowed to turn it back into a delivery failure.
+    (try
+      (clear-retry-state! headers path)
+      (catch Exception e
+        (safe-log! "retry-cleanup-failed" (str path) (.getMessage e))))
+    (doseq [recipient recipients]
+      (notify-or-queue! roles socket headers recipient))
+    (try
+      (maybe-notify-unblocked-sender! roles socket headers sender-role)
+      (catch Exception e
+        (safe-log! "sender-wake-processing-failed" sender-role (.getMessage e))))
+    (try
+      (notify-lieutenant! headers)
+      (catch Exception e
+        (safe-log! "lieutenant-event-failed" (.getMessage e))))
+    (safe-log! "delivered" (str path))))
 
 (defn outbox-files [role-info]
   (let [outbox (fs/path (:worktree-path role-info) ".swarmforge" "handoffs" "outbox")]
@@ -417,10 +612,11 @@
 (defn process-outbox-file! [roles socket path]
   (let [headers (:headers (parse-message path))
         from (get headers "from")]
-    (when (= "git_handoff" (get headers "type"))
-      (notify-lieutenant! headers))
     (if (should-hold? roles headers)
-      (hold! (fs/path path))
+      (do
+        (hold! (fs/path path))
+        (try (notify-lieutenant! headers)
+             (catch Exception e (log! "lieutenant-event-failed" (.getMessage e)))))
       (deliver! roles socket (or from "") (fs/path path)))))
 
 (defn poll-once! []
@@ -432,15 +628,22 @@
                      (map str)
                      distinct)]
       (doseq [path paths
-              :while (not (should-stop?))]
+              :while (not (should-stop?))
+              :when (retry-due? path)]
         (try
           (process-outbox-file! roles socket path)
           (catch Exception e
             (log! "error" path (.getMessage e))
-            (try
-              (fail! (fs/path path) (.getMessage e))
-              (catch Exception nested
-                (log! "failed-to-archive" path (.getMessage nested))))))))))
+            (if (:permanent (ex-data e))
+              (try
+                (fail! (fs/path path) (.getMessage e))
+                (catch Exception nested
+                  (log! "failed-to-archive" path (.getMessage nested))))
+              (try
+                (record-retry! (fs/path path) (.getMessage e))
+                (catch Exception nested
+                  (log! "failed-to-record-retry" path (.getMessage nested)))))))
+      (process-wakeups! roles socket)))))
 
 (defn shutdown! []
   (reset! stopping-flag true)

@@ -26,40 +26,32 @@ It provides a shared structure for role-specific prompts, worktree assignment, t
 
 ## Branches
 
-Pack templates live on dedicated branches. Each branch contains the `swarmforge/swarmforge.conf`, local constitution articles, and role prompts for one workflow. `get-swarm-forge <pack>` composes one of them into `.`. `get-swarm-forge project-manager` copies all three under `packs/` for New Project. This `lieutenant` host instantiates `.swarmforge/project-pack` instead.
+Pack templates live on dedicated branches. Each branch contains a
+`swarmforge/swarmforge.conf`, local constitution articles, and the role prompts
+for one workflow. The configuration file—not this README—is the authority for
+that pack's current roles, routes, worktrees, agent backends, receive modes, and
+propagation modes. `get-swarm-forge <pack>` composes one pack into `.`;
+`get-swarm-forge project-manager` copies its available templates under `packs/`;
+and this `lieutenant` host instantiates `.swarmforge/project-pack`.
 
 ### `two-pack`
 
-`two-pack` is the quick backend workflow. Use it for small tasks that benefit from fast coding without the overhead of Gherkin and acceptance testing, while still preserving backend refactoring and hardening.
-
-- `coder` implements requested behavior with TDD and unit tests.
-- `cleaner` batches coder handoffs and performs cleanup, CRAP and DRY review, architectural review, encapsulation and separation-of-concerns fixes, one-job module splits, and language mutation hardening.
-
-The card moves `coder` -> `cleaner`, then to Done. Cleaner also sends a merge-only copy back to coder. Use this branch when you want a tight implementation/refinement loop without specification, QA, property-test, or acceptance-test roles.
+`two-pack` is the smallest workflow template. Use it for work that benefits
+from a short implementation and refinement path. Inspect that branch's
+`swarmforge/swarmforge.conf` for its current topology.
 
 ### `four-pack`
 
-`four-pack` is the compact specification workflow. Use it for moderate projects that require Gherkin specification and some architectural consideration without splitting every quality gate into its own agent:
-
-- `specifier` turns user intent into precise Gherkin acceptance specifications and asks for approval before handoff.
-- `coder` implements approved behavior slices with TDD, unit tests, and generated acceptance tests.
-- `refactorer` performs behavior-preserving cleanup, coverage improvement, CRAP and DRY review, one-job module splits, and property-test support.
-- `architect` owns high-level structure, dependency direction, one-job module splits, mutation hardening, DRY review, soft Gherkin mutation, and final completion notification.
-
-The card moves `specifier` -> `coder` -> `refactorer` -> `architect`, then to Done. Refactorer also sends a merge-only copy back to coder. Architect also sends merge-only copies to every earlier role. Use this branch when you want disciplined development without splitting cleanup, architecture, hardening, and QA into separate agents.
+`four-pack` is the compact specification workflow template. Use it when work
+needs specification and multiple engineering passes without the largest
+topology. Inspect that branch's `swarmforge/swarmforge.conf` for its current
+topology.
 
 ### `six-pack`
 
-`six-pack` is the full workflow. Use it for major projects that require full specification, up-front QA, backend verification, and significant architectural consideration. It separates each major quality gate into its own role:
-
-- `specifier` turns user intent into accepted Gherkin specifications and end-to-end QA procedures.
-- `coder` implements approved behavior slices with TDD, unit tests, and generated acceptance tests.
-- `cleaner` performs local behavior-preserving cleanup, coverage improvement, CRAP and DRY review, and one-job module splits.
-- `architect` reviews module structure, boundaries, dependency direction, and property-test coverage.
-- `hardender` performs one-job module splits, mutation hardening, language mutation, CRAP and DRY verification, and soft Gherkin mutation.
-- `QA` converts the specifier's QA procedures into executable scripts, runs final user-interface verification, checks handoff consistency, and sends completion notifications.
-
-The card moves `specifier` -> `coder` -> `cleaner` -> `architect` -> `hardender` -> `QA`, then to Done. Cleaner also sends a merge-only copy back to coder. Architect and QA also send merge-only copies to every earlier role. Use this branch when you want each review and verification concern owned by a separate agent.
+`six-pack` is the largest workflow template. Use it for work that benefits from
+more independently owned specification, engineering, and verification passes.
+Inspect that branch's `swarmforge/swarmforge.conf` for its current topology.
 
 ### `simple-windows`
 
@@ -122,13 +114,16 @@ project agents. Startup prints a **Dashboard:** URL (also written to
 available.
 
 Create a project from the dashboard with **New Project** (name, mission,
-optional GitHub `owner/repo`). There are no pack radios: every project
-is this pipeline, copied from `.swarmforge/project-pack`. That writes
-`projects/<name>/` including `mission.md`, gives that directory its own
-git repo (or uses the clone), and starts that pack. The pack's `master`
-role works in that repo. **Open Project** starts an existing directory
-under `projects/`. **Close** on a project header stops that pack and
-leaves the directory.
+optional GitHub `owner/repo`). There are no pack radios: every project uses the
+pipeline copied from `.swarmforge/project-pack`. New Project builds the result
+in a staging directory and commits a clean baseline before agents or worktrees
+start. A GitHub import keeps the cloned product files but replaces any older
+mission and SwarmForge-managed files with the submitted mission and the forge's
+current copies. If `projects/<name>/` already exists, nothing is changed until
+you confirm an alert that clearly says the directory will be permanently
+cleared and replaced without a backup. Cancel leaves it untouched. **Open
+Project** starts an existing directory under `projects/`. **Close** stops that
+project and leaves its directory in place.
 
 Set `SWARMFORGE_OPEN_BROWSER=0` before `./swarm` to skip the browser open. The dashboard still starts; visit the printed URL.
 
@@ -151,29 +146,40 @@ a project agent.
 Layout, top to bottom then left to right:
 
 - **Header** — SwarmForge, live marker, **New Project**, **Open Project**, **Teardown**.
-- **Attention** — human gates from every open project. Each row names the work as underlined **`project`/`task`** (project bold).
+- **Attention** — human gates and repeated delivery failures from every open
+  project. Each row names the work as underlined **`project`/`task`** (project
+  bold).
 - **Board** — one band per open project, split by a horizontal bar. Each band has a header (**New Task**, **Close**) and that pack's swimlanes plus **Done**.
 - **Work Queue** — the same project stack on the right; the two sides scroll independently.
 - **Chat** — follow-ups to the lieutenant. Pending replies show live green `|` status under the request.
 
 ### Operating the dashboard
 
-**New Project.** Name, mission (`mission.md` at the project top). Check
-**github repo** and type `owner/repo` to clone first. The directory is the
-last path segment. Existing names get an alert. The project is always this
-pipeline (no pack radios).
+**New Project.** Name the project and enter its mission (`mission.md` at the
+project top). Check **github repo** and type `owner/repo` to import the product
+history. The directory name is the repository's last path segment. If that
+directory exists, the first request leaves it unchanged and asks whether to
+permanently clear and replace it; no backup is retained. The imported product
+is then overlaid with the submitted mission and the forge's current managed
+SwarmForge files, committed, and started. The project always uses this forge's
+project-pack configuration.
 
-**Open Project.** Menu of directories under `projects/`. Opening refreshes
-scripts from `.swarmforge/project-pack` (keeps `mission.md` and the
-project's conf) and starts that pack. Already-open names get an alert.
+**Open Project.** Menu of directories under `projects/`. Opening refreshes the
+managed SwarmForge data from `.swarmforge/project-pack`, preserving the mission
+and project configuration, then commits that baseline before starting the
+configured roles. A project is shown as Starting until its tmux sessions and
+handoff daemon are verified; Close similarly shows Stopping until shutdown is
+verified. A failure is shown as Error instead of incorrectly claiming the
+project is open or closed. Recorded state is reconciled with actual processes
+after a forge restart.
 
 **Start a task.** Click **New Task** on that project's header bar, give a
-short stable **name**, a **type**, and the **task** text, then **OK**. The
-default type is **LT**: that sends the name and text to the lieutenant
-and does not create a card. Utility, Component, QA, and Review create a
-**waiting** card. The lieutenant starts it with `pack_board move` into
-the type's starting lane (no Attention) when the plan says so. It does
-not queue a start note.
+short stable **name**, a **type**, and the **task** text, then **OK**. **LT**
+sends the name and text to the lieutenant and does not create a card. The other
+choices come from the project's configured `card` routes and create a
+**waiting** card. The lieutenant starts it with `pack_board move` into that
+route's first lane (no Attention) when the plan says so. It does not queue a
+start note.
 
 **Talk to the lieutenant.** Type in the chat composer (Enter sends,
 Shift+Enter newline). The dashboard stores a durable request and injects
@@ -181,14 +187,29 @@ Shift+Enter newline). The dashboard stores a durable request and injects
 two green `|` status lines appear under the request (same filtering as
 card status) and replace each other as the lieutenant thinks. The chat
 rail stays put unless the scroller is already at the bottom; then new
-lines stay pinned to the bottom. The lieutenant is grok unless host
-`swarmforge/swarmforge.conf` has a line like `Lieutenant grok --yolo`.
+lines stay pinned to the bottom. The lieutenant backend and its CLI arguments
+come from the host `swarmforge/swarmforge.conf` `Lieutenant` line.
 
-**Approve a specifier handoff.** When the specifier queues work for the next role, Attention shows **Approval**, the underlined **`project`/`task`** pair, a **Documents** menu for artifacts, **Approve**, and **Reject**. A new Attention row plays a short chime. Approve delivers the handoff and moves the card. Reject leaves the card with the specifier and notifies that agent. Utility and review never hit this gate.
+**Approve a gated handoff.** When a workflow requests operator approval,
+Attention shows **Approval**, the underlined **`project`/`task`** pair, a
+**Documents** menu for artifacts, **Approve**, and **Reject**. A new Attention
+row plays a short chime. Approve releases the handoff; Reject leaves the card
+with its current role and notifies that role. Approval policy belongs to the
+project's workflow instructions.
 
 **Answer a clarification.** If an agent needs a human answer, Attention shows **Request clarification**, the question, and a text box. Submit injects the answer into that agent's pane. Do not use Approve/Reject for this.
 
-**Watch the board.** Cards move when `handoffd` delivers a forward `git_handoff`. Click a card to open its task body in a resizable window. The card can show the agent's latest status sentence (the last pane line that contains `I'm`). Merge-only copies from `back-one` or `back-all` do not move the card. The last role **on this card** sends the **terminal** handoff: `to:` every pack role upstream of that last role (including roles before the card's starting lane). That set, not merely several names, moves the card to **Done**. Cleaner is last on utility (`to:` specifier,coder); hardender is last on component; the QA role is last on QA-type and review. The Done well is always on the board; it fills when that handoff is delivered.
+**Watch the board.** Cards move when `handoffd` delivers a forward
+`git_handoff`. Click a card to open its task body in a resizable window. The
+card can show the agent's latest status sentence (the last pane line that
+contains `I'm`). Merge-only copies from `back-one` or `back-all` do not move the
+card. The last role on the card's configured route sends the terminal handoff
+to every configured role earlier than it in window order; only that complete
+recipient set moves the card to **Done**. A delivery is stored for every
+recipient and the board is updated before the sender copy is archived. Temporary
+failures are retried with backoff, and a repeatedly failing delivery appears in
+Attention. Notification failure is separate: the stored handoff remains sent
+and its wake-up is retried when the session returns.
 
 **Inspect an agent.** Click a Work Queue role name, or **Open** in the header / chat rail, to pop a live pane capture. Those windows are growable. Agents themselves stay in tmux; these views do not replace the dashboard.
 
@@ -277,7 +298,12 @@ In a runnable branch:
 4. Startup validates the configured role prompts, helper scripts, and terminal adapters.
 5. If the target directory is not already a git repository, startup initializes one and creates the first commit.
 6. Startup creates one git worktree per configured role under `.worktrees/`, unless the role is assigned to `master` or `none`.
-7. Startup copies the composed `swarmforge/scripts/` and `swarmforge/constitution/` trees into each role worktree and puts that local scripts directory on each agent's `PATH`, so agents use local handoff helpers without reaching back into the master checkout.
+7. Startup replaces each role worktree's managed `swarmforge/scripts/`,
+   `swarmforge/roles/`, and `swarmforge/constitution/` trees with exact copies
+   of the project's current trees. Files removed or renamed in the project are
+   therefore removed from reused worktrees, while product files and runtime
+   state outside those trees are preserved. The local scripts directory is put
+   on each agent's `PATH`.
 8. SwarmForge creates tmux sessions, launches each configured backend in its assigned worktree, starts the pack dashboard, and opens a Terminal surface only for `window` (visible) roles.
 9. Startup starts an OS-specific sleep inhibitor when one is available, and cleanup stops it with the swarm.
 10. Roles communicate through daemon-delivered handoff files. Agents create validated drafts with `swarm_handoff.sh`, accept work with `ready_for_next.sh`, and complete work with `done_with_current.sh`.
@@ -322,44 +348,102 @@ does not contain that current task document. This keeps the original operator
 intent in every forward and terminal merge, including utility and review cards
 whose first role does not run on `master`.
 
-The durable handoff files and lifecycle headers replace the old logbook and resend queue. Runtime handoff state lives under `.swarmforge/handoffs/` in each worktree, with `outbox`, `sent`, `failed`, and `inbox` subdirectories. Agents should not hand-edit, merge, stage, or commit handoff runtime state. See [swarmforge/handoff-protocol.md](swarmforge/handoff-protocol.md) for the full protocol.
+The durable handoff files and lifecycle headers replace the old logbook and
+resend queue. Runtime handoff state lives under `.swarmforge/handoffs/` in each
+worktree, with `outbox`, `sent`, `failed`, and `inbox` subdirectories. Temporary
+delivery failures remain in the outbox with retry metadata; after three failed
+attempts they are also reported in dashboard Attention while retries continue.
+Malformed handoffs and unknown recipients are permanent failures. Wake-up
+failures use a separate durable retry queue and never undo a completed
+delivery. Agents should not hand-edit, merge, stage, or commit handoff runtime
+state. See [swarmforge/handoff-protocol.md](swarmforge/handoff-protocol.md) for
+the full protocol.
+
+## Committed and Ignored Files
+
+The project repository commits the product, `mission.md`, task documents, and
+the project-owned `swarmforge/` configuration, prompts, constitution, and helper
+scripts. Git handoffs name a commit, so these committed documents are what a
+receiving role merges. In particular, `tasks/<task-name>.md` carries the
+operator's current task intent. A receiver then re-reads its own mirrored role
+and constitution instructions; runtime inbox files are transport state, not
+committed work instructions.
+
+Generated runtime data is deliberately ignored. In a project, SwarmForge owns
+a marked ignore block for `/.swarmforge/` and `/.worktrees/`, while preserving
+unrelated project ignore rules. In the forge repository, `/projects/`,
+`/.worktrees/`, and runtime entries under `/.swarmforge/` are ignored, with
+`/.swarmforge/project-pack/` explicitly kept visible and committed. The
+installer repairs older SwarmForge-managed rules to this policy.
+
+Startup installs a marked combined `.git/hooks/commit-msg` hook. When a project
+already has that hook, SwarmForge preserves it as
+`commit-msg.before-swarmforge`, applies the SwarmForge byline first, and then
+runs the preserved executable hook with Git's original arguments and
+environment. Repeated startup does not wrap it again. To remove SwarmForge's
+dispatcher and restore the prior hook, run:
+
+```sh
+bb swarmforge/scripts/swarmforge.bb --remove-hooks .
+```
+
+Removal refuses to replace a `commit-msg` hook that someone changed after
+SwarmForge installed it.
 
 ## The `swarmforge.conf` File
 
-`swarmforge/swarmforge.conf` defines the swarm window-by-window. Each line has this form:
+`swarmforge/swarmforge.conf` defines card routes and the swarm window by window.
+It is the sole authority for current role and agent assignments. Its line forms
+are:
 
 ```conf
+card <type> <role> [<role>...]
 window-invisible <role> <agent> <worktree> [task|batch] [forward-only|back-one|back-all] [extra-cli-args...]
 window <role> <agent> <worktree> [task|batch] [forward-only|back-one|back-all] [extra-cli-args...]
 ```
+
+Each `card` line defines one New Task type and its ordered active route. The
+first role is its starting lane, each following role is the next handoff
+destination, and the last role completes it. A route must be nonempty, contain
+no duplicate roles, and name only roles defined by window lines. Startup
+validates all routes and writes the shared normalized description used by the
+dashboard, board, handoff validator, and daemon. Window order—not route order—
+determines which earlier roles receive a terminal result.
 
 `window-invisible` starts the agent in tmux without a Terminal window (the pack default). `window` also opens a Terminal surface for that role.
 
 The optional receive mode defaults to `task`. Use `batch` for roles that should consume queued handoffs that share priority, card type, and reverse/forward with the first file as one batch. Equal priority of a different type or direction stays queued.
 
-The optional propagation token defaults to `forward-only`. The card still follows the forward send to the next window.
+The optional propagation token defaults to `forward-only`. The card still
+follows the forward send to the next role on its configured route.
 
 - `forward-only` — no extra copies.
-- `back-one` — also queue a merge-only copy to the previous window.
-- `back-all` — also queue merge-only copies to every earlier window.
+- `back-one` — also queue a merge-only copy to the previous role on this card's
+  configured route.
+- `back-all` — also queue merge-only copies to every earlier role on this
+  card's configured route.
 
 Those extra copies do not move the card. The recipient merges the copy and keeps working; it does not hand that copy onward. The card goes Done only when the last role **on this card** sends a terminal `git_handoff`.
 
-The **host** conf may include a lieutenant line instead of windows:
+The **host** configuration sets its lieutenant independently:
 
 ```conf
-Lieutenant grok --yolo
+Lieutenant <agent> [extra-cli-args...]
 ```
 
-If that line is omitted, the lieutenant is grok with no extra args.
+Fields after the agent name are passed to the lieutenant CLI. The active choice
+belongs in the host configuration rather than in this README.
 
-Pack defaults (roles not listed here are `forward-only`):
+For example, a project could define a three-role change route and a separate
+review route without making either one SwarmForge's built-in roster:
 
-- `two-pack`: coder grok, cleaner codex `batch back-one`
-- `four-pack`: specifier codex, coder grok, refactorer grok, architect
-  codex `batch back-all`; refactorer `back-one`
-- `six-pack`: specifier codex, coder grok, cleaner grok `batch back-one`,
-  architect grok `batch back-all`, hardender codex, QA grok `batch back-all`
+```conf
+card change lead implement verify
+card review verify
+window-invisible lead codex master
+window-invisible implement claude implementation task back-one
+window-invisible verify copilot verification batch back-all
+```
 
 Any fields after receive-mode and the propagation token are passed directly to the agent CLI as additional arguments. If you omit those tokens, extra arguments may start at the fifth field:
 
@@ -368,31 +452,25 @@ window coder copilot wt-coder --yolo
 window architect claude wt-arch task --dangerously-skip-permissions
 ```
 
-You can define as many windows as your project needs. Each `role` maps to a corresponding prompt file at `swarmforge/roles/<role>.prompt`, so a config containing `architect`, `coder`, `reviewer`, `research`, and `release` windows would expect:
+You can define as many windows as your project needs. Each `<role>` maps to
+`swarmforge/roles/<role>.prompt`. This lets each project choose its own swarm
+shape instead of being locked to a fixed set of roles.
 
-- `swarmforge/roles/architect.prompt`
-- `swarmforge/roles/coder.prompt`
-- `swarmforge/roles/reviewer.prompt`
-- `swarmforge/roles/research.prompt`
-- `swarmforge/roles/release.prompt`
-
-This lets each project choose its own swarm shape instead of being locked to a fixed set of roles.
-
-Example config (four-pack shape, pack default is invisible):
+Illustrative configuration (not a statement of current assignments):
 
 ```conf
-window-invisible specifier codex master --yolo
-window-invisible coder grok coder
-window-invisible refactorer grok refactorer back-one
-window-invisible architect codex architect batch back-all --yolo
+card change lead implement verify
+card check verify
+window-invisible lead <agent> master
+window-invisible implement <agent> implementation task back-one <cli-arg>
+window-invisible verify <agent> verification batch back-all
 ```
 
 In the example above, the agents run in these worktrees:
 
-- `specifier` -> main working directory on `master` (master agent: New Task and chat)
-- `coder` -> `.worktrees/coder`
-- `refactorer` -> `.worktrees/refactorer`
-- `architect` -> `.worktrees/architect`
+- `lead` -> main working directory on `master`
+- `implement` -> `.worktrees/implementation`
+- `verify` -> `.worktrees/verification`
 
 If a window uses `master` as its worktree name, SwarmForge does not create `.worktrees/master`; that role runs in the main working directory on the `master` branch.
 

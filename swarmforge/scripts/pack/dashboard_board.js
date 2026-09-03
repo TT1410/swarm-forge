@@ -169,17 +169,30 @@ function projectBand(proj) {
   title.className = "project-name";
   title.textContent = proj.name || "";
   title.onclick = () => openMission(proj.name);
+  const state = document.createElement("span");
+  state.className = "project-state project-state-" + (proj.state || "open");
+  state.textContent = displayName(proj.state || "open");
+  if (proj.error) state.title = proj.error;
   const nt = document.createElement("button");
   nt.type = "button";
   nt.className = "btn btn-primary btn-sm";
   nt.textContent = "New Task";
   nt.onclick = () => openNewTask(proj.name);
+  nt.disabled = (proj.state || "open") !== "open";
   const cl = document.createElement("button");
   cl.type = "button";
   cl.className = "btn btn-sm";
-  cl.textContent = "Close";
-  cl.onclick = () => closeProject(proj.name);
-  header.append(title, nt, cl);
+  if ((proj.state || "open") === "open") {
+    cl.textContent = "Close";
+    cl.onclick = () => closeProject(proj.name);
+  } else if (proj.state === "starting" || proj.state === "stopping") {
+    cl.textContent = displayName(proj.state);
+    cl.disabled = true;
+  } else {
+    cl.textContent = "Open";
+    cl.onclick = () => openProject(proj.name);
+  }
+  header.append(title, state, nt, cl);
   const cols = document.createElement("div");
   cols.className = "columns";
   const lanes = proj.lanes || [];
@@ -211,6 +224,9 @@ function renderBoard(data) {
 let forgePacks = [];
 let allProjects = [];
 let openProjects = [];
+let projectStates = [];
+let cardTypesByProject = {};
+let standaloneCardTypes = [];
 let taskProject = "";
 
 function fillOpenMenu() {
@@ -218,9 +234,11 @@ function fillOpenMenu() {
   if (!list) return;
   list.replaceChildren();
   allProjects.forEach((name) => {
+    const entry = projectStates.find((item) => item.name === name) || {state: "closed"};
     const btn = document.createElement("button");
     btn.type = "button";
-    btn.textContent = name + (openProjects.indexOf(name) >= 0 ? " (open)" : "");
+    btn.textContent = name + " (" + (entry.state || "closed") + ")";
+    btn.disabled = entry.state === "open" || entry.state === "starting" || entry.state === "stopping";
     btn.onclick = (event) => {
       event.stopPropagation();
       $("open-project-menu").classList.remove("open");
@@ -248,7 +266,14 @@ function renderChrome(data) {
     forgePacks = data.packs || [];
     allProjects = data.all_projects || [];
     openProjects = data.open_projects || [];
+    projectStates = data.project_states || [];
+    cardTypesByProject = {};
+    (data.projects || []).forEach((project) => {
+      cardTypesByProject[project.name] = project.card_types || [];
+    });
     fillOpenMenu();
+  } else {
+    standaloneCardTypes = data.card_types || [];
   }
   $("pack-meta").replaceChildren();
   const dot = document.createElement("span");
@@ -275,8 +300,6 @@ function renderChrome(data) {
   } else if (therm) {
     therm.remove();
   }
-  const ltRadio = $("nt-type-lt");
-  if (ltRadio) ltRadio.style.display = forge ? "" : "none";
 }
 
 function openGrowable(url, name) {
@@ -287,4 +310,3 @@ function openGrowable(url, name) {
 function openAgentWindow(url, name) {
   openGrowable(url, name);
 }
-

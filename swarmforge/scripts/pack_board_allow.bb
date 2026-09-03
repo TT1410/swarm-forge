@@ -1,7 +1,7 @@
 ;; Allow, move, and done. Loaded into pack-board.
 
-(defn rewrite-lane [line name lane]
-  (let [row (card-type/parse-row line)]
+(defn rewrite-lane [root line name lane]
+  (let [row (card-type/parse-row root line)]
     (if (= (str/lower-case (or name "")) (str/lower-case (or (:name row) "")))
       (card-type/format-row (assoc row :lane lane :updated (timestamp)))
       line)))
@@ -9,10 +9,12 @@
 (def allow-acts #{"move" "done" "increment-audit" "stop" "create"})
 
 (defn lt-allow-file [root name act]
-  (fs/path root ".swarmforge" "board" "lt-allow" (str name "-" act)))
+  (safe-paths/task-path! (fs/path root ".swarmforge" "board" "lt-allow")
+                         name (str "-" act)))
 
 (defn lt-pending-file [root name act]
-  (fs/path root ".swarmforge" "board" "lt-allow-pending" (str name "-" act)))
+  (safe-paths/task-path! (fs/path root ".swarmforge" "board" "lt-allow-pending")
+                         name (str "-" act)))
 
 (defn require-act! [act]
   (require-value! act "act")
@@ -20,13 +22,14 @@
     (exit! 1 (str "Unknown act: " act))))
 
 (defn caller-task-name [opts]
-  (or (not-empty (task-name opts))
-      (when-let [id (not-empty (:task-id opts))]
-        (some (fn [line]
-                (let [row (card-type/parse-row line)]
-                  (when (or (= id (:id row)) (= id (:name row)))
-                    (:name row))))
-              (read-rows (tasks-file (resolve-root opts)))))))
+  (let [root (resolve-root opts)]
+    (or (not-empty (task-name opts))
+        (when-let [id (not-empty (:task-id opts))]
+          (some (fn [line]
+                  (let [row (card-type/parse-row root line)]
+                    (when (or (= id (:id row)) (= id (:name row)))
+                      (:name row))))
+                (read-rows (tasks-file root)))))))
 
 (defn request-allow! [opts]
   (let [name (task-name opts)
@@ -34,6 +37,7 @@
         root (resolve-root opts)
         file (lt-pending-file root name act)]
     (require-value! name "task name")
+    (safe-paths/require-task-name! name)
     (require-act! act)
     (fs/create-dirs (fs/parent file))
     (spit (str file) (str "name: " name "\nact: " act "\n"))))
@@ -45,6 +49,7 @@
         pending (lt-pending-file root name act)
         allow (lt-allow-file root name act)]
     (require-value! name "task name")
+    (safe-paths/require-task-name! name)
     (require-act! act)
     (fs/create-dirs (fs/parent allow))
     (spit (str allow) (str "name: " name "\nact: " act "\n"))
@@ -55,10 +60,10 @@
         name (task-name opts)
         lane (task-lane opts)
         line (when (and name lane) (find-task (read-rows (tasks-file root)) name))
-        row (when line (card-type/parse-row line))]
+        row (when line (card-type/parse-row root line))]
     (and row
          (= "waiting" (:lane row))
-         (= lane (card-type/starting-lane (:type row)))
+         (= lane (card-type/starting-lane root (:type row)))
          (not (#{"waiting" "done"} lane)))))
 
 (defn caller-allowed? [opts act]
@@ -165,7 +170,11 @@
           root (resolve-root opts)
           file (tasks-file root)]
       (require-value! name "task name")
+      (safe-paths/require-task-name! name)
       (require-value! lane "lane")
+      (when-not (or (#{"waiting" "done"} lane)
+                    (some #{lane} (pack-role-names root)))
+        (exit! 1 (str "Unknown lane: " lane)))
       (let [before (atom nil)]
         (with-board-lock
           root
@@ -174,8 +183,8 @@
                   line (find-task rows name)]
               (when-not line
                 (exit! 1 (str "Unknown task name: " name)))
-              (reset! before (card-type/parse-row line))
-              (write-rows file (mapv #(rewrite-lane % name lane) rows)))))
+              (reset! before (card-type/parse-row root line))
+              (write-rows file (mapv #(rewrite-lane root % name lane) rows)))))
         (consume-allow! opts act)
         @before))))
 

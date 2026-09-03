@@ -3,11 +3,15 @@
 .claude/
 .cpcache/
 .superpowers/
-.swarmforge/*
-!.swarmforge/project-pack/
-!.swarmforge/project-pack/**
-.worktrees/
 target/
 node_modules/
 test-results/
 playwright-report/
+
+# BEGIN SWARMFORGE FORGE
+/projects/
+/.worktrees/
+/.swarmforge/*
+!/.swarmforge/project-pack/
+!/.swarmforge/project-pack/**
+# END SWARMFORGE FORGE

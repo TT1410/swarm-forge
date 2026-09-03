@@ -137,7 +137,7 @@
 (defn reverse-roles [sender task]
   (let [card (or (board-card-named task) (first (board-cards-in-lane sender)))
         earlier (if card
-                  (card-type/earlier-roles (:type card) sender)
+                  (card-type/earlier-roles (project-root) (:type card) sender)
                   (let [roles (pack-role-names)
                         idx (.indexOf roles sender)]
                     (if (neg? idx) [] (vec (take idx roles)))))]
@@ -151,7 +151,7 @@
            (let [card (or (board-card-named (get headers "task"))
                           (first (board-cards-in-lane sender)))]
              (if card
-               (card-type/last-on-card? (:type card) sender)
+               (card-type/last-on-card? (project-root) (:type card) sender)
                (last-pack-role? sender))))
     (assoc headers "non-forwarding" "true")
     headers))

@@ -11,6 +11,10 @@
             [org.httpkit.server :as http]))
 
 (def script-dir (fs/parent *file*))
+(try
+  (require 'safe-paths)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "safe_paths.bb")))))
 (load-file (str (fs/path script-dir "forge.bb")))
 (load-file (str (fs/path script-dir "card_type.bb")))
 
@@ -49,6 +53,8 @@
        "  pack_web.sh --test-doc <root> <path>\n"
        "  pack_web.sh --test-teardown <root> [TEARDOWN]\n"
        "  pack_web.sh --test-new-project <root> <name> <pack> [mission]\n"
+       "  pack_web.sh --test-new-project-replace <root> <name> <pack> [mission]\n"
+       "  pack_web.sh --test-new-github-project <root> <owner/repo> <pack> [mission]\n"
        "  pack_web.sh --test-open-project <root> <name>\n"
        "  pack_web.sh --test-close-project <root> <name>\n"
        "  pack_web.sh --test-inferred-name <input> [github]\n"
@@ -198,15 +204,16 @@
   (some #(when (= name (:name %)) %) (board-tasks root)))
 
 (defn task-document [root name]
-  (let [md (fs/path root "tasks" (str name ".md"))
-        txt (fs/path root ".swarmforge" "board" (str name ".txt"))]
+  (let [md (safe-paths/task-path! (fs/path root "tasks") name ".md")
+        txt (safe-paths/task-path! (fs/path root ".swarmforge" "board") name ".txt")]
     (cond
       (fs/regular-file? md) (slurp (str md))
       (fs/regular-file? txt) (slurp (str txt))
       :else "")))
 
 (defn list-card-audits [root task-id]
-  (let [dir (fs/path root ".swarmforge" "board" "audits" task-id)]
+  (let [dir (safe-paths/state-key-path! (fs/path root ".swarmforge" "board" "audits")
+                                        task-id "")]
     (if (fs/directory? dir)
       (->> (fs/list-dir dir)
            (filter #(re-matches #"[0-9]+\.md" (fs/file-name %)))

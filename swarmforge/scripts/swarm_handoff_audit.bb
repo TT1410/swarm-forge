@@ -121,7 +121,8 @@
       (exit! 1 (str/trim (str (:err result) "\n" (:out result)))))))
 
 (defn latest-durable-audit-n [task-id]
-  (let [dir (fs/path (project-root) ".swarmforge" "board" "audits" task-id)]
+  (let [dir (safe-paths/state-key-path! (fs/path (project-root) ".swarmforge" "board" "audits")
+                                        task-id "")]
     (if (fs/directory? dir)
       (->> (fs/list-dir dir)
            (map fs/file-name)
@@ -146,7 +147,10 @@
 (defn persist-durable-audit! [candidate]
   (let [task-id (:task-id candidate)
         n (latest-durable-audit-n task-id)
-        file (fs/path (project-root) ".swarmforge" "board" "audits" task-id (str n ".md"))
+        file (safe-paths/id-path!
+              (safe-paths/state-key-path! (fs/path (project-root) ".swarmforge" "board" "audits")
+                                          task-id "")
+              (str n) ".md")
         notes (tmp-audit-notes)]
     (when (pos? n)
       (fs/create-dirs (fs/parent file))

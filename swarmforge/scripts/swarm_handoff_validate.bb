@@ -44,13 +44,13 @@
         sender (sender-role)]
     (if (or (not= "git_handoff" (get headers "type"))
             (str/blank? card-type)
-            (not (card-type/on-chain? card-type sender)))
+            (not (card-type/on-chain? (project-root) card-type sender)))
       []
-      (let [next (card-type/next-role card-type sender)
-            last? (card-type/last-on-card? card-type sender)]
+      (let [next (card-type/next-role (project-root) card-type sender)
+            last? (card-type/last-on-card? (project-root) card-type sender)]
         (cond
           last?
-          (let [want (set (card-type/terminal-upstream (pack-role-names) card-type))
+          (let [want (set (card-type/terminal-upstream (project-root) (pack-role-names) card-type))
                 got (set recipients)
                 extra (set/difference got want)
                 missing (set/difference want got)]
@@ -61,13 +61,13 @@
               (seq missing)
               (conj (format "Terminal to: must include all upstream roles (%s)."
                             (str/join "," (card-type/terminal-upstream
-                                           (pack-role-names) card-type))))))
+                                           (project-root) (pack-role-names) card-type))))))
           :else
           (cond-> []
             (some #(not= % next) recipients)
             (conj (format "Recipient must be next on this card (%s); got %s."
                           next (str/join "," recipients)))
-            (some #(not (card-type/on-chain? card-type %)) recipients)
+            (some #(not (card-type/on-chain? (project-root) card-type %)) recipients)
             (conj "Recipient is not on this card's chain.")))))))
 
 (defn validate-recipients [to]

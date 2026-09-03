@@ -27,6 +27,8 @@
     (when *temp-dirs*
       (swap! *temp-dirs* conj dir))
     dir))
+(defn tmp-tmux-socket []
+  (str "/tmp/swarmforge-test-" (System/nanoTime) ".sock"))
 (defn run
   [{:keys [dir env ok?]} & args]
   (let [result (apply sh/sh (concat args [:dir (str dir)
@@ -61,6 +63,17 @@
                       (str/capitalize role)
                       (get propagation role "forward-only")))
             roles)))
+   (let [route (fn [preferred]
+                 (let [found (vec (filter (set roles) preferred))]
+                   (if (seq found) found (vec roles))))]
+     (write-file
+      (fs/path root ".swarmforge/routes.tsv")
+      (apply str
+             (for [[type preferred] [["utility" ["coder" "cleaner"]]
+                                     ["component" ["specifier" "coder" "cleaner" "architect" "hardender"]]
+                                     ["QA" ["specifier" "coder" "cleaner" "architect" "hardender" "QA"]]
+                                     ["review" ["cleaner" "architect" "hardender" "QA"]]]]
+               (str type "\t" (str/join "," (route preferred)) "\n")))))
    (doseq [role roles
            dir [".swarmforge/handoffs/outbox"
                 ".swarmforge/handoffs/sent"
@@ -148,11 +161,13 @@
   (pack-board root true "increment-audit" "--root" (str root)
               "--task-id" task-id "--caller" "handoffd"))
 (defn queue-handoff! [root {:keys [from to task artifacts non-forwarding priority body]}]
-  (let [priority (or priority "50")]
+  (let [priority (or priority "50")
+        id (str "test-" (System/nanoTime))]
     (write-file
      (fs/path root ".swarmforge/handoffs/outbox"
               (str priority "_from_" from "_to_" (str/replace to #"," "_") ".handoff"))
-     (str "from: " from "\n"
+     (str "id: " id "\n"
+          "from: " from "\n"
           "to: " to "\n"
           "priority: " priority "\n"
           "type: git_handoff\n"
@@ -208,7 +223,7 @@
 (defn task-card [root name]
   (some #(when (= name (:name %)) %) (:tasks (web-state root))))
 (defn start-tmux!
-  ([root sessions] (start-tmux! root sessions (str (fs/path root "tmux.sock"))))
+  ([root sessions] (start-tmux! root sessions (tmp-tmux-socket)))
   ([root sessions sock]
    (write-file (fs/path root ".swarmforge/tmux-socket") (str sock "\n"))
    (doseq [session sessions]
@@ -245,8 +260,10 @@
 (defn write-pending-approval! [root {:keys [id task task-id artifacts body]}]
   (write-file
    (fs/path root ".swarmforge/handoffs/pending_approval" (str id ".handoff"))
-   (str "from: specifier\n"
+   (str "id: " id "\n"
+        "from: specifier\n"
         "to: coder\n"
+        "priority: 50\n"
         "type: git_handoff\n"
         "task_id: " (or task-id task) "\n"
         "task: " task "\n"
@@ -310,4 +327,3 @@
   (is (fs/exists? other-pending))
   (is (= #{"unrelated-id"} (pending-audit-task-ids root)))
   (is (empty? (handoff-names (in-process-dir root roles "specifier")))))
-

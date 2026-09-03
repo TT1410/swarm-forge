@@ -19,6 +19,17 @@
 (def propagation-modes #{"forward-only" "back-one" "back-all"})
 (def known-agents #{"claude" "codex" "copilot" "grok"})
 
+(defn role-name? [value]
+  (boolean (re-matches #"[A-Za-z][A-Za-z0-9-]*" (or value ""))))
+
+(defn worktree-name? [value]
+  (or (special-worktree? value)
+      (boolean (and (re-matches #"[A-Za-z0-9][A-Za-z0-9._-]*" (or value ""))
+                    (not (#{"." ".."} value))))))
+
+(defn card-type-name? [value]
+  (boolean (re-matches #"[A-Za-z][A-Za-z0-9_-]*" (or value ""))))
+
 (defn receive-fields [trailing]
   (let [[receive-mode after-receive]
         (if (receive-modes (first trailing))
@@ -38,13 +49,14 @@
   (when pred (config-fail! message)))
 
 (defn validate-window! [ctx line-no role agent worktree receive-mode roles worktrees]
-  (reject-if (str/includes? role "_")
-             (str "Invalid role '" role "' on line " line-no ": role names may not contain underscores"))
+  (reject-if (not (role-name? role))
+             (str "Invalid role '" role "' on line " line-no
+                  ": use letters, digits, and hyphens, beginning with a letter"))
   (reject-if (contains? roles role)
              (str "Duplicate role '" role "' in " (:config-file ctx)))
   (reject-if (and (not (special-worktree? worktree)) (contains? worktrees worktree))
              (str "Duplicate worktree '" worktree "' in " (:config-file ctx)))
-  (reject-if (or (str/includes? worktree "/") (#{"." ".."} worktree))
+  (reject-if (not (worktree-name? worktree))
              (str "Invalid worktree '" worktree "' for role '" role "'"))
   (reject-if (not (known-agents agent))
              (str "Unsupported agent '" agent "' for role '" role "'"))
@@ -83,6 +95,31 @@
     (reject-if (not= 1 (count masters))
                "Config must name exactly one master worktree")))
 
+(defn parse-card-line [ctx line-no line]
+  (let [[_ card-type & route] (str/split line #"\s+")]
+    (reject-if (not (card-type-name? card-type))
+               (str "Invalid card type on line " line-no ": " (or card-type "")))
+    (reject-if (empty? route)
+               (str "Card route '" card-type "' is empty on line " line-no))
+    (reject-if (not= (count route) (count (distinct route)))
+               (str "Card route '" card-type "' repeats a role on line " line-no))
+    {:type card-type :roles (vec route) :line-no line-no}))
+
+(defn validate-routes! [ctx rows routes]
+  (let [known (set (map :role rows))
+        positions (into {} (map-indexed (fn [index row] [(:role row) index]) rows))
+        types (map :type routes)]
+    (reject-if (not= (count types) (count (distinct types)))
+               (str "Duplicate card type in " (:config-file ctx)))
+    (doseq [{:keys [type roles line-no]} routes]
+      (doseq [role roles]
+        (reject-if (not (contains? known role))
+                   (str "Unknown role '" role "' in card route '" type
+                        "' on line " line-no)))
+      (let [indices (mapv positions roles)]
+        (reject-if (not= indices (vec (sort indices)))
+                   (str "Card route '" type "' does not follow configured window order"))))))
+
 (defn parse-config [ctx]
   (when-not (fs/exists? (:config-file ctx))
     (config-fail! (str "Config not found at " (:config-file ctx))))
@@ -90,24 +127,29 @@
     (config-fail! (str "Constitution prompt not found at " (:constitution-file ctx))))
   (loop [lines (map-indexed vector (str/split-lines (slurp (str (:config-file ctx)))))
          rows []
+         routes []
          roles #{}
          worktrees #{}]
     (if-let [[line-index raw-line] (first lines)]
       (let [line-no (inc line-index)
             line (str/trim raw-line)]
         (if (skip-config-line? line)
-          (recur (next lines) rows roles worktrees)
-          (let [row (parse-window-line ctx line-no line roles worktrees)
-                worktree (:worktree-name row)]
-            (recur (next lines)
-                   (conj rows row)
-                   (conj roles (:role row))
-                   (cond-> worktrees (not (special-worktree? worktree)) (conj worktree))))))
+          (recur (next lines) rows routes roles worktrees)
+          (if (str/starts-with? line "card ")
+            (recur (next lines) rows (conj routes (parse-card-line ctx line-no line)) roles worktrees)
+            (let [row (parse-window-line ctx line-no line roles worktrees)
+                  worktree (:worktree-name row)]
+              (recur (next lines)
+                     (conj rows row)
+                     routes
+                     (conj roles (:role row))
+                     (cond-> worktrees (not (special-worktree? worktree)) (conj worktree)))))))
       (do
         (reject-if (empty? rows)
                    (str "No windows defined in " (:config-file ctx)))
         (require-master-worktree! rows)
-        (assoc ctx :roles rows)))))
+        (validate-routes! ctx rows routes)
+        (assoc ctx :roles rows :routes routes)))))
 
 (defn write-sessions-file! [ctx]
   (spit (str (:sessions-file ctx))
@@ -132,6 +174,12 @@
                          (:receive-mode row)
                          (:propagation row))))))
 
+(defn write-routes-file! [ctx]
+  (spit (str (:routes-file ctx))
+        (apply str
+               (for [{:keys [type roles]} (:routes ctx)]
+                 (str type "\t" (str/join "," roles) "\n")))))
+
 (def required-helpers
   ["handoff_lib.bb" "swarm_handoff.sh" "swarm_handoff.bb"
    "swarm_tool.sh" "swarm_tool.bb"
@@ -154,6 +202,8 @@
 (def terminal-helpers
   ["terminal-app.sh" "iterm2.sh" "ghostty.sh" "windows-terminal.sh" "none.sh"])
 
+(def required-libraries ["card_type.bb" "safe_paths.bb"])
+
 (defn check-helper-scripts! [ctx]
   (doseq [helper required-helpers]
     (let [path (fs/path (:script-dir ctx) helper)]
@@ -162,7 +212,11 @@
   (doseq [helper terminal-helpers]
     (let [path (fs/path (:script-dir ctx) "terminal-adapters" helper)]
       (when-not (and (fs/exists? path) (fs/executable? path))
-        (fail! (str red "Error:" reset " Required terminal adapter not found or not executable: " path))))))
+        (fail! (str red "Error:" reset " Required terminal adapter not found or not executable: " path)))))
+  (doseq [library required-libraries]
+    (let [path (fs/path (:script-dir ctx) library)]
+      (when-not (fs/regular-file? path)
+        (fail! (str red "Error:" reset " Required script library not found: " path))))))
 
 (defn git-hooks-dir [ctx]
   (let [path (sh-out "git" "-C" (str (:working-dir ctx)) "rev-parse" "--git-path" "hooks")
@@ -174,13 +228,44 @@
 (defn install-commit-msg-hook! [ctx]
   (let [dir (git-hooks-dir ctx)
         hook (fs/path dir "commit-msg")
+        saved (fs/path dir "commit-msg.before-swarmforge")
         bb (str (fs/absolutize (fs/path (:script-dir ctx) "commit_msg_hook.bb")))]
     (fs/create-dirs dir)
-    (spit (str hook)
-          (str "#!/usr/bin/env zsh\n"
-               "set -euo pipefail\n"
-               "exec bb " (sq bb) " \"$@\"\n"))
+    (let [managed? (and (fs/regular-file? hook)
+                        (try
+                          (str/includes? (slurp (str hook)) "SWARMFORGE COMBINED COMMIT-MSG HOOK")
+                          (catch Exception _ false)))
+          hook-present? (or (fs/exists? hook) (fs/sym-link? hook))
+          saved-present? (or (fs/exists? saved) (fs/sym-link? saved))]
+      (when (and hook-present? (not managed?))
+        (when saved-present?
+          (config-fail! (str "Cannot install commit-msg hook: " saved " already exists")))
+        (fs/move hook saved))
+      (spit (str hook)
+            (str "#!/usr/bin/env zsh\n"
+                 "# SWARMFORGE COMBINED COMMIT-MSG HOOK v1\n"
+                 "set -u\n"
+                 "bb " (sq bb) " \"$@\" || exit $?\n"
+                 "saved=" (sq (str saved)) "\n"
+                 "if [[ -x \"$saved\" ]]; then\n"
+                 "  \"$saved\" \"$@\"\n"
+                 "fi\n")))
     (fs/set-posix-file-permissions hook "rwxr-xr-x")))
+
+(defn remove-commit-msg-hook! [ctx]
+  (let [dir (git-hooks-dir ctx)
+        hook (fs/path dir "commit-msg")
+        saved (fs/path dir "commit-msg.before-swarmforge")
+        managed? (and (fs/regular-file? hook)
+                      (try
+                        (str/includes? (slurp (str hook)) "SWARMFORGE COMBINED COMMIT-MSG HOOK")
+                        (catch Exception _ false)))]
+    (when (and (or (fs/exists? hook) (fs/sym-link? hook)) (not managed?))
+      (config-fail! "Cannot remove SwarmForge hook: commit-msg was changed"))
+    (when managed?
+      (fs/delete-if-exists hook))
+    (when (or (fs/exists? saved) (fs/sym-link? saved))
+      (fs/move saved hook))))
 
 (defn prepare-workspace! [ctx]
   (doseq [dir [(:state-dir ctx) (:notify-dir ctx) (:prompts-dir ctx)
@@ -189,7 +274,8 @@
   (spit (str (:tmux-socket-file ctx)) (str (:tmux-socket ctx) "\n"))
   (check-helper-scripts! ctx)
   (write-sessions-file! ctx)
-  (write-roles-file! ctx))
+  (write-roles-file! ctx)
+  (write-routes-file! ctx))
 
 (defn prepare-worktrees! [ctx]
   (doseq [row (:roles ctx)
@@ -210,15 +296,17 @@
   (spit (str (:tmux-env-file ctx))
         (str (sh-out "tmux" "-S" (:tmux-socket ctx) "display-message" "-p" "#{socket_path},#{pid},#{pane_id}") "\n")))
 
-(defn copy-tree-into! [src dest]
+(defn mirror-tree! [src dest]
+  (when (fs/exists? dest)
+    (fs/delete-tree dest))
   (when (fs/directory? src)
-    (fs/create-dirs dest)
-    (fs/copy-tree src dest {:replace-existing true})))
+    (fs/create-dirs (fs/parent dest))
+    (fs/copy-tree src dest)))
 
 (defn sync-worktree-roles! [ctx worktree-path]
-  (copy-tree-into! (:roles-dir ctx) (fs/path worktree-path "swarmforge" "roles"))
-  (copy-tree-into! (fs/path (:swarm-forge-dir ctx) "constitution")
-                   (fs/path worktree-path "swarmforge" "constitution"))
+  (mirror-tree! (:roles-dir ctx) (fs/path worktree-path "swarmforge" "roles"))
+  (mirror-tree! (fs/path (:swarm-forge-dir ctx) "constitution")
+                (fs/path worktree-path "swarmforge" "constitution"))
   (when (fs/exists? (:constitution-file ctx))
     (fs/create-dirs (fs/path worktree-path "swarmforge"))
     (fs/copy (:constitution-file ctx)
@@ -231,16 +319,11 @@
           :when (not= (str worktree-path) (str (:working-dir ctx)))]
     (let [role-scripts-dir (fs/path worktree-path "swarmforge" "scripts")
           role-state-dir (fs/path worktree-path ".swarmforge")]
-      (fs/create-dirs role-scripts-dir)
-      (doseq [entry (fs/list-dir (:script-dir ctx))]
-        (let [target (fs/path role-scripts-dir (fs/file-name entry))]
-          (if (fs/directory? entry)
-            (fs/copy-tree entry target {:replace-existing true})
-            (fs/copy entry target {:replace-existing true}))))
+      (mirror-tree! (:script-dir ctx) role-scripts-dir)
       (sync-worktree-roles! ctx worktree-path)
       (fs/create-dirs (fs/path role-state-dir "notify"))
       (fs/copy (:sessions-file ctx) (fs/path role-state-dir "sessions.tsv") {:replace-existing true})
       (fs/copy (:roles-file ctx) (fs/path role-state-dir "roles.tsv") {:replace-existing true})
+      (fs/copy (:routes-file ctx) (fs/path role-state-dir "routes.tsv") {:replace-existing true})
       (fs/copy (:tmux-socket-file ctx) (fs/path role-state-dir "tmux-socket") {:replace-existing true})
       (fs/copy (:tmux-env-file ctx) (fs/path role-state-dir "tmux-env") {:replace-existing true}))))
-

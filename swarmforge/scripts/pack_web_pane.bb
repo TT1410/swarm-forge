@@ -46,7 +46,7 @@
       (recorded-pane root role)))
 
 (defn pane-files [root role]
-  (let [dir (fs/path root ".swarmforge" "sessions" role)]
+  (let [dir (safe-paths/id-path! (fs/path root ".swarmforge" "sessions") role "")]
     (if (fs/directory? dir)
       (->> (fs/list-dir dir)
            (map #(fs/path % "pane.txt"))
@@ -64,7 +64,8 @@
     (some #(when (= task (fs/file-name (fs/parent %))) %) files)))
 
 (defn recorded-pane [root role]
-  (let [direct (fs/path root ".swarmforge" "sessions" role "pane.txt")]
+  (let [direct (fs/path (safe-paths/id-path! (fs/path root ".swarmforge" "sessions") role "")
+                        "pane.txt")]
     (if (fs/regular-file? direct)
       (slurp (str direct))
       (let [files (pane-files root role)
@@ -130,16 +131,17 @@
     (java.net.URLDecoder/decode role "UTF-8")))
 
 (defn get-agent [root uri]
-  (if-let [role (agent-role uri)]
+  (if-let [role (some-> (agent-role uri)
+                        (#(when (safe-paths/internal-id? %) %)))]
     {:status 200
      :headers {"Content-Type" "text/html; charset=utf-8"}
      :body (pane-page role (pane-content root role) (query-value uri "project"))}
     {:status 404 :body "Not found"}))
 
 (defn get-agent-pane [root uri]
-  (if-let [role (agent-pane-role uri)]
+  (if-let [role (some-> (agent-pane-role uri)
+                        (#(when (safe-paths/internal-id? %) %)))]
     {:status 200
      :headers {"Content-Type" "text/plain; charset=utf-8"}
      :body (pane-content root role)}
     {:status 404 :body "Not found"}))
-

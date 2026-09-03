@@ -1,72 +1,82 @@
 (ns card-type
-  (:require [clojure.string :as str]))
+  (:require [babashka.fs :as fs]
+            [clojure.string :as str]))
 
-(def types #{"utility" "component" "QA" "review"})
-(def default-type "component")
-(def missing-type "QA")
+(defn routes-file [root]
+  (fs/path root ".swarmforge" "routes.tsv"))
 
-(def start-lane
-  {"utility" "coder"
-   "component" "specifier"
-   "QA" "specifier"
-   "review" "cleaner"})
+(defn route-rows [root]
+  (let [file (routes-file root)]
+    (if (fs/regular-file? file)
+      (->> (str/split-lines (slurp (str file)))
+           (remove str/blank?)
+           (keep (fn [line]
+                   (let [[card-type roles] (str/split line #"\t" 2)
+                         chain (vec (remove str/blank? (str/split (or roles "") #",")))]
+                     (when (and (not (str/blank? card-type)) (seq chain))
+                       [card-type chain]))))
+           vec)
+      [])))
 
-(def chains
-  {"utility" ["coder" "cleaner"]
-   "component" ["specifier" "coder" "cleaner" "architect" "hardender"]
-   "QA" ["specifier" "coder" "cleaner" "architect" "hardender" "QA"]
-   "review" ["cleaner" "architect" "hardender" "QA"]})
+(defn routes [root]
+  (into {} (route-rows root)))
 
-(defn known? [card-type]
-  (contains? types card-type))
+(defn card-types [root]
+  (mapv first (route-rows root)))
 
-(defn normalize [card-type]
+(defn default-type [root]
+  (first (card-types root)))
+
+(defn known? [root card-type]
+  (contains? (routes root) card-type))
+
+(defn normalize [root card-type]
   (if (str/blank? card-type)
-    missing-type
+    (default-type root)
     card-type))
 
-(defn starting-lane [card-type]
-  (get start-lane (normalize card-type)))
+(defn starting-lane [root card-type]
+  (first (get (routes root) (normalize root card-type))))
 
-(defn chain [card-type]
-  (get chains (normalize card-type) (get chains missing-type)))
+(defn chain [root card-type]
+  (get (routes root) (normalize root card-type)))
 
-(defn last-role [card-type]
-  (last (chain card-type)))
+(defn last-role [root card-type]
+  (last (chain root card-type)))
 
-(defn next-role [card-type sender]
-  (let [ch (chain card-type)
+(defn next-role [root card-type sender]
+  (let [ch (chain root card-type)
         idx (.indexOf ch sender)]
     (when (and (>= idx 0) (< (inc idx) (count ch)))
       (nth ch (inc idx)))))
 
-(defn earlier-roles [card-type sender]
-  (let [ch (chain card-type)
+(defn earlier-roles [root card-type sender]
+  (let [ch (chain root card-type)
         idx (.indexOf ch sender)]
     (if (neg? idx)
       []
       (vec (take idx ch)))))
 
-(defn last-on-card? [card-type sender]
-  (= sender (last-role card-type)))
+(defn last-on-card? [root card-type sender]
+  (= sender (last-role root card-type)))
 
-(defn terminal-upstream [pack-roles card-type]
-  (let [last (last-role card-type)
+(defn terminal-upstream [root pack-roles card-type]
+  (let [last (last-role root card-type)
         names (vec pack-roles)
         idx (.indexOf names last)]
     (if (neg? idx)
       []
       (vec (take idx names)))))
 
-(defn on-chain? [card-type role]
-  (boolean (some #{role} (chain card-type))))
+(defn on-chain? [root card-type role]
+  (boolean (some #{role} (chain root card-type))))
 
 (defn parse-count [value]
   (if (and value (re-matches #"[0-9]+" value))
     (Long/parseLong value)
     0))
 
-(defn parse-row [line]
+(defn parse-row [root line]
   (let [[name lane created updated task-id audit-count card-type]
         (str/split (or line "") #"\t" -1)]
     {:name name
@@ -75,7 +85,7 @@
      :updated updated
      :id (or (not-empty task-id) name)
      :audit-count (parse-count audit-count)
-     :type (normalize card-type)}))
+     :type (normalize root card-type)}))
 
 (defn format-row [{:keys [name lane created updated id audit-count type]}]
   (str/join "\t" [name
@@ -84,4 +94,4 @@
                   updated
                   id
                   (str (or audit-count 0))
-                  (normalize type)]))
+                  (or type "")]))

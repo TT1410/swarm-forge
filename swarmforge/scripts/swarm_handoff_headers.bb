@@ -142,7 +142,7 @@
   (some #(when (= task-id (:id %)) %) (board-rows)))
 
 (defn task-document-relative-path [task-name]
-  (when-not (str/blank? task-name)
+  (when (safe-paths/task-name? task-name)
     (str "tasks/" task-name ".md")))
 
 (defn committed-task-document [commit relative-path]
@@ -170,8 +170,9 @@
 
 (defn rejected-task? [task]
   (let [name (:name task)]
-    (and (not (str/blank? name))
-         (fs/exists? (fs/path (state-root) "notify" (str "reject-" name))))))
+    (and (safe-paths/task-name? name)
+         (fs/exists? (safe-paths/task-path! (fs/path (state-root) "notify")
+                                            (str "reject-" name) "")))))
 
 (defn task-state-errors [headers sender]
   (if-not (= "git_handoff" (get headers "type"))

@@ -1,9 +1,10 @@
 ;; Approval write, git rollback, and retry. Loaded into pack-web.
 
 (defn pending-file [root id]
-  (fs/path (pending-dir root) (str id ".handoff")))
+  (safe-paths/id-path! (pending-dir root) id ".handoff"))
 
 (defn require-pending! [root id]
+  (safe-paths/require-internal-id! id)
   (let [path (pending-file root id)]
     (when-not (fs/regular-file? path)
       (throw (ex-info (str "Unknown approval: " id) {:http-status 404})))
@@ -36,6 +37,7 @@
 
 (defn write-reject-notify! [root task]
   (when-not (str/blank? task)
+    (safe-paths/require-task-name! task)
     (let [path (fs/path root ".swarmforge" "notify" (str "reject-" task))]
       (fs/create-dirs (fs/parent path))
       (spit (str path) "rejected\n"))))
@@ -105,7 +107,8 @@
     (pack-board root "increment-audit" "--task-id" task-id "--caller" "handoffd")))
 
 (defn latest-audit-n [root task-id]
-  (let [dir (fs/path root ".swarmforge" "board" "audits" task-id)]
+  (let [dir (safe-paths/state-key-path! (fs/path root ".swarmforge" "board" "audits")
+                                        task-id "")]
     (if (fs/directory? dir)
       (->> (fs/list-dir dir)
            (map fs/file-name)
@@ -126,7 +129,10 @@
         extra (str/trim (or comments ""))
         findings (review-findings reviews)]
     (when (pos? n)
-      (let [file (fs/path root ".swarmforge" "board" "audits" task-id (str n ".md"))]
+      (let [file (safe-paths/id-path!
+                  (safe-paths/state-key-path! (fs/path root ".swarmforge" "board" "audits")
+                                              task-id "")
+                  (str n) ".md")]
         (fs/create-dirs (fs/parent file))
         (spit (str file)
               (str "# Audit " n "\n\n"
@@ -232,7 +238,8 @@
 (defn approval-route [uri]
   (let [path (first (str/split (or uri "") #"\?"))]
     (when-let [[_ id action] (re-matches #"/api/approvals/([^/]+)/(approve|reject|comments)" path)]
-      {:id (java.net.URLDecoder/decode id "UTF-8")
+      {:id (safe-paths/require-internal-id!
+            (java.net.URLDecoder/decode id "UTF-8"))
        :action action})))
 
 (defn post-approval [root uri body]

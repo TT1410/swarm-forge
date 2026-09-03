@@ -88,17 +88,32 @@
                 ".swarmforge/handoffs/inbox/in_process"
                 ".swarmforge/handoffs/inbox/completed"]]
      (fs/create-dirs (fs/path root dir)))
-   (write-file
+   (let [rows (role-spec-rows roles)
+         role-names (mapv first rows)]
+     (write-file
     (fs/path root ".swarmforge/roles.tsv")
     (apply str
-           (for [[role mode prop] (role-spec-rows roles)]
+           (for [[role mode prop] rows]
              (format "%s\tmaster\t%s\tsession\t%s\tcodex\t%s\t%s\n"
-                     role root (str/capitalize role) mode prop))))))
+                     role root (str/capitalize role) mode prop))))
+     (let [preferred-route (fn [preferred]
+                             (let [found (vec (filter (set role-names) preferred))]
+                               (if (seq found) found role-names)))
+           component (vec (remove #{"QA"} role-names))]
+       (write-file
+        (fs/path root ".swarmforge/routes.tsv")
+        (apply str
+               (for [[type route] [["utility" (preferred-route ["coder" "cleaner"])]
+                                   ["component" (if (seq component) component role-names)]
+                                   ["QA" role-names]
+                                   ["review" (preferred-route ["cleaner" "architect" "hardender" "QA"])]]]
+                 (str type "\t" (str/join "," route) "\n"))))))))
 (defn handoff
   [{:keys [id from to recipient priority type task-id task commit body
            task-base-commit enqueued-at dequeued-at completed-at
            card-type non-forwarding]}]
-  (str "id: " id "\n"
+  (let [id (or id (str "test-" (System/nanoTime)))]
+    (str "id: " id "\n"
        "from: " from "\n"
        "to: " to "\n"
        (when recipient (str "recipient: " recipient "\n"))
@@ -114,7 +129,7 @@
        (when dequeued-at (str "dequeued_at: " dequeued-at "\n"))
        (when completed-at (str "completed_at: " completed-at "\n"))
        "\n"
-       (or body (str "payload for " id)) "\n"))
+         (or body (str "payload for " id)) "\n")))
 (defn handoff-path [root state filename]
   (fs/path root ".swarmforge" "handoffs" "inbox" state filename))
 (defn put-handoff! [root state filename attrs]
@@ -227,4 +242,3 @@
    ["architect" "batch" "back-all"]
    ["hardender" "task" "forward-only"]
    ["QA" "task" "back-all"]])
-

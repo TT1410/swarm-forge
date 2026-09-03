@@ -1,4 +1,4 @@
-# Handoff Daemon Proposal
+# Handoff Protocol
 
 ## Goal
 
@@ -23,12 +23,13 @@ timestamps are stored in the handoff file headers.
 
 ## Directory Layout
 
-Each agent worktree owns this structure:
+Each role worktree owns its queue and audit trail:
 
 ```text
 .swarmforge/handoffs/
   outbox/
     tmp/
+    <handoff>.retry.edn
   sent/
   failed/
   inbox/
@@ -37,9 +38,23 @@ Each agent worktree owns this structure:
     completed/
 ```
 
-The daemon consumes `outbox/`. Agents consume `inbox/new/` through helper
-scripts. The `sent`, `failed`, `in_process`, and `completed` directories provide
-the audit trail and restart state.
+The project root owns cross-role delivery and notification state:
+
+```text
+.swarmforge/handoffs/
+  delivery_attention/
+.swarmforge/daemon/
+  wakeups/
+```
+
+The daemon consumes final `.handoff` files directly under `outbox/`. Agents
+consume `inbox/new/` through helper scripts. The `sent`, `failed`,
+`in_process`, and `completed` directories provide the audit trail and restart
+state. A retry sidecar beside an outbox handoff records a transient delivery
+failure. After three attempts, the daemon also writes a project-root
+`delivery_attention` record for the dashboard while continuing retries.
+The project-root `daemon/wakeups` directory is the independent retry queue for
+tmux notifications.
 
 ## Role Receive Mode
 
@@ -51,16 +66,16 @@ window <role> <agent> <worktree> [task|batch] [forward-only|back-one|back-all] [
 
 When omitted, receive mode defaults to `task`. An optional propagation token
 after receive-mode defaults to `forward-only`. `back-one` and `back-all` queue
-merge-only copies to earlier windows; they do not move the card. Any fields after
-those tokens are passed to the agent CLI as additional arguments. The launcher
+merge-only copies to earlier roles on the active card route; they do not move
+the card. Any fields after those tokens are passed to the agent CLI as
+additional arguments. The launcher
 writes the normalized mode and propagation into `.swarmforge/roles.tsv`, and
 agent-facing receive helpers read that runtime file rather than reparsing
 `swarmforge.conf`.
 
-Use `batch` for roles that should consume queued handoffs that share
-priority, card type, and reverse/forward with the first file as a
-single unit, such as six-pack `cleaner`, `architect`, `hardender`, and `QA`,
-and four-pack `architect`.
+Use `batch` for a configured role that should consume queued handoffs sharing
+priority, card type, and reverse/forward direction with the first file as one
+unit. The active assignment belongs in `swarmforge.conf`.
 
 ## Filename Format
 
@@ -116,13 +131,13 @@ priority: 50
 type: git_handoff
 role: coder
 task: task-1-cave-setup
-commit: a1b2c3d9
+commit: a1b2c3d9e8
 created_at: 2026-06-15T14:05:31Z
 enqueued_at: 2026-06-15T14:05:32Z
 
 Re-read your role and constitution.
 
-merge_and_process.sh coder a1b2c3d9
+merge_and_process.sh coder a1b2c3d9e8
 ```
 
 For broadcast handoffs, `to` preserves the full recipient list and `recipient`
@@ -143,7 +158,6 @@ type: git_handoff
 to: cleaner
 priority: 50
 task: task-1-cave-setup
-commit: a1b2c3d9e8
 ```
 
 Generated body:
@@ -151,28 +165,25 @@ Generated body:
 ```text
 Re-read your role and constitution.
 
-merge_and_process.sh coder a1b2c3d9
+merge_and_process.sh coder a1b2c3d9e8
 ```
 
-The script validates the task name and canonicalizes the commit abbreviation
-before queuing the handoff. The task name is a short, stable human-readable
-name that follows the work through downstream git handoffs for the same task.
+The helper replaces any draft `commit` value with the sender worktree's current
+HEAD, validates and canonicalizes it, and records the resulting ten-character
+abbreviation in the delivered file. The task name is a short, stable
+human-readable name that follows the work through downstream Git handoffs for
+the same task.
 
 #### Chain forwarding
 
-Intermediate roles in a pack pipeline must always forward a `git_handoff` to
-the next role in the chain after completing the inbound task, regardless of
-what changed. Manifest-only, audit-only, generated metadata, formatting-only,
-and other non-functional churn still require a forward down the chain.
-
-Examples:
-
-- `two-pack`: `coder` -> `cleaner`; `cleaner` always forwards to `coder`.
-- `four-pack`: `specifier` -> `coder` -> `refactorer` -> `architect`; each
-  intermediate role always forwards to the next role in the chain.
-- `six-pack`: `specifier` -> `coder` -> `cleaner` -> `architect` -> `hardender`
-  -> `QA`; each intermediate role always forwards to the next role in the
-  chain.
+Each `card <type> <role>...` line in `swarmforge.conf` defines an ordered
+pipeline. After completing a forward inbound task, an intermediate role always
+forwards a `git_handoff` to the next role on that card's configured route,
+regardless of what changed. Manifest-only, audit-only, generated metadata,
+formatting-only, and other non-functional churn still require a forward down
+the route. Startup validates the routes and writes `.swarmforge/routes.tsv`;
+the board, handoff gate, receive guard, and daemon all read that normalized
+description.
 
 #### Terminal broadcast
 
@@ -183,17 +194,9 @@ marks the card Done. Each recipient merges that commit
 (`merge_and_process.sh`) and stops; they do not re-forward. A partial
 `to:` list is not terminal.
 
-On this lieutenant forge:
-
-- utility: `cleaner` `to:` specifier,coder
-- component: `hardender` `to:` specifier,coder,cleaner,architect
-- QA type and review: `QA` `to:` specifier,coder,cleaner,architect,hardender
-
-Pack-only products still use last-in-pack (every other role):
-
-- `two-pack`: `cleaner` `to: coder`
-- `four-pack`: `architect` `to: specifier,coder,refactorer`
-- `six-pack`: `QA` `to:` the other five roles
+The terminal recipient set is derived from the project's configured window
+order and the final role on this card's route. Current role names and routes
+belong in that project's `swarmforge.conf`, not in this protocol document.
 
 ### `note`
 
@@ -227,9 +230,9 @@ The `message` value must be a single line no longer than 80 characters.
 
 ## `swarm_handoff.sh`
 
-`swarm_handoff.sh` should be the strict outbound protocol gate.
+`swarm_handoff.sh` is the strict outbound protocol gate.
 
-Proposed usage:
+Usage:
 
 ```sh
 swarm_handoff.sh ./tmp/handoff.txt
@@ -281,7 +284,7 @@ Atomic outbound write sequence:
 2. Flush and close the file.
 3. Rename it to `outbox/<filename>.handoff`.
 
-The daemon should ignore `outbox/tmp/` and process only final `.handoff` files
+The daemon ignores `outbox/tmp/` and processes only final `.handoff` files
 that appear directly under `outbox/`.
 
 Reserved headers:
@@ -307,7 +310,7 @@ HANDOFF INVALID: ./tmp/handoff.txt
 Errors:
 - Line 3: `priority` must be two digits from 00 to 99; got `urgent`.
 - Header `completed_at` is reserved and must not be written by agents.
-- message: commit `a1b2c3` is ambiguous; use at least 9 characters.
+- The current HEAD does not resolve to a commit.
 
 Expected git_handoff format:
 
@@ -315,13 +318,12 @@ type: git_handoff
 to: cleaner
 priority: 50
 task: <short-stable-task-name>
-commit: <commit-abbrev>
 ```
 
 ## Commit Validation
 
-For `git_handoff`, `swarm_handoff.sh` should validate the commit abbreviation
-with Git.
+For `git_handoff`, `swarm_handoff.sh` reads the sender worktree HEAD and
+validates the generated commit abbreviation with Git.
 
 Rules:
 
@@ -329,13 +331,13 @@ Rules:
 - It must be exactly 10 characters.
 - It must resolve to exactly one object.
 - The resolved object must be a commit.
-- The script should write a canonical abbreviation into the queued handoff.
+- The script writes a canonical abbreviation into the queued handoff.
 
 This prevents agents from sending corrupted or ambiguous SHA abbreviations.
 
 ## Handoff Daemon
 
-The daemon should be implemented in Babashka.
+The daemon is implemented in Babashka.
 
 Rationale:
 
@@ -346,15 +348,29 @@ Rationale:
 
 Responsibilities:
 
-- Discover configured agents and worktrees.
+- Discover configured roles and worktrees.
 - Poll each agent `outbox/`.
 - Process only complete `.handoff` files, never files in `outbox/tmp/`.
-- Copy each handoff to every recipient `inbox/new/`.
+- Preflight all headers, configured recipients, worktree destinations, board
+  tasks, and conflicting target files before writing or moving anything.
+- Copy each handoff to every recipient `inbox/new/` atomically. An existing copy
+  with the same handoff ID and recipient is an idempotent success; a conflicting
+  copy is a permanent failure.
 - Add `recipient` and `enqueued_at` to each recipient copy.
-- Send a generic tmux wake-up message to each recipient.
-- Move the original outbox file to `sent/` after successful delivery.
-- Move malformed or undeliverable files to `failed/` with useful diagnostics.
-- Avoid duplicate delivery when retrying after interruption.
+- Update the board only after every recipient has a stored copy.
+- Archive the sender's completed inbox work, then move the original outbox file
+  to `sent/`.
+- Send a generic tmux wake-up message to each recipient after delivery commits.
+- Move malformed or permanently invalid files—such as unknown roles or
+  conflicting recipient copies—to `failed/` with useful diagnostics.
+- Leave transient failures in `outbox/`, record attempt/error/next-at metadata,
+  and retry with exponential backoff capped at 60 seconds.
+- Show a delivery in dashboard Attention after three failed attempts while
+  continuing retries.
+- Queue failed tmux wake-ups separately so notification trouble cannot turn a
+  stored handoff into a failed delivery.
+- Resume unfinished delivery and wake-up retries after daemon restart without
+  duplicating recipient copies.
 
 The tmux message should not name the delivered file. It should avoid biasing the
 recipient toward one file and should force queue-order processing.
@@ -426,7 +442,7 @@ TASK_NAME: task-1-cave-setup
 PAYLOAD:
 Re-read your role and constitution.
 
-merge_and_process.sh architect a1b2c3d9
+merge_and_process.sh architect a1b2c3d9e8
 ```
 
 ### `done_with_current_task.sh`
@@ -584,14 +600,15 @@ Shutdown:
 - The daemon may also watch `.swarmforge/daemon/stop` as a secondary shutdown
   mechanism.
 
-Delivery should be transaction-like:
+Delivery is transaction-like:
 
-1. Detect an outbox file.
-2. Copy it to all recipient inboxes.
-3. Send wake-up notifications.
-4. Move the original outbox file to `sent/`.
-5. If interrupted before completion, retry without duplicating already delivered
-   recipient copies.
+1. Detect and preflight an outbox file and every target.
+2. Atomically store any missing recipient copies.
+3. Update the board after all copies exist.
+4. Archive the sender's completed work and move the outbox original to `sent/`.
+5. Send or durably queue wake-up notifications.
+6. If interrupted before step 4 completes, retry without replacing or
+   duplicating matching recipient copies.
 
 ## Implemented Helpers
 
@@ -618,5 +635,7 @@ or the removed send/receive/complete/resend wrapper scripts.
 - Git handoff commit abbreviations are exactly 10 hexadecimal characters.
 - `note` handoffs have no optional classification field.
 - Helper scripts do not provide recovery modes for ambiguous queue state.
-- The daemon does not perform a second full validation pass on outbox files;
-  `swarm_handoff.sh` is the validation boundary.
+- `swarm_handoff.sh` is the full agent-facing validation boundary; the daemon
+  still performs delivery preflight for structural headers, identifiers,
+  configured roles, board task identity, worktree availability, and target
+  conflicts before mutating delivery state.

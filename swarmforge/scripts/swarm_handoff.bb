@@ -43,6 +43,10 @@
   (require 'card-type)
   (catch Exception _
     (load-file (str (fs/path script-dir "card_type.bb")))))
+(try
+  (require 'safe-paths)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "safe_paths.bb")))))
 
 (defn usage []
   (binding [*out* *err*]

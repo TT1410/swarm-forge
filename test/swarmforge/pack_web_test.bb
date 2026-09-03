@@ -329,14 +329,18 @@
       (println (:body resp)))
     (System/exit 1)))
 
-(defn test-new-project! [root name pack mission]
+(defn test-new-project!
+  ([root name pack mission] (test-new-project! root name pack mission false false))
+  ([root name pack mission github replace]
   (test-project-http!
    (handle-request (require-root! root)
                    {:method "POST"
                     :uri "/api/projects"
                     :body (json/generate-string {:name name
                                                  :pack pack
-                                                 :mission (or mission "")})})))
+                                                 :mission (or mission "")
+                                                 :github github
+                                                 :replace replace})}))))
 
 (defn test-open-project! [root name]
   (test-project-http!
@@ -410,6 +414,10 @@
     "--test-teardown" (test-teardown! (second args) (nth args 2 nil))
     "--test-teardown-throw" (test-teardown-throw! (second args))
     "--test-new-project" (test-new-project! (second args) (nth args 2 nil) (nth args 3 nil) (nth args 4 nil))
+    "--test-new-project-replace" (test-new-project! (second args) (nth args 2 nil) (nth args 3 nil)
+                                                      (nth args 4 nil) false true)
+    "--test-new-github-project" (test-new-project! (second args) (nth args 2 nil) (nth args 3 nil)
+                                                     (nth args 4 nil) true false)
     "--test-open-project" (test-open-project! (second args) (nth args 2 nil))
     "--test-close-project" (test-close-project! (second args) (nth args 2 nil))
     "--test-inferred-name" (test-inferred-name! (second args) (nth args 2 nil))

@@ -60,12 +60,12 @@
     (is (= six-pack-roles (mapv :role (:work_in_flight state))))))
 (deftest pack-web-post-task-creates-a-card-in-the-master-lane
   ;; Given a six-role pack
-  ;; When POST /api/tasks records name and text with no type
+  ;; When POST /api/tasks records name, text, and a configured type
   ;; Then the card is component in waiting with no start note
   (let [root (tmp-dir)
         text "Integrate HTW stories"]
     (setup-pack! root six-pack-roles)
-    (let [result (pack-web root true "--test-post-task" (str root) "htw-console-app" text)
+    (let [result (pack-web root true "--test-post-task" (str root) "htw-console-app" text "" "component")
           body (slurp (str (fs/path root ".swarmforge/board/htw-console-app.txt")))
           notes (handoff-names (fs/path root ".swarmforge/handoffs/outbox"))]
       (is (zero? (:exit result)))

@@ -41,7 +41,7 @@
     (if (fs/exists? file)
       (into []
             (keep (fn [line]
-                    (let [row (card-type/parse-row line)]
+                    (let [row (card-type/parse-row (project-root) line)]
                       (when (not (str/blank? (:name row)))
                         row))))
             (str/split-lines (slurp (str file))))

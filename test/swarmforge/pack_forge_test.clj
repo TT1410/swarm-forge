@@ -29,11 +29,61 @@
     (seed-mini-forge! root)
     (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
                   "--test-new-project" (str root) "cave" "two-pack" "one")
+    (write-file (fs/path root "projects/cave/keep-me.txt") "untouched\n")
     (let [result (run {:dir root :env {"SWARMFORGE_SKIP_START" "1"} :ok? false}
                       (script "pack_web.sh")
                       "--test-new-project" (str root) "cave" "two-pack" "two")]
       (is (not (zero? (:exit result))))
-      (is (str/includes? (str (:err result) (:out result)) "already exists")))))
+      (is (str/includes? (str (:err result) (:out result)) "already exists"))
+      (is (= "untouched\n" (slurp (str (fs/path root "projects/cave/keep-me.txt")))))
+      (is (= "one\n" (slurp (str (fs/path root "projects/cave/mission.md"))))))))
+
+(deftest forge-confirmed-replacement-clears-the-old-directory
+  (let [root (tmp-dir)]
+    (seed-mini-forge! root)
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
+                  "--test-new-project" (str root) "cave" "lieutenant" "one")
+    (write-file (fs/path root "projects/cave/old-only.txt") "old\n")
+    (let [result (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
+                               "--test-new-project-replace" (str root) "cave" "lieutenant" "two")
+          dest (fs/path root "projects/cave")]
+      (is (zero? (:exit result)) (:err result))
+      (is (not (fs/exists? (fs/path dest "old-only.txt"))))
+      (is (= "two\n" (slurp (str (fs/path dest "mission.md")))))
+      (is (= "" (str/trim (:out (run {:dir dest} "git" "status" "--porcelain"))))))))
+
+(deftest forge-github-import-keeps-product-and-replaces-old-swarmforge-data
+  (let [root (tmp-dir)
+        github-base (tmp-dir)
+        source (fs/path github-base "acme/cave")]
+    (seed-mini-forge! root)
+    (fs/create-dirs source)
+    (run {:dir source} "git" "init" "-q")
+    (run {:dir source} "git" "config" "user.email" "test@example.com")
+    (run {:dir source} "git" "config" "user.name" "Test User")
+    (write-file (fs/path source "product.txt") "product\n")
+    (write-file (fs/path source "mission.md") "old mission\n")
+    (write-file (fs/path source "swarmforge/obsolete.txt") "old\n")
+    (write-file (fs/path source "swarmforge/scripts/obsolete.sh") "old\n")
+    (write-file (fs/path source "swarmforge/roles/obsolete.prompt") "old\n")
+    (write-file (fs/path source ".gitignore") ".swarmforge/\n.worktrees/\ncustom.cache\n")
+    (run {:dir source} "git" "add" "-A")
+    (run {:dir source} "git" "commit" "-q" "-m" "Old project")
+    (let [result (pack-web-env root {"SWARMFORGE_SKIP_START" "1"
+                                     "SWARMFORGE_GITHUB_BASE" (str github-base)}
+                               "--test-new-github-project" (str root) "acme/cave"
+                               "lieutenant" "current mission")
+          dest (fs/path root "projects/cave")
+          ignore (slurp (str (fs/path dest ".gitignore")))]
+      (is (zero? (:exit result)) (:err result))
+      (is (= "product\n" (slurp (str (fs/path dest "product.txt")))))
+      (is (= "current mission\n" (slurp (str (fs/path dest "mission.md")))))
+      (is (not (fs/exists? (fs/path dest "swarmforge/obsolete.txt"))))
+      (is (not (fs/exists? (fs/path dest "swarmforge/scripts/obsolete.sh"))))
+      (is (not (fs/exists? (fs/path dest "swarmforge/roles/obsolete.prompt"))))
+      (is (str/includes? ignore "custom.cache"))
+      (is (str/includes? ignore "# BEGIN SWARMFORGE RUNTIME"))
+      (is (= "" (str/trim (:out (run {:dir dest} "git" "status" "--porcelain"))))))))
 (deftest forge-open-already-open-alerts
   (let [root (tmp-dir)]
     (seed-mini-forge! root)
@@ -44,6 +94,20 @@
                       "--test-open-project" (str root) "cave")]
       (is (not (zero? (:exit result))))
       (is (str/includes? (str (:err result) (:out result)) "already open")))))
+(deftest forge-reconciles-a-stale-open-state-with-stopped-runtime
+  (let [root (tmp-dir)]
+    (seed-mini-forge! root)
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
+                  "--test-new-project" (str root) "cave" "lieutenant" "m")
+    (write-file (fs/path root ".swarmforge/project-states.edn")
+                (str (pr-str {"cave" {:state "open" :error "" :managed-runtime true}}) "\n"))
+    (let [state (json/parse-string
+                 (:out (pack-web root true "--test-state" (str root)))
+                 true)
+          cave (first (filter #(= "cave" (:name %)) (:projects state)))]
+      (is (= "error" (:state cave)))
+      (is (str/includes? (:error cave) "runtime is stopped"))
+      (is (empty? (:open_projects state))))))
 (deftest forge-close-leaves-the-directory
   (let [root (tmp-dir)]
     (seed-mini-forge! root)
@@ -71,11 +135,13 @@
                   "--test-new-project" (str root) "cave" "four-pack" "keep me")
     (let [conf (fs/path root "projects/cave/swarmforge/swarmforge.conf")]
       (spit (str conf) "window specifier grok master extra-flag\n")
+      (write-file (fs/path root "projects/cave/swarmforge/obsolete.txt") "old\n")
       (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
                     "--test-close-project" (str root) "cave")
       (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
                     "--test-open-project" (str root) "cave")
       (is (= "keep me\n" (slurp (str (fs/path root "projects/cave/mission.md")))))
+      (is (not (fs/exists? (fs/path root "projects/cave/swarmforge/obsolete.txt"))))
       (is (str/includes? (slurp (str conf)) "extra-flag")))))
 (deftest forge-state-tags-attention-with-project
   (let [root (tmp-dir)]
@@ -102,6 +168,7 @@
     (seed-mini-forge! root)
     (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
                   "--test-new-project" (str root) "cave" "two-pack" "m")
+    (setup-pack! project ["specifier" "coder"])
     (create-task project "HTW" "specifier")
     (pack-board project true "request-allow" "--root" (str project)
                 "--name" "HTW" "--act" "move")
@@ -262,6 +329,7 @@
     (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
     (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
                   "--test-new-project" (str root) "cave" "two-pack" "m")
+    (setup-pack! project ["specifier" "coder"])
     (create-task project "HTW" "specifier")
     (pack-board project true "request-allow" "--root" (str project)
                 "--name" "HTW" "--act" "stop")
@@ -285,7 +353,7 @@
     (pack-web root true "--test-close-project" (str root) "cave")
     (doseq [file (fs/glob (fs/path root ".swarmforge/notify") "*.notify")]
       (fs/delete-if-exists file))
-    (pack-web-env root {"SWARMFORGE_TMUX_STUB" argv}
+    (pack-web-env root {"SWARMFORGE_SKIP_START" "1" "SWARMFORGE_TMUX_STUB" argv}
                   "--test-open-project" (str root) "cave")
     (is (empty? (vec (fs/glob (fs/path root ".swarmforge/notify") "*new-project*.notify"))))))
 (deftest forge-pack-clarify-notifies-lieutenant
@@ -329,10 +397,11 @@
     (pack-web-env root {"SWARMFORGE_SKIP_START" "1"}
                   "--test-new-project" (str root) "cave" "two-pack" "m")
     (setup-pack! dest ["specifier" "coder"])
+    (create-task dest "cave" "specifier")
     (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
     (write-file (fs/path dest ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
     (write-file (fs/path dest ".swarmforge/handoffs/outbox/50_approved.handoff")
-                (str "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\n"
+                (str "id: approved\nfrom: specifier\nto: coder\npriority: 50\ntype: git_handoff\n"
                      "task_id: cave\ntask: cave\ncommit: 1234567890\n"
                      "approved: true\n\npayload\n"))
     (let [result (run {:dir dest

@@ -96,7 +96,7 @@
     (json-ok)))
 
 (defn clar-pending-file [root id]
-  (fs/path (clar-pending-dir root) (str id ".request")))
+  (safe-paths/id-path! (clar-pending-dir root) id ".request"))
 
 (defn render-clarification [{:keys [id status role body response created_at]}]
   (str "id: " id "\n"
@@ -110,11 +110,12 @@
        (when-not (str/ends-with? (or body "") "\n") "\n")))
 
 (defn answer-clarification! [root id text]
+  (safe-paths/require-internal-id! id)
   (let [src (clar-pending-file root id)]
     (when-not (fs/regular-file? src)
       (throw (ex-info (str "Unknown clarification: " id) {:http-status 404})))
     (let [entry (parse-clarification src)
-          dest (fs/path (clar-done-dir root) (str id ".request"))
+          dest (safe-paths/id-path! (clar-done-dir root) id ".request")
           role (:role entry)]
       (fs/create-dirs (fs/parent dest))
       (spit (str dest) (render-clarification (assoc entry
@@ -126,7 +127,8 @@
 (defn clarification-route [uri]
   (let [path (first (str/split (or uri "") #"\?"))]
     (when-let [[_ id] (re-matches #"/api/clarifications/([^/]+)/answer" path)]
-      (java.net.URLDecoder/decode id "UTF-8"))))
+      (safe-paths/require-internal-id!
+       (java.net.URLDecoder/decode id "UTF-8")))))
 
 (defn post-clarification [root uri body]
   (if-let [id (clarification-route uri)]

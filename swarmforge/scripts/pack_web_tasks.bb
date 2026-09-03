@@ -61,9 +61,11 @@
     (fs/copy path (fs/path dir (fs/file-name path)) {:replace-existing true})))
 
 (defn archive-rejected! [root task-id name]
-  (let [dir (fs/path root ".swarmforge" "rejected-tasks" task-id)]
+  (safe-paths/require-task-name! name)
+  (let [dir (safe-paths/state-key-path! (fs/path root ".swarmforge" "rejected-tasks")
+                                        task-id "")]
     (fs/create-dirs dir)
-    (copy-into dir (fs/path root ".swarmforge" "board" (str name ".txt")))
+    (copy-into dir (safe-paths/task-path! (fs/path root ".swarmforge" "board") name ".txt"))
     (copy-into dir (fs/path root ".swarmforge" "notify" (str "reject-" name)))
     (doseq [path (task-handoffs root task-id name)]
       (copy-into dir path))))
@@ -91,7 +93,9 @@
     (fs/delete-if-exists path)))
 
 (defn reject-notify [root name]
-  (fs/path root ".swarmforge" "notify" (str "reject-" name)))
+  (safe-paths/require-task-name! name)
+  (safe-paths/task-path! (fs/path root ".swarmforge" "notify")
+                         (str "reject-" name) ""))
 
 (defn task-by-name [root name]
   (some #(when (= name (:name %)) %) (board-tasks root)))
@@ -102,6 +106,7 @@
 (defn delete-task! [root name]
   (when (str/blank? name)
     (throw (ex-info "Missing task name" {:http-status 400})))
+  (safe-paths/require-task-name! name)
   (when-not (rejected-task? root name)
     (throw (ex-info (str "Not rejected: " name) {:http-status 400})))
   (let [task-id (task-id-for-name root name)]
@@ -138,8 +143,9 @@
 (defn create-task! [root name text card-type]
   (when (str/blank? name)
     (throw (ex-info "Missing task name" {:http-status 400})))
-  (let [card-type (if (str/blank? card-type) card-type/default-type card-type)]
-    (when-not (card-type/known? card-type)
+  (safe-paths/require-task-name! name)
+  (let [card-type (if (str/blank? card-type) (card-type/default-type root) card-type)]
+    (when-not (card-type/known? root card-type)
       (throw (ex-info (str "Unknown type: " card-type) {:http-status 400})))
     (let [task-id (new-task-id name)]
       (pack-board root "create"
@@ -154,6 +160,7 @@
   (contains? #{"LT" "lt"} (or card-type "")))
 
 (defn notify-lt-task! [forge dest name text]
+  (safe-paths/require-task-name! name)
   (let [project (if (forge/forge? forge) (fs/file-name dest) "")]
     (notify-lieutenant! (or (forge-of forge dest) forge) "new-task"
                         [["event" "new-task"]

@@ -12,6 +12,12 @@
        "  pack_dashboard_request.sh create --root <dir> --body <text>\n"
        "  pack_dashboard_request.sh list --root <dir>\n"))
 
+(def script-dir (fs/parent *file*))
+(try
+  (require 'safe-paths)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "safe_paths.bb")))))
+
 (defn usage []
   (binding [*out* *err*]
     (println usage-text)))
@@ -92,7 +98,7 @@
   (fs/path root ".swarmforge" "dashboard" "requests" "done"))
 
 (defn request-file [dir id]
-  (fs/path dir (str id ".request")))
+  (safe-paths/id-path! dir id ".request"))
 
 (defn parse-kv [text]
   (let [[header body] (str/split (or text "") #"\n\n" 2)
@@ -140,7 +146,7 @@
   (fs/path root ".swarmforge" "dashboard" "clarifications" "done"))
 
 (defn clar-file [dir id]
-  (fs/path dir (str id ".request")))
+  (safe-paths/id-path! dir id ".request"))
 
 (defn create-clarification! [root role body]
   (when (str/blank? body)
@@ -269,6 +275,7 @@
 (defn answer-request! [root id answer-file]
   (when (str/blank? id)
     (exit! 1 "Missing request id"))
+  (safe-paths/require-internal-id! id)
   (when-not (fs/regular-file? answer-file)
     (exit! 1 (str "Answer file not found: " answer-file)))
   (if-let [src (find-pending root id)]

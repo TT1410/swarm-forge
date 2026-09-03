@@ -19,9 +19,10 @@ function closeNewTask() {
 }
 
 function defaultTaskType() {
-  const wrap = $("nt-type-lt");
-  if (wrap && wrap.style.display !== "none") return "LT";
-  return "component";
+  const lieutenant = document.querySelector("input[name=nt-type][value=LT]");
+  if (taskProject && lieutenant) return "LT";
+  const first = document.querySelector("input[name=nt-type]");
+  return first ? first.value : "";
 }
 
 function selectedType() {
@@ -44,8 +45,38 @@ function resetTypeRadios() {
   });
 }
 
+function fillTaskTypes(project) {
+  const host = $("nt-types");
+  const forge = !!project;
+  const types = forge ? (cardTypesByProject[project] || []) : standaloneCardTypes;
+  host.replaceChildren();
+  types.forEach((type) => {
+    const label = document.createElement("label");
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "nt-type";
+    input.value = type;
+    label.append(input, " " + displayName(type));
+    host.appendChild(label);
+  });
+  if (forge) {
+    const label = document.createElement("label");
+    label.id = "nt-type-lt";
+    const input = document.createElement("input");
+    input.type = "radio";
+    input.name = "nt-type";
+    input.value = "LT";
+    input.checked = true;
+    label.append(input, " LT");
+    host.appendChild(label);
+  } else if (host.querySelector("input")) {
+    host.querySelector("input").checked = true;
+  }
+}
+
 function openNewTask(project) {
   taskProject = project || "";
+  fillTaskTypes(taskProject);
   resetTypeRadios();
   updateNewTaskNote();
   $("new-task-layer").classList.add("open");
@@ -82,6 +113,7 @@ async function refreshForgePacks() {
     if (data.packs) forgePacks = data.packs;
     if (data.all_projects) allProjects = data.all_projects;
     if (data.open_projects) openProjects = data.open_projects;
+    if (data.project_states) projectStates = data.project_states;
   } catch (_) {}
 }
 
@@ -118,17 +150,32 @@ async function submitNewProject() {
   btn.disabled = true;
   btn.textContent = "Creating…";
   try {
-    const res = await fetch("/api/projects", {
+    const payload = {
+      name,
+      github: $("np-github").checked,
+      pack,
+      conf: $("np-conf").value,
+      mission: $("np-mission").value
+    };
+    let res = await fetch("/api/projects", {
       method: "POST",
       headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({
-        name,
-        github: $("np-github").checked,
-        pack,
-        conf: $("np-conf").value,
-        mission: $("np-mission").value
-      })
+      body: JSON.stringify(payload)
     });
+    if (res.status === 409) {
+      const replace = confirm(
+        "This project directory already exists. Clear and replace it? " +
+        "This permanently deletes every file in that directory. SwarmForge keeps no backup."
+      );
+      if (!replace) return;
+      payload.replace = true;
+      btn.textContent = "Replacing…";
+      res = await fetch("/api/projects", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify(payload)
+      });
+    }
     if (!res.ok) {
       let msg = "Could not create project";
       try { msg = (await res.json()).error || msg; } catch (_) {}

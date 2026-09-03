@@ -10,8 +10,8 @@
 
 (def usage-text
   (str "Usage:\n"
-       "  pack_board.sh create --name <name> --type <utility|component|QA|review> [--waiting] [--merge-from <role>] [--root <dir>] [--text <text>] [--caller lieutenant]\n"
-       "  pack_board.sh create <name> --type <utility|component|QA|review> [--waiting]\n"
+       "  pack_board.sh create --name <name> --type <configured-type> [--waiting] [--merge-from <role>] [--root <dir>] [--text <text>] [--caller lieutenant]\n"
+       "  pack_board.sh create <name> --type <configured-type> [--waiting]\n"
        "  pack_board.sh move --name <name> --lane <lane> [--merge-from <role>] [--root <dir>]\n"
        "  pack_board.sh move <name> <lane>\n"
        "  pack_board.sh done --name <name> [--root <dir>]\n"
@@ -44,6 +44,10 @@
   (require 'card-type)
   (catch Exception _
     (load-file (str (fs/path script-dir "card_type.bb")))))
+(try
+  (require 'safe-paths)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "safe_paths.bb")))))
 
 (declare role-rows halt-live-card!)
 

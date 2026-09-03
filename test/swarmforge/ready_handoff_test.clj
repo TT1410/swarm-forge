@@ -160,7 +160,7 @@
                 (format "sender\tmaster\t%s\tsession\tSender\tcodex\ttask\nreceiver\treceiver\t%s\tsession\tReceiver\tcodex\ttask\n"
                         root (fs/path root ".worktrees/receiver")))
     (write-file (fs/path root ".swarmforge/handoffs/outbox/50_outbound.handoff")
-                "from: sender\nto: receiver\npriority: 50\ntype: git_handoff\ntask_id: task-one\ntask: task-one\ncommit: 1234567890\n\npayload\n")
+                "id: outbound\nfrom: sender\nto: receiver\npriority: 50\ntype: git_handoff\ntask_id: task-one\ntask: task-one\ncommit: 1234567890\n\npayload\n")
     (put-handoff! root "new" "50_next.handoff"
                   {:id "next"
                    :from "(New Task)"
@@ -228,9 +228,10 @@
     (write-file (fs/path root ".swarmforge/roles.tsv")
                 (format "sender\tmaster\t%s\tsender-session\tSender\tcodex\ttask\nreceiver\treceiver\t%s\treceiver-session\tReceiver\tcodex\ttask\n"
                         root receiver))
+    (fs/create-dirs receiver)
     (write-file (fs/path root ".swarmforge/tmux-socket") "/tmp/fake.sock\n")
     (write-file (fs/path root ".swarmforge/handoffs/outbox/50_approved.handoff")
-                "from: sender\nto: receiver\npriority: 50\ntype: git_handoff\ntask_id: task-one\ntask: task-one\ncommit: 1234567890\napproved: true\n\npayload\n")
+                "id: approved\nfrom: sender\nto: receiver\npriority: 50\ntype: git_handoff\ntask_id: task-one\ntask: task-one\ncommit: 1234567890\napproved: true\n\npayload\n")
     (put-handoff! root "new" "50_next.handoff"
                   {:id "next"
                    :from "(New Task)"

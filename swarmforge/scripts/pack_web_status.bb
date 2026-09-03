@@ -14,8 +14,8 @@
 (defn master-role [root]
   (str/trim (pack-board root "master-lane")))
 
-(defn task-entry [line]
-  (let [row (card-type/parse-row line)]
+(defn task-entry [root line]
+  (let [row (card-type/parse-row root line)]
     {:name (:name row)
      :id (:id row)
      :lane (:lane row)
@@ -152,7 +152,7 @@
   (or (last (im-status-lines role text backend)) ""))
 
 (defn board-tasks [root]
-  (mapv task-entry (lines (pack-board root "list"))))
+  (mapv #(task-entry root %) (lines (pack-board root "list"))))
 
 (defn pane-status-lines-for [root role]
   (let [row (role-row root role)
@@ -176,7 +176,9 @@
         #{}))))
 
 (defn rejected-task? [root name]
-  (fs/exists? (fs/path root ".swarmforge" "notify" (str "reject-" name))))
+  (and (safe-paths/task-name? name)
+       (fs/exists? (safe-paths/task-path! (fs/path root ".swarmforge" "notify")
+                                          (str "reject-" name) ""))))
 
 (defn pending-approval-ids [root]
   (->> (approvals root)

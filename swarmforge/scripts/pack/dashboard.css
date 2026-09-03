@@ -47,6 +47,9 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .project-header{display:flex;align-items:center;gap:8px;margin-bottom:8px;flex:0 0 auto}
 .project-header .project-name{margin:0;padding:0;font:inherit;font-size:13px;font-weight:700;flex:1;text-align:left;border:0;background:none;cursor:pointer;color:inherit}
 .project-header .project-name:hover{text-decoration:underline}
+.project-state{font-size:10px;font-weight:700;text-transform:uppercase;letter-spacing:.04em;color:var(--muted)}
+.project-state-error{color:#a32626}
+.project-state-starting,.project-state-stopping{color:#8a5a00}
 .inferred{font-size:11px;color:var(--muted);margin:-6px 0 8px}
 .pack-radios{display:flex;flex-wrap:wrap;gap:10px;margin-bottom:10px;font-size:12px}
 #np-conf{min-height:120px;font:12px/1.4 ui-monospace,Menlo,monospace}

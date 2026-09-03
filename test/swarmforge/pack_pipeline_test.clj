@@ -7,6 +7,67 @@
 
 (use-fixtures :once once-fixture)
 
+(deftest handoffd-keeps-delivery-success-when-session-wakeup-fails
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner"]]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (queue-handoff! root {:from "coder" :to "cleaner" :task "HTW"})
+    (write-file (fs/path root ".swarmforge/tmux-socket") "/tmp/missing-swarmforge.sock\n")
+    (let [result (handoffd-once root)]
+      (is (zero? (:exit result)))
+      (is (= "cleaner" (task-lane root "HTW")))
+      (is (= 1 (count (inbox-names root roles "cleaner"))))
+      (is (= 1 (count (handoff-names (fs/path root ".swarmforge/handoffs/sent")))))
+      (is (empty? (handoff-names (fs/path root ".swarmforge/handoffs/failed"))))
+      (is (seq (fs/glob (fs/path root ".swarmforge/daemon/wakeups") "*.edn"))))))
+
+(deftest handoffd-retries-a-temporarily-unavailable-recipient
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner"]
+        recipient (fs/path root ".worktrees/cleaner")]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (queue-handoff! root {:from "coder" :to "cleaner" :task "HTW"})
+    (write-file (fs/path root ".swarmforge/tmux-socket") "/tmp/missing-swarmforge.sock\n")
+    (fs/delete-tree recipient)
+    (let [outbox (first (handoff-names (fs/path root ".swarmforge/handoffs/outbox")))
+          source (fs/path root ".swarmforge/handoffs/outbox" outbox)
+          retry (fs/path (str source ".retry.edn"))]
+      (handoffd-once root)
+      (is (fs/regular-file? source))
+      (is (fs/regular-file? retry))
+      (is (= "coder" (task-lane root "HTW")))
+      (fs/create-dirs (fs/path recipient ".swarmforge/handoffs/inbox/new"))
+      (write-file retry (str (pr-str {:attempt 1 :next-at 0 :error "test"}) "\n"))
+      (handoffd-once root)
+      (is (not (fs/exists? source)))
+      (is (not (fs/exists? retry)))
+      (is (= "cleaner" (task-lane root "HTW")))
+      (is (= [outbox] (inbox-names root roles "cleaner"))))))
+
+(deftest handoffd-shows-repeated-transient-failures-in-attention
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner"]
+        recipient (fs/path root ".worktrees/cleaner")]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (queue-handoff! root {:from "coder" :to "cleaner" :task "HTW"})
+    (write-file (fs/path root ".swarmforge/tmux-socket") "/tmp/missing-swarmforge.sock\n")
+    (fs/delete-tree recipient)
+    (let [source (first (fs/glob (fs/path root ".swarmforge/handoffs/outbox") "*.handoff"))
+          retry (fs/path (str source ".retry.edn"))]
+      (dotimes [attempt 3]
+        (when (pos? attempt)
+          (write-file retry (str (pr-str {:attempt attempt :next-at 0 :error "test"}) "\n")))
+        (handoffd-once root))
+      (let [failures (:delivery_failures (web-state root))]
+        (is (= 1 (count failures)))
+        (is (= 3 (:attempt (first failures))))
+        (is (= "HTW" (:task (first failures)))))
+      (is (fs/regular-file? source))
+      (is (= "coder" (task-lane root "HTW"))))))
+
 (deftest handoffd-moves-the-task-card-to-the-recipient
   ;; Given card htw-console-app in coder
   ;; When a git_handoff coder→cleaner for that task is delivered
@@ -43,14 +104,14 @@
   (let [forge (tmp-dir)
         project (fs/path forge "projects" "cave")
         roles ["coder" "cleaner"]
-        lt-sock (str (fs/path forge "tmux.sock"))]
+        lt-sock (tmp-tmux-socket)]
     (fs/create-dirs project)
     (setup-pack! project roles)
     (create-task project "HTW" "coder")
     (queue-handoff! project {:from "coder" :to "cleaner" :task "HTW"})
     (write-file (fs/path forge ".swarmforge/tmux-socket") (str lt-sock "\n"))
     (run {:dir forge} "tmux" "-S" lt-sock "new-session" "-d" "-s" "swarmforge-lieutenant" "sleep" "120")
-    (let [sock (start-tmux! project roles (str (fs/path forge "proj.sock")))]
+    (let [sock (start-tmux! project roles (tmp-tmux-socket))]
       (try
         (handoffd-once project)
         (let [notes (vec (fs/glob (fs/path forge ".swarmforge/notify") "*.notify"))]
@@ -68,14 +129,14 @@
   (let [forge (tmp-dir)
         project (fs/path forge "projects" "cave")
         roles six-pack-roles
-        lt-sock (str (fs/path forge "tmux.sock"))]
+        lt-sock (tmp-tmux-socket)]
     (fs/create-dirs project)
     (setup-pack! project roles)
     (create-task project "HTW" "specifier")
     (queue-handoff! project {:from "specifier" :to "coder" :task "HTW"})
     (write-file (fs/path forge ".swarmforge/tmux-socket") (str lt-sock "\n"))
     (run {:dir forge} "tmux" "-S" lt-sock "new-session" "-d" "-s" "swarmforge-lieutenant" "sleep" "120")
-    (let [sock (start-tmux! project roles (str (fs/path forge "proj.sock")))]
+    (let [sock (start-tmux! project roles (tmp-tmux-socket))]
       (try
         (handoffd-once project)
         (let [notes (vec (fs/glob (fs/path forge ".swarmforge/notify") "*.notify"))
@@ -98,14 +159,14 @@
   (let [forge (tmp-dir)
         project (fs/path forge "projects" "cave")
         roles ["coder" "cleaner"]
-        lt-sock (str (fs/path forge "tmux.sock"))]
+        lt-sock (tmp-tmux-socket)]
     (fs/create-dirs project)
     (setup-pack! project roles)
     (create-task project "HTW" "cleaner")
     (queue-handoff! project {:from "cleaner" :to "coder" :task "HTW"})
     (write-file (fs/path forge ".swarmforge/tmux-socket") (str lt-sock "\n"))
     (run {:dir forge} "tmux" "-S" lt-sock "new-session" "-d" "-s" "swarmforge-lieutenant" "sleep" "120")
-    (let [sock (start-tmux! project roles (str (fs/path forge "proj.sock")))]
+    (let [sock (start-tmux! project roles (tmp-tmux-socket))]
       (try
         (handoffd-once project)
         (let [notes (vec (fs/glob (fs/path forge ".swarmforge/notify") "*.notify"))

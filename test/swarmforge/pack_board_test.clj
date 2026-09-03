@@ -7,6 +7,33 @@
 
 (use-fixtures :once once-fixture)
 
+(deftest board-uses-only-configured-card-types-and-lanes
+  (let [root (tmp-dir)]
+    (setup-pack! root ["specifier" "coder"])
+    (write-file (fs/path root ".swarmforge/routes.tsv") "quick\tspecifier,coder\n")
+    (let [created (pack-board root true "create" "--root" (str root)
+                              "--name" "Quick task" "--type" "quick")]
+      (is (zero? (:exit created)))
+      (is (= "specifier" (task-lane root "Quick task"))))
+    (let [bad-type (pack-board root false "create" "--root" (str root)
+                               "--name" "Wrong type" "--type" "component")
+          bad-lane (pack-board root false "move" "--root" (str root)
+                               "--name" "Quick task" "--lane" "missing"
+                               "--caller" "handoffd")]
+      (is (pos? (:exit bad-type)))
+      (is (pos? (:exit bad-lane)))
+      (is (= "specifier" (task-lane root "Quick task"))))))
+
+(deftest board-rejects-path-like-task-names-before-writing
+  (let [root (tmp-dir)
+        outside (fs/path root "escaped.md")]
+    (setup-pack! root ["specifier"])
+    (let [result (pack-board root false "create" "--root" (str root)
+                             "--name" "../escaped" "--type" "component")]
+      (is (pos? (:exit result)))
+      (is (not (fs/exists? outside)))
+      (is (empty? (:tasks (web-state root)))))))
+
 (deftest pack-board-creates-a-task-in-the-master-lane
   ;; Given a pack with specifier on master
   ;; When New Task records name htw-console-app
@@ -34,6 +61,7 @@
     (write-file
      (fs/path root ".swarmforge/roles.tsv")
      (str "specifier\tmaster\t" root "\tsession\tSpecifier\tcodex\ttask\n"))
+    (write-file (fs/path root ".swarmforge/routes.tsv") "component\tspecifier\n")
     (let [created (pack-board root true
                               "create"
                               "--root" (str root)
@@ -212,7 +240,7 @@
   ;; When pack_board move --name htw --lane coder
   ;; Then the card HTW is in coder
   (let [root (tmp-dir)]
-    (setup-pack! root)
+    (setup-pack! root ["specifier" "coder"])
     (create-task root "HTW" "specifier")
     (pack-board root true "move" "--root" (str root) "--name" "htw" "--lane" "coder"
                 "--caller" "handoffd")

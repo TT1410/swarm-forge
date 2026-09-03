@@ -301,12 +301,10 @@
 (defn get-task [root uri]
   (let [name (task-query-name uri)
         project (query-value uri "project")
-        task (when (and (not (str/blank? name))
-                        (not (str/includes? name "/"))
-                        (not (str/includes? name "..")))
+        task (when (safe-paths/task-name? name)
                (or (board-task-named root name)
-                   (when (or (fs/regular-file? (fs/path root "tasks" (str name ".md")))
-                             (fs/regular-file? (fs/path root ".swarmforge" "board" (str name ".txt"))))
+                   (when (or (fs/regular-file? (safe-paths/task-path! (fs/path root "tasks") name ".md"))
+                             (fs/regular-file? (safe-paths/task-path! (fs/path root ".swarmforge" "board") name ".txt")))
                      {:name name :id name :lane "waiting"})))]
     (if task
       (let [text (task-document root name)
@@ -319,7 +317,7 @@
 (defn get-api-tree [root uri]
   (let [name (query-value uri "name")
         rel (or (query-value uri "path") "")
-        task (board-task-named root name)
+        task (when (safe-paths/task-name? name) (board-task-named root name))
         wt (when task (card-worktree root task))
         dir (when wt (resolve-under wt rel))]
     (if (and dir (fs/directory? dir))
@@ -338,7 +336,7 @@
 (defn get-api-file [root uri]
   (let [name (query-value uri "name")
         rel (query-value uri "path")
-        task (board-task-named root name)
+        task (when (safe-paths/task-name? name) (board-task-named root name))
         wt (when task (card-worktree root task))
         file (when (and wt (not (str/blank? rel))) (resolve-under wt rel))]
     (if (and file (fs/regular-file? file))
@@ -357,7 +355,7 @@
 (defn get-file-page [root uri]
   (let [name (query-value uri "name")
         rel (query-value uri "path")
-        task (board-task-named root name)
+        task (when (safe-paths/task-name? name) (board-task-named root name))
         wt (when task (card-worktree root task))
         file (when (and wt (not (str/blank? rel))) (resolve-under wt rel))
         payload (if (and file (fs/regular-file? file))
@@ -383,4 +381,3 @@
                 ".cmt{color:#6b7280}.str{color:#b45309}.kw{color:#1d4ed8}</style></head><body>"
                 "<header>" title "</header>"
                 "<div id=\"file-body\">" inner "</div></body></html>")}))
-

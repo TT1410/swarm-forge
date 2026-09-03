@@ -609,9 +609,8 @@
   (let [root (tmp-dir)
         _ (init-repo! root)
         _ (setup-project! root)
-        base (head-sha root)
         _ (write-file (fs/path root ".swarmforge/board/tasks.tsv")
-                      "extras\tsender\tcreated\tupdated\textras-id\n")
+                      "extras\tsender\tcreated\tupdated\textras-id\t0\tcomponent\n")
         _ (run {:dir root} "git" "checkout" "-q" "-b" "jump")
         _ (write-file (fs/path root "features/console/wumpus_jump.feature") "jump\n")
         _ (run {:dir root} "git" "add" "features/console/wumpus_jump.feature")
@@ -637,15 +636,17 @@
                    :task "extras"
                    :task-base-commit jump
                    :body "extras"})
-    (write-file draft (format "type: git_handoff\nto: receiver\npriority: 50\ntask: extras\ncommit: %s\n" base))
+    (write-file draft "type: git_handoff\nto: receiver\npriority: 50\ntask: extras\n")
     (let [result (audit-and-submit-git-handoff
                   {:dir root :env {"SWARMFORGE_ROLE" "sender"}} draft)
-          queued (queued-path (:out result))
-          content (read-file queued)]
-      (is (zero? (:exit result)))
-      (is (str/includes? content (str "commit: " merge-head "\n")))
-      (is (str/includes? content "artifacts: features/console/command_extras.feature,features/console/holy_hand_grenade.feature\n"))
-      (is (not (str/includes? content "wumpus_jump.feature"))))))
+          queued (queued-path (:out result))]
+      (is (zero? (:exit result)) (pr-str result))
+      (is (some? queued) (pr-str result))
+      (when queued
+        (let [content (read-file queued)]
+          (is (str/includes? content (str "commit: " merge-head "\n")))
+          (is (str/includes? content "artifacts: features/console/command_extras.feature,features/console/holy_hand_grenade.feature\n"))
+          (is (not (str/includes? content "wumpus_jump.feature"))))))))
 (deftest swarm-handoff-refuses-a-merge-with-no-changed-files
   ;; Given HEAD is a merge whose first-parent diff is empty
   ;; When swarm_handoff queues a git_handoff

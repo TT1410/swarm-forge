@@ -16,7 +16,7 @@
   (str/replace (fs/file-name path) #"\.handoff$" ""))
 
 (defn reviews-file [root id]
-  (fs/path (pending-dir root) (str id ".reviews.json")))
+  (safe-paths/id-path! (pending-dir root) id ".reviews.json"))
 
 (defn read-reviews [root id]
   (let [file (reviews-file root id)]
@@ -36,7 +36,9 @@
   (fs/delete-if-exists (reviews-file root id)))
 
 (defn task-reviews-file [root task-id]
-  (fs/path root ".swarmforge" "rejected-tasks" task-id "reviews.json"))
+  (fs/path (safe-paths/state-key-path! (fs/path root ".swarmforge" "rejected-tasks")
+                                       task-id "")
+           "reviews.json"))
 
 (defn read-task-reviews [root task-id]
   (let [file (task-reviews-file root task-id)]
@@ -85,6 +87,25 @@
 
 (defn approvals [root]
   (mapv #(approval-entry root %) (pending-files root)))
+
+(defn delivery-attention-dir [root]
+  (fs/path root ".swarmforge" "handoffs" "delivery_attention"))
+
+(defn delivery-failures [root]
+  (let [dir (delivery-attention-dir root)]
+    (if-not (fs/directory? dir)
+      []
+      (->> (fs/list-dir dir)
+           (filter #(and (fs/regular-file? %)
+                         (str/ends-with? (fs/file-name %) ".edn")))
+           (sort-by #(fs/file-name %))
+           (keep (fn [path]
+                   (try
+                     (let [entry (edn/read-string (slurp (str path)))]
+                       (when (map? entry)
+                         (assoc entry :attention_id (fs/file-name path))))
+                     (catch Exception _ nil))))
+           vec))))
 
 (defn board-allow-pending-dir [root]
   (fs/path root ".swarmforge" "board" "lt-allow-pending"))

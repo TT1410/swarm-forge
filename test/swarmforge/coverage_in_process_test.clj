@@ -247,7 +247,7 @@
   (is (true? (pack-web/confirm-teardown? "TEARDOWN")))
   (is (false? (pack-web/confirm-teardown? "no")))
   (is (= "&lt;x&gt;" (pack-web/html-escape "<x>")))
-  (let [entry (pack-web/task-entry "HTW\tspecifier\tnow\tnow\tid1\t2")]
+  (let [entry (pack-web/task-entry nil "HTW\tspecifier\tnow\tnow\tid1\t2\tcomponent")]
     (is (= "HTW" (:name entry)))
     (is (= 2 (:audit_count entry))))
   (is (seq (pack-web/parse-unified-diff "--- a\n+++ b\n@@ -1 +1 @@\n-old\n+new\n")))
@@ -274,7 +274,11 @@
   (is (= "hello" (pack-board/slug "Hello!")))
   (is (= 3 (pack-board/parse-count "3")))
   (is (= 0 (pack-board/parse-count "x")))
-  (is (re-find #"\tlane2\t" (pack-board/rewrite-lane "n\tlane1\tc\tu\tid\t0" "n" "lane2"))))
+  (is (re-find #"\tlane2\t"
+               (pack-board/rewrite-lane nil
+                                        "n\tlane1\tc\tu\tid\t0\tcomponent"
+                                        "n"
+                                        "lane2"))))
 
 (deftest stop-daemon-with-no-pid
   (let [root (tmp-dir)]

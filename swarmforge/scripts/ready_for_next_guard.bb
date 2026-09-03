@@ -10,6 +10,10 @@
   (require 'card-type)
   (catch Exception _
     (load-file (str (fs/path script-dir "card_type.bb")))))
+(try
+  (require 'safe-paths)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "safe_paths.bb")))))
 
 (defn command [& args]
   (apply sh/sh args))
@@ -72,7 +76,7 @@
 (declare header-map)
 
 (defn task-document-relative-path [task-name]
-  (when-not (str/blank? task-name)
+  (when (safe-paths/task-name? task-name)
     (str "tasks/" task-name ".md")))
 
 (defn committed-file [root relative-path]
@@ -172,9 +176,9 @@
   (reverse-git-handoff? (header-map file)))
 
 (defn merge-from-role [task-name]
-  (when-not (str/blank? task-name)
+  (when (safe-paths/task-name? task-name)
     (when-let [root (project-root)]
-      (let [file (fs/path root "tasks" (str task-name ".md"))]
+      (let [file (safe-paths/task-path! (fs/path root "tasks") task-name ".md")]
         (when (fs/regular-file? file)
           (some (fn [line]
                   (when-let [[_ role] (re-matches #"Merge-from:\s*(\S+)" line)]
@@ -198,7 +202,7 @@
     (let [file (fs/path root ".swarmforge" "board" "tasks.tsv")]
       (when (and task-name (fs/regular-file? file))
         (some (fn [line]
-                (let [row (card-type/parse-row line)]
+                (let [row (card-type/parse-row root line)]
                   (when (= task-name (:name row))
                     (:type row))))
               (str/split-lines (slurp (str file))))))))
@@ -212,10 +216,11 @@
   (when-let [card-type (card-type-of file)]
     (println "CARD_TYPE:" card-type)
     (when-let [role (current-role)]
-      (if (card-type/last-on-card? card-type role)
+      (if (card-type/last-on-card? (project-root) card-type role)
         (println (str "THIS_CARD: last; terminal to: "
                       (str/join "," (card-type/terminal-upstream
+                                     (project-root)
                                      (mapv first (role-rows))
                                      card-type))))
-        (when-let [nxt (card-type/next-role card-type role)]
+        (when-let [nxt (card-type/next-role (project-root) card-type role)]
           (println "THIS_CARD: next" nxt))))))
