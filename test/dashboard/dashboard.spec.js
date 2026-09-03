@@ -368,6 +368,32 @@ test.describe("pack dashboard", () => {
     await expect(page.locator("#attention-clarifications .att-project")).toHaveText("htw");
   });
 
+  test("Attention truncates long text instead of scrolling", async ({ page }) => {
+    const request = path.join(
+      handle.root,
+      "projects/htw/.swarmforge/dashboard/clarifications/pending/clar-long.request"
+    );
+    writeFile(
+      request,
+      "id: clar-long\nstatus: pending\nrole: specifier\ncreated_at: 2026-01-01T00:00:00Z\n\n" +
+        "This deliberately long clarification keeps going so the compact Attention bar " +
+        "must shorten it with an ellipsis while the full-window control remains visible.\n"
+    );
+    try {
+      await page.setViewportSize({ width: 760, height: 700 });
+      await page.goto(handle.url);
+      const row = page.locator("#attention-clarifications .att-row", { hasText: "deliberately long" });
+      const summary = row.locator(".att-summary");
+      await expect(page.locator("#attention")).toHaveCSS("overflow", "hidden");
+      await expect(row).toHaveCSS("flex-wrap", "nowrap");
+      await expect(summary).toHaveCSS("text-overflow", "ellipsis");
+      await expect(row.locator(".att-expand")).toBeVisible();
+      expect(await summary.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+    } finally {
+      fs.unlinkSync(request);
+    }
+  });
+
   test("chimes once when a new Attention row appears", async ({ page }) => {
     await page.goto(handle.url);
     await expect(page.locator("#attention-approvals .att-row")).toHaveCount(1);

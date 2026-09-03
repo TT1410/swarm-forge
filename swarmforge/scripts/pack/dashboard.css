@@ -19,13 +19,14 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed;transform:none}
 .btn:disabled:hover,.btn[disabled]:hover{background:#fff;border-color:#9aa59e;color:var(--ink)}
 .btn-approve:disabled:hover,.btn-approve[disabled]:hover{background:#2f6b3a;border-color:#2f6b3a;color:#fff}
-.attention{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:120px;overflow:auto;position:relative;z-index:30}
+.attention{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;overflow:hidden;position:relative;z-index:30}
 .attention .tag{font-weight:700;text-transform:uppercase;font-size:10px;color:#8a5a0a;padding-top:4px}
-.att-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(255,255,255,.65);border:1px solid #efd7a8;border-radius:6px;padding:4px 8px;margin:0 0 4px;min-width:0}
+#attention-rows{min-width:0}
+.att-row{display:flex;flex-wrap:nowrap;gap:8px;align-items:center;background:rgba(255,255,255,.65);border:1px solid #efd7a8;border-radius:6px;padding:4px 8px;margin:0 0 4px;min-width:0;overflow:hidden}
 .att-summary{flex:1 1 8rem;min-width:4rem;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .att-expand{flex:0 0 auto;border:0;background:none;padding:0 2px;cursor:pointer;color:var(--accent);font-size:14px;line-height:1;border-radius:4px}
 .att-expand:hover,.att-expand:focus-visible{background:#f0f2ee}
-.att-work{text-decoration:underline}
+.att-work{flex:0 1 auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-decoration:underline}
 .att-work .att-project{font-weight:700}
 .menu{position:relative;display:inline-block}
 .menu-list{display:none;position:fixed;z-index:200;min-width:12rem;background:#fff;border:1px solid var(--line);border-radius:6px;box-shadow:0 8px 20px rgba(0,0,0,.12);padding:4px 0}
