@@ -10,7 +10,7 @@
 
 (def usage-text
   (str "Usage:\n"
-       "  pack_board.sh create --name <name> --type <utility|component|QA|review> [--waiting] [--merge-from <role>] [--root <dir>] [--text <text>]\n"
+       "  pack_board.sh create --name <name> --type <utility|component|QA|review> [--waiting] [--merge-from <role>] [--root <dir>] [--text <text>] [--caller lieutenant]\n"
        "  pack_board.sh create <name> --type <utility|component|QA|review> [--waiting]\n"
        "  pack_board.sh move --name <name> --lane <lane> [--merge-from <role>] [--root <dir>]\n"
        "  pack_board.sh move <name> <lane>\n"
@@ -19,12 +19,13 @@
        "  pack_board.sh list [--root <dir>]\n"
        "  pack_board.sh lanes [--root <dir>]\n"
        "  pack_board.sh master-lane [--root <dir>]\n"
-       "  pack_board.sh archive --role <role> [--root <dir>]\n"
-       "  pack_board.sh archive <role>\n"
+       "  pack_board.sh archive --archive <window> [--root <dir>]\n"
+       "  pack_board.sh archive --role <window> [--root <dir>]\n"
+       "  pack_board.sh archive <window>\n"
        "  pack_board.sh archive-all [--root <dir>]\n"
        "  pack_board.sh increment-audit --task-id <task-id> --caller <handoffd|lieutenant> [--root <dir>]\n"
-       "  pack_board.sh request-allow --name <name> --act <move|done|increment-audit> [--root <dir>]\n"
-       "  pack_board.sh allow --name <name> --act <move|done|increment-audit> [--root <dir>]\n"
+       "  pack_board.sh request-allow --name <name> --act <move|done|increment-audit|stop|create> [--root <dir>]\n"
+       "  pack_board.sh allow --name <name> --act <move|done|increment-audit|stop|create> [--root <dir>]\n"
        "  pack_board.sh delete --name <name> [--root <dir>]\n"
        "  pack_board.sh delete <name>\n"
        "  pack_board.sh stop --name <name> [--root <dir>]"))

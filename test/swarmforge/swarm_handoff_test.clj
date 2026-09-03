@@ -481,6 +481,33 @@
         (is (= 2 (:exit result)))
         (is (str/includes? (:err result) "must not add QA procedures"))
         (is (empty? (remove #(str/includes? (str %) "New_Task") (outbox-handoffs root))))))))
+(deftest swarm-handoff-refuses-qa-on-component-and-allows-it-on-qa-type
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        _ (setup-project! root [["specifier" "task" "forward-only"]
+                                ["coder" "task" "forward-only"]
+                                ["cleaner" "task" "back-one"]
+                                ["architect" "batch" "back-all"]
+                                ["hardender" "batch" "forward-only"]
+                                ["QA" "batch" "back-all"]])]
+    (pack-board root true "create" "--root" (str root) "--name" "comp" "--type" "component")
+    (write-file (fs/path root "qa/headed.md") "# headed\n")
+    (run {:dir root} "git" "add" "qa/headed.md")
+    (run {:dir root} "git" "commit" "-q" "-m" "Add qa")
+    (let [draft (fs/path root "tmp" "comp.handoff")]
+      (write-file draft "type: git_handoff\nto: coder\npriority: 50\ntask: comp\n")
+      (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"} :ok? false}
+                        (script "swarm_handoff.sh") (str draft))]
+        (is (= 2 (:exit result)))
+        (is (str/includes? (:err result) "must not add QA procedures"))
+        (is (empty? (remove #(str/includes? (str %) "New_Task") (outbox-handoffs root))))))
+    (pack-board root true "create" "--root" (str root) "--name" "full" "--type" "QA")
+    (let [draft (fs/path root "tmp" "full.handoff")]
+      (write-file draft "type: git_handoff\nto: coder\npriority: 50\ntask: full\n")
+      (let [result (audit-and-submit-git-handoff
+                    {:dir root :env {"SWARMFORGE_ROLE" "specifier"}} draft)]
+        (is (zero? (:exit result)))
+        (is (seq (remove #(str/includes? (str %) "New_Task") (outbox-handoffs root))))))))
 (deftest swarm-handoff-fills-artifacts-from-the-commit
   ;; Given a git_handoff of a commit that added a file
   ;; When it is queued

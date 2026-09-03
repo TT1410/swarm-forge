@@ -57,7 +57,8 @@ writes the normalized mode and propagation into `.swarmforge/roles.tsv`, and
 agent-facing receive helpers read that runtime file rather than reparsing
 `swarmforge.conf`.
 
-Use `batch` for roles that should consume equal-priority queued handoffs as a
+Use `batch` for roles that should consume queued handoffs that share
+priority, card type, and reverse/forward with the first file as a
 single unit, such as six-pack `cleaner`, `architect`, `hardender`, and `QA`,
 and four-pack `architect`.
 
@@ -175,19 +176,24 @@ Examples:
 
 #### Terminal broadcast
 
-The terminal handoff is the last role's `git_handoff` whose `to:` is every
-other role in the pack. That set, not a count of names, marks the card Done.
-Each recipient merges that commit (`merge_and_process.sh`) and stops; they do
-not re-forward. A partial `to:` list is not terminal.
+The terminal handoff is the last role **on this card's chain** sending
+`to:` every pack role upstream of that last role (including roles
+before the card's starting lane). That set, not a count of names,
+marks the card Done. Each recipient merges that commit
+(`merge_and_process.sh`) and stops; they do not re-forward. A partial
+`to:` list is not terminal.
 
-Examples:
+On this lieutenant forge:
 
-- `two-pack`: `cleaner` `to: coder` (every other role). `coder` merges only
-  and the card goes to Done.
-- `four-pack`: `architect` `to: specifier,coder,refactorer`. Each recipient
-  merges only and the card goes to Done.
-- `six-pack`: `QA` `to:` the other five roles. Each recipient merges only
-  and the card goes to Done.
+- utility: `cleaner` `to:` specifier,coder
+- component: `hardender` `to:` specifier,coder,cleaner,architect
+- QA type and review: `QA` `to:` specifier,coder,cleaner,architect,hardender
+
+Pack-only products still use last-in-pack (every other role):
+
+- `two-pack`: `cleaner` `to: coder`
+- `four-pack`: `architect` `to: specifier,coder,refactorer`
+- `six-pack`: `QA` `to:` the other five roles
 
 ### `note`
 
@@ -446,7 +452,9 @@ Responsibilities:
 - Refuse to run if a single in-process task exists.
 - If no in-process work exists, select the first file in `inbox/new/` by sorted
   filename order.
-- Select every queued handoff with the same priority as that first file.
+- Select every queued handoff that shares priority, card type, and
+  reverse/forward with that first file. Equal priority of a different
+  type or direction stays queued.
 - Move those files into one `inbox/in_process/batch_<timestamp>_<suffix>/`
   directory.
 - Add or update `dequeued_at` on each selected file.

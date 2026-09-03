@@ -6,7 +6,7 @@
       (card-type/format-row (assoc row :lane lane :updated (timestamp)))
       line)))
 
-(def allow-acts #{"move" "done" "increment-audit" "stop"})
+(def allow-acts #{"move" "done" "increment-audit" "stop" "create"})
 
 (defn lt-allow-file [root name act]
   (fs/path root ".swarmforge" "board" "lt-allow" (str name "-" act)))
@@ -85,6 +85,78 @@
   (when (= "lieutenant" (:caller opts))
     (when-let [name (not-empty (caller-task-name opts))]
       (fs/delete-if-exists (lt-allow-file (resolve-root opts) name act)))))
+
+(defn pending-pack-clarify? [root]
+  (let [dir (fs/path root ".swarmforge" "dashboard" "clarifications" "pending")]
+    (boolean
+     (and (fs/directory? dir)
+          (seq (filter #(and (fs/regular-file? %)
+                             (str/ends-with? (fs/file-name %) ".request"))
+                       (fs/list-dir dir)))))))
+
+(defn handoff-files-under [dir]
+  (if (fs/directory? dir)
+    (->> (fs/list-dir dir)
+         (mapcat (fn [entry]
+                   (cond
+                     (and (fs/regular-file? entry)
+                          (str/ends-with? (fs/file-name entry) ".handoff"))
+                     [entry]
+                     (fs/directory? entry)
+                     (handoff-files-under entry)
+                     :else [])))
+         vec)
+    []))
+
+(defn header-map [file]
+  (into {}
+        (for [line (take-while (complement str/blank?)
+                               (str/split-lines (slurp (str file))))
+              :let [[k v] (str/split line #": " 2)]
+              :when (and k v)]
+          [k v])))
+
+(defn in-process-dirs [root]
+  (into [(fs/path root ".swarmforge" "handoffs" "inbox" "in_process")]
+        (keep (fn [cols]
+                (when-let [wt (not-empty (nth cols 2 nil))]
+                  (fs/path wt ".swarmforge" "handoffs" "inbox" "in_process")))
+              (role-rows root))))
+
+(defn in-flight-reverse? [root]
+  (boolean
+   (some (fn [file]
+           (let [h (header-map file)]
+             (and (= "git_handoff" (get h "type"))
+                  (= "true" (get h "non-forwarding")))))
+         (mapcat handoff-files-under (in-process-dirs root)))))
+
+(defn stuck-create-reason [root]
+  (cond
+    (pending-pack-clarify? root) "pending clarification"
+    (in-flight-reverse? root) "in-flight reverse merge"
+    :else nil))
+
+(defn recut-of? [root name]
+  (= (str/lower-case (or (recut-name root) ""))
+     (str/lower-case (or name ""))))
+
+(defn require-create-when-stuck! [opts]
+  (let [root (resolve-root opts)
+        name (task-name opts)
+        reason (stuck-create-reason root)]
+    (when reason
+      (cond
+        (recut-of? root name)
+        (consume-recut! root name)
+
+        (and (= "lieutenant" (:caller opts))
+             (not (str/blank? name))
+             (fs/regular-file? (lt-allow-file root name "create")))
+        nil
+
+        :else
+        (exit! 1 (str "create refused: " reason))))))
 
 (defn set-lane! [opts lane]
   (let [act (if (= "done" lane) "done" "move")]

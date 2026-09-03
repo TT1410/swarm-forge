@@ -319,3 +319,104 @@
                             "--caller" "lieutenant")]
       (is (not (zero? (:exit moved))))
       (is (= "waiting" (task-lane root "place-hunter"))))))
+(deftest pack-board-create-requires-type
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)
+        result (pack-board root false "create" "--root" (str root)
+                           "--name" "no-type")]
+    (is (pos? (:exit result)))
+    (is (str/includes? (:err result) "type"))
+    (is (nil? (task-lane root "no-type")))))
+(deftest pack-board-usage-lists-archive-flag
+  (let [root (tmp-dir)
+        result (pack-board root false)]
+    (is (pos? (:exit result)))
+    (is (str/includes? (:err result) "--archive"))))
+(deftest pack-board-archive-accepts-archive-flag-and-aliases
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner"]]
+    (setup-pack! root roles)
+    (create-task root "htw-console-app" "coder")
+    (let [flagged (run {:dir root :env {"SWARMFORGE_PANE_STUB" "flag\n"}}
+                       (script "pack_board.sh")
+                       "archive" "--archive" "coder" "--root" (str root))]
+      (is (zero? (:exit flagged)))
+      (is (= "flag\n" (slurp (str (role-pane-path root "coder"))))))
+    (let [aliased (run {:dir root :env {"SWARMFORGE_PANE_STUB" "role\n"}}
+                       (script "pack_board.sh")
+                       "archive" "--role" "coder" "--root" (str root))]
+      (is (zero? (:exit aliased)))
+      (is (= "role\n" (slurp (str (role-pane-path root "coder"))))))
+    (let [positional (run {:dir root :env {"SWARMFORGE_PANE_STUB" "pos\n"}}
+                          (script "pack_board.sh")
+                          "archive" "coder" "--root" (str root))]
+      (is (zero? (:exit positional)))
+      (is (= "pos\n" (slurp (str (role-pane-path root "coder"))))))))
+(deftest pack-board-create-refuses-pending-clarify
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)
+        pending (fs/path root ".swarmforge/dashboard/clarifications/pending/clar-1.request")]
+    (write-file pending "id: clar-1\nstatus: pending\nrole: specifier\n\nstuck\n")
+    (let [blocked (pack-board root false "create" "--root" (str root)
+                              "--name" "next" "--type" "component")]
+      (is (pos? (:exit blocked)))
+      (is (str/includes? (:err blocked) "pending clarification"))
+      (is (nil? (task-lane root "next"))))
+    (fs/delete-if-exists pending)
+    (let [ok (pack-board root true "create" "--root" (str root)
+                         "--name" "next" "--type" "component")]
+      (is (zero? (:exit ok)))
+      (is (= "specifier" (task-lane root "next"))))))
+(deftest pack-board-create-ignores-forge-lieutenant-clarify
+  (let [forge (tmp-dir)
+        project (fs/path forge "projects" "cave")]
+    (fs/create-dirs project)
+    (setup-pack! project six-pack-roles)
+    (write-file (fs/path forge ".swarmforge/dashboard/clarifications/pending/lt.request")
+                "id: lt\nstatus: pending\nrole: lieutenant\n\nstall\n")
+    (let [ok (pack-board project true "create" "--root" (str project)
+                         "--name" "next" "--type" "component")]
+      (is (zero? (:exit ok)))
+      (is (= "specifier" (task-lane project "next"))))))
+(deftest pack-board-create-recut-allowed-while-stuck
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)]
+    (pack-board root true "create" "--root" (str root)
+                "--name" "stuck" "--type" "component")
+    (write-file (fs/path root ".swarmforge/dashboard/clarifications/pending/clar.request")
+                "id: clar\nstatus: pending\nrole: specifier\n\nstuck\n")
+    (pack-board root true "delete" "--root" (str root) "--name" "stuck")
+    (let [recut (pack-board root true "create" "--root" (str root)
+                            "--name" "stuck" "--type" "utility")]
+      (is (zero? (:exit recut)))
+      (is (= "coder" (task-lane root "stuck"))))
+    (let [other (pack-board root false "create" "--root" (str root)
+                            "--name" "other" "--type" "component")]
+      (is (pos? (:exit other)))
+      (is (nil? (task-lane root "other"))))))
+(deftest pack-board-create-allow-overrides-stuck
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)]
+    (write-file (fs/path root ".swarmforge/dashboard/clarifications/pending/clar.request")
+                "id: clar\nstatus: pending\nrole: specifier\n\nstuck\n")
+    (pack-board root true "request-allow" "--root" (str root)
+                "--name" "override" "--act" "create")
+    (pack-board root true "allow" "--root" (str root)
+                "--name" "override" "--act" "create")
+    (let [ok (pack-board root true "create" "--root" (str root)
+                         "--name" "override" "--type" "component"
+                         "--caller" "lieutenant")]
+      (is (zero? (:exit ok)))
+      (is (= "specifier" (task-lane root "override"))))))
+(deftest pack-board-create-refuses-in-flight-reverse
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)
+        in-process (fs/path root ".swarmforge/handoffs/inbox/in_process/00_rev.handoff")]
+    (write-file in-process
+                (str "from: architect\nto: specifier\npriority: 00\n"
+                     "type: git_handoff\ntask: stuck\nnon-forwarding: true\n\nmerge\n"))
+    (let [blocked (pack-board root false "create" "--root" (str root)
+                              "--name" "next" "--type" "component")]
+      (is (pos? (:exit blocked)))
+      (is (str/includes? (:err blocked) "in-flight reverse merge"))
+      (is (nil? (task-lane root "next"))))))

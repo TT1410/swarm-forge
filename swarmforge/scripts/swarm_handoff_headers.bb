@@ -46,13 +46,13 @@
        vec))
 
 (defn banned-path-errors [card-type files added]
-  (if-not (contains? #{"utility" "review"} card-type)
-    []
-    (cond-> []
-      (some #(or (str/starts-with? % "features/") (str/ends-with? % ".feature")) files)
-      (conj "This card type must not add features/*.feature.")
-      (some #(str/starts-with? % "qa/") added)
-      (conj "This card type must not add QA procedures."))))
+  (cond-> []
+    (and (contains? #{"utility" "review"} card-type)
+         (some #(or (str/starts-with? % "features/") (str/ends-with? % ".feature")) files))
+    (conj "This card type must not add features/*.feature.")
+    (and (contains? #{"utility" "review" "component"} card-type)
+         (some #(str/starts-with? % "qa/") added))
+    (conj "This card type must not add QA procedures.")))
 
 (defn commit-named-files [sha diff-filter]
   (if-let [base (not-empty (current-task-base))]

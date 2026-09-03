@@ -92,6 +92,7 @@
       (println "TASK_NAME:" task-name))
     (when task-id
       (println "TASK_ID:" task-id))
+    (ready-for-next-guard/print-card-briefing! file)
     (println "PAYLOAD:")
     (print (body file))))
 
@@ -106,6 +107,7 @@
     (when-let [name (header-field (first files) "task")]
       (println "TASK_NAME:" name))
     (println "PRIORITY:" (header-value (first files) "priority" "50"))
+    (ready-for-next-guard/print-card-briefing! (first files))
     (doseq [[index file] (map-indexed vector files)]
       (println)
       (println "BATCH_ITEM:" (inc index))

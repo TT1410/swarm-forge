@@ -1,6 +1,6 @@
 ;; Board rows, task docs, create, increment-audit, and delete. Loaded into pack-board.
 
-(declare require-caller! consume-allow!)
+(declare require-caller! consume-allow! require-create-when-stuck!)
 
 (defn board-dir [root]
   (fs/path root ".swarmforge" "board"))
@@ -198,6 +198,7 @@
     (when-not (card-type/known? card-type)
       (exit! 1 (str "Unknown type: " card-type)))
     (require-merge-from! root merge-from)
+    (require-create-when-stuck! opts)
     (let [lane (if (:waiting opts) "waiting" (card-type/starting-lane card-type))
           task-id (or (:task-id opts) (new-task-id name))]
       (with-board-lock
@@ -212,7 +213,8 @@
             (write-body! root name (:text opts))
             (write-task-doc! root name (:text opts) card-type merge-from)
             (when-not (:waiting opts)
-              (queue-start-note! root name lane task-id (:text opts)))))))))
+              (queue-start-note! root name lane task-id (:text opts))))))
+      (consume-allow! opts "create"))))
 
 (defn parse-count [value]
   (if (and value (re-matches #"[0-9]+" value))
@@ -254,6 +256,24 @@
                 (write-durable-audit! root task-id n nil))))))))
   (consume-allow! opts "increment-audit"))
 
+(defn recut-file [root]
+  (fs/path (board-dir root) "recut"))
+
+(defn write-recut! [root name]
+  (let [file (recut-file root)]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file) (str name "\n"))))
+
+(defn recut-name [root]
+  (let [file (recut-file root)]
+    (when (fs/regular-file? file)
+      (not-empty (str/trim (slurp (str file)))))))
+
+(defn consume-recut! [root name]
+  (when (= (str/lower-case (or (recut-name root) ""))
+           (str/lower-case (or name "")))
+    (fs/delete-if-exists (recut-file root))))
+
 (defn delete! [opts]
   (let [name (task-name opts)
         root (resolve-root opts)
@@ -268,4 +288,5 @@
           (write-rows file (filterv #(not= (str/lower-case name)
                                            (str/lower-case (or (row-name %) "")))
                                     rows))
-          (fs/delete-if-exists (task-body-file root name)))))))
+          (fs/delete-if-exists (task-body-file root name))
+          (write-recut! root name))))))

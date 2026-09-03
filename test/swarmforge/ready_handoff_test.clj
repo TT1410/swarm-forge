@@ -302,6 +302,73 @@
       (is (not (str/includes? out "TASK_NAME: jump")))
       (is (= 1 (count (fs/glob batch-dir "*.handoff"))))
       (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_20260615T000002Z_000002_from_sender_to_receiver.handoff"))))))
+(deftest ready-for-next-task-prints-card-type-and-this-card
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root [["specifier" "task" "forward-only"]
+                          ["coder" "task" "forward-only"]
+                          ["cleaner" "task" "back-one"]
+                          ["architect" "batch" "back-all"]
+                          ["hardender" "batch" "forward-only"]
+                          ["QA" "batch" "back-all"]])
+    (pack-board root true "create" "--root" (str root)
+                "--name" "jump" "--type" "component")
+    (make-queued-handoff! root "50_20260615T000001Z_000001_from_New_Task_to_specifier.handoff"
+                          {:id "20260615T000001Z_000001_from_New_Task"
+                           :from "(New Task)"
+                           :to "specifier"
+                           :recipient "specifier"
+                           :priority "50"
+                           :type "note"
+                           :task "jump"
+                           :card-type "component"
+                           :body "Specify jump.\n"})
+    (let [out (:out (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"}}
+                         (script "ready_for_next.sh")))]
+      (is (str/includes? out "CARD_TYPE: component"))
+      (is (str/includes? out "THIS_CARD: next coder")))))
+(deftest ready-for-next-batch-prints-card-type-and-this-card
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root [["specifier" "task" "forward-only"]
+                          ["coder" "task" "forward-only"]
+                          ["cleaner" "batch" "back-one"]
+                          ["architect" "batch" "back-all"]
+                          ["hardender" "batch" "forward-only"]
+                          ["QA" "batch" "back-all"]])
+    (pack-board root true "create" "--root" (str root)
+                "--name" "util" "--type" "utility")
+    (make-queued-handoff! root "50_20260615T000001Z_000001_from_coder_to_cleaner.handoff"
+                          {:id "20260615T000001Z_000001_from_coder"
+                           :from "coder"
+                           :to "cleaner"
+                           :recipient "cleaner"
+                           :priority "50"
+                           :type "note"
+                           :task "util"
+                           :card-type "utility"
+                           :body "cleanup util\n"})
+    (let [out (:out (run {:dir root :env {"SWARMFORGE_ROLE" "cleaner"}}
+                         (script "ready_for_next.sh")))]
+      (is (str/includes? out "CARD_TYPE: utility"))
+      (is (str/includes? out "THIS_CARD: last; terminal to: specifier,coder")))
+    (pack-board root true "create" "--root" (str root)
+                "--name" "jump" "--type" "component")
+    (make-queued-handoff! root "50_20260615T000002Z_000002_from_coder_to_cleaner.handoff"
+                          {:id "20260615T000002Z_000002_from_coder"
+                           :from "coder"
+                           :to "cleaner"
+                           :recipient "cleaner"
+                           :priority "50"
+                           :type "note"
+                           :task "jump"
+                           :card-type "component"
+                           :body "cleanup jump\n"})
+    (run {:dir root :env {"SWARMFORGE_ROLE" "cleaner"}} (script "done_with_current.sh"))
+    (let [out (:out (run {:dir root :env {"SWARMFORGE_ROLE" "cleaner"}}
+                         (script "ready_for_next.sh")))]
+      (is (str/includes? out "CARD_TYPE: component"))
+      (is (str/includes? out "THIS_CARD: next architect")))))
 (deftest done-with-current-replaces-an-existing-completed-file
   (let [root (tmp-dir)
         name "50_retry_htw.handoff"]

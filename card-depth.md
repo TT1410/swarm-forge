@@ -173,11 +173,11 @@ Badge is the type name: `utility` / `component` / `QA` / `review`.
 The name must be present.
 
 The **New Task** dialog has five radio buttons: Utility, Component,
-QA, Review, and **LT**. Default **component**. Utility through
-review store that type on a waiting card. **LT** does not create a
-card; it sends the name and text to the lieutenant. The operator
-picks a type the same way the lieutenant picks it on
-`pack_board create --type`.
+QA, Review, and **LT**. Default **LT**. Utility through review store
+that type on a waiting card. **LT** does not create a card; it sends
+the name and text to the lieutenant. After a successful typed
+submit, radios reset to LT. The operator picks a type the same way
+the lieutenant picks it on `pack_board create --type`.
 
 **New Project** does not have those radios, and on this branch it
 does not have pack radios either. Task type is per card. Every
@@ -203,9 +203,13 @@ type needs a distinct header, e.g. `card_type:`.)
 One specifier, one coder, one cleaner, one architect, one hardender,
 one QA. Same worktrees as today.
 
-1. Lieutenant (or operator New Task) creates a card with a type and
-   a name. Utility is created in the coder lane; component and QA
-   in specifier; review in cleaner.
+1. Operator New Task (Utility through Review) parks a **waiting**
+   card with a type and a name. It does not queue a start note. The
+   lieutenant starts it with `pack_board move` into the type's
+   starting lane (utility → coder, component and QA → specifier,
+   review → cleaner). LT New Task does not create a card. Lieutenant
+   `create --type` without `--waiting` still lands in that starting
+   lane and queues the start note.
 2. Each role does its usual work, then `git_handoff` to the next
    role **in this card's chain**. After the last role for that
    depth, the helper marks the card Done. It does not invent a
@@ -289,10 +293,8 @@ prompt is not enough.
 to coder, card Done, clarify, reverse merge), then tmux-wakes the
 lieutenant pane. Same idea as other wakes; the file is the payload.
 
-Until this role exists, the only legal card source is operator New
-Task. Specifier must still not ask for the next feature — that
-vacuum is why the lieutenant is not optional in the design, only
-phaseable after the field exists.
+The lieutenant is the dispatcher. Specifier does not ask for the
+next feature.
 
 ### Prompt rules
 
@@ -501,7 +503,8 @@ making the pipeline stop. Do not touch pack branches or `main`.
 
 Add `type` as the next column: `utility`, `component`, `QA`, or
 `review`. A missing column on an old row means **QA** (the full
-chain on this branch). New cards default to **component**.
+chain on this branch). `pack_board create` requires `--type`. New
+Task on the dashboard defaults to **LT** (no card).
 
 `rewrite-lane` and `rewrite-audit-count` rebuild the line from named
 fields and would drop type if left as-is. Same for parsers in
@@ -516,10 +519,13 @@ chosen by hand. Every project on this branch has the six windows.
 
 Starting lane comes from type, not from "always master":
 
-- **utility** → `coder`; the New Task note goes to coder
-- **component** or **QA** → specifier (master); the note goes to
-  specifier
-- **review** → cleaner; the note goes to cleaner
+- **utility** → `coder`
+- **component** or **QA** → specifier (master)
+- **review** → cleaner
+
+Operator New Task parks in **waiting** with no start note. The
+note is queued when the lieutenant (or `create` without `--waiting`)
+moves the card into that starting lane.
 
 `write-task-doc!` puts `Type: utility` (or `component`, `QA`,
 `review`) under the title. Agents do not change it.
@@ -530,12 +536,12 @@ Today the dialog is name + text; `POST /api/tasks` is
 `{name, text, project}`; `create-task!` always uses `master-role`.
 
 Add five radio buttons next to Name and Task: Utility, Component,
-QA, Review, LT. Default **component**. Submit
+QA, Review, LT. Default **LT**. Submit
 `{name, text, type, project}`. Utility through review use the same
-create path as `pack_board --type`. **LT** skips create and notifies
-the lieutenant.
+create path as `pack_board --type` with `--waiting`. **LT** skips
+create and notifies the lieutenant.
 
-On success, clear the radios back to component.
+On success, clear the radios back to LT.
 
 Do not add those radios to **New Project**. On this branch New
 Project does not choose a pack.
@@ -620,10 +626,7 @@ hit the board, helper, `handoffd`, artifacts, and the dialog.
 
 ### 6. Lieutenant as dispatcher
 
-The field can land with operator New Task only. The design does not:
-specifier has stopped asking, and nobody else is cutting cards.
-
-This slice is the bigger lieutenant, not a later nice-to-have.
+Specifier has stopped asking. The lieutenant cuts and starts cards.
 
 - Expand `lieutenant.prompt` with **Prompt rules** above. Still do
   not implement.
@@ -647,11 +650,12 @@ proves two cards do not conflict.
 - `pack_board create --type utility` → coder lane, `Type: utility`
   in the task file, TSV column set
 - `pack_board create --type utility --lane specifier` is rejected
-- default create → component
+- `pack_board create` without `--type` is rejected
 - `POST /api/tasks` with `type: utility` same as CLI
 - dashboard New Task: five radios on the forge (including LT),
-  default component; submitted utility shows on the card; New
-  Project has no type radios and no pack radios
+  default LT (no card); submitted utility shows on the waiting
+  card; radios reset to LT; New Project has no type radios and no
+  pack radios
 - component: hardender `git_handoff` → Done, not the QA role
 - component: architect `git_handoff` → hardender
 - QA type: hardender `git_handoff` → QA role (today's full path)
@@ -659,7 +663,9 @@ proves two cards do not conflict.
 - helper rejects `to: QA` on a component card; `to: architect` on a
   utility card; review terminal includes specifier and coder;
   utility terminal includes specifier and coder
-- helper rejects `features/*.feature` on a utility or review commit
+- helper rejects `features/*.feature` on a utility or review commit;
+  helper rejects new `qa/` on utility, review, and component;
+  QA-type may add `qa/`
 - `pack_board create --type review` → cleaner lane; QA role
   `git_handoff` → Done
 - review with missing or empty `qa/`: QA still receives the card

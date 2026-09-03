@@ -168,11 +168,12 @@ scripts from `.swarmforge/project-pack` (keeps `mission.md` and the
 project's conf) and starts that pack. Already-open names get an alert.
 
 **Start a task.** Click **New Task** on that project's header bar, give a
-short stable **name**, a **type**, and the **task** text, then **OK**. That
-creates a **waiting** card. The lieutenant starts it with
-`pack_board move` into the type's starting lane (no Attention) when
-the plan says so. It does not queue a start note. **LT** does not
-create a card.
+short stable **name**, a **type**, and the **task** text, then **OK**. The
+default type is **LT**: that sends the name and text to the lieutenant
+and does not create a card. Utility, Component, QA, and Review create a
+**waiting** card. The lieutenant starts it with `pack_board move` into
+the type's starting lane (no Attention) when the plan says so. It does
+not queue a start note.
 
 **Talk to the lieutenant.** Type in the chat composer (Enter sends,
 Shift+Enter newline). The dashboard stores a durable request and injects
@@ -183,11 +184,11 @@ rail stays put unless the scroller is already at the bottom; then new
 lines stay pinned to the bottom. The lieutenant is grok unless host
 `swarmforge/swarmforge.conf` has a line like `Lieutenant grok --yolo`.
 
-**Approve a specifier handoff.** When the specifier queues work for the next role, Attention shows **Approval**, the underlined **`project`/`task`** pair, a **Documents** menu for artifacts, **Approve**, and **Reject**. A new Attention row plays a short chime. Approve delivers the handoff and moves the card. Reject leaves the card with the specifier and notifies that agent. Two-pack has no specifier gate; those handoffs deliver immediately.
+**Approve a specifier handoff.** When the specifier queues work for the next role, Attention shows **Approval**, the underlined **`project`/`task`** pair, a **Documents** menu for artifacts, **Approve**, and **Reject**. A new Attention row plays a short chime. Approve delivers the handoff and moves the card. Reject leaves the card with the specifier and notifies that agent. Utility and review never hit this gate.
 
 **Answer a clarification.** If an agent needs a human answer, Attention shows **Request clarification**, the question, and a text box. Submit injects the answer into that agent's pane. Do not use Approve/Reject for this.
 
-**Watch the board.** Cards move when `handoffd` delivers a forward `git_handoff`. Click a card to open its task body in a resizable window. The card can show the agent's latest status sentence (the last pane line that contains `I'm`). Merge-only copies from `back-one` or `back-all` do not move the card. The last role in every pack sends the **terminal** handoff: `to:` every other role. That, not merely several names, moves the card to **Done**. The Done well is always on the board; it fills when that handoff is delivered.
+**Watch the board.** Cards move when `handoffd` delivers a forward `git_handoff`. Click a card to open its task body in a resizable window. The card can show the agent's latest status sentence (the last pane line that contains `I'm`). Merge-only copies from `back-one` or `back-all` do not move the card. The last role **on this card** sends the **terminal** handoff: `to:` every pack role upstream of that last role (including roles before the card's starting lane). That set, not merely several names, moves the card to **Done**. Cleaner is last on utility (`to:` specifier,coder); hardender is last on component; the QA role is last on QA-type and review. The Done well is always on the board; it fills when that handoff is delivered.
 
 **Inspect an agent.** Click a Work Queue role name, or **Open** in the header / chat rail, to pop a live pane capture. Those windows are growable. Agents themselves stay in tmux; these views do not replace the dashboard.
 
@@ -213,7 +214,7 @@ SwarmForge is a lightweight, tmux-based orchestration layer that:
 - **Project-Local Roles** — Each role is defined by `swarmforge/roles/<role>.prompt` in the working tree being orchestrated.
 - **Layered Constitution** — `swarmforge/constitution.prompt` directs agents to read article files under `swarmforge/constitution/articles/`.
 - **Backend Selection Per Role** — A role can launch `claude`, `codex`, `copilot`, or `grok`.
-- **Pack Cockpit** — A local dashboard for New Task, Attention, the board, Work Queue, master-agent chat, and Teardown.
+- **Pack Cockpit** — A local dashboard for New Task, Attention, the board, Work Queue, lieutenant chat, and Teardown.
 - **Observable Swarm** — Watch agents from the dashboard; open a live pane when you need the raw session. Optional `window` lines still open a Terminal surface per role.
 - **Self-Hosted & Lightweight** — Runs locally in tmux and a browser, with optional Terminal windows.
 
@@ -292,14 +293,13 @@ Agents interact with handoffs through three helper scripts:
 - `ready_for_next.sh` accepts work using the role's configured receive mode.
 - `done_with_current.sh` completes the current task or batch using the role's configured receive mode.
 
-Outbound drafts use one of two message types. A git handoff points the recipient at a committed state. The commit abbreviation must be exactly 10 hexadecimal characters; `swarm_handoff.sh` validates that it resolves to a single commit and canonicalizes it before queuing the handoff. The first valid Git handoff call returns `AUDIT_REQUIRED` without queueing or completing the sender's current inbox item, and increments the task card's audit counter. The sender must re-read the complete task and referenced sources, trace every requirement and constraint to role-appropriate work and evidence, examine boundaries and failure cases, fix every finding, rerun applicable checks, and repeat the audit. Only an unchanged second call queues the handoff without another increment, after which any required approval is requested. A changed draft, task, sender, recipient set, or commit invalidates the earlier audit and creates a new counted challenge.
+Outbound drafts use one of two message types. A git handoff points the recipient at a committed state. The agent does not type a SHA; `swarm_handoff.sh` fills `commit` from the sender worktree HEAD (exactly 10 hexadecimal characters, resolved to a single commit). The first valid Git handoff call returns `AUDIT_REQUIRED` without queueing or completing the sender's current inbox item, and increments the task card's audit counter. The sender must re-read the complete task and referenced sources, trace every requirement and constraint to role-appropriate work and evidence, examine boundaries and failure cases, fix every finding, rerun applicable checks, and repeat the audit. Only an unchanged second call queues the handoff without another increment, after which any required approval is requested. A changed draft, task, sender, recipient set, or commit invalidates the earlier audit and creates a new counted challenge.
 
 ```text
 type: git_handoff
 to: <role>[,<role>...]
 priority: NN
 task: <short-stable-task-name>
-commit: <10-character-commit-abbrev>
 ```
 
 A note is one short freeform message:
@@ -328,7 +328,7 @@ window <role> <agent> <worktree> [task|batch] [forward-only|back-one|back-all] [
 
 `window-invisible` starts the agent in tmux without a Terminal window (the pack default). `window` also opens a Terminal surface for that role.
 
-The optional receive mode defaults to `task`. Use `batch` for roles that should consume all currently queued equal-priority handoffs as one batch.
+The optional receive mode defaults to `task`. Use `batch` for roles that should consume queued handoffs that share priority, card type, and reverse/forward with the first file as one batch. Equal priority of a different type or direction stays queued.
 
 The optional propagation token defaults to `forward-only`. The card still follows the forward send to the next window.
 
@@ -336,7 +336,7 @@ The optional propagation token defaults to `forward-only`. The card still follow
 - `back-one` — also queue a merge-only copy to the previous window.
 - `back-all` — also queue merge-only copies to every earlier window.
 
-Those extra copies do not move the card. The recipient merges the copy and keeps working; it does not hand that copy onward. The card goes Done only when the last window sends a `git_handoff`.
+Those extra copies do not move the card. The recipient merges the copy and keeps working; it does not hand that copy onward. The card goes Done only when the last role **on this card** sends a terminal `git_handoff`.
 
 The **host** conf may include a lieutenant line instead of windows:
 

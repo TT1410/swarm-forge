@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+set -euo pipefail
+ROOT="/Users/unclebob/projects/swarm-forge"
+if [[ -d swarmforge/scripts ]]; then
+  SCRIPTS="$PWD/swarmforge/scripts"
+else
+  SCRIPTS="$ROOT/swarmforge/scripts"
+fi
+exec bb --classpath "$ROOT/test:$SCRIPTS" -e '
+(require (quote clojure.test)
+         (quote swarmforge.swarm-handoff-test)
+         (quote swarmforge.ready-handoff-test)
+         (quote swarmforge.script-misc-test)
+         (quote swarmforge.swarmforge-script-test)
+         (quote swarmforge.installer-test)
+         (quote swarmforge.pack-board-test)
+         (quote swarmforge.pack-web-status-test)
+         (quote swarmforge.pack-web-ui-test)
+         (quote swarmforge.pack-pipeline-test)
+         (quote swarmforge.pack-forge-test)
+         (quote swarmforge.coverage-in-process-test))
+(let [{:keys [fail error]} (clojure.test/run-tests
+                             (quote swarmforge.swarm-handoff-test)
+                             (quote swarmforge.ready-handoff-test)
+                             (quote swarmforge.script-misc-test)
+                             (quote swarmforge.swarmforge-script-test)
+                             (quote swarmforge.installer-test)
+                             (quote swarmforge.pack-board-test)
+                             (quote swarmforge.pack-web-status-test)
+                             (quote swarmforge.pack-web-ui-test)
+                             (quote swarmforge.pack-pipeline-test)
+                             (quote swarmforge.pack-forge-test)
+                             (quote swarmforge.coverage-in-process-test))]
+  (System/exit (+ fail error)))
+'

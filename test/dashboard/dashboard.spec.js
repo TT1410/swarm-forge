@@ -194,6 +194,7 @@ test.describe("pack dashboard", () => {
     await page.locator(".project-header button", { hasText: "New Task" }).click();
     await expect(page.locator("#nt-name")).toBeFocused();
     await expect(page.locator("input[name=nt-type][value=LT]")).toBeChecked();
+    await expect(page.locator("#nt-note")).toContainText("Does not create a card");
     await expect(page.locator("input[name=nt-type]")).toHaveCount(5);
   });
 
@@ -591,6 +592,9 @@ test.describe("mocked dashboard buttons", () => {
     await expect(card.locator(".status")).toHaveText("Waiting to start");
     await expect(card.locator(".pill")).toHaveText("QA");
     expect(created).toMatchObject({ name: "UiFromMock", type: "QA", project: "htw" });
+    await page.locator(".project-header button", { hasText: "New Task" }).click();
+    await expect(page.locator("input[name=nt-type][value=LT]")).toBeChecked();
+    await expect(page.locator("#nt-note")).toContainText("Does not create a card");
   });
 
   test("New Task LT does not park a card", async ({ page }) => {

@@ -5,6 +5,12 @@
             [clojure.java.shell :as sh]
             [clojure.string :as str]))
 
+(def script-dir (fs/parent *file*))
+(try
+  (require 'card-type)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "card_type.bb")))))
+
 (defn command [& args]
   (apply sh/sh args))
 
@@ -142,3 +148,30 @@
     (let [result (command "git" "-C" wt "rev-parse" "HEAD")]
       (when (zero? (:exit result))
         (not-empty (str/trim (:out result)))))))
+
+(defn board-card-type [task-name]
+  (when-let [root (project-root)]
+    (let [file (fs/path root ".swarmforge" "board" "tasks.tsv")]
+      (when (and task-name (fs/regular-file? file))
+        (some (fn [line]
+                (let [row (card-type/parse-row line)]
+                  (when (= task-name (:name row))
+                    (:type row))))
+              (str/split-lines (slurp (str file))))))))
+
+(defn card-type-of [file]
+  (let [headers (header-map file)]
+    (or (not-empty (get headers "card_type"))
+        (board-card-type (get headers "task")))))
+
+(defn print-card-briefing! [file]
+  (when-let [card-type (card-type-of file)]
+    (println "CARD_TYPE:" card-type)
+    (when-let [role (current-role)]
+      (if (card-type/last-on-card? card-type role)
+        (println (str "THIS_CARD: last; terminal to: "
+                      (str/join "," (card-type/terminal-upstream
+                                     (mapv first (role-rows))
+                                     card-type))))
+        (when-let [nxt (card-type/next-role card-type role)]
+          (println "THIS_CARD: next" nxt))))))
