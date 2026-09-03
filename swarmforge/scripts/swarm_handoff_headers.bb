@@ -141,6 +141,33 @@
 (defn board-task [task-id]
   (some #(when (= task-id (:id %)) %) (board-rows)))
 
+(defn task-document-relative-path [task-name]
+  (when-not (str/blank? task-name)
+    (str "tasks/" task-name ".md")))
+
+(defn committed-task-document [commit relative-path]
+  (command (git-cwd) "git" "show" (str commit ":" relative-path)))
+
+(defn task-document-errors [headers canonical-commit]
+  (if-not (= "git_handoff" (get headers "type"))
+    []
+    (let [relative-path (task-document-relative-path (get headers "task"))
+          source (when relative-path (fs/path (project-root) relative-path))]
+      (if-not (and relative-path (fs/regular-file? source)
+                   (not (str/blank? canonical-commit)))
+        []
+        (let [committed (committed-task-document canonical-commit relative-path)]
+          (cond
+            (not (zero? (:exit committed)))
+            [(str "Result commit " canonical-commit " does not include the task document "
+                  relative-path ". Receive the task and commit that document before handoff.")]
+
+            (not= (:out committed) (slurp (str source)))
+            [(str "Result commit " canonical-commit " contains a stale task document "
+                  relative-path ". Commit the current operator task document before handoff.")]
+
+            :else []))))))
+
 (defn rejected-task? [task]
   (let [name (:name task)]
     (and (not (str/blank? name))

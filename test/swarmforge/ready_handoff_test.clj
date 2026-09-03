@@ -40,6 +40,62 @@
       (is (str/includes? out "TYPE: note"))
       (is (str/includes? out "TASK_NAME: Holy Hand Grenade"))
       (is (str/includes? out "The grenade is placed at setup.")))))
+(deftest ready-for-next-commits-operator-task-document-in-role-worktree
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        receiver (add-worktree! root "receiver")
+        document "# Utility task\n\nType: utility\n\nBuild the shim.\n"]
+    (setup-project! root {"receiver" "task"})
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "receiver\treceiver\t%s\tsession\tReceiver\tcodex\ttask\n"
+                        receiver))
+    (write-file (fs/path root "tasks/Utility task.md") document)
+    (put-handoff! receiver "new" "50_utility.handoff"
+                  {:id "utility"
+                   :from "(New Task)"
+                   :to "receiver"
+                   :recipient "receiver"
+                   :priority "50"
+                   :type "note"
+                   :task-id "utility-id"
+                   :task "Utility task"
+                   :body "Build the shim."})
+    (let [result (run {:dir receiver :env {"SWARMFORGE_ROLE" "receiver"}}
+                      (script "ready_for_next.sh"))
+          committed (run {:dir receiver}
+                         "git" "show" "HEAD:tasks/Utility task.md")]
+      (is (zero? (:exit result)))
+      (is (= document (read-file (fs/path receiver "tasks/Utility task.md"))))
+      (is (= document (:out committed))))))
+(deftest ready-for-next-batch-commits-each-operator-task-document
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        receiver (add-worktree! root "receiver")]
+    (setup-project! root {"receiver" "batch"})
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "receiver\treceiver\t%s\tsession\tReceiver\tcodex\tbatch\n"
+                        receiver))
+    (doseq [[priority task] [["40" "First"] ["40" "Second"]]]
+      (write-file (fs/path root "tasks" (str task ".md"))
+                  (str "# " task "\n\nType: utility\n\nDo " task ".\n"))
+      (put-handoff! receiver "new" (str priority "_" task ".handoff")
+                    {:id task
+                     :from "(New Task)"
+                     :to "receiver"
+                     :recipient "receiver"
+                     :priority priority
+                     :type "note"
+                     :task-id (str task "-id")
+                     :task task
+                     :body (str "Do " task ".")}))
+    (let [result (run {:dir receiver :env {"SWARMFORGE_ROLE" "receiver"}}
+                      (script "ready_for_next.sh"))]
+      (is (zero? (:exit result)))
+      (is (str/includes? (:out result) "COUNT: 2"))
+      (doseq [task ["First" "Second"]]
+        (is (zero? (:exit (run {:dir receiver}
+                               "git" "cat-file" "-e"
+                               (str "HEAD:tasks/" task ".md")))))))))
 (deftest ready-for-next-task-accepts-and-resumes-single-tasks
   (let [root (tmp-dir)]
     (init-repo! root)

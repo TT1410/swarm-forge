@@ -27,7 +27,7 @@
          "- Do not search the tree or `$HOME` for those scripts.\n"
          "- Do not invoke helpers as `./swarmforge/scripts/...`. They are already on PATH.\n"
          "- Board cards live in `.swarmforge/board/tasks.tsv`. Use that card name as `task:`.\n"
-         "- Operator task documents live in `tasks/<task-name>.md`. Re-read that file as operator intent. The master agent commits it with the task's first git work.\n"
+         "- Operator task documents live in `tasks/<task-name>.md`. Re-read that file as operator intent. The receive helper commits it when the task starts.\n"
          "- A retry audit may include remedial comments on named documents. Read those comments as findings.\n"
          "- Do not search the worktree for `.swarmforge/board/tasks.tsv`. That file is on the project (master).\n"
          "- Use TASK_NAME from `ready_for_next.sh` or the inbound `task:` header. For a batch, that name is the top item. The helper fills `task:` from the in-process batch, else the sender-lane card.\n"

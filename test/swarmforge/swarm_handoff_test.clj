@@ -461,7 +461,7 @@
                                 ["architect" "batch" "back-all"]])]
     (pack-board root true "create" "--root" (str root) "--name" "util" "--type" "utility")
     (write-file (fs/path root "features/console.feature") "Feature: console\n")
-    (run {:dir root} "git" "add" "features/console.feature")
+    (run {:dir root} "git" "add" "features/console.feature" "tasks/util.md")
     (run {:dir root} "git" "commit" "-q" "-m" "Add feature")
     (let [draft (fs/path root "tmp" "util.handoff")]
       (write-file draft "type: git_handoff\nto: cleaner\npriority: 50\ntask: util\n")
@@ -472,7 +472,7 @@
         (is (empty? (remove #(str/includes? (str %) "New_Task") (outbox-handoffs root))))))
     (pack-board root true "create" "--root" (str root) "--name" "rev" "--type" "review")
     (write-file (fs/path root "qa/headed.md") "# headed\n")
-    (run {:dir root} "git" "add" "qa/headed.md")
+    (run {:dir root} "git" "add" "qa/headed.md" "tasks/rev.md")
     (run {:dir root} "git" "commit" "-q" "-m" "Add qa")
     (let [draft (fs/path root "tmp" "rev.handoff")]
       (write-file draft "type: git_handoff\nto: architect\npriority: 50\ntask: rev\n")
@@ -492,7 +492,7 @@
                                 ["QA" "batch" "back-all"]])]
     (pack-board root true "create" "--root" (str root) "--name" "comp" "--type" "component")
     (write-file (fs/path root "qa/headed.md") "# headed\n")
-    (run {:dir root} "git" "add" "qa/headed.md")
+    (run {:dir root} "git" "add" "qa/headed.md" "tasks/comp.md")
     (run {:dir root} "git" "commit" "-q" "-m" "Add qa")
     (let [draft (fs/path root "tmp" "comp.handoff")]
       (write-file draft "type: git_handoff\nto: coder\npriority: 50\ntask: comp\n")
@@ -502,6 +502,8 @@
         (is (str/includes? (:err result) "must not add QA procedures"))
         (is (empty? (remove #(str/includes? (str %) "New_Task") (outbox-handoffs root))))))
     (pack-board root true "create" "--root" (str root) "--name" "full" "--type" "QA")
+    (run {:dir root} "git" "add" "tasks/full.md")
+    (run {:dir root} "git" "commit" "-q" "-m" "Add full task document")
     (let [draft (fs/path root "tmp" "full.handoff")]
       (write-file draft "type: git_handoff\nto: coder\npriority: 50\ntask: full\n")
       (let [result (audit-and-submit-git-handoff
@@ -541,6 +543,41 @@
           content (read-file (queued-path (:out result)))]
       (is (zero? (:exit result)))
       (is (str/includes? content "artifacts: tasks/htw.md\n")))))
+(deftest swarm-handoff-requires-current-operator-task-document-in-commit
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        _ (setup-project! root)
+        task-id "task-document-id"
+        _ (write-file (fs/path root ".swarmforge/board/tasks.tsv")
+                      (str "Document task\tsender\tcreated\tupdated\t" task-id
+                           "\t0\tcomponent\n"))
+        document "# Document task\n\nType: component\n\nPreserve this intent.\n"
+        _ (write-file (fs/path root "tasks/Document task.md") document)
+        _ (write-file (fs/path root "slice.md") "work\n")
+        _ (run {:dir root} "git" "add" "slice.md")
+        _ (run {:dir root} "git" "commit" "-q" "-m" "Add work")
+        draft (fs/path root "tmp" "document-task.handoff")]
+    (write-file draft "type: git_handoff\nto: receiver\npriority: 50\ntask: Document task\n")
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false}
+                      (script "swarm_handoff.sh") (str draft))]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "does not include the task document"))
+      (is (empty? (outbox-handoffs root))))
+    (run {:dir root} "git" "add" "tasks/Document task.md")
+    (run {:dir root} "git" "commit" "-q" "-m" "Record task document")
+    (write-file (fs/path root "tasks/Document task.md")
+                "# Document task\n\nType: component\n\nUpdated operator intent.\n")
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false}
+                      (script "swarm_handoff.sh") (str draft))]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "contains a stale task document"))
+      (is (empty? (outbox-handoffs root))))
+    (run {:dir root} "git" "add" "tasks/Document task.md")
+    (run {:dir root} "git" "commit" "-q" "-m" "Update task document")
+    (let [result (audit-and-submit-git-handoff
+                  {:dir root :env {"SWARMFORGE_ROLE" "sender"}} draft)]
+      (is (zero? (:exit result)))
+      (is (some? (queued-path (:out result)))))))
 (deftest swarm-handoff-excludes-deleted-artifacts
   ;; Given a commit deletes one file and changes another
   ;; When it is queued
@@ -1013,7 +1050,7 @@
                                 ["QA" "batch" "back-all"]])
         _ (pack-board root true "create" "--root" (str root) "--name" "rev" "--type" "review")
         _ (write-file (fs/path root "slice.md") "work\n")
-        _ (run {:dir root} "git" "add" "slice.md")
+        _ (run {:dir root} "git" "add" "slice.md" "tasks/rev.md")
         _ (run {:dir root} "git" "commit" "-q" "-m" "Review work")
         ok (fs/path root "tmp" "rev-ok.handoff")
         bad (fs/path root "tmp" "rev-bad.handoff")]
@@ -1062,7 +1099,7 @@
         _ (pack-board root true "move" "--root" (str root)
                       "--name" "shim" "--lane" "cleaner" "--caller" "handoffd")
         _ (write-file (fs/path root "slice.md") "work\n")
-        _ (run {:dir root} "git" "add" "slice.md")
+        _ (run {:dir root} "git" "add" "slice.md" "tasks/shim.md")
         _ (run {:dir root} "git" "commit" "-q" "-m" "Utility work")
         ok (fs/path root "tmp" "util-ok.handoff")
         architect (fs/path root "tmp" "util-architect.handoff")

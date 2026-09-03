@@ -402,10 +402,18 @@ Responsibilities:
   filename order.
 - Atomically move that file to `inbox/in_process/`.
 - Add or update `dequeued_at`.
+- Copy the current `tasks/<task-name>.md` from the project root into the role
+  worktree when necessary and commit that document before reporting the task.
 - Print the accepted task path, sender, message type, priority, and payload.
 - Print `NO_TASK` if no inbox item is available.
 - Refuse ambiguous states, such as multiple in-process files, unless an explicit
   repair is made outside the helper.
+
+The batch receiver performs the same task-document copy and commit for every
+selected batch item. `swarm_handoff.sh` refuses a Git handoff when the sender's
+commit lacks the current operator task document or contains a stale version.
+The `artifacts` header therefore includes the durable task intent alongside the
+role's other committed work.
 
 Example success:
 

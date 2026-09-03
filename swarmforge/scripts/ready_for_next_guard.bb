@@ -69,6 +69,50 @@
   (or (not-empty (System/getenv "SWARMFORGE_ROLE"))
       (infer-role-from-worktree)))
 
+(declare header-map)
+
+(defn task-document-relative-path [task-name]
+  (when-not (str/blank? task-name)
+    (str "tasks/" task-name ".md")))
+
+(defn committed-file [root relative-path]
+  (command "git" "-C" root "show" (str "HEAD:" relative-path)))
+
+(defn task-document-committed? [root relative-path file]
+  (let [result (committed-file root relative-path)]
+    (and (zero? (:exit result))
+         (= (:out result) (slurp (str file))))))
+
+(defn task-document-fail! [message]
+  (binding [*out* *err*]
+    (println message))
+  (System/exit 1))
+
+(defn commit-task-document! [root relative-path file]
+  (let [add-result (command "git" "-C" root "add" "--" relative-path)]
+    (when-not (zero? (:exit add-result))
+      (task-document-fail!
+       (str/trim (str (:err add-result) "\n" (:out add-result)))))
+    (let [commit-result (command "git" "-C" root "commit" "--only"
+                                 "-m" "Record task document" "--" relative-path)]
+      (when-not (zero? (:exit commit-result))
+        (task-document-fail!
+         (str/trim (str (:err commit-result) "\n" (:out commit-result))))))))
+
+(defn ensure-task-document-committed! [handoff-file]
+  (when-let [relative-path (task-document-relative-path
+                            (get (header-map handoff-file) "task"))]
+    (when-let [project (project-root)]
+      (let [source (fs/path project relative-path)
+            worktree (git-root)
+            destination (when worktree (fs/path worktree relative-path))]
+        (when (and worktree (fs/regular-file? source))
+          (when-not (same-path? source destination)
+            (fs/create-dirs (fs/parent destination))
+            (fs/copy source destination {:replace-existing true}))
+          (when-not (task-document-committed? worktree relative-path destination)
+            (commit-task-document! worktree relative-path destination)))))))
+
 (defn header-map [file]
   (into {}
         (for [line (take-while (complement str/blank?) (str/split-lines (slurp (str file))))

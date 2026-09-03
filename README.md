@@ -315,6 +315,13 @@ The helper generates the delivered payload. Agents do not write long handoff bod
 
 Recipient agents run `ready_for_next.sh` when notified or after restart. It dispatches to the task or batch helper configured for that role. If it prints `NO_TASK`, they stop waiting for work. If it prints `TASK: <path>`, they treat the printed `TASK_NAME` and `PAYLOAD` as the task. If it prints `BATCH: <path>`, they process the printed `BATCH_ITEM` entries in helper-delivered order. If a wake-up arrives while an agent is already working, it can ignore the wake-up. `done_with_current.sh` completes the current item only: it prints `MAIL_WAITING` when more mail is queued, or `NO_TASK`. The agent then runs `ready_for_next.sh` if mail is waiting.
 
+When a role accepts work, the receive helper copies the operator's
+`tasks/<task-name>.md` into that role's worktree when necessary and commits the
+current document before work begins. A Git handoff is rejected if its commit
+does not contain that current task document. This keeps the original operator
+intent in every forward and terminal merge, including utility and review cards
+whose first role does not run on `master`.
+
 The durable handoff files and lifecycle headers replace the old logbook and resend queue. Runtime handoff state lives under `.swarmforge/handoffs/` in each worktree, with `outbox`, `sent`, `failed`, and `inbox` subdirectories. Agents should not hand-edit, merge, stage, or commit handoff runtime state. See [swarmforge/handoff-protocol.md](swarmforge/handoff-protocol.md) for the full protocol.
 
 ## The `swarmforge.conf` File

@@ -214,6 +214,7 @@
                                       (current-work-state-errors headers)
                                       (task-state-errors headers sender)
                                       (ancestry-errors headers (:canonical-commit validation))
+                                      (task-document-errors headers (:canonical-commit validation))
                                       (duplicate-errors sender
                                                         (:recipients validation)
                                                         headers

@@ -188,6 +188,8 @@
       (if (= 1 (count in-process-batches))
         (let [batch-dir (first in-process-batches)]
           (merge-batch! batch-dir)
+          (doseq [file (handoff-files batch-dir)]
+            (ready-for-next-guard/ensure-task-document-committed! file))
           (print-batch batch-dir))
         (let [new-files (handoff-files new-dir)]
           (when-let [active (seq (ready-for-next-guard/active-outbound-git-files
@@ -209,6 +211,8 @@
                 (fail! 2 "AMBIGUOUS_TASK_STATE: no tasks selected for batch."))
               (merge-batch! batch-dir)
               (apply-batch-merge-from! batch-dir)
+              (doseq [file (handoff-files batch-dir)]
+                (ready-for-next-guard/ensure-task-document-committed! file))
               (print-batch batch-dir))))))))
 
 (when (= (str *file*) (System/getProperty "babashka.file"))

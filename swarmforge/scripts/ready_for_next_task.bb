@@ -138,6 +138,7 @@
       (if (= 1 (count in-process-files))
         (let [file (first in-process-files)]
           (merge-git-handoff! file)
+          (ready-for-next-guard/ensure-task-document-committed! file)
           (print-task file))
         (let [new-files (handoff-files new-dir)]
           (when-let [active (seq (ready-for-next-guard/active-outbound-git-files
@@ -154,6 +155,7 @@
               (set-header! target-file "task_base_commit" (current-head))
               (merge-git-handoff! target-file)
               (apply-merge-from! target-file)
+              (ready-for-next-guard/ensure-task-document-committed! target-file)
               (print-task target-file))))))))
 
 (when (= (str *file*) (System/getProperty "babashka.file"))
