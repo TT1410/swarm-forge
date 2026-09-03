@@ -53,11 +53,29 @@ function cardEl(task, opts) {
   return card;
 }
 
+const heatPassMs = [0, 2400, 1900, 1500, 1100, 800, 550];
+
+function setHeat(therm, heat) {
+  const level = Math.max(0, Math.min(6, Math.round(Number(heat) || 0)));
+  therm.dataset.heat = String(level);
+  if (level) {
+    const passMs = heatPassMs[level];
+    const phaseMs = Date.now() % (passMs * 2);
+    therm.style.setProperty("--scan-duration", passMs + "ms");
+    therm.style.setProperty("--scan-delay", -phaseMs + "ms");
+    therm.title = "pane heat " + level + "; faster scan is hotter";
+  } else {
+    therm.style.removeProperty("--scan-duration");
+    therm.style.removeProperty("--scan-delay");
+    therm.title = "pane heat idle";
+  }
+  therm.setAttribute("aria-label", therm.title);
+}
+
 function heatEl(heat) {
   const therm = document.createElement("span");
   therm.className = "wif-therm";
-  therm.dataset.heat = String(Number(heat) || 0);
-  therm.title = "pane heat";
+  setHeat(therm, heat);
   for (let i = 0; i < 6; i++) {
     const bar = document.createElement("span");
     bar.className = "bar";
@@ -295,7 +313,11 @@ function renderChrome(data) {
       therm = heatEl(data.lieutenant_activity);
       $("master-title").after(therm);
     } else {
-      therm.dataset.heat = String(Number(data.lieutenant_activity) || 0);
+      const level = Math.max(0, Math.min(6, Math.round(Number(data.lieutenant_activity) || 0)));
+      if (therm.dataset.heat !== String(level)) {
+        const replacement = heatEl(level);
+        therm.replaceWith(replacement);
+      }
     }
   } else if (therm) {
     therm.remove();

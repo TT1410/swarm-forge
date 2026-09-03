@@ -482,22 +482,28 @@ test.describe("pack dashboard", () => {
     }
   });
 
-  test("pending lieutenant chat shows green status under the request", async ({ page }) => {
+  test("lieutenant status stays live outside the response history", async ({ page }) => {
     const local = await startDashboard();
     try {
-      writeFile(
-        path.join(local.root, ".swarmforge/dashboard/requests/pending/req-1.request"),
-        "id: req-1\nstatus: pending\ncreated_at: 2026-01-01T00:00:00Z\n\nhi\n"
-      );
       writeFile(
         path.join(local.root, ".swarmforge/sessions/lieutenant/pane.txt"),
         "I'm listing the open projects.\nI'll summarize HTW next.\n"
       );
       await page.goto(local.url);
-      const status = page.locator("#chat-history [data-chat-id=\"req-1\"] .bubble-status");
-      await expect(status).toContainText("| I'm listing the open projects.");
-      await expect(status).toContainText("| I'll summarize HTW next.");
+      const status = page.locator("#lieutenant-status");
+      await expect(status).toHaveText("I'll summarize HTW next.");
       await expect(status).toHaveCSS("color", "rgb(47, 107, 58)");
+      await expect(status).toHaveCSS("border-top-width", "0px");
+      expect(await status.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
+        await page.locator(".rail section.ts").evaluate((el) => getComputedStyle(el).backgroundColor)
+      );
+      writeFile(
+        path.join(local.root, ".swarmforge/dashboard/requests/pending/req-1.request"),
+        "id: req-1\nstatus: pending\ncreated_at: 2026-01-01T00:00:00Z\n\nhi\n"
+      );
+      await page.reload();
+      await expect(page.locator("#lieutenant-status")).toHaveText("I'll summarize HTW next.");
+      await expect(page.locator("#chat-history .bubble-status")).toHaveCount(0);
     } finally {
       await stopDashboard(local);
     }
@@ -770,6 +776,40 @@ test.describe("mocked dashboard buttons", () => {
     const therm = page.locator(".ts-head .wif-therm");
     await expect(therm).toHaveCount(1);
     await expect(therm).toHaveAttribute("data-heat", "4");
+    expect(await therm.evaluate((el) => getComputedStyle(el, "::after").animationName)).toBe("wif-cylon");
+    expect(await therm.evaluate((el) => getComputedStyle(el, "::after").animationDirection)).toBe("alternate");
+  });
+
+  test("thermometer heat controls scanner speed", async ({ page }) => {
+    await page.route("**/api/state", (route) => {
+      route.fulfill({
+        json: mockForgeState([], {
+          lieutenant_activity: 0,
+          all_projects: ["htw", "empire"],
+          open_projects: ["htw", "empire"],
+          projects: [
+            {
+              name: "htw", open: true, lanes: ["specifier"], tasks: [],
+              role_heats: { specifier: 1 }, work_in_flight: []
+            },
+            {
+              name: "empire", open: true, lanes: ["specifier"], tasks: [],
+              role_heats: { specifier: 6 }, work_in_flight: []
+            }
+          ]
+        })
+      });
+    });
+    await page.goto(handle.url);
+    const idle = page.locator(".ts-head .wif-therm");
+    const cool = page.locator('.project-band[data-project="htw"] .wif-therm');
+    const hot = page.locator('.project-band[data-project="empire"] .wif-therm');
+    const duration = (locator) => locator.evaluate((el) =>
+      parseFloat(getComputedStyle(el, "::after").animationDuration)
+    );
+    await expect(idle).toHaveAttribute("data-heat", "0");
+    expect(await idle.evaluate((el) => getComputedStyle(el, "::after").animationName)).toBe("none");
+    expect(await duration(hot)).toBeLessThan(await duration(cool));
   });
 
   test("Lieutenant title opens the session and there is no Open button", async ({ page }) => {

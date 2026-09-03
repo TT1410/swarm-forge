@@ -364,18 +364,16 @@ function chatAtBottom(history) {
   return (history.scrollHeight - history.scrollTop - history.clientHeight) <= 64;
 }
 
-function statusText(lines) {
-  return (lines || []).slice(0, 2).map((line) => "| " + line).join("\n");
+function renderLieutenantStatus(data) {
+  const status = $("lieutenant-status");
+  const available = data.lieutenant_status || [];
+  const text = available.length ? available[available.length - 1] : "";
+  status.hidden = !data.forge;
+  status.textContent = text;
+  status.title = text;
 }
 
-function statusBlock(lines) {
-  const el = document.createElement("div");
-  el.className = "bubble-status";
-  el.textContent = statusText(lines);
-  return el;
-}
-
-function chatTurn(item, statusLines) {
+function chatTurn(item) {
   const wrap = document.createElement("div");
   wrap.dataset.chatId = item.id || "";
   const you = document.createElement("div");
@@ -387,20 +385,14 @@ function chatTurn(item, statusLines) {
     reply.className = "bubble-ts";
     reply.textContent = item.response;
     wrap.appendChild(reply);
-  } else if (statusLines && statusLines.length) {
-    wrap.appendChild(statusBlock(statusLines));
   }
   return wrap;
-}
-
-function pendingChatId(items) {
-  const pending = (items || []).filter((item) => item.status === "pending" && !item.response);
-  return pending.length ? pending[pending.length - 1].id : "";
 }
 
 function renderChat(data) {
   const history = $("chat-history");
   const items = data.chat || [];
+  renderLieutenantStatus(data);
   const pinBottom = chatAtBottom(history);
   const live = {};
   items.forEach((item) => {
@@ -409,17 +401,13 @@ function renderChat(data) {
   [...history.querySelectorAll("[data-chat-id]")].forEach((el) => {
     if (!live[el.dataset.chatId]) el.remove();
   });
-  const latestPending = pendingChatId(items);
-  const statusLines = data.lieutenant_status || [];
   items.forEach((item) => {
-    const showStatus = item.id === latestPending && !item.response;
     let wrap = history.querySelector("[data-chat-id=\"" + item.id + "\"]");
     if (!wrap) {
-      history.appendChild(chatTurn(item, showStatus ? statusLines : []));
+      history.appendChild(chatTurn(item));
       return;
     }
     const reply = wrap.querySelector(".bubble-ts");
-    const statusEl = wrap.querySelector(".bubble-status");
     if (item.response && !reply) {
       const next = document.createElement("div");
       next.className = "bubble-ts";
@@ -427,18 +415,6 @@ function renderChat(data) {
       wrap.appendChild(next);
     } else if (item.response && reply && reply.textContent !== item.response) {
       reply.textContent = item.response;
-    }
-    if (item.response || !showStatus) {
-      if (statusEl) statusEl.remove();
-    } else {
-      const text = statusText(statusLines);
-      if (!text) {
-        if (statusEl) statusEl.remove();
-      } else if (statusEl) {
-        if (statusEl.textContent !== text) statusEl.textContent = text;
-      } else {
-        wrap.appendChild(statusBlock(statusLines));
-      }
     }
   });
   if (pinBottom) {
