@@ -221,7 +221,25 @@ test.describe("pack dashboard", () => {
 
   test("board card shows type", async ({ page }) => {
     await page.goto(handle.url);
-    await expect(page.locator(".card .pill", { hasText: "QA" })).toBeVisible();
+    const card = page.locator('.card[data-task-name="HTW"]');
+    await expect(card.locator(".pill", { hasText: "QA" })).toBeVisible();
+    const rows = await card.evaluate((el) =>
+      Array.from(el.children).map((child) => child.className)
+    );
+    expect(rows.slice(0, 2)).toEqual(["card-meta", "title"]);
+    const positions = await card.evaluate((el) => {
+      const cardBox = el.getBoundingClientRect();
+      const typeBox = el.querySelector(".pill").getBoundingClientRect();
+      const titleBox = el.querySelector(".title").getBoundingClientRect();
+      return {
+        typeLeft: Math.round(typeBox.left),
+        contentLeft: Math.round(cardBox.left + 9),
+        typeTop: Math.round(typeBox.top),
+        titleTop: Math.round(titleBox.top)
+      };
+    });
+    expect(positions.typeLeft).toBe(positions.contentLeft);
+    expect(positions.titleTop).toBeGreaterThan(positions.typeTop);
   });
 
   test("Attention lists approvals and clarifications", async ({ page }) => {
@@ -491,7 +509,12 @@ test.describe("pack dashboard", () => {
       );
       await page.goto(local.url);
       const status = page.locator("#lieutenant-status");
-      await expect(status).toHaveText("I'll summarize HTW next.");
+      const lines = status.locator(".lt-status-line");
+      await expect(lines).toHaveCount(2);
+      await expect(lines).toHaveText([
+        "I'm listing the open projects.",
+        "I'll summarize HTW next."
+      ]);
       await expect(status).toHaveCSS("color", "rgb(47, 107, 58)");
       await expect(status).toHaveCSS("border-top-width", "0px");
       expect(await status.evaluate((el) => getComputedStyle(el).backgroundColor)).toBe(
@@ -502,7 +525,7 @@ test.describe("pack dashboard", () => {
         "id: req-1\nstatus: pending\ncreated_at: 2026-01-01T00:00:00Z\n\nhi\n"
       );
       await page.reload();
-      await expect(page.locator("#lieutenant-status")).toHaveText("I'll summarize HTW next.");
+      await expect(page.locator("#lieutenant-status .lt-status-line")).toHaveCount(2);
       await expect(page.locator("#chat-history .bubble-status")).toHaveCount(0);
     } finally {
       await stopDashboard(local);
@@ -865,6 +888,38 @@ test.describe("mocked dashboard buttons", () => {
     await expect(empire.locator('.col[data-lane="coder"] .lane-title .wif-therm')).toHaveAttribute("data-heat", "2");
     await expect(page.locator(".card .wif-therm")).toHaveCount(0);
     await expect(htw.locator('.col[data-lane="waiting"] .wif-therm')).toHaveCount(0);
+  });
+
+  test("role swimlanes stay fixed while Waiting and Done are narrower", async ({ page }) => {
+    await page.route("**/api/state", (route) => {
+      route.fulfill({
+        json: mockForgeState([
+          {
+            name: "A deliberately long waiting card that must not widen its lane",
+            lane: "waiting",
+            type: "component",
+            project: "htw"
+          },
+          {
+            name: "A deliberately long card name that would otherwise widen its lane",
+            lane: "specifier",
+            type: "component",
+            project: "htw"
+          }
+        ])
+      });
+    });
+    await page.goto(handle.url);
+    const widths = await page.locator(".col").evaluateAll((lanes) =>
+      Object.fromEntries(lanes.map((lane) => [
+        lane.dataset.lane,
+        Math.round(lane.getBoundingClientRect().width)
+      ]))
+    );
+    expect(widths.waiting).toBe(148);
+    expect(widths.done).toBe(148);
+    expect(widths.specifier).toBe(185);
+    expect(widths.coder).toBe(185);
   });
 
   test("QA documents get a qa suffix", async ({ page }) => {

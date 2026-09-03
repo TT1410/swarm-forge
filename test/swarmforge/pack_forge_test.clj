@@ -264,6 +264,35 @@
       (is (true? (:forge state)))
       (is (= ["I'm listing the open projects." "I'll summarize HTW next."]
              (:lieutenant_status state))))))
+(deftest forge-state-keeps-lieutenant-prose-ahead-of-grok-tool-output
+  ;; Given two lieutenant prose sentences followed by a long Grok command block
+  ;; When --test-state
+  ;; Then lieutenant_status contains the prose, not command text or terminal chrome
+  (let [root (tmp-dir)]
+    (seed-mini-forge! root)
+    (fs/create-dirs (fs/path root "projects"))
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "lieutenant\tmaster\t%s\tswarmforge-lieutenant\tLieutenant\tgrok\ttask\tforward-only\n"
+                        root))
+    (write-file (fs/path root ".swarmforge/sessions/lieutenant/pane.txt")
+                (str "Specifier is free. Starting replay-\n"
+                     "setup.\n"
+                     "◆ Run Start replay-setup on specifier\n"
+                     "$ python3 - << 'PY'\n"
+                     "  for line in rows:\n"
+                     "      if not line.strip(): continue\n"
+                     "  PY\n"
+                     "=== live ===\n"
+                     "replay-setup specifier\n"
+                     "⠴ Waiting for response… 27s\n"
+                     "minimal · /help\n"
+                     "❯\n"
+                     "Grok 4.6 (high) · always-approve\n"))
+    (let [state (json/parse-string
+                 (:out (pack-web root true "--test-state" (str root)))
+                 true)]
+      (is (= ["Specifier is free." "Starting replay-setup."]
+             (:lieutenant_status state))))))
 (deftest forge-state-includes-lieutenant-clarifications
   (let [root (tmp-dir)]
     (seed-mini-forge! root)

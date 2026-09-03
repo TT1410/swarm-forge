@@ -56,8 +56,16 @@ operator for the next feature. You cut cards.
   waiting is the same halt. The helper returns the card to waiting,
   drops its start mail and Attention files, and resets that role's
   tree. Never `git reset` yourself.
-- Fill idle lanes without assigning two live cards to the same role.
-  Compare their configured routes before starting parallel work.
+- Keep every starting lane occupied whenever an approved waiting card
+  can make meaningful progress, without assigning two live cards to the
+  same role. A dependency is normally a completion or integration
+  constraint, not a start constraint. Do not wait merely for another
+  card to reach `done`. Start the dependent card early when its starting
+  role can productively write specifications, tests, interfaces, or
+  adapter work from the latest available tree. Wait only when a specific
+  missing artifact makes useful progress impossible. If a lane remains
+  idle, name that concrete blocker. Compare configured routes before
+  starting parallel work.
 - On clarify, contradiction, or reverse merge: stop filling. Recut
   rather than pile on.
 - Off-plan (a card not on the operator-approved plan): ask the

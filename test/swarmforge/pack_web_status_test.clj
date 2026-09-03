@@ -47,13 +47,14 @@
 (deftest pack-web-thermometer-heats-on-codex-working-timer
   ;; Given a Codex specifier pane whose only change is the working timer
   ;; When --test-heat-codex samples both
-  ;; Then activity rises
+  ;; Then activity uses the slowest moving level
   (let [root (tmp-dir)
         _ (setup-pack! root ["specifier"])
         result (pack-web root false "--test-heat-codex" (str root))
         body (json/parse-string (:out result) true)]
     (is (zero? (:exit result)))
-    (is (< (:before body) (:after body)))))
+    (is (= 0 (:before body)))
+    (is (= 1 (:after body)))))
 (deftest pack-web-thermometer-ignores-reordered-tail
   ;; Given a pane whose last 20 lines are the same bag in a new order
   ;; When --test-heat-reorder samples both
@@ -237,6 +238,31 @@
     (is (str/includes? (str (:status card)) "I'll commit the spec"))
     (is (not (str/includes? (str (:status card)) "ready_for_next")))
     (is (not (str/includes? (str (:status card)) "Waiting for response")))))
+(deftest pack-web-grok-card-status-ignores-command-blocks
+  ;; Given current Grok prose followed by a command containing status-like words
+  ;; When --test-status-pane
+  ;; Then the prose remains the status and the command is ignored
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (set-backend! root "grok")
+        _ (create-task root "HTW" "specifier")
+        result (pack-web-env root {} "--test-status-pane" (str root)
+                             (str "Specifier is free. Starting replay-setup.\n"
+                                  "◆ Run Start replay-setup on specifier\n"
+                                  "$ python3 - << 'PY'\n"
+                                  "  for line in rows:\n"
+                                  "      if not line.strip(): continue\n"
+                                  "  PY\n"
+                                  "=== live ===\n"
+                                  "replay-setup specifier\n"
+                                  "⠴ Waiting for response… 27s\n"
+                                  "❯\n"
+                                  "Grok 4.6 (high) · always-approve\n"))
+        card (first (:tasks (json/parse-string (:out result) true)))]
+    (is (zero? (:exit result)))
+    (is (str/includes? (str (:status card)) "Starting replay-setup"))
+    (is (not (str/includes? (str (:status card)) "continue")))
+    (is (not (str/includes? (str (:status card)) "python3")))))
 (deftest pack-web-waiting-cards-say-waiting-in-queue
   ;; Given two specifier cards and a pane I'm sentence
   ;; When --test-status-pane
@@ -318,14 +344,15 @@
 (deftest pack-web-grok-thermometer-heats-on-waiting-timer
   ;; Given a Grok pane whose only change is Waiting for response Ns
   ;; When --test-heat-grok
-  ;; Then activity rises
+  ;; Then activity uses the slowest moving level
   (let [root (tmp-dir)
         _ (setup-pack! root ["specifier"])
         _ (set-backend! root "grok")
         result (pack-web root false "--test-heat-grok" (str root))
         body (json/parse-string (:out result) true)]
     (is (zero? (:exit result)))
-    (is (< (:before body) (:after body)))))
+    (is (= 0 (:before body)))
+    (is (= 1 (:after body)))))
 (deftest pack-web-thermometer-heats-on-collapsed-transcript-counts
   ;; Given Codex collapsed output whose +N line changes
   ;; When --test-heat-collapse

@@ -366,11 +366,16 @@ function chatAtBottom(history) {
 
 function renderLieutenantStatus(data) {
   const status = $("lieutenant-status");
-  const available = data.lieutenant_status || [];
-  const text = available.length ? available[available.length - 1] : "";
+  const lines = (data.lieutenant_status || []).slice(-2);
   status.hidden = !data.forge;
-  status.textContent = text;
-  status.title = text;
+  status.replaceChildren();
+  lines.forEach((text) => {
+    const line = document.createElement("div");
+    line.className = "lt-status-line";
+    line.textContent = text;
+    status.appendChild(line);
+  });
+  status.title = lines.join("\n");
 }
 
 function chatTurn(item) {

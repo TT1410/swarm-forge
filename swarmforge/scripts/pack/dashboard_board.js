@@ -13,17 +13,13 @@ function cardEl(task, opts) {
   if (task.merging) card.classList.add("card-merging");
   card.setAttribute("data-task-name", task.name || "");
   if (task.merging) card.setAttribute("data-merging", "true");
-  const title = document.createElement("div");
-  title.className = "title";
-  const name = document.createElement("span");
-  name.className = "name";
-  name.textContent = task.name;
-  title.appendChild(name);
+  const meta = document.createElement("div");
+  meta.className = "card-meta";
   if (task.type) {
     const badge = document.createElement("span");
     badge.className = "pill";
     badge.textContent = task.type;
-    title.appendChild(badge);
+    meta.appendChild(badge);
   }
   const audit = document.createElement("span");
   audit.className = "audit-count";
@@ -37,8 +33,14 @@ function cardEl(task, opts) {
   const auditValue = document.createElement("span");
   auditValue.textContent = String(task.audit_count || 0);
   audit.append(auditIcon, auditValue);
-  title.appendChild(audit);
-  card.appendChild(title);
+  meta.appendChild(audit);
+  const title = document.createElement("div");
+  title.className = "title";
+  const name = document.createElement("span");
+  name.className = "name";
+  name.textContent = task.name;
+  title.appendChild(name);
+  card.append(meta, title);
   if (!thin && task.status) {
     const status = document.createElement("div");
     status.className = "status";

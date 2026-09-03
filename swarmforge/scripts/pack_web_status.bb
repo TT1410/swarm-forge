@@ -123,20 +123,72 @@
         (recur (next lines) current out))
       (cond-> out current (conj current)))))
 
+(defn grok-thought-line? [line]
+  (boolean (re-find #"^\s*┃" (or line ""))))
+
+(defn grok-tool-start-line? [line]
+  (boolean (re-find #"^\s*(?:◆|\$)\s" (or line ""))))
+
+(defn grok-chrome-line? [line]
+  (let [n (str/lower-case (fold-apostrophe (str/trim (or line ""))))]
+    (boolean
+     (or (str/blank? n)
+         (mail-banner? n)
+         (pane-chrome? n)
+         (re-find #"^notify:" n)
+         (re-find #"^\[req-[^]]+\]" n)
+         (re-find #"^worked for\b" n)
+         (re-find #"^grok\s" n)
+         (re-find #"^❯" n)
+         (re-find #"waiting for response" n)
+         (re-find #"^always-approve\b" n)
+         (re-find #"^enter:send\b" n)
+         (re-find #"·\s*/help\b" n)
+         (re-find #"^…\s*\+\d+\s+lines\b" n)))))
+
+(defn grok-prose-text [text]
+  (:text
+   (reduce
+    (fn [{:keys [in-tool? text]} line]
+      (cond
+        (grok-thought-line? line)
+        {:in-tool? false :text (conj text "")}
+
+        (grok-tool-start-line? line)
+        {:in-tool? true :text (conj text "")}
+
+        in-tool?
+        {:in-tool? true :text text}
+
+        (grok-chrome-line? line)
+        {:in-tool? false :text (conj text "")}
+
+        :else
+        {:in-tool? false :text (conj text (str/trim line))}))
+    {:in-tool? false :text []}
+    (str/split-lines (or text "")))))
+
+(defn grok-prose-sentences [text]
+  (-> (str/join "\n" (grok-prose-text text))
+      (str/replace #"-[ \t]*\n[ \t]*([a-z0-9])" "-$1")
+      pane-sentences))
+
 (defn pane-cache-key [root role]
   [(str root) (str role)])
 
 (defn matching-status-sentences [text backend]
-  (let [sample (pane-sample text backend)
-        tail (last-n-lines sample 20)
-        joined-tail (str/join "\n" tail)
-        from-sentences (filterv status-sentence? (pane-sentences joined-tail))]
-    (if (= "codex" backend)
-      (let [bullets (->> (codex-bullets sample)
-                         (remove codex-throwaway-bullet?)
-                         vec)]
-        (if (seq bullets) bullets from-sentences))
-      from-sentences)))
+  (let [sample (pane-sample text backend)]
+    (if (= "grok" backend)
+      (grok-prose-sentences sample)
+      (let [tail (last-n-lines sample 20)
+            joined-tail (str/join "\n" tail)
+            from-sentences (filterv status-sentence? (pane-sentences joined-tail))]
+        (if (= "codex" backend)
+          (let [bullets (->> (codex-bullets sample)
+                             (remove codex-throwaway-bullet?)
+                             vec)]
+            (if (seq bullets) bullets from-sentences))
+          from-sentences)))))
 
 (defn im-status-lines [role text backend]
   (let [found (vec (take-last 2 (matching-status-sentences text backend)))]

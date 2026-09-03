@@ -86,12 +86,29 @@
 (defn heat-from-count [n]
   (min 6 (long n)))
 
+(defn spinner-line? [line]
+  (let [n (str/lower-case (fold-apostrophe (str/trim (or line ""))))]
+    (boolean
+     (or (re-find #"waiting for response" n)
+         (re-find #"\bworking\b.*\besc to interrupt\b" n)
+         (re-find #"\besc to interrupt\b.*\d+s\b" n)))))
+
+(defn without-spinner-lines [bag]
+  (into {} (remove (fn [[line _]] (spinner-line? line)) bag)))
+
 (defn record-heat! [key text backend]
   (let [tail (last-n-lines (pane-sample text backend) 20)
         bag (frequencies tail)
         prev (get @pane-heat key)
         n (if (:bag prev) (bag-diff (:bag prev) bag) 0)
-        heat (heat-from-count n)]
+        work-n (if (:bag prev)
+                 (bag-diff (without-spinner-lines (:bag prev))
+                           (without-spinner-lines bag))
+                 0)
+        heat (cond
+               (pos? work-n) (heat-from-count work-n)
+               (pos? n) 1
+               :else 0)]
     (swap! pane-heat assoc key {:bag bag :heat heat})
     heat))
 
