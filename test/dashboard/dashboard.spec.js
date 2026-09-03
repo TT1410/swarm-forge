@@ -621,6 +621,60 @@ test.describe("mocked dashboard buttons", () => {
     await expect(names).toHaveText(["Active", "Older", "Newer"]);
   });
 
+  test("cards reserve five lines while batch children stay two lines", async ({ page }) => {
+    const longStatus = "one two three four five six seven eight nine ten eleven twelve " +
+      "thirteen fourteen fifteen sixteen seventeen eighteen nineteen twenty " +
+      "twenty-one twenty-two twenty-three twenty-four twenty-five";
+    await page.route("**/api/state", (route) => {
+      route.fulfill({
+        json: mockForgeState([
+          {
+            name: "Primary",
+            lane: "specifier",
+            type: "QA",
+            status: longStatus,
+            batch: "batch-1",
+            updated_at: "2026-01-01T00:00:00Z",
+            project: "htw"
+          },
+          {
+            name: "Child",
+            lane: "specifier",
+            type: "QA",
+            status: longStatus,
+            batch: "batch-1",
+            updated_at: "2026-01-02T00:00:00Z",
+            project: "htw"
+          },
+          {
+            name: "No status",
+            lane: "coder",
+            type: "component",
+            status: "",
+            project: "htw"
+          }
+        ])
+      });
+    });
+    await page.goto(handle.url);
+    const primary = page.locator('.card[data-task-name="Primary"]');
+    const child = page.locator('.card[data-task-name="Child"]');
+    const empty = page.locator('.card[data-task-name="No status"]');
+    await expect(primary).toHaveCSS("height", "96px");
+    await expect(empty).toHaveCSS("height", "96px");
+    await expect(child).toHaveCSS("height", "45px");
+    await expect(primary.locator(".status")).toHaveCount(1);
+    await expect(empty.locator(".status")).toHaveCount(1);
+    await expect(child.locator(".status")).toHaveCount(0);
+    const statusGeometry = await primary.locator(".status").evaluate((el) => ({
+      height: el.clientHeight,
+      lineHeight: parseFloat(getComputedStyle(el).lineHeight),
+      scrollHeight: el.scrollHeight
+    }));
+    expect(statusGeometry.height).toBe(statusGeometry.lineHeight * 3);
+    expect(statusGeometry.scrollHeight).toBeGreaterThan(statusGeometry.height);
+  });
+
   test("New Task OK parks the card in waiting", async ({ page }) => {
     let created = null;
     await page.route("**/api/state", (route) => {

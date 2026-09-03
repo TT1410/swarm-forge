@@ -41,10 +41,10 @@ function cardEl(task, opts) {
   name.textContent = task.name;
   title.appendChild(name);
   card.append(meta, title);
-  if (!thin && task.status) {
+  if (!thin) {
     const status = document.createElement("div");
     status.className = "status";
-    status.textContent = task.status;
+    status.textContent = task.status || "";
     card.appendChild(status);
   }
   card.onclick = () => {

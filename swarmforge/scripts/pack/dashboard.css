@@ -1,4 +1,4 @@
-:root{--bg:#eef0eb;--panel:#fbfbf8;--lt-pane:#f7f8f5;--ink:#1e221f;--muted:#68726c;--line:#d5d9d2;--line-soft:#e8ebe5;--accent:#3d5a45;--amber:#c9851a;--amber-bg:#fff6e5;--red:#9b1c1c;--green:#2f6b3a;--green-bg:#e7f3ea;--chip:#e8eee9;--card:#fffef9;--rail:340px;--card-min-w:148px;--card-min-h:72px;--card-max-w:200px;--lane-w:185px;--edge-lane-w:148px;font-family:ui-sans-serif,system-ui,sans-serif}
+:root{--bg:#eef0eb;--panel:#fbfbf8;--lt-pane:#f7f8f5;--ink:#1e221f;--muted:#68726c;--line:#d5d9d2;--line-soft:#e8ebe5;--accent:#3d5a45;--amber:#c9851a;--amber-bg:#fff6e5;--red:#9b1c1c;--green:#2f6b3a;--green-bg:#e7f3ea;--chip:#e8eee9;--card:#fffef9;--rail:340px;--card-min-w:148px;--card-h:96px;--card-thin-h:45px;--card-max-w:200px;--lane-w:185px;--edge-lane-w:148px;font-family:ui-sans-serif,system-ui,sans-serif}
 *{box-sizing:border-box}html,body{height:100%;margin:0}
 body{background:#cfd4cc;color:var(--ink);height:100vh;display:flex;flex-direction:column;overflow:hidden}
 .cockpit{flex:1;min-width:0;min-height:0;width:calc(100% - 20px);margin:10px;background:var(--bg);border:1px solid #b8bfb6;border-radius:12px;display:flex;flex-direction:column;overflow:hidden}
@@ -61,21 +61,21 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .col .lane-title{background:none;border:0;padding:0;cursor:pointer;color:var(--accent);text-decoration:underline;font:inherit;font-size:10px;text-transform:uppercase;letter-spacing:.06em;font-weight:700}
 .col-body{display:flex;flex-direction:column;align-items:flex-start;gap:8px;flex:1;min-height:100px;overflow:visible;padding:8px;background:rgba(255,255,255,.35);border:1px dashed #c5cbc2;border-radius:10px;width:100%;min-width:0}
 .batch{display:flex;flex-direction:column;gap:0;width:100%;min-width:0}
-.card{background:var(--card);border:1px solid #d0cbb8;border-radius:8px;padding:7px 8px;font-size:11px;width:100%;max-width:100%;min-width:0;min-height:var(--card-min-h);cursor:pointer;display:flex;flex-direction:column;gap:3px}
+.card{background:var(--card);border:1px solid #d0cbb8;border-radius:8px;padding:7px 8px;font-size:11px;width:100%;max-width:100%;min-width:0;height:var(--card-h);min-height:var(--card-h);cursor:pointer;display:flex;flex-direction:column;gap:3px}
 .card-merging{background:#fff7c2;border-color:#e6d36a}
 .card:hover{border-color:#a89f7e}
 .card-merging:hover{border-color:#c9b24a}
-.card-meta{display:flex;align-items:center;width:100%;min-width:0}
+.card-meta{display:flex;align-items:center;width:100%;min-width:0;height:16px;min-height:16px}
 .card-meta .audit-count{margin-left:auto}
-.card .title{font-weight:700;font-size:12px;display:block;width:100%;min-width:0}
+.card .title{font-weight:700;font-size:12px;line-height:16px;display:block;width:100%;min-width:0;height:16px;min-height:16px}
 .card .title .name{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%;display:block;min-width:0}
 .audit-count{display:inline-flex;align-items:center;gap:2px;flex:0 0 auto;color:var(--muted);font-size:10px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
 .audit-icon{font-size:10px}
-.card .status{color:var(--muted);font-size:10px;white-space:normal;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.card .status{color:var(--muted);font-size:10px;line-height:14px;height:42px;min-height:42px;white-space:normal;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
 .card-rejected .status{color:var(--red);font-weight:700;-webkit-line-clamp:1}
 .card-del{margin-left:auto;padding:1px 6px;font-size:10px;line-height:1.2}
 .card .foot{display:flex;justify-content:flex-end;gap:8px;color:var(--muted);font-size:10px;margin-top:auto}
-.card-thin{min-height:0;padding:4px 8px;gap:0}
+.card-thin{height:var(--card-thin-h);min-height:var(--card-thin-h);padding:4px 8px;gap:3px}
 .timer{font-variant-numeric:tabular-nums}
 .rail{background:var(--panel);display:flex;flex-direction:column;min-height:0;overflow:hidden;font-size:12px;scrollbar-gutter:stable}
 .rail section{padding:10px 12px;border-bottom:1px solid var(--line-soft);display:flex;flex-direction:column;min-height:0}
