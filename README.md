@@ -89,9 +89,19 @@ The default active pipeline uses these templates:
 
 ## Configuration
 
-[`swarmforge/squad.conf`](swarmforge/squad.conf) is the source of truth for
-transient capacity, backend selection, approval gates, and session retention.
-The current defaults are:
+This branch has two configuration files with separate jobs:
+
+- [`swarmforge/swarmforge.conf`](swarmforge/swarmforge.conf) defines persistent
+  roles with
+  `window[-invisible] <role> <backend> <worktree> [task|batch] [backend arguments...]`.
+  It starts squad leader and troubleshooter in the project checkout. Changing
+  `window-invisible` to `window` adds a terminal surface without changing the
+  role's tmux execution.
+- [`swarmforge/squad.conf`](swarmforge/squad.conf) defines transient capacity,
+  backend selection, approval gates, and session retention. It does not start
+  workers; the daemon consults it when the advisor requests one.
+
+The current transient defaults are:
 
 - At most 10 transient agents at once.
 - `hardener`, `qa`, `architect`, `senior-implementer`, and `system-analyst` are
@@ -106,6 +116,55 @@ The current defaults are:
 `SWARMFORGE_SQUAD_AGENT` can override the backend for every transient worker.
 Per-template `transient_agent` lines in `squad.conf` override the global
 default without starting agents themselves.
+
+## Constitution, prompts, and contracts
+
+[`swarmforge/constitution.prompt`](swarmforge/constitution.prompt) is the
+entry point for the two persistent roles and takes precedence over the article
+files it loads:
+
+| Article | Responsibility |
+|---|---|
+| [`engineering.prompt`](swarmforge/constitution/articles/engineering.prompt) | General tool identity, testability, acceptance-pipeline, verification, and quality guardrails. |
+| [`workflow.prompt`](swarmforge/constitution/articles/workflow.prompt) | Worktree boundaries, commit attribution, scratch paths, and startup failures. |
+| [`handoffs.prompt`](swarmforge/constitution/articles/handoffs.prompt) | Persistent-role handoff creation, receipt, merge, and completion. |
+| [`project.prompt`](swarmforge/constitution/articles/project.prompt) | Local-state locations, terse handoffs, and ownership protection; its project-shape paragraph still records the branch's original single-leader slice. |
+| [`local-engineering.prompt`](swarmforge/constitution/articles/local-engineering.prompt) | Squad tool startup, project tooling layout, and verification, preceded by legacy first-slice development constraints. |
+| [`local-workflow.prompt`](swarmforge/constitution/articles/local-workflow.prompt) | The per-story state machine, approvals, assignments, batching, role order, and terminal handback policy. |
+
+After the constitution, each persistent agent reads its prompt and contract:
+
+- [`squad-leader.prompt`](swarmforge/roles/squad-leader.prompt) plus
+  [`squad-leader.contract.edn`](swarmforge/roles/squad-leader.contract.edn)
+  permit orchestration metadata and user-facing decisions while forbidding
+  product artifacts. The contract names `squad_next.sh --residual-only` as the
+  decision source.
+- [`troubleshooter.prompt`](swarmforge/roles/troubleshooter.prompt) plus
+  [`troubleshooter.contract.edn`](swarmforge/roles/troubleshooter.contract.edn)
+  permit operator-facing diagnosis and state repair but exclude the role from
+  the product state machine.
+
+Transient workers use a different, generated instruction stack. They read
+[`worker-common.prompt`](swarmforge/worker-common.prompt), then their
+`role-templates/<template>.prompt`, which in turn names its `.contract.edn`, and
+then the generated assignment. The assignment supplies scope, artifacts,
+required tools, evidence, and runtime paths and has precedence over the role
+prompt and common protocol. Transients are not launched with the persistent
+constitution entry point.
+
+The EDN contracts declare role capabilities and required tool/evidence data
+used while assignments are generated; the prompt supplies procedural
+instructions. [`tool-table.edn`](swarmforge/tool-table.edn) is the authority for
+external tool source/version identities, and
+[`clean-architecture.md`](swarmforge/clean-architecture.md) supplies the design
+model to roles that explicitly load it.
+
+The first-slice wording in `project.prompt` and `local-engineering.prompt` is
+historical and no longer describes the implemented transient-worker runtime.
+The current topology comes from the two configuration files, contracts,
+advisor, and daemon described here. The product-frame prerequisite is likewise
+implemented by `squad_product.*`, `squad_next.*`, and the dashboard; it has not
+yet been folded into `local-workflow.prompt`.
 
 ## Product frame
 
@@ -159,6 +218,26 @@ reunites its source artifact, approvals, specifications, implementation
 results, reviews, and batch membership. `squad_next.sh` is the sole workflow
 advisor; helper validation and dashboard appearance do not independently
 define readiness.
+
+## Runtime components and generated state
+
+| Component | Responsibility |
+|---|---|
+| `squadd.*` | Repeatedly applies mechanical transitions, services spawn and retirement requests, delivers handoffs, and updates the dashboard. |
+| `squad_next.*` | Projects durable state into the single next-action/residual decision used by the squad leader and daemon. |
+| `squad_assign.*`, `squad_spawn*`, `squad_retire.*` | Generate assignments and manage each transient branch, worktree, prompt, session, and lifecycle. |
+| `squad_product.*`, `squad_packet.*`, `squad_batch.*`, `squad_approval.*` | Persist product framing, per-story state, quality batches, approvals, rejections, and blockers. |
+| `squad_event.*`, `squad_run.*`, `squad_status.*`, `squad_recover.*` | Record telemetry and support inspection and recovery. |
+| `squadd/web.clj` and dashboard assets | Present the backlog, frame, board, Attention rows, chat, agents, and operator controls. |
+
+`.squad/product` records the frame and initial backlog snapshot.
+`.squad/backlog/`, `.squad/stories/`, `.squad/assignments/`, `.squad/batches/`,
+`.squad/approvals/`, `.squad/blockers/`, `.squad/agents/`, and
+`.squad/sessions/` are the durable control-plane records. `.worktrees/` holds
+generated transient checkouts; `.swarmforge/` holds lower-level tmux and
+handoff transport state. Product artifacts such as the executable, `frame.md`,
+features, QA procedures, source, and tests live outside those orchestration
+directories and are committed normally.
 
 ## Run and operate
 
