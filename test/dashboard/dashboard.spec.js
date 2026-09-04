@@ -469,6 +469,9 @@ test.describe("pack dashboard", () => {
     const local = await startDashboard();
     try {
       await page.goto(local.url);
+      await expect(page.locator(
+        "#attention-clarifications .att-expand + input[type=text]"
+      )).toHaveCount(1);
       const popupPromise = context.waitForEvent("page");
       await page.locator("#attention-clarifications .att-expand").click();
       const clar = await popupPromise;

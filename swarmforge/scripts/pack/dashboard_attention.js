@@ -429,7 +429,7 @@ function clarificationRow(item) {
     event.preventDefault();
     postClarification(item.id, input.value);
   });
-  row.append(pill, pair, summary, input, open, send);
+  row.append(pill, pair, summary, open, input, send);
   return row;
 }
 
