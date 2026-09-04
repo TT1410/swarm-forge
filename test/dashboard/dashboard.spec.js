@@ -603,6 +603,26 @@ test.describe("mocked dashboard buttons", () => {
     await stopDashboard(handle);
   });
 
+  test("dashboard does not overlap slow state refreshes", async ({ page }) => {
+    let stateRequests = 0;
+    let releaseFirst;
+    const firstReleased = new Promise((resolve) => {
+      releaseFirst = resolve;
+    });
+    await page.route("**/api/state", async (route) => {
+      stateRequests += 1;
+      if (stateRequests === 1) await firstReleased;
+      await route.fulfill({json: mockForgeState([])});
+    });
+
+    await page.goto(handle.url);
+    await expect.poll(() => stateRequests).toBe(1);
+    await page.waitForTimeout(2200);
+    expect(stateRequests).toBe(1);
+    releaseFirst();
+    await expect.poll(() => stateRequests, {timeout: 3000}).toBe(2);
+  });
+
   test("swimlane shows the active card above queued cards", async ({ page }) => {
     await page.route("**/api/state", (route) => {
       route.fulfill({

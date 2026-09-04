@@ -70,6 +70,7 @@
 (def ^:dynamic *tmux-stub* nil)
 (def ^:dynamic *pane-text* nil)
 (def ^:dynamic *sync-teardown?* false)
+(def ^:dynamic *board-tasks-cache* nil)
 (def teardown-delay-ms 250)
 (def pane-capture-lines 2000)
 (def pane-heat (atom {}))

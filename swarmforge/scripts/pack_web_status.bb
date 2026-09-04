@@ -203,8 +203,18 @@
 (defn im-status [role text backend]
   (or (last (im-status-lines role text backend)) ""))
 
-(defn board-tasks [root]
+(defn read-board-tasks [root]
   (mapv #(task-entry root %) (lines (pack-board root "list"))))
+
+(defn board-tasks [root]
+  (if-not *board-tasks-cache*
+    (read-board-tasks root)
+    (let [key (str (fs/absolutize root))]
+      (if-let [cached (find @*board-tasks-cache* key)]
+        (val cached)
+        (let [loaded (read-board-tasks root)]
+          (swap! *board-tasks-cache* assoc key loaded)
+          loaded)))))
 
 (defn pane-status-lines-for [root role]
   (let [row (role-row root role)

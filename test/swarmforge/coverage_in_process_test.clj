@@ -67,6 +67,26 @@
   (is (= "HTW" (pack-web/query-value "/api/task?name=HTW" "name")))
   (is (nil? (pack-web/query-value "/api/task" "name"))))
 
+(deftest pack-web-caches-board-list-for-one-state-request
+  (let [root (tmp-dir)
+        list-calls (atom 0)
+        listed "HTW\tspecifier\tcreated\tupdated\ttask-1\t0\tQA\n"]
+    (try
+      (with-redefs [pack-web/pack-board
+                    (fn [_ & args]
+                      (when (= ["list"] args)
+                        (swap! list-calls inc))
+                      listed)
+                    pack-web/dashboard-state
+                    (fn [request-root]
+                      [(pack-web/board-tasks request-root)
+                       (pack-web/board-tasks request-root)])]
+        (let [[first-read second-read] (pack-web/api-state root)]
+          (is (= first-read second-read))
+          (is (= 1 @list-calls))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest pack-board-parses-flags
   (is (= {:positional ["list"] :root "/tmp/root"}
          (pack-board/parse-args ["list" "--root" "/tmp/root"]))))

@@ -1,4 +1,8 @@
+let stateLoading = false;
+
 async function loadState() {
+  if (stateLoading) return;
+  stateLoading = true;
   try {
     const res = await fetch("/api/state", {cache: "no-store"});
     if (!res.ok) throw new Error("offline");
@@ -10,6 +14,8 @@ async function loadState() {
     renderChat(data);
   } catch (_) {
     $("error").textContent = "Swarm disconnected";
+  } finally {
+    stateLoading = false;
   }
 }
 

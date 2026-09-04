@@ -105,9 +105,10 @@
      :work_in_flight (vec (mapcat :work_in_flight projects))}))
 
 (defn api-state [root]
-  (if (forge/forge? root)
-    (forge-dashboard-state root)
-    (dashboard-state root)))
+  (binding [*board-tasks-cache* (atom {})]
+    (if (forge/forge? root)
+      (forge-dashboard-state root)
+      (dashboard-state root))))
 
 (defn require-root! [root]
   (when (str/blank? root)
