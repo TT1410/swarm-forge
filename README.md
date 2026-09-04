@@ -37,6 +37,8 @@ swarmforge/
 shared constitution articles from `main`. Generated transport state lives in
 `.swarmforge/`; generated role checkouts live in `.worktrees/`.
 
+## Configuration
+
 The branch's [`swarmforge/swarmforge.conf`](swarmforge/swarmforge.conf) is the
 authority for the active agents, worktrees, receive modes, and propagation.
 
@@ -52,25 +54,56 @@ authority for the active agents, worktrees, receive modes, and propagation.
 `master` means the main project checkout on its current branch; the branch does
 not need to be named `master`.
 
+Each non-comment line uses the shared pack form:
+
+```text
+window[-invisible] <role> <backend> <worktree> [task|batch] [forward-only|back-one|back-all] [backend arguments...]
+```
+
+File order defines the forward route. Omitted receive and propagation fields
+mean `task` and `forward-only`. The four downstream quality roles select batch
+mode; cleaner propagates back one, architect and QA propagate back to all
+earlier roles, and the two Codex roles receive `--yolo`.
+
+## Constitution
+
+[`swarmforge/constitution.prompt`](swarmforge/constitution.prompt) is the
+instruction entry point and takes precedence over its articles. Installation
+combines three shared articles from `main` with three six-pack articles:
+
+| Source | Article | Purpose in this pack |
+|---|---|---|
+| `main` | `engineering.prompt` | Shared language, TDD, acceptance-pipeline, tooling, and verification law. |
+| `main` | `workflow.prompt` | Shared worktree, commit, scratch-file, and failure rules. |
+| `main` | `handoffs.prompt` | Shared durable handoff and merge protocol. |
+| `six-pack` | [`project.prompt`](swarmforge/constitution/articles/project.prompt) | Declares the six-role shape, local state locations, handoff style, and ownership boundary. |
+| `six-pack` | [`local-engineering.prompt`](swarmforge/constitution/articles/local-engineering.prompt) | Requires non-specifier agents to verify unit and acceptance behavior and the final quality roles to run available property tests. |
+| `six-pack` | [`local-workflow.prompt`](swarmforge/constitution/articles/local-workflow.prompt) | Defines how earlier roles process QA's merge-only terminal handbacks without restarting the pipeline. |
+
+Every project agent reads all six articles before its role prompt. The local
+articles specialize the full pipeline while the common engineering and handoff
+rules remain owned and documented by `main`.
+
+## Roles
+
+| Prompt | Ownership |
+|---|---|
+| [`specifier.prompt`](swarmforge/roles/specifier.prompt) | Writes deterministic Gherkin plus headed end-to-end QA procedures and submits them for dashboard approval. |
+| [`coder.prompt`](swarmforge/roles/coder.prompt) | Builds the acceptance pipeline and implements approved behavior with TDD, unit tests, and generated acceptance tests. |
+| [`cleaner.prompt`](swarmforge/roles/cleaner.prompt) | Performs local behavior-preserving cleanup, coverage, CRAP and DRY analysis, and module-responsibility checks. |
+| [`architect.prompt`](swarmforge/roles/architect.prompt) | Owns boundaries, dependency direction, structural corrections, and property-test support. |
+| [`hardender.prompt`](swarmforge/roles/hardender.prompt) | Owns language and Gherkin mutation hardening, CRAP and DRY gates, and robustness work. |
+| [`QA.prompt`](swarmforge/roles/QA.prompt) | Turns QA procedures into executable UI-level checks, performs independent final verification, and makes only narrow fixes found through QA. |
+
+Configuration establishes topology and propagation; the constitution governs
+the entire project; role prompts assign exclusive artifacts, checks, and
+handoffs.
+
 ## Workflow
 
 ```text
 New Task → specifier → approval → coder → cleaner → architect → hardender → QA → Done
 ```
-
-- `specifier` writes deterministic Gherkin and the end-to-end QA procedures
-  that will later drive independent user-interface verification.
-- `coder` builds the acceptance pipeline and implements approved behavior with
-  TDD, unit tests, and generated acceptance tests.
-- `cleaner` performs local behavior-preserving cleanup, coverage improvement,
-  CRAP and DRY analysis, and module-responsibility checks.
-- `architect` improves boundaries and dependency direction and owns property
-  testing support.
-- `hardender` runs language mutation, soft Gherkin mutation, CRAP, and DRY
-  gates and strengthens tests and edge handling.
-- `QA` converts the specified QA procedures into executable checks, exercises
-  the product through its user interface, fixes narrow defects, and performs
-  final independent verification.
 
 Because the specifier is the project-root role, its forward handoff is held in
 **Attention** for operator approval before delivery to the coder. Later
@@ -80,6 +113,21 @@ earlier roles and moves the card to Done.
 
 Batch mode lets the four downstream quality roles process compatible queued
 handoffs together while keeping specification and implementation task-focused.
+
+## Runtime components and generated state
+
+The branch owns no runtime implementation. `get-swarm-forge` installs the
+launcher, configuration, constitution entry point, local articles, and role
+prompts from this branch, then adds the shared scripts and articles from
+`main`.
+
+At startup the composed runtime creates the five non-master worktrees, mirrors
+managed instructions and helpers into them, starts six tmux sessions, and
+starts the handoff daemon and dashboard. `.swarmforge/` contains generated
+role/session maps, handoff queues, board cards, approvals, daemon state, and
+pane metadata. `.worktrees/coder`, `.worktrees/cleaner`,
+`.worktrees/architect`, `.worktrees/hardender`, and `.worktrees/QA` are
+generated git checkouts, not policy or configuration sources.
 
 ## Install and run
 
