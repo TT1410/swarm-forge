@@ -121,8 +121,32 @@ The active templates are `analyst`, `gherkin-writer`, `gherkin-reviewer`,
 `code-reviewer`, `hardener`, `qa`, `architect`, `senior-implementer`, and
 `merger`.
 
+| Stage | Templates | Ownership |
+|---|---|---|
+| Sprint analysis | `analyst` | Elaborates scheduled stories into module tasks and explicit intermodule interfaces. |
+| Feature specification | `gherkin-writer`, `gherkin-reviewer` | Write deterministic acceptance features, then independently accept them or return concrete findings. |
+| QA specification | `qa-procedure-writer`, `qa-procedure-reviewer` | Write headed user-interface procedures, then independently review their completeness and executability. |
+| Module implementation | `implementer`, `cleaner`, `code-reviewer` | Implement one module task with TDD, clean it without changing behavior, and issue an independent accept/change review. |
+| Sprint integration | `hardener`, `qa`, `architect`, `senior-implementer` | Integrate and mutation-harden the sprint, run UI QA, review architecture, and apply accepted architecture findings. |
+| Merge repair | `merger` | Resolve a daemon-detected integration conflict for the assigned merge only; repeated repair depth is capped by configuration. |
+
+## Configuration
+
 [`swarmforge/squad.conf`](swarmforge/squad.conf) is the source of truth for
-capacity and backend selection. Current defaults are:
+transient capacity, backend selection, approval gates, and merger depth.
+[`swarmforge/swarmforge.conf`](swarmforge/swarmforge.conf) separately defines
+the two persistent roles with this form:
+
+```text
+window[-invisible] <role> <backend> <worktree> [task|batch] [backend arguments...]
+```
+
+Both persistent roles currently use invisible, task-mode tmux sessions in the
+project checkout. Changing `window-invisible` to `window` adds a terminal
+surface. `squad.conf` does not start workers; the daemon consults it as
+assignments become ready.
+
+Current transient defaults are:
 
 - At most 10 transient agents at once.
 - `analyst`, `hardener`, `qa`, `architect`, and `merger` are singletons; other
@@ -138,6 +162,52 @@ capacity and backend selection. Current defaults are:
 `SWARMFORGE_SQUAD_AGENT` overrides the backend for every transient worker.
 Per-template `transient_agent` lines override the global default without
 starting workers themselves.
+
+## Constitution, prompts, and contracts
+
+[`swarmforge/constitution.prompt`](swarmforge/constitution.prompt) is the
+entry point for the two persistent roles and takes precedence over all loaded
+articles:
+
+| Article | Responsibility |
+|---|---|
+| [`engineering.prompt`](swarmforge/constitution/articles/engineering.prompt) | General tool identity, testability, acceptance-pipeline, verification, and quality guardrails. |
+| [`workflow.prompt`](swarmforge/constitution/articles/workflow.prompt) | Worktree boundaries, commit attribution, scratch paths, and startup failures. |
+| [`handoffs.prompt`](swarmforge/constitution/articles/handoffs.prompt) | Persistent-role handoff creation, receipt, merge, and completion. |
+| [`project.prompt`](swarmforge/constitution/articles/project.prompt) | Local-state locations, handoff style, and ownership protection; its project-shape paragraph still records the original single-leader slice. |
+| [`local-engineering.prompt`](swarmforge/constitution/articles/local-engineering.prompt) | Squad tool startup, project tooling layout, and verification, preceded by legacy first-slice development constraints. |
+| [`local-workflow.prompt`](swarmforge/constitution/articles/local-workflow.prompt) | Sprint 0, scheduling, module work, approvals, assignments, reviews, batching, telemetry, and completion policy. |
+
+The persistent prompts then load declarative contracts:
+
+- [`squad-leader.prompt`](swarmforge/roles/squad-leader.prompt) and
+  [`squad-leader.contract.edn`](swarmforge/roles/squad-leader.contract.edn)
+  allow orchestration metadata, sprint framing, module maps, approvals, and
+  reports while forbidding worker-owned product artifacts.
+- [`troubleshooter.prompt`](swarmforge/roles/troubleshooter.prompt) and
+  [`troubleshooter.contract.edn`](swarmforge/roles/troubleshooter.contract.edn)
+  define the operator-facing diagnostic, repair, recovery, and requested
+  backlog-entry role outside the product state machine.
+
+Transient workers do not start from that persistent constitution entry point.
+Their generated prompt loads [`worker-common.prompt`](swarmforge/worker-common.prompt),
+then `role-templates/<template>.prompt` and its `.contract.edn`, followed by the
+generated assignment. The assignment supplies the sprint/story scope,
+interfaces, module map where relevant, required tools, evidence, and runtime
+paths; it takes precedence over the role prompt and common protocol.
+
+Contracts declare capabilities and tool/evidence requirements consumed by
+assignment generation. [`tool-table.edn`](swarmforge/tool-table.edn) is the
+authority for external tool sources and versions.
+[`clean-architecture.md`](swarmforge/clean-architecture.md) defines the design
+model for roles that explicitly load it, while the templates under
+`swarmforge/templates/` define the initial module-map, dependency, tooling, and
+acceptance-pipeline shapes.
+
+The first-slice statements in `project.prompt` and `local-engineering.prompt`
+are historical and do not describe the implemented sprint/transient runtime.
+Current topology and operation come from the configurations, contracts,
+`sprints.md`, workflow article, advisor, and daemon described here.
 
 ## Run and operate
 
@@ -169,6 +239,26 @@ bb swarmforge/scripts/sprint_mockup.clj
 ```
 
 It serves `sprint-mockup.html` at `http://127.0.0.1:4987/`.
+
+## Runtime components and generated state
+
+| Component | Responsibility |
+|---|---|
+| `squadd.*` | Applies mechanical transitions, owns normal main-git merges, services worker lifecycle requests, and updates the dashboard. |
+| `squad_sprint.*` and `squad_sprint_next.*` | Persist sprint lifecycle and project it into schedule, cancel, Sprint 0, implementation, and completion actions. |
+| `squad_next.*` | Combines sprint, story, assignment, approval, and agent state into the authoritative next action. |
+| `squad_assign.*`, `squad_spawn*`, `squad_retire.*` | Generate assignments and manage transient branches, worktrees, prompts, sessions, and retirement. |
+| `squad_packet.*`, `squad_batch.*`, `squad_approval.*`, `squad_theme.*` | Persist story packets, module batches, approvals/blockers, module maps, and implementation order. |
+| Telemetry, recovery, dashboard, and mockup components | Record execution, recover agents, expose operator controls, and exercise the proposed UI. |
+
+`.squad/sprints/` stores draft, scheduled, cancelled, and completed sprint
+records and their task projections. `.squad/themes/` stores the Sprint 0 module
+map and implementation order. Story packets, assignments, batches, approvals,
+blockers, agent records, and saved sessions live under their corresponding
+`.squad/` subdirectories. `.worktrees/` holds generated transient checkouts;
+`.swarmforge/` holds tmux and handoff transport state. Stories, features, QA
+procedures, source, tests, and other product artifacts remain normal committed
+project files.
 
 Common launcher concepts originate on `main`; sprint records, scheduling,
 advisor behavior, dashboard projection, role templates, and squad policy belong
