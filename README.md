@@ -12,7 +12,7 @@ SwarmForge overview, prerequisites, product comparison, and installation of
 `get-swarm-forge`. This README covers only the structure and operation of the
 lieutenant forge.
 
-![Lieutenant forge dashboard](project-swarm.jpg)
+![SwarmForge Lieutenant dashboard](lieutenant.jpg)
 
 ## Structure
 
