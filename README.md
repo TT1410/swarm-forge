@@ -78,6 +78,20 @@ The committed project template is
 It is the authority for the default card routes, project agent backends,
 worktree assignments, receive modes, and backward propagation.
 
+Its two directive forms are:
+
+```text
+card <type> <first-role> [<next-role>...]
+window[-invisible] <role> <backend> <worktree> [task|batch] [forward-only|back-one|back-all] [backend arguments...]
+```
+
+Each `card` line defines an ordered route. Each `window` line defines one role
+that may appear in those routes. `master` selects the project checkout;
+ordinary worktree names are created under `.worktrees/`. `window-invisible`
+keeps the role in tmux without opening a separate terminal surface. Receive
+mode defaults to `task`, propagation defaults to `forward-only`, and tokens
+after those optional fields are passed to the selected agent backend.
+
 ### Default card routes
 
 | Card type | Route | Intended use |
@@ -87,18 +101,26 @@ worktree assignments, receive modes, and backward propagation.
 | `QA` | `specifier` → `coder` → `cleaner` → `architect` → `hardender` → `QA` → Done | A behavior change that also needs specified and executable end-to-end UI verification. |
 | `review` | `cleaner` → `architect` → `hardender` → `QA` → Done | A brownfield review and hardening pass without inventing new behavior. QA runs an existing `qa/` suite or passes through if none exists. |
 
-The roles divide responsibility as follows:
+### Project roles
 
-- `specifier` turns intent into Gherkin; on `QA` cards it also specifies the
+The project role prompts divide responsibility as follows:
+
+- [`specifier`](.swarmforge/project-pack/swarmforge/roles/specifier.prompt)
+  turns intent into Gherkin; on `QA` cards it also specifies the
   headed end-to-end QA procedures.
-- `coder` implements behavior with TDD, unit tests, and generated acceptance
+- [`coder`](.swarmforge/project-pack/swarmforge/roles/coder.prompt) implements
+  behavior with TDD, unit tests, and generated acceptance
   tests where the card route requires them.
-- `cleaner` performs local behavior-preserving cleanup and quality analysis.
-- `architect` improves boundaries and dependency direction and owns property
+- [`cleaner`](.swarmforge/project-pack/swarmforge/roles/cleaner.prompt)
+  performs local behavior-preserving cleanup and quality analysis.
+- [`architect`](.swarmforge/project-pack/swarmforge/roles/architect.prompt)
+  improves boundaries and dependency direction and owns property
   testing support.
-- `hardender` performs mutation hardening and the final non-headed quality
+- [`hardender`](.swarmforge/project-pack/swarmforge/roles/hardender.prompt)
+  performs mutation hardening and the final non-headed quality
   gates.
-- `QA` executes independent user-interface verification and makes narrow fixes
+- [`QA`](.swarmforge/project-pack/swarmforge/roles/QA.prompt) executes
+  independent user-interface verification and makes narrow fixes
   for failures it finds.
 
 ### Default worktrees and queue modes
@@ -122,6 +144,35 @@ created. On a later **Open Project**, the forge refreshes that project's
 managed scripts, shared articles, constitution entry point, and role prompts
 from the current forge, but preserves the project's own
 `swarmforge/swarmforge.conf`.
+
+## Constitution and instruction assembly
+
+The host lieutenant and project agents intentionally receive different
+instructions:
+
+- The host reads only
+  [`swarmforge/roles/lieutenant.prompt`](swarmforge/roles/lieutenant.prompt).
+  That prompt makes it a planning and dispatch agent and explicitly tells it
+  not to follow the engineering constitution.
+- A project agent first reads the project pack's
+  [`constitution.prompt`](.swarmforge/project-pack/swarmforge/constitution.prompt),
+  then every article under the project's `swarmforge/constitution/articles/`,
+  and finally its matching role prompt. The entry point takes precedence over
+  its articles; the role prompt specializes responsibility within that common
+  law.
+
+This branch carries the three shared articles copied from `main`:
+
+| Article | Applies to project agents |
+|---|---|
+| [`engineering.prompt`](swarmforge/constitution/articles/engineering.prompt) | Tool selection, TDD and acceptance infrastructure, testability, mutation, CRAP, DRY, and verification guardrails. |
+| [`workflow.prompt`](swarmforge/constitution/articles/workflow.prompt) | Worktree boundaries, commit bylines, scratch paths, and startup failure behavior. |
+| [`handoffs.prompt`](swarmforge/constitution/articles/handoffs.prompt) | Structured handoff creation, acceptance, merge direction, batching, and completion. |
+
+The lieutenant project pack adds no local constitution article. Its
+specialization is the typed configuration and the six role prompts. Canonical
+documentation for the shared articles and handoff machinery remains on
+[`main`](https://github.com/unclebob/swarm-forge/tree/main).
 
 ## Install and start
 
@@ -200,6 +251,23 @@ run in tmux.
 For the durable handoff format, audit gate, delivery states, retries, and merge
 rules, see the
 [`main` handoff protocol](https://github.com/unclebob/swarm-forge/blob/main/swarmforge/handoff-protocol.md).
+
+## Runtime components and generated state
+
+| Component | Responsibility |
+|---|---|
+| `forge.*` | Stages creation, overlays the project pack, refreshes managed files on open, and starts or stops project swarms. |
+| `swarmforge.*` and `card_type.*` | Parse host/project configuration, create sessions and worktrees, and resolve typed card routes. |
+| `handoffd.*` and the handoff helpers | Deliver, audit, merge, and complete committed work between roles. |
+| `pack_board*` and `pack_web*` | Maintain the boards and expose the dashboard, chat, Attention queue, pane captures, and controls. |
+| Terminal adapters, watchdog, and cleanup scripts | Open requested surfaces, monitor agents, and shut down projects or the forge. |
+
+The forge root's `.swarmforge/` holds host sessions, open-project records, and
+dashboard process state. Each `projects/<name>/.swarmforge/` holds that
+project's role/session maps, board, handoff queues, approvals, clarifications,
+and daemon state; `projects/<name>/.worktrees/` holds generated role checkouts.
+Those directories are runtime records. Product artifacts and durable source
+history remain in the project directory and git repository.
 
 ## Changing the lieutenant branch
 
