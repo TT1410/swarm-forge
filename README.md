@@ -42,7 +42,7 @@ The forge host and each open project have separate tmux sessions and runtime
 state. A project also has its own `.worktrees/` role checkouts and
 `.swarmforge/` handoff state.
 
-## Host and packs
+## Host configuration and installed packs
 
 The host configuration is
 [`swarmforge/swarmforge.conf`](swarmforge/swarmforge.conf). With no active
@@ -51,6 +51,13 @@ the backend and pass extra arguments:
 
 ```conf
 Lieutenant grok --yolo
+```
+
+The complete host form is `Lieutenant <backend> [backend arguments...]`.
+Project configurations use the fixed-pack form documented on `main`:
+
+```text
+window[-invisible] <role> <backend> <worktree> [task|batch] [forward-only|back-one|back-all] [backend arguments...]
 ```
 
 The lieutenant runs in the forge root and follows
@@ -71,6 +78,35 @@ new projects. New Project shows that configuration in an editable field, so a
 project can customize backends, worktrees, receive modes, or CLI arguments
 before creation. The resulting `projects/<name>/swarmforge/swarmforge.conf` is
 that project's active configuration.
+
+## Constitution and roles
+
+The host and its projects use different instruction assemblies:
+
+- The host reads only
+  [`swarmforge/roles/lieutenant.prompt`](swarmforge/roles/lieutenant.prompt).
+  That prompt makes it a forge concierge and explicitly excludes it from the
+  project engineering constitution.
+- A project agent reads the installed pack's `constitution.prompt`, then every
+  article under that project's `swarmforge/constitution/articles/`, and then
+  `swarmforge/roles/<role>.prompt`. The constitution governs every project
+  role; the role prompt assigns one part of the pipeline.
+
+Every created or refreshed project receives the shared articles carried by
+this forge:
+
+| Article | Shared responsibility |
+|---|---|
+| [`engineering.prompt`](swarmforge/constitution/articles/engineering.prompt) | Language, TDD, testability, acceptance tooling, and quality verification. |
+| [`workflow.prompt`](swarmforge/constitution/articles/workflow.prompt) | Worktree boundaries, commit attribution, temporary files, and failure handling. |
+| [`handoffs.prompt`](swarmforge/constitution/articles/handoffs.prompt) | Structured handoff creation, delivery, merge direction, batching, and completion. |
+
+The chosen pack overlays its own `constitution.prompt`, differently named
+local articles, and role prompts. Those local files define the pack-specific
+shape and terminal handback rules; they cannot replace the three shared
+article names. The two-, four-, and six-pack READMEs linked above describe
+their configuration and each project role without duplicating that material
+here.
 
 ## Install and start
 
@@ -136,6 +172,23 @@ Open a role from **Work Queue** to inspect that project's live tmux pane.
 
 For shared handoff and runtime details, see the
 [`main` handoff protocol](https://github.com/unclebob/swarm-forge/blob/main/swarmforge/handoff-protocol.md).
+
+## Runtime components and generated state
+
+| Component | Responsibility |
+|---|---|
+| `forge.*` | Create or clone projects, overlay the selected pack, refresh managed files, and start or stop project swarms. |
+| `swarmforge.*` | Parse host and project configuration, construct worktrees and tmux sessions, and launch backends. |
+| `handoffd.*` and handoff helpers | Queue, deliver, audit, merge, and complete committed work. |
+| `pack_board.*`, `pack_web.*`, and dashboard assets | Maintain project boards and expose chat, Attention, pane inspection, and lifecycle controls. |
+| Terminal adapters, watchdog, and cleanup scripts | Present requested windows, monitor sessions, and shut down the forge cleanly. |
+
+The forge root's `.swarmforge/` contains host sessions, open-project records,
+and dashboard process state. Each open project owns its own `.swarmforge/`
+role/session maps, handoff queues, board, approvals, clarifications, and daemon
+state, plus generated role checkouts under `.worktrees/`. `packs/` contains
+installed templates; `projects/` contains durable project repositories. Close
+and Teardown remove processes, not those repositories.
 
 ## Changing this branch
 
