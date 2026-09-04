@@ -34,6 +34,8 @@ swarmforge/
 shared constitution articles from `main`. Generated transport state lives in
 `.swarmforge/`; generated role checkouts live in `.worktrees/`.
 
+## Configuration
+
 The branch's [`swarmforge/swarmforge.conf`](swarmforge/swarmforge.conf) is the
 authority for the active agents, worktrees, receive modes, and propagation.
 
@@ -47,22 +49,51 @@ authority for the active agents, worktrees, receive modes, and propagation.
 `master` means the main project checkout on its current branch; the branch does
 not need to be named `master`.
 
+Each non-comment line uses the shared pack form:
+
+```text
+window[-invisible] <role> <backend> <worktree> [task|batch] [forward-only|back-one|back-all] [backend arguments...]
+```
+
+File order defines the forward route. Omitted receive and propagation fields
+mean `task` and `forward-only`. The refactorer selects `back-one`; the architect
+selects `batch back-all`; the two Codex roles also receive `--yolo`.
+
+## Constitution
+
+[`swarmforge/constitution.prompt`](swarmforge/constitution.prompt) is the
+instruction entry point and takes precedence over its articles. Installation
+combines three shared articles from `main` with two local articles:
+
+| Source | Article | Purpose in this pack |
+|---|---|---|
+| `main` | `engineering.prompt` | Shared language, TDD, acceptance-pipeline, tooling, and verification law. |
+| `main` | `workflow.prompt` | Shared worktree, commit, scratch-file, and failure rules. |
+| `main` | `handoffs.prompt` | Shared durable handoff and merge protocol. |
+| `four-pack` | [`project.prompt`](swarmforge/constitution/articles/project.prompt) | Declares the four-role project shape, local state locations, handoff style, and ownership boundary. |
+| `four-pack` | [`local-workflow.prompt`](swarmforge/constitution/articles/local-workflow.prompt) | Defines how earlier roles process the architect's merge-only terminal handbacks without restarting the pipeline. |
+
+Every agent reads all of those articles before its role prompt. The local
+articles specialize the four-pack; they do not duplicate the shared law on
+`main`.
+
+## Roles
+
+| Prompt | Ownership |
+|---|---|
+| [`specifier.prompt`](swarmforge/roles/specifier.prompt) | Turns operator intent into deterministic Gherkin and examples, then submits the specification for dashboard approval. It does not prescribe implementation. |
+| [`coder.prompt`](swarmforge/roles/coder.prompt) | Builds the acceptance pipeline and implements approved behavior with TDD, unit tests, and generated acceptance tests. |
+| [`refactorer.prompt`](swarmforge/roles/refactorer.prompt) | Preserves behavior while improving coverage, names, cohesion, duplication, boundaries, testability, and property-test support. It runs CRAP and DRY but not mutation tests. |
+| [`architect.prompt`](swarmforge/roles/architect.prompt) | Owns high-level boundaries and dependency direction, structural corrections, language mutation, DRY verification, and soft Gherkin mutation. |
+
+Configuration determines topology and queue behavior; the constitution governs
+all four agents; role prompts assign exclusive work and the next handoff.
+
 ## Workflow
 
 ```text
 New Task → specifier → approval → coder → refactorer → architect → Done
 ```
-
-- `specifier` turns operator intent into deterministic Gherkin specifications
-  and examples. It does not produce a headed QA suite.
-- `coder` builds the acceptance pipeline, implements approved behavior with
-  TDD and unit tests, and keeps generated acceptance tests separate.
-- `refactorer` preserves behavior while improving coverage, names, cohesion,
-  duplication, testability, and property-test support. It runs CRAP and DRY
-  analysis but does not own mutation execution.
-- `architect` owns high-level boundaries and dependency direction, performs
-  mutation hardening and DRY verification, and runs soft Gherkin mutation when
-  feature files exist.
 
 Because the specifier is the project-root role, its forward handoff is held in
 **Attention** for operator approval before delivery to the coder. Later
@@ -73,6 +104,20 @@ moves the card to Done.
 This is the middle-sized workflow: use it when Gherkin and a separate
 architecture pass matter, but dedicated cleaner, hardender, and final QA roles
 would be excessive.
+
+## Runtime components and generated state
+
+The branch owns no runtime implementation. `get-swarm-forge` installs the
+launcher, configuration, constitution entry point, local articles, and role
+prompts from this branch, then adds `swarmforge/scripts/` and shared articles
+from `main`.
+
+At startup the composed runtime creates the three non-master worktrees, mirrors
+managed instructions and helpers into them, starts four tmux sessions, and
+starts the handoff daemon and dashboard. `.swarmforge/` contains generated
+role/session maps, handoff queues, board cards, approvals, daemon state, and
+pane metadata. `.worktrees/coder`, `.worktrees/refactorer`, and
+`.worktrees/architect` are generated git checkouts, not configuration sources.
 
 ## Install and run
 
