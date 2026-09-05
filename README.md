@@ -41,7 +41,7 @@ experimental workflows. They are not `get-swarm-forge` products.
 - `git`
 - `tmux`
 - Babashka (`bb`)
-- `python3` with `venv`, for projects whose language is Python
+- `python3` 3.11 or newer with `venv`, for projects whose language is Python
 - At least one configured agent backend: `grok`, `codex`, `claude`, or
   `copilot`
 
@@ -155,8 +155,11 @@ tools come from PyPI and are installed into one project-local virtualenv at
 `.swarmforge/venv`, so a Python project never installs constitution tools into
 the system interpreter.
 `mutate4py` and `crap4py` are ports of `mutate4go` and `crap4go`/`crap4clj` and
-keep the same differential-manifest and LCOV contracts; `symilar` is the
-duplicate-code command that ships with `pylint`. A Python project produces the
+keep the same differential-manifest and LCOV contracts, though the `mutate4py`
+wrapper always runs serially: its parallel mode copies the working tree into
+per-worker checkouts, which does not fit a tree that carries `.swarmforge/`
+and `.worktrees/`. `symilar` is the duplicate-code command that ships with
+`pylint`. A Python project produces the
 LCOV those two tools read with `coverage run --branch -m pytest` followed by
 `coverage lcov -o ./tmp/lcov.info`.
 
