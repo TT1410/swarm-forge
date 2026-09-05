@@ -730,10 +730,26 @@
       (fs/set-posix-file-permissions script "rwxr-xr-x")))
   venv)
 
+(defn write-fake-python! [shims {:keys [old? tools]}]
+  ;; A python3 stand-in: `-c` answers the version probe, `-m venv DIR` writes a
+  ;; venv skeleton whose pip "installs" the named console scripts.
+  (let [python (fs/path shims "python3")
+        installs (str/join " " (map #(str "touch \"$dir/bin/" % "\"; chmod +x \"$dir/bin/" % "\"") tools))]
+    (write-file python
+                (str "#!/usr/bin/env bash\n"
+                     "if [ \"$1\" = -c ]; then exit " (if old? 1 0) "; fi\n"
+                     "if [ \"$1\" = -m ] && [ \"$2\" = venv ]; then\n"
+                     "  mkdir -p \"$3/bin\"\n"
+                     "  printf '#!/usr/bin/env bash\\ndir=\"$(cd \"$(dirname \"$0\")/..\" && pwd)\"\\n" installs "\\n' > \"$3/bin/pip\"\n"
+                     "  chmod +x \"$3/bin/pip\"\n"
+                     "  exit 0\n"
+                     "fi\n"
+                     "exit 1\n"))
+    (fs/set-posix-file-permissions python "rwxr-xr-x")
+    shims))
+
 (defn venv-env [venv]
-  {"SWARMFORGE_PY_VENV" (str venv)
-   "PATH" (System/getenv "PATH")
-   "GIT_CONFIG_NOSYSTEM" "1"})
+  {"SWARMFORGE_PY_VENV" (str venv)})
 
 (deftest swarm-tool-knows-python-tool-names
   ;; Given a pack project
@@ -809,10 +825,11 @@
       (finally
         (fs/delete-tree root)))))
 
-(deftest mutate4py-wrapper-is-differential-with-four-workers
+(deftest mutate4py-wrapper-is-differential-and-serial
   ;; Given an installed mutate4py wrapper
-  ;; When it is invoked with --mutate-all
-  ;; Then --mutate-all is dropped and --max-workers 4 is used
+  ;; When it is invoked with --mutate-all or a worker limit
+  ;; Then --mutate-all is dropped and no --max-workers reaches mutate4py,
+  ;; because its parallel mode copies the working tree and needs uv
   (let [root (tmp-dir)
         venv (write-fake-venv! (fs/path root "venv") "mutate4py" "coverage" "pytest")]
     (try
@@ -823,12 +840,71 @@
       (let [wrapper (str (fs/path root ".swarmforge/bin/mutate4py"))
             scored (:out (run {:dir root} wrapper "src/calc.py"
                               "--lcov" "./tmp/lcov.info" "--mutate-all"))
-            scan (:out (run {:dir root} wrapper "src/calc.py" "--scan"))
-            manifest (:out (run {:dir root} wrapper "src/" "--check-manifest"))]
-        (is (str/includes? scored "--max-workers 4"))
+            limited (:out (run {:dir root} wrapper "src/calc.py"
+                               "--max-workers" "8" "--max-workers=4" "--lcov" "./tmp/lcov.info"))
+            contexts (:out (run {:dir root} wrapper "--build-test-contexts" "./tmp/tests.db"))]
+        (is (str/includes? scored "src/calc.py --lcov ./tmp/lcov.info"))
         (is (not (str/includes? scored "--mutate-all")))
-        (is (not (str/includes? scan "--max-workers")))
-        (is (not (str/includes? manifest "--max-workers"))))
+        (is (not (str/includes? scored "--max-workers")))
+        (is (= "mutate4py ARGS: src/calc.py --lcov ./tmp/lcov.info" (str/trim limited)))
+        (is (= "mutate4py ARGS: --build-test-contexts ./tmp/tests.db" (str/trim contexts))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest swarm-tool-empty-venv-override-means-no-override
+  ;; Given SWARMFORGE_PY_VENV exported but empty
+  ;; When swarm_tool.sh ensure pytest runs against a fake python3
+  ;; Then it provisions the project venv instead of treating the empty value as a path
+  (let [root (tmp-dir)
+        shims (fs/path root "shims")]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (write-fake-python! shims {:tools ["pytest"]})
+      (run {:dir root :env {"SWARMFORGE_PY_VENV" ""
+                            "PATH" (str shims ":" (System/getenv "PATH"))}}
+           (script "swarm_tool.sh") "ensure" "pytest")
+      (is (fs/exists? (fs/path root ".swarmforge/venv/bin/pip")))
+      (is (str/includes? (slurp (str (fs/path root ".swarmforge/bin/pytest")))
+                         (str (fs/path root ".swarmforge/venv/bin/pytest"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest swarm-tool-refuses-a-python-package-without-the-command
+  ;; Given a fake python3 whose pip installs nothing
+  ;; When swarm_tool.sh ensure symilar runs
+  ;; Then it fails naming the missing command and writes no wrapper
+  (let [root (tmp-dir)
+        shims (fs/path root "shims")]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (write-fake-python! shims {})
+      (let [result (run {:dir root :ok? false
+                         :env {"PATH" (str shims ":" (System/getenv "PATH"))}}
+                        (script "swarm_tool.sh") "ensure" "symilar")]
+        (is (not= 0 (:exit result)))
+        (is (str/includes? (:err result) "symilar"))
+        (is (not (fs/exists? (fs/path root ".swarmforge/bin/symilar")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest swarm-tool-rejects-an-old-python
+  ;; Given python3 older than 3.11
+  ;; When swarm_tool.sh ensure pytest runs
+  ;; Then it stops with a version message before creating a venv
+  (let [root (tmp-dir)
+        shims (fs/path root "shims")]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (write-fake-python! shims {:old? true})
+      (let [result (run {:dir root :ok? false
+                         :env {"PATH" (str shims ":" (System/getenv "PATH"))}}
+                        (script "swarm_tool.sh") "ensure" "pytest")]
+        (is (not= 0 (:exit result)))
+        (is (str/includes? (:err result) "3.11"))
+        (is (not (fs/exists? (fs/path root ".swarmforge/venv")))))
       (finally
         (fs/delete-tree root)))))
 

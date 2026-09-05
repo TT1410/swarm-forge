@@ -124,18 +124,30 @@
       (clone-source! dir source))
     dir))
 
+(defn venv-override []
+  (not-empty (System/getenv "SWARMFORGE_PY_VENV")))
+
 (defn venv-dir [root]
-  (if-let [override (not-empty (System/getenv "SWARMFORGE_PY_VENV"))]
+  (if-let [override (venv-override)]
     (fs/absolutize (fs/path override))
     (fs/path root ".swarmforge" "venv")))
 
 (defn venv-bin [root name]
   (fs/path (venv-dir root) "bin" name))
 
+(def min-python "3.11")
+
+(defn python-new-enough? [exe]
+  (zero? (:exit (sh/sh (str exe) "-c"
+                       "import sys; sys.exit(0 if sys.version_info[:2] >= (3, 11) else 1)"))))
+
 (defn python-exe []
-  (or (fs/which "python3")
-      (fs/which "python")
-      (exit! 1 "Python tools need python3 on PATH")))
+  (let [exe (or (fs/which "python3")
+                (fs/which "python")
+                (exit! 1 (str "Python tools need python3 " min-python "+ on PATH")))]
+    (when-not (python-new-enough? exe)
+      (exit! 1 (str "Python tools need python " min-python "+; found " exe)))
+    exe))
 
 (defn pip-env [root]
   (assoc (into {} (System/getenv))
@@ -160,12 +172,15 @@
 
 (defn ensure-venv-tool! [root spec]
   (let [script (venv-bin root (:bin spec))]
-    (if (System/getenv "SWARMFORGE_PY_VENV")
-      (when-not (fs/exists? script)
-        (exit! 1 (str "SWARMFORGE_PY_VENV is missing " (:bin spec) ": " script)))
-      (do (when-not (fs/exists? (venv-bin root "pip"))
-            (create-venv! root))
-          (pip-install! root (:pip spec))))
+    (when-not (venv-override)
+      (when-not (fs/exists? (venv-bin root "pip"))
+        (create-venv! root))
+      (pip-install! root (:pip spec)))
+    (when-not (fs/exists? script)
+      (exit! 1 (if (venv-override)
+                 (str "SWARMFORGE_PY_VENV is missing " (:bin spec) ": " script)
+                 (str "pip installed " (:pip spec) " but it has no " (:bin spec)
+                      " command: " script))))
     script))
 
 (defn mutate-rewrite-bash []
@@ -180,6 +195,18 @@
        "  esac\n"
        "done\n"
        "if [ -z \"$scan\" ]; then args+=(--max-workers 4); fi\n"
+       "set -- \"${args[@]}\"\n"))
+
+(defn serial-mutate-rewrite-bash []
+  (str "args=()\n"
+       "while [ $# -gt 0 ]; do\n"
+       "  case \"$1\" in\n"
+       "    --mutate-all) shift ;;\n"
+       "    --max-workers) shift; [ $# -gt 0 ] && shift ;;\n"
+       "    --max-workers=*) shift ;;\n"
+       "    *) args+=(\"$1\"); shift ;;\n"
+       "  esac\n"
+       "done\n"
        "set -- \"${args[@]}\"\n"))
 
 (defn gherkin-rewrite-bash []
@@ -198,7 +225,8 @@
 
 (defn rewrite-bash [tool]
   (cond
-    (#{"clj-mutate" "mutate4go" "mutate4java" "mutate4py"} tool) (mutate-rewrite-bash)
+    (#{"clj-mutate" "mutate4go" "mutate4java"} tool) (mutate-rewrite-bash)
+    (= "mutate4py" tool) (serial-mutate-rewrite-bash)
     (= "gherkin-mutator" tool) (gherkin-rewrite-bash)
     :else ""))
 
