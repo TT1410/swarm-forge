@@ -1,13 +1,14 @@
 # Engineering Rules
 
 ## Startup Tools
-- On startup, procure the latest version of each required CRAP, mutation, and DRY tool for the project language directly from the listed `github.com/unclebob/...` repositories and get each one ready to run.
-- Resolve each listed repository at its latest available upstream version before installing or building it.
-- Do not rely on stale cached, vendored, or preinstalled copies when a fresh GitHub install/build is possible in the current environment.
+- On startup, procure the latest version of each required CRAP, mutation, and DRY tool for the project language from the source named for that language in the table below, and get each one ready to run.
+- Resolve each listed source at its latest available upstream version before installing or building it.
+- Do not rely on stale cached, vendored, or preinstalled copies when a fresh install/build is possible in the current environment.
 - Language tool table:
   - Go: install with `go install`; mutation `github.com/unclebob/mutate4go`, CRAP `github.com/unclebob/crap4go`, DRY `github.com/unclebob/dry4go`.
   - Clojure: install with Clojure CLI/deps.edn; mutation `github.com/unclebob/clj-mutate`, CRAP `github.com/unclebob/crap4clj`, DRY `github.com/unclebob/dry4clj`.
   - Java: install with Maven (`mvn`); mutation `github.com/unclebob/mutate4java`, CRAP `github.com/unclebob/crap4java`, DRY `github.com/unclebob/dry4java`.
+  - Python: install from PyPI with `swarm_tool.sh ensure <tool>`; mutation `mutate4py` (port of `github.com/unclebob/mutate4go`), CRAP `crap4py` (port of `github.com/unclebob/crap4go` and `crap4clj`), DRY `symilar` (the duplicate-code command that ships with `pylint`).
 
 ## Language Defaults
 - For Clojure projects, prefer Babashka where possible.
@@ -15,6 +16,10 @@
 - Install Speclj with `swarm_tool.sh require speclj`. If missing, `swarm_tool.sh ensure speclj`.
 - If a Speclj spec file changed, run `swarm_tool.sh require speclj-structure-check` (ensure if missing) and check the spec file before running tests.
 - For Java projects, avoid using Maven to run tests; build dedicated test runners and run those instead.
+- For Python projects, write `pytest` tests. Install pytest with `swarm_tool.sh require pytest`. If missing, `swarm_tool.sh ensure pytest`.
+- Python constitution tools run from the project-local virtualenv that `swarm_tool.sh` creates at `.swarmforge/venv`. Do not install them into the system interpreter, into `$HOME`, or with `sudo`, and do not run them from a hand-made venv.
+- `crap4py` and `mutate4py` both read branch coverage as LCOV. Produce it with `coverage run --branch -m pytest` followed by `coverage lcov -o ./tmp/lcov.info`, then pass `--lcov ./tmp/lcov.info`.
+- Run the Python DRY check as `symilar --duplicates=4 <changed python files>`; it takes an explicit file list, not a directory.
 
 ## Design And Testability
 - Work in small, reviewable increments.
@@ -50,7 +55,7 @@
 - Run the relevant local verification command before handoff whenever the project has one.
 
 ## Guardrails
-- Do not invent project-local CRAP, DRY, mutation, or coverage proxies. Install and run the constitution tools (`crap4clj` with cloverage, `dry4clj`, `clj-mutate`, speclj, or the language table). Do not treat a homegrown `bb crap` / `bb coverage` / `bb mutation-count` task as those tools.
+- Do not invent project-local CRAP, DRY, mutation, or coverage proxies. Install and run the constitution tools (`crap4clj` with cloverage, `dry4clj`, `clj-mutate`, speclj, `crap4py` with coverage, `mutate4py`, `symilar`, pytest, or the language table). Do not treat a homegrown `bb crap` / `bb coverage` / `bb mutation-count` task, or a hand-rolled `make`, `tox`, or `nox` target of the same name, as those tools.
 - Do not edit mutation testing or Gherkin acceptance mutation manifests by hand; allow approved mutation tools to update those manifests as part of their normal runs.
 - Do not commit unrelated local changes or generated artifacts unless required for the task.
 - Before relying on an unfamiliar command, inspect local help or project documentation.

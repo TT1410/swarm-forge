@@ -41,6 +41,7 @@ experimental workflows. They are not `get-swarm-forge` products.
 - `git`
 - `tmux`
 - Babashka (`bb`)
+- `python3` with `venv`, for projects whose language is Python
 - At least one configured agent backend: `grok`, `codex`, `claude`, or
   `copilot`
 
@@ -133,6 +134,32 @@ named local articles, such as `project.prompt`, `local-engineering.prompt`, or
 `main`, so a pack cannot silently replace common law. The product's README
 describes what its local articles add without repeating these shared rules.
 
+### Project languages
+
+`engineering.prompt` carries a language tool table. A pack agent installs the
+CRAP, DRY, and mutation tool named there for the project's language with
+`swarm_tool.sh ensure <tool>`; the helper writes a wrapper into
+`.swarmforge/bin/` and puts that directory on the agent's PATH.
+
+| Language | Tests / coverage | Mutation | CRAP | DRY |
+|---|---|---|---|---|
+| Clojure | `speclj`, `cloverage` | `clj-mutate` | `crap4clj` | `dry4clj` |
+| Go | project runner | `mutate4go` | `crap4go` | `dry4go` |
+| Java | dedicated test runners | `mutate4java` | `crap4java` | `dry4java` |
+| Python | `pytest`, `coverage` | `mutate4py` | `crap4py` | `symilar` |
+
+The Go, Clojure, and Java CRAP, DRY, and mutation tools are cloned from
+`github.com/unclebob/...` into `.swarmforge/tools/` and run with Babashka;
+`cloverage` and `speclj` are resolved as Maven dependencies instead. The Python
+tools come from PyPI and are installed into one project-local virtualenv at
+`.swarmforge/venv`, so a Python project never installs constitution tools into
+the system interpreter.
+`mutate4py` and `crap4py` are ports of `mutate4go` and `crap4go`/`crap4clj` and
+keep the same differential-manifest and LCOV contracts; `symilar` is the
+duplicate-code command that ships with `pylint`. A Python project produces the
+LCOV those two tools read with `coverage run --branch -m pytest` followed by
+`coverage lcov -o ./tmp/lcov.info`.
+
 Role prompts divide ownership inside that law: what a role may change, what it
 must verify, what it must leave to another role, and where its next handoff
 goes. There must be a matching prompt for every configured role. A forge
@@ -204,7 +231,9 @@ role checkouts live under `.worktrees/`. `.swarmforge/` contains such runtime
 records as role/session maps, the tmux socket, handoff inboxes and outboxes,
 board data, approvals, clarifications, daemon state, and dashboard state. It is
 not product source and agents must not edit it as a substitute for the helper
-commands.
+commands. `swarm_tool.sh` also installs constitution tools there: cloned
+sources under `.swarmforge/tools/`, the Python virtualenv under
+`.swarmforge/venv/`, and one wrapper per tool under `.swarmforge/bin/`.
 
 Agents send committed work with `swarm_handoff.sh`, accept it with
 `ready_for_next.sh`, and finish the current item with `done_with_current.sh`.

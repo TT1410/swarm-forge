@@ -31,7 +31,12 @@
    "mutate4go" {:source "github.com/unclebob/mutate4go" :bb-task "mutate4go"}
    "crap4java" {:source "github.com/unclebob/crap4java" :bb-task "crap4java"}
    "dry4java" {:source "github.com/unclebob/dry4java" :bb-task "dry4java"}
-   "mutate4java" {:source "github.com/unclebob/mutate4java" :bb-task "mutate4java"}})
+   "mutate4java" {:source "github.com/unclebob/mutate4java" :bb-task "mutate4java"}
+   "pytest" {:pip "pytest" :bin "pytest"}
+   "coverage" {:pip "coverage" :bin "coverage" :needs ["pytest"]}
+   "crap4py" {:pip "crap4py" :bin "crap4py" :needs ["coverage"]}
+   "mutate4py" {:pip "mutate4py" :bin "mutate4py" :needs ["coverage"]}
+   "symilar" {:pip "pylint" :bin "symilar"}})
 
 (def usage-text
   (str "Usage:\n"
@@ -119,13 +124,57 @@
       (clone-source! dir source))
     dir))
 
+(defn venv-dir [root]
+  (if-let [override (not-empty (System/getenv "SWARMFORGE_PY_VENV"))]
+    (fs/absolutize (fs/path override))
+    (fs/path root ".swarmforge" "venv")))
+
+(defn venv-bin [root name]
+  (fs/path (venv-dir root) "bin" name))
+
+(defn python-exe []
+  (or (fs/which "python3")
+      (fs/which "python")
+      (exit! 1 "Python tools need python3 on PATH")))
+
+(defn pip-env [root]
+  (assoc (into {} (System/getenv))
+         "PIP_CACHE_DIR" (str (fs/path root ".swarmforge" "cache" "pip"))
+         "PIP_DISABLE_PIP_VERSION_CHECK" "1"))
+
+(defn run-or-exit! [message result]
+  (when-not (zero? (:exit result))
+    (exit! 1 (str message "\n" (:err result) (:out result))))
+  result)
+
+(defn create-venv! [root]
+  (let [dir (venv-dir root)]
+    (fs/create-dirs (fs/parent dir))
+    (run-or-exit! (str "Failed to create virtualenv " dir)
+                  (sh/sh (str (python-exe)) "-m" "venv" (str dir)))))
+
+(defn pip-install! [root package]
+  (run-or-exit! (str "Failed to pip install " package)
+                (sh/sh (str (venv-bin root "pip")) "install" "--upgrade" package
+                       :env (pip-env root))))
+
+(defn ensure-venv-tool! [root spec]
+  (let [script (venv-bin root (:bin spec))]
+    (if (System/getenv "SWARMFORGE_PY_VENV")
+      (when-not (fs/exists? script)
+        (exit! 1 (str "SWARMFORGE_PY_VENV is missing " (:bin spec) ": " script)))
+      (do (when-not (fs/exists? (venv-bin root "pip"))
+            (create-venv! root))
+          (pip-install! root (:pip spec))))
+    script))
+
 (defn mutate-rewrite-bash []
   (str "args=()\n"
        "scan=\n"
        "while [ $# -gt 0 ]; do\n"
        "  case \"$1\" in\n"
        "    --mutate-all) shift ;;\n"
-       "    --scan|--update-manifest) scan=1; args+=(\"$1\"); shift ;;\n"
+       "    --scan|--update-manifest|--check-manifest) scan=1; args+=(\"$1\"); shift ;;\n"
        "    --max-workers) shift; [ $# -gt 0 ] && shift ;;\n"
        "    *) args+=(\"$1\"); shift ;;\n"
        "  esac\n"
@@ -149,7 +198,7 @@
 
 (defn rewrite-bash [tool]
   (cond
-    (#{"clj-mutate" "mutate4go" "mutate4java"} tool) (mutate-rewrite-bash)
+    (#{"clj-mutate" "mutate4go" "mutate4java" "mutate4py"} tool) (mutate-rewrite-bash)
     (= "gherkin-mutator" tool) (gherkin-rewrite-bash)
     :else ""))
 
@@ -190,14 +239,23 @@
           (when (seq args) (str " " args))
           " \"$@\"\n"))))
 
+(defn write-venv-wrapper! [root tool spec]
+  (let [target (wrapper-path root tool)
+        script (ensure-venv-tool! root spec)]
+    (write-wrapper!
+     target
+     (str (rewrite-bash tool)
+          "exec " (sq (str script)) " \"$@\"\n"))))
+
 (defn install-one! [tool]
   (let [spec (tool-spec tool)
         root (project-root)
         name (canonical-tool tool)
-        target (if-let [bb-task (:bb-task spec)]
-                 (write-bb-wrapper! root name bb-task
-                                    (ensure-source! root (:source spec)))
-                 (write-mvn-wrapper! root name spec))]
+        target (cond
+                 (:bb-task spec) (write-bb-wrapper! root name (:bb-task spec)
+                                                    (ensure-source! root (:source spec)))
+                 (:pip spec) (write-venv-wrapper! root name spec)
+                 :else (write-mvn-wrapper! root name spec))]
     (println "INSTALLED:" name (str target))))
 
 (defn ensure-tool! [tool]
