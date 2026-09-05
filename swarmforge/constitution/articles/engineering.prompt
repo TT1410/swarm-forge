@@ -1,13 +1,14 @@
 # Engineering Rules
 
 ## Startup Tools
-- On startup, procure the latest version of each required CRAP, mutation, and DRY tool for the project language directly from the listed `github.com/unclebob/...` repositories and get each one ready to run.
-- Resolve each listed repository at its latest available upstream version before installing or building it.
-- Do not rely on stale cached, vendored, or preinstalled copies when a fresh GitHub install/build is possible in the current environment.
+- On startup, procure the latest version of each required CRAP, mutation, and DRY tool for the project language from the source named for that language in the table below, and get each one ready to run.
+- Resolve each listed source at its latest available upstream version before installing or building it.
+- Do not rely on stale cached, vendored, or preinstalled copies when a fresh install/build is possible in the current environment.
 - Language tool table:
   - Go: install with `go install`; mutation `github.com/unclebob/mutate4go`, CRAP `github.com/unclebob/crap4go`, DRY `github.com/unclebob/dry4go`.
   - Clojure: install with Clojure CLI/deps.edn; mutation `github.com/unclebob/clj-mutate`, CRAP `github.com/unclebob/crap4clj`, DRY `github.com/unclebob/dry4clj`.
   - Java: install with Maven (`mvn`); mutation `github.com/unclebob/mutate4java`, CRAP `github.com/unclebob/crap4java`, DRY `github.com/unclebob/dry4java`.
+  - Python: install from PyPI with `swarm_tool.sh ensure <tool>`; mutation `mutate4py` (port of `github.com/unclebob/mutate4go`), CRAP `crap4py` (port of `github.com/unclebob/crap4go` and `crap4clj`), DRY `symilar` (the duplicate-code command that ships with `pylint`).
 
 ## Language Defaults
 - For Clojure projects, prefer Babashka where possible.
@@ -15,12 +16,17 @@
 - Install Speclj with `swarm_tool.sh require speclj`. If missing, `swarm_tool.sh ensure speclj`.
 - If a Speclj spec file changed, run `swarm_tool.sh require speclj-structure-check` (ensure if missing) and check the spec file before running tests.
 - For Java projects, avoid using Maven to run tests; build dedicated test runners and run those instead.
+- For Python projects, write `pytest` tests. Install pytest with `swarm_tool.sh require pytest`. If missing, `swarm_tool.sh ensure pytest`.
+- Python constitution tools run from the project-local virtualenv that `swarm_tool.sh` creates at `.swarmforge/venv`. Do not install them into the system interpreter, into `$HOME`, or with `sudo`, and do not run them from a hand-made venv.
+- `crap4py` and `mutate4py` both read branch coverage as LCOV. Produce it with `coverage run --branch -m pytest` followed by `coverage lcov -o ./tmp/lcov.info`, then pass `--lcov ./tmp/lcov.info`.
+- Run the Python DRY check as `symilar --duplicates=4 <changed python files>`; it takes an explicit file list, not a directory.
 
 ## Design And Testability
 - Work in small, reviewable increments.
 - Prefer the simplest design that supports the current behavior and leaves clear options for the next step.
 - Keep tests close to the behavior being changed.
 - Separate testable modules from environmentally unsuitable modules that open GUIs, depend on external devices, throw environment errors, emit system errors, or hang under automated tests. Maximize testable code and minimize the unsuitable boundary.
+- IO-near modules must not reimplement a domain question. If a high-level module already answers it, call that module and translate the result. Walking the same facts again is a defect even when the dependency arrow already points inward.
 - Only testable modules should participate in tools that run tests, including unit tests, acceptance tests, coverage, mutation testing, CRAP analysis, DRY analysis that invokes tests, and property tests.
 - Keep property tests separate from normal verification. Do not include property-test tags in normal unit coverage, Gherkin acceptance mutation, language mutation tools, CRAP, or coverage commands unless the role owns property-test verification or the user explicitly asks for property tests.
 
@@ -42,13 +48,14 @@
 - Run constitution tools one at a time. Do not run CRAP, DRY, coverage, language mutation, Gherkin mutation, or structure-check concurrently.
 - Tools that take a worker limit must use `--max-workers 4` or `--workers 4`.
 - Function mutation is differential against the source manifest. Do not pass `--mutate-all`.
+- Scan changed and new source files with the language mutation tool's scan/count mode as a hint that a module may mix jobs. Split a source file when it has more than one job. Do not split a one-job module to chase a mutation-site count. Preserve mutation manifests across the split; do not hand-edit them.
 - Gherkin mutation is differential against the feature manifest (`--level hard`). Do not pass `--level full`.
 - Run acceptance generation and acceptance tests sequentially.
 - Avoid running whole-suite language test commands concurrently with acceptance generation.
 - Run the relevant local verification command before handoff whenever the project has one.
 
 ## Guardrails
-- Do not invent project-local CRAP, DRY, mutation, or coverage proxies. Install and run the constitution tools (`crap4clj` with cloverage, `dry4clj`, `clj-mutate`, speclj, or the language table). Do not treat a homegrown `bb crap` / `bb coverage` / `bb mutation-count` task as those tools.
+- Do not invent project-local CRAP, DRY, mutation, or coverage proxies. Install and run the constitution tools (`crap4clj` with cloverage, `dry4clj`, `clj-mutate`, speclj, `crap4py` with coverage, `mutate4py`, `symilar`, pytest, or the language table). Do not treat a homegrown `bb crap` / `bb coverage` / `bb mutation-count` task, or a hand-rolled `make`, `tox`, or `nox` target of the same name, as those tools.
 - Do not edit mutation testing or Gherkin acceptance mutation manifests by hand; allow approved mutation tools to update those manifests as part of their normal runs.
 - Do not commit unrelated local changes or generated artifacts unless required for the task.
 - Before relying on an unfamiliar command, inspect local help or project documentation.
