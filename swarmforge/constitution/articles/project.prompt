@@ -4,7 +4,11 @@
 - This project is configured for SwarmForge with two Codex-backed agents:
   coder and cleaner.
 - The coder is the master worktree role.
-- Project language: Babashka.
+- Project language: the language of the project's existing source. Detect it
+  from the tree: `pyproject.toml`, `setup.py`, or `requirements.txt` means
+  Python; `deps.edn` or `bb.edn` means Clojure/Babashka; `go.mod` means Go;
+  `pom.xml` means Java. An empty project is Babashka. Use that language's row
+  in the constitution's language tool table and its Language Defaults.
 
 ## Local Configuration
 - Preserve project-local SwarmForge configuration under `swarmforge/`.
