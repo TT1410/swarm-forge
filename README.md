@@ -19,11 +19,11 @@ a runnable SwarmForge product.
 
 | Command | Branch | Shape |
 |---|---|---|
-| `get-swarm-forge two-pack` | [`two-pack`](https://github.com/unclebob/swarm-forge/blob/two-pack/README.md) | Pack installed into the current project: `coder` → `cleaner`. |
-| `get-swarm-forge four-pack` | [`four-pack`](https://github.com/unclebob/swarm-forge/blob/four-pack/README.md) | Pack installed into the current project: `specifier` → `coder` → `refactorer` → `architect`. |
-| `get-swarm-forge six-pack` | [`six-pack`](https://github.com/unclebob/swarm-forge/blob/six-pack/README.md) | Pack installed into the current project: six separate specification, implementation, cleanup, architecture, hardening, and QA roles. |
-| `get-swarm-forge project-manager` | [`project-manager`](https://github.com/unclebob/swarm-forge/blob/project-manager/README.md) | Multi-project forge with selectable two-, four-, and six-pack templates and a host lieutenant. |
-| `get-swarm-forge lieutenant` | [`lieutenant`](https://github.com/unclebob/swarm-forge/blob/lieutenant/README.md) | Multi-project forge with one configurable project template and a planning lieutenant. |
+| `get-swarm-forge two-pack` | [`two-pack`](https://github.com/TT1410/swarm-forge/blob/two-pack/README.md) | Pack installed into the current project: `coder` → `cleaner`. |
+| `get-swarm-forge four-pack` | [`four-pack`](https://github.com/TT1410/swarm-forge/blob/four-pack/README.md) | Pack installed into the current project: `specifier` → `coder` → `refactorer` → `architect`. |
+| `get-swarm-forge six-pack` | [`six-pack`](https://github.com/TT1410/swarm-forge/blob/six-pack/README.md) | Pack installed into the current project: six separate specification, implementation, cleanup, architecture, hardening, and QA roles. |
+| `get-swarm-forge project-manager` | [`project-manager`](https://github.com/TT1410/swarm-forge/blob/project-manager/README.md) | Multi-project forge with selectable two-, four-, and six-pack templates and a host lieutenant. |
+| `get-swarm-forge lieutenant` | [`lieutenant`](https://github.com/TT1410/swarm-forge/blob/lieutenant/README.md) | Multi-project forge with one configurable project template and a planning lieutenant. |
 
 A **pack** is composed into an existing project. Running `./swarm` starts that
 project's configured roles.
@@ -52,7 +52,7 @@ Put `get-swarm-forge` somewhere on `PATH`:
 ```sh
 mkdir -p ~/cmds
 curl -L -o ~/cmds/get-swarm-forge \
-  https://raw.githubusercontent.com/unclebob/swarm-forge/main/get-swarm-forge
+  https://raw.githubusercontent.com/TT1410/swarm-forge/main/get-swarm-forge
 chmod +x ~/cmds/get-swarm-forge
 ```
 
