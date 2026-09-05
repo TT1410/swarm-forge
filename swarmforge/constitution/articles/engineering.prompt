@@ -17,7 +17,7 @@
 - If a Speclj spec file changed, run `swarm_tool.sh require speclj-structure-check` (ensure if missing) and check the spec file before running tests.
 - For Java projects, avoid using Maven to run tests; build dedicated test runners and run those instead.
 - For Python projects, write `pytest` tests. Install pytest with `swarm_tool.sh require pytest`. If missing, `swarm_tool.sh ensure pytest`.
-- Python constitution tools run from the project-local virtualenv that `swarm_tool.sh` creates at `.swarmforge/venv`. Do not install them into the system interpreter, into `$HOME`, or with `sudo`, and do not run them from a hand-made venv.
+- Python constitution tools need Python 3.11 or newer and run from the project-local virtualenv that `swarm_tool.sh` creates at `.swarmforge/venv`. Do not install them into the system interpreter, into `$HOME`, or with `sudo`, and do not run them from a hand-made venv.
 - `crap4py` and `mutate4py` both read branch coverage as LCOV. Produce it with `coverage run --branch -m pytest` followed by `coverage lcov -o ./tmp/lcov.info`, then pass `--lcov ./tmp/lcov.info`.
 - Run the Python DRY check as `symilar --duplicates=4 <changed python files>`; it takes an explicit file list, not a directory.
 
@@ -46,7 +46,7 @@
 ## Verification
 - Before running language, build, or test commands, prefer project-local cache/configuration paths inside the assigned worktree. Avoid default cache locations that write outside the project and may trigger sandbox or permission restrictions.
 - Run constitution tools one at a time. Do not run CRAP, DRY, coverage, language mutation, Gherkin mutation, or structure-check concurrently.
-- Tools that take a worker limit must use `--max-workers 4` or `--workers 4`.
+- Tools that take a worker limit must use `--max-workers 4` or `--workers 4`. `mutate4py` is the exception: run it serially with no `--max-workers`, because its parallel mode copies the whole working tree, including `.swarmforge/` and `.worktrees/`, into per-worker checkouts and provisions them with `uv`.
 - Function mutation is differential against the source manifest. Do not pass `--mutate-all`.
 - Scan changed and new source files with the language mutation tool's scan/count mode as a hint that a module may mix jobs. Split a source file when it has more than one job. Do not split a one-job module to chase a mutation-site count. Preserve mutation manifests across the split; do not hand-edit them.
 - Gherkin mutation is differential against the feature manifest (`--level hard`). Do not pass `--level full`.
