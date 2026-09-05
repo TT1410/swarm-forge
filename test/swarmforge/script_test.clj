@@ -722,6 +722,116 @@
       (finally
         (fs/delete-tree root)))))
 
+(defn write-fake-venv! [venv & tools]
+  (doseq [tool tools]
+    (let [script (fs/path venv "bin" tool)]
+      (write-file script
+                  (str "#!/usr/bin/env bash\necho \"" tool " ARGS: $*\"\n"))
+      (fs/set-posix-file-permissions script "rwxr-xr-x")))
+  venv)
+
+(defn venv-env [venv]
+  {"SWARMFORGE_PY_VENV" (str venv)
+   "PATH" (System/getenv "PATH")
+   "GIT_CONFIG_NOSYSTEM" "1"})
+
+(deftest swarm-tool-knows-python-tool-names
+  ;; Given a pack project
+  ;; When require runs for crap4py
+  ;; Then it is a known tool (missing until ensure), not Unknown tool
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (let [missing (run {:dir root :ok? false}
+                         (script "swarm_tool.sh") "require" "crap4py")
+            help (run {:dir root :ok? false}
+                      (script "swarm_tool.sh") "--help")
+            listed (str (:err help) (:out help))]
+        (is (not= 0 (:exit missing)))
+        (is (str/includes? (:err missing) "MISSING: crap4py"))
+        (is (not (str/includes? (:err missing) "Unknown tool")))
+        (doseq [tool ["pytest" "coverage" "crap4py" "mutate4py" "symilar"]]
+          (is (str/includes? listed tool))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest swarm-tool-ensure-pytest-wraps-the-project-virtualenv
+  ;; Given a project virtualenv that already has pytest
+  ;; When swarm_tool.sh ensure pytest
+  ;; Then the wrapper execs that virtualenv's pytest and require succeeds
+  (let [root (tmp-dir)
+        venv (write-fake-venv! (fs/path root "venv") "pytest")]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (run {:dir root :env (venv-env venv)}
+           (script "swarm_tool.sh") "ensure" "pytest")
+      (let [wrapper (fs/path root ".swarmforge/bin/pytest")]
+        (is (fs/executable? wrapper))
+        (is (str/includes? (slurp (str wrapper)) (str (fs/path venv "bin" "pytest"))))
+        (is (zero? (:exit (run {:dir root} (script "swarm_tool.sh") "require" "pytest"))))
+        (is (zero? (:exit (run {:dir root} (script "swarm_tool.sh") "require" "PyTest")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest swarm-tool-ensure-crap4py-also-installs-coverage-and-pytest
+  ;; Given a project virtualenv with the python constitution tools
+  ;; When swarm_tool.sh ensure crap4py
+  ;; Then crap4py, coverage, and pytest wrappers are all installed
+  (let [root (tmp-dir)
+        venv (write-fake-venv! (fs/path root "venv") "crap4py" "coverage" "pytest")]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (run {:dir root :env (venv-env venv)}
+           (script "swarm_tool.sh") "ensure" "crap4py")
+      (doseq [tool ["crap4py" "coverage" "pytest"]]
+        (is (fs/executable? (fs/path root ".swarmforge/bin" tool))))
+      (is (zero? (:exit (run {:dir root} (script "swarm_tool.sh") "require" "crap4py"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest swarm-tool-reports-a-python-tool-missing-from-the-virtualenv
+  ;; Given a project virtualenv without symilar
+  ;; When swarm_tool.sh ensure symilar
+  ;; Then it fails naming the missing command instead of writing a broken wrapper
+  (let [root (tmp-dir)
+        venv (write-fake-venv! (fs/path root "venv") "pytest")]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (let [result (run {:dir root :ok? false :env (venv-env venv)}
+                        (script "swarm_tool.sh") "ensure" "symilar")]
+        (is (not= 0 (:exit result)))
+        (is (str/includes? (:err result) "symilar"))
+        (is (not (fs/exists? (fs/path root ".swarmforge/bin/symilar")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest mutate4py-wrapper-is-differential-with-four-workers
+  ;; Given an installed mutate4py wrapper
+  ;; When it is invoked with --mutate-all
+  ;; Then --mutate-all is dropped and --max-workers 4 is used
+  (let [root (tmp-dir)
+        venv (write-fake-venv! (fs/path root "venv") "mutate4py" "coverage" "pytest")]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (run {:dir root :env (venv-env venv)}
+           (script "swarm_tool.sh") "ensure" "mutate4py")
+      (let [wrapper (str (fs/path root ".swarmforge/bin/mutate4py"))
+            scored (:out (run {:dir root} wrapper "src/calc.py"
+                              "--lcov" "./tmp/lcov.info" "--mutate-all"))
+            scan (:out (run {:dir root} wrapper "src/calc.py" "--scan"))
+            manifest (:out (run {:dir root} wrapper "src/" "--check-manifest"))]
+        (is (str/includes? scored "--max-workers 4"))
+        (is (not (str/includes? scored "--mutate-all")))
+        (is (not (str/includes? scan "--max-workers")))
+        (is (not (str/includes? manifest "--max-workers"))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest swarmforge-start-order-opens-dashboard-before-agents
   ;; Given a pack
   ;; When --test-start-order
