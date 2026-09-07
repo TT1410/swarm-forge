@@ -102,11 +102,11 @@
                              socket (tmux-socket root)
                              down? (and row socket
                                         (not (session-alive? socket (session-name row))))
-                             grok-status (when (and row (= "grok" (backend-name row)))
-                                           (grok-status-for-row row))]
+                             structured-status (when row
+                                                 (structured-status-for-row root row))]
                          (cond
                            down? "no session"
-                           (:active? grok-status) "working"
+                           (:active? structured-status) "working"
                            :else "idle"))
      :lieutenant_activity (let [heats (role-heats root)]
                             (get heats "lieutenant" 0))
