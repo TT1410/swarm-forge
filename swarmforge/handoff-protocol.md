@@ -75,7 +75,9 @@ agent-facing receive helpers read that runtime file rather than reparsing
 
 Use `batch` for a configured role that should consume queued handoffs sharing
 priority, card type, and reverse/forward direction with the first file as one
-unit. The active assignment belongs in `swarmforge.conf`.
+unit. The receiver records the unit in `batch_manifest.edn`; every member must
+be completed and forwarded in one result handoff. The active assignment belongs
+in `swarmforge.conf`.
 
 ## Filename Format
 
@@ -132,6 +134,7 @@ type: git_handoff
 role: coder
 task: task-1-cave-setup
 commit: a1b2c3d9e8
+delivery_kind: forward
 created_at: 2026-06-15T14:05:31Z
 enqueued_at: 2026-06-15T14:05:32Z
 
@@ -185,6 +188,16 @@ the route. Startup validates the routes and writes `.swarmforge/routes.tsv`;
 the board, handoff gate, receive guard, and daemon all read that normalized
 description.
 
+The helper adds the reserved `delivery_kind` header to every generated Git
+handoff:
+
+- `forward` is the one card-moving delivery to the next configured role.
+- `reverse` is a merge-only propagation copy to an earlier role.
+- `terminal` is the one completion broadcast from the final role.
+
+Only a nonterminal `forward` may generate `back-one` or `back-all` reverse
+copies. A terminal delivery never generates additional propagation copies.
+
 #### Terminal broadcast
 
 The terminal handoff is the last role **on this card's chain** sending
@@ -192,7 +205,10 @@ The terminal handoff is the last role **on this card's chain** sending
 before the card's starting lane). That set, not a count of names,
 marks the card Done. Each recipient merges that commit
 (`merge_and_process.sh`) and stops; they do not re-forward. A partial
-`to:` list is not terminal.
+`to:` list is not terminal and the daemon rejects it. The daemon marks the
+card Done only for `delivery_kind: terminal` with that exact recipient set.
+For compatibility during an upgrade, an unclassified handoff is terminal only
+when the sender is final and its recipients are already that exact set.
 
 The terminal recipient set is derived from the project's configured window
 order and the final role on this card's route. Current role names and routes
@@ -256,7 +272,13 @@ Responsibilities:
 - Validate `git_handoff` commits as real, unambiguous commits.
 - Canonicalize valid commit abbreviations.
 - Generate `role` from the current sender role for `git_handoff`.
+- Generate the reserved `delivery_kind` from the sender's position and the
+  delivery being written.
 - Preserve `task` from the draft for `git_handoff`.
+- When current work is a batch, reject a result commit that does not contain
+  every incoming member commit. Generate `batch_id` and the complete
+  `batch_task_ids` membership from the receiver's manifest; agents cannot
+  supply or narrow either field.
 - On the first valid `git_handoff` call, record the exact candidate under
   `.swarmforge/handoffs/audit_pending/`, print `AUDIT_REQUIRED`, and leave the
   draft and current inbox item in place. Atomically increment the board card's
@@ -298,6 +320,9 @@ created_at
 enqueued_at
 dequeued_at
 completed_at
+delivery_kind
+batch_id
+batch_task_ids
 ```
 
 Validation errors should be explicit enough for an agent to repair the draft.
@@ -358,6 +383,8 @@ Responsibilities:
   copy is a permanent failure.
 - Add `recipient` and `enqueued_at` to each recipient copy.
 - Update the board only after every recipient has a stored copy.
+- Require a terminal delivery to name the exact configured upstream recipient
+  set; only that single delivery can move a card or batch to Done.
 - Archive the sender's completed inbox work, then move the original outbox file
   to `sent/`.
 - Send a generic tmux wake-up message to each recipient after delivery commits.
@@ -371,6 +398,10 @@ Responsibilities:
   stored handoff into a failed delivery.
 - Resume unfinished delivery and wake-up retries after daemon restart without
   duplicating recipient copies.
+- Track active reverse and terminal integration across outboxes and recipient
+  `inbox/new/` and `inbox/in_process/` queues. When the last such handoff leaves
+  active state, write one durable `reverse-cleared` event for the cycle and wake
+  the lieutenant to reconsider waiting cards.
 
 The tmux message should not name the delivered file. It should avoid biasing the
 recipient toward one file and should force queue-order processing.
@@ -479,11 +510,19 @@ Responsibilities:
 - Select every queued handoff that shares priority, card type, and
   reverse/forward with that first file. Equal priority of a different
   type or direction stays queued.
+- Resolve every incoming Git commit and select the unique commit that contains
+  every other member commit in its ancestry. Reject a non-linear set before
+  moving or merging anything.
 - Move those files into one `inbox/in_process/batch_<timestamp>_<suffix>/`
   directory.
 - Add or update `dequeued_at` on each selected file.
-- Print the accepted batch path, count, the top item's `TASK_NAME`, priority,
-  and each task payload in helper-delivered order.
+- Persist `batch_manifest.edn` with the batch ID, ordered membership, task IDs,
+  incoming commits, and selected complete commit before attempting the merge.
+- Print the batch ID, complete membership, selected commit, atomic completion
+  rule, and each task payload before attempting the merge. Print that same
+  declaration when resuming after a conflict.
+- Merge the selected complete commit once. Do not merge every member commit in
+  filename order.
 - Print `NO_TASK` if no inbox item is available.
 - Refuse ambiguous states, such as multiple in-process batches, unless an
   explicit repair is made outside the helper.
@@ -496,7 +535,7 @@ Responsibilities:
 - Require exactly one batch directory in `inbox/in_process/`.
 - Refuse to run if `inbox/in_process/` contains a single task file.
 - Add or update `completed_at` on each file in the batch.
-- Move the batch directory to `inbox/completed/`.
+- Move the batch directory, including its manifest, to `inbox/completed/`.
 - Print the completed task paths and completed batch path.
 - Archive the completing role's pane.
 - Print `MAIL_WAITING` if `inbox/new/` still has handoffs, otherwise `NO_TASK`.
@@ -527,8 +566,9 @@ Prompts should instruct agents to follow this loop:
    your role.
 3. If it prints `NO_TASK`, stop waiting for work.
 4. If it prints `TASK: <path>`, treat the printed `PAYLOAD` as the task.
-5. If it prints `BATCH: <path>`, treat each printed `BATCH_ITEM` as part of the
-   current batch in helper-delivered order.
+5. If it prints `BATCH: <path>`, treat the declared batch and every printed
+   `BATCH_ITEM` as one atomic work unit. Complete all members, create one
+   combined result commit, and send one outgoing handoff for the unit.
 6. Use only the task information printed by the helper scripts.
 7. If a tmux wake-up arrives while already working on a task, ignore it.
 8. When the task or batch is fully complete, run `done_with_current.sh`.
@@ -558,6 +598,9 @@ to
 recipient
 priority
 type
+batch_id
+batch_task_ids
+delivery_kind
 created_at
 enqueued_at
 dequeued_at
@@ -566,8 +609,10 @@ completed_at
 
 Lifecycle ownership:
 
-- `swarm_handoff.sh` writes `id`, `from`, `to`, `priority`, `type`, and
-  `created_at`.
+- `swarm_handoff.sh` writes `id`, `from`, `to`, `priority`, `type`,
+  `delivery_kind`, and
+  `created_at`; for current batch work it also writes `batch_id` and the full
+  `batch_task_ids` membership after verifying all incoming commits.
 - `handoffd` writes `recipient` and `enqueued_at` into each recipient copy.
 - `ready_for_next_task.sh` writes `dequeued_at`.
 - `ready_for_next_batch.sh` writes `dequeued_at`.
@@ -589,6 +634,7 @@ Runtime files:
 .swarmforge/daemon/
   handoffd.pid
   handoffd.log
+  reverse-cycle.edn
   stop
 ```
 

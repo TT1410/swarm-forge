@@ -99,42 +99,8 @@
                              (str/ends-with? (fs/file-name %) ".request"))
                        (fs/list-dir dir)))))))
 
-(defn handoff-files-under [dir]
-  (if (fs/directory? dir)
-    (->> (fs/list-dir dir)
-         (mapcat (fn [entry]
-                   (cond
-                     (and (fs/regular-file? entry)
-                          (str/ends-with? (fs/file-name entry) ".handoff"))
-                     [entry]
-                     (fs/directory? entry)
-                     (handoff-files-under entry)
-                     :else [])))
-         vec)
-    []))
-
-(defn header-map [file]
-  (into {}
-        (for [line (take-while (complement str/blank?)
-                               (str/split-lines (slurp (str file))))
-              :let [[k v] (str/split line #": " 2)]
-              :when (and k v)]
-          [k v])))
-
-(defn in-process-dirs [root]
-  (into [(fs/path root ".swarmforge" "handoffs" "inbox" "in_process")]
-        (keep (fn [cols]
-                (when-let [wt (not-empty (nth cols 2 nil))]
-                  (fs/path wt ".swarmforge" "handoffs" "inbox" "in_process")))
-              (role-rows root))))
-
 (defn in-flight-reverse? [root]
-  (boolean
-   (some (fn [file]
-           (let [h (header-map file)]
-             (and (= "git_handoff" (get h "type"))
-                  (= "true" (get h "non-forwarding")))))
-         (mapcat handoff-files-under (in-process-dirs root)))))
+  (handoff-state/synchronization-active? root))
 
 (defn stuck-create-reason [root]
   (cond
@@ -149,7 +115,10 @@
 (defn require-create-when-stuck! [opts]
   (let [root (resolve-root opts)
         name (task-name opts)
-        reason (stuck-create-reason root)]
+        reason (stuck-create-reason root)
+        reason (when-not (and (:waiting opts)
+                              (= "in-flight reverse merge" reason))
+                 reason)]
     (when reason
       (cond
         (recut-of? root name)
@@ -162,6 +131,11 @@
 
         :else
         (exit! 1 (str "create refused: " reason))))))
+
+(defn require-start-when-stuck! [opts]
+  (when (waiting-start? opts)
+    (when-let [reason (stuck-create-reason (resolve-root opts))]
+      (exit! 1 (str "start refused: " reason)))))
 
 (defn set-lane! [opts lane]
   (let [act (if (= "done" lane) "done" "move")]
@@ -193,6 +167,7 @@
         name (task-name opts)
         lane (task-lane opts)
         merge-from (:merge-from opts)
+        _ (require-start-when-stuck! opts)
         before (set-lane! opts lane)]
     (require-merge-from! root merge-from)
     (when-not (str/blank? merge-from)

@@ -91,15 +91,13 @@
           (fail! 2 (str "AMBIGUOUS_TASK_STATE: batch contains no tasks: " source-dir)))
         (when (fs/exists? target-dir)
           (fail! 2 (str "AMBIGUOUS_TASK_STATE: completed batch already exists: " target-dir)))
-        (fs/create-dir target-dir)
         (doseq [source-file batch-files]
-          (set-header! source-file "completed_at" completed-at)
-          (let [target-file (fs/path target-dir (fs/file-name source-file))]
-            (when (fs/exists? target-file)
-              (fail! 2 (str "AMBIGUOUS_TASK_STATE: completed batch file already exists: " target-file)))
-            (fs/move source-file target-file)
-            (println "COMPLETED:" (str target-file))))
-        (fs/delete source-dir)
+          (set-header! source-file "completed_at" completed-at))
+        ;; Move the directory as one unit so its manifest remains attached to
+        ;; the handoffs throughout the completed audit trail.
+        (fs/move source-dir target-dir)
+        (doseq [source-file batch-files]
+          (println "COMPLETED:" (str (fs/path target-dir (fs/file-name source-file)))))
         (println "COMPLETED_BATCH:" (str target-dir))
         (finish-done!)))))
 

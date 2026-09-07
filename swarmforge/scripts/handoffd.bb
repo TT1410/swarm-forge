@@ -27,6 +27,11 @@
   (require 'safe-paths)
   (catch Exception _
     (load-file (str (fs/path script-dir "safe_paths.bb")))))
+(try
+  (require '[handoff-state :as handoff-state])
+  (catch Exception _
+    (load-file (str (fs/path script-dir "handoff_state.bb")))
+    (require '[handoff-state :as handoff-state])))
 (def state-dir nil)
 (def daemon-dir nil)
 (def roles-file nil)
@@ -102,7 +107,8 @@
 
 (defn render-message [headers body]
   (let [preferred ["id" "from" "to" "recipient" "priority" "type" "role" "task_id" "task" "commit"
-                   "artifacts" "batch_task_ids" "task_base_commit" "message" "created_at" "enqueued_at" "dequeued_at" "completed_at"]
+                   "artifacts" "batch_id" "batch_task_ids" "card_type" "delivery_kind"
+                   "task_base_commit" "message" "created_at" "enqueued_at" "dequeued_at" "completed_at"]
         remaining (->> (keys headers)
                        (remove (set preferred))
                        sort)
@@ -195,11 +201,15 @@
   (= (get headers "from") (master-role-name roles)))
 
 (defn non-forwarding? [headers]
-  (= "true" (get headers "non-forwarding")))
+  (boolean
+   (or (= "true" (get headers "non-forwarding"))
+       (#{"reverse" "terminal"} (get headers "delivery_kind")))))
 
 (defn reverse-git-mail? [headers]
   (and (= "git_handoff" (get headers "type"))
-       (or (non-forwarding? headers)
+       (or (= "reverse" (get headers "delivery_kind"))
+           (= "terminal" (get headers "delivery_kind"))
+           (non-forwarding? headers)
            (= "00" (get headers "priority")))))
 
 (defn pack-role-names []
@@ -254,9 +264,15 @@
   (let [value (get headers "batch_task_ids")
         parsed (parsed-batch-task-ids headers)]
     (or (str/blank? value)
-        (and (next parsed)
+        (and (seq parsed)
              (= parsed (vec (distinct parsed)))
              (= (task-key headers) (first parsed))))))
+
+(defn valid-batch-id? [headers]
+  (let [batch-id (get headers "batch_id")]
+    (or (str/blank? batch-id)
+        (and (safe-paths/state-key? batch-id)
+             (seq (parsed-batch-task-ids headers))))))
 
 (defn batch-task-keys [headers]
   (let [parsed (parsed-batch-task-ids headers)]
@@ -274,12 +290,41 @@
 (defn board-row-for-headers [headers]
   (board-row-for-key (task-key headers)))
 
-(defn terminal-handoff? [_roles headers]
+(def delivery-kinds #{"forward" "reverse" "terminal"})
+
+(defn expected-terminal-recipients [headers]
   (let [from (get headers "from")
         row (board-row-for-headers headers)]
-    (if row
-      (card-type/last-on-card? project-root (:type row) from)
-      (last-pack-role? from))))
+    (cond
+      (and row (card-type/last-on-card? project-root (:type row) from))
+      (card-type/terminal-upstream project-root (pack-role-names) (:type row))
+
+      (and (nil? row) (last-pack-role? from))
+      (vec (butlast (pack-role-names)))
+
+      :else nil)))
+
+(defn exact-recipient-set? [actual expected]
+  (and (some? expected)
+       (= (count actual) (count expected))
+       (= (set actual) (set expected))))
+
+(defn exact-terminal-recipients? [headers]
+  (exact-recipient-set? (vec (recipient-list headers))
+                        (expected-terminal-recipients headers)))
+
+(defn effective-delivery-kind [headers]
+  (or (get headers "delivery_kind")
+      (cond
+        (exact-terminal-recipients? headers) "terminal"
+        (or (= "true" (get headers "non-forwarding"))
+            (= "00" (get headers "priority"))) "reverse"
+        :else "forward")))
+
+(defn terminal-handoff? [_roles headers]
+  (and (= "git_handoff" (get headers "type"))
+       (= "terminal" (effective-delivery-kind headers))
+       (exact-terminal-recipients? headers)))
 
 (defn board-row-key [line]
   (let [[name _lane _created _updated task-id] (str/split line #"\t" -1)]
@@ -454,6 +499,69 @@
 (defn safe-stem [value]
   (str/replace (or value "handoff") #"[^A-Za-z0-9._-]+" "_"))
 
+(defn reverse-cycle-file []
+  (fs/path daemon-dir "reverse-cycle.edn"))
+
+(defn new-reverse-cycle []
+  {:id (str (safe-stem (now)) "-" (java.util.UUID/randomUUID))
+   :started-at (now)})
+
+(defn reverse-cleared-event-file [forge cycle]
+  (fs/path forge ".swarmforge" "notify"
+           (str (safe-stem (:id cycle)) "-reverse-cleared.notify")))
+
+(defn write-reverse-cleared-event! [forge cycle]
+  (let [file (reverse-cleared-event-file forge cycle)]
+    (if (fs/exists? file)
+      false
+      (let [dir (fs/parent file)
+            tmp (do
+                  (fs/create-dirs dir)
+                  (fs/create-temp-file {:dir dir :prefix ".reverse-cleared."}))]
+        (try
+          (spit (str tmp)
+                (str "project: " (fs/file-name project-root) "\n"
+                     "event: reverse-cleared\n"
+                     "cycle: " (:id cycle) "\n"))
+          (try
+            (fs/move tmp file {:replace-existing false :atomic-move true})
+            true
+            (catch java.nio.file.FileAlreadyExistsException _
+              false))
+          (finally
+            (fs/delete-if-exists tmp)))))))
+
+(defn notify-reverse-cleared! [cycle]
+  (when-let [forge (forge-root)]
+    (when (write-reverse-cleared-event! forge cycle)
+      (let [socket-path (fs/path forge ".swarmforge" "tmux-socket")
+            socket (when (fs/regular-file? socket-path)
+                     (not-empty (str/trim (slurp (str socket-path)))))]
+        (when socket
+          (try
+            (notify! socket "swarmforge-lieutenant" "Notify: reverse-cleared")
+            (catch Exception e
+              (safe-log! "lieutenant-notify-failed" (.getMessage e)))))))))
+
+(defn read-reverse-cycle []
+  (let [file (reverse-cycle-file)]
+    (when (fs/regular-file? file)
+      (or (read-edn-file file)
+          {:id (safe-stem (str/trim (slurp (str file))))}))))
+
+(defn reconcile-reverse-cycle! []
+  (let [file (reverse-cycle-file)
+        active? (handoff-state/synchronization-active? project-root)
+        cycle (read-reverse-cycle)]
+    (cond
+      (and active? (nil? cycle))
+      (write-edn-atomic! file (new-reverse-cycle))
+
+      (and (not active?) cycle)
+      (do
+        (notify-reverse-cleared! cycle)
+        (fs/delete-if-exists file)))))
+
 (defn attention-file [headers path]
   (fs/path (attention-dir)
            (str (safe-stem (or (get headers "id") (fs/file-name path))) ".edn")))
@@ -490,6 +598,38 @@
 (defn raw-recipients [headers]
   (mapv str/trim (str/split (or (get headers "to") "") #"," -1)))
 
+(defn validate-delivery-kind! [headers recipients]
+  (let [type (get headers "type")
+        declared (get headers "delivery_kind")
+        kind (effective-delivery-kind headers)
+        expected-terminal (expected-terminal-recipients headers)]
+    (when (and declared (not (delivery-kinds declared)))
+      (throw (permanent-error "invalid delivery_kind header")))
+    (when (and declared (not= "git_handoff" type))
+      (throw (permanent-error "delivery_kind is only valid for git_handoff")))
+    (when (= "git_handoff" type)
+      (case kind
+        "terminal"
+        (do
+          (when (and declared (not= "true" (get headers "non-forwarding")))
+            (throw (permanent-error "terminal delivery must be non-forwarding")))
+          (when-not (exact-recipient-set? recipients expected-terminal)
+            (throw (permanent-error
+                    (str "terminal recipient set must be exactly "
+                         (str/join "," (or expected-terminal [])))))))
+
+        "reverse"
+        (when (and declared (not= "true" (get headers "non-forwarding")))
+          (throw (permanent-error "reverse delivery must be non-forwarding")))
+
+        "forward"
+        (when expected-terminal
+          (throw (permanent-error
+                  (str "last role must send one terminal handoff to "
+                       (str/join "," expected-terminal)))))
+
+        (throw (permanent-error "invalid delivery_kind header"))))))
+
 (defn same-delivery? [source-headers target recipient]
   (let [target-headers (:headers (parse-message target))]
     (and (= (get source-headers "id") (get target-headers "id"))
@@ -518,6 +658,9 @@
                (not (valid-batch-task-ids? headers)))
       (throw (permanent-error "invalid batch_task_ids header")))
     (when (and (= "git_handoff" (get headers "type"))
+               (not (valid-batch-id? headers)))
+      (throw (permanent-error "invalid batch_id header")))
+    (when (and (= "git_handoff" (get headers "type"))
                (fs/regular-file? (board-file)))
       (doseq [key (batch-task-keys headers)]
         (when-not (safe-paths/state-key? key)
@@ -528,6 +671,7 @@
       (throw (permanent-error "missing or empty recipient")))
     (when-not (= (count recipients) (count (distinct recipients)))
       (throw (permanent-error "duplicate recipient")))
+    (validate-delivery-kind! headers recipients)
     (when (and (not (phantom-sender? sender-role)) (nil? (get roles sender-role)))
       (throw (permanent-error (str "unknown sender " sender-role))))
     (doseq [recipient recipients]
@@ -663,7 +807,8 @@
           paths (->> (concat (mapcat #(or (outbox-files %) []) (vals roles))
                              (or (outbox-files {:worktree-path project-root}) []))
                      (map str)
-                     distinct)]
+                     distinct
+                     vec)]
       (doseq [path paths
               :while (not (should-stop?))
               :when (retry-due? path)]
@@ -679,8 +824,12 @@
               (try
                 (record-retry! (fs/path path) (.getMessage e))
                 (catch Exception nested
-                  (log! "failed-to-record-retry" path (.getMessage nested)))))))
-      (process-wakeups! roles socket)))))
+                  (log! "failed-to-record-retry" path (.getMessage nested))))))))
+      (process-wakeups! roles socket)
+      (try
+        (reconcile-reverse-cycle!)
+        (catch Exception e
+          (safe-log! "reverse-cycle-failed" (.getMessage e)))))))
 
 (defn shutdown! []
   (reset! stopping-flag true)

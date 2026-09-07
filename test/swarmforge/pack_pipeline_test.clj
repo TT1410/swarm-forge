@@ -3,6 +3,7 @@
             [cheshire.core :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is use-fixtures]]
+            [handoff-state :as handoff-state]
             [swarmforge.pack-test-support :refer :all]))
 
 (use-fixtures :once once-fixture)
@@ -93,7 +94,8 @@
         to "specifier,coder,cleaner,architect,hardender"
         sock (do (setup-pack! root six-pack-roles)
                  (create-task root "htw-console-app" "QA")
-                 (queue-handoff! root {:from "QA" :to to :task "htw-console-app"})
+                 (queue-handoff! root {:from "QA" :to to :task "htw-console-app"
+                                       :delivery-kind "terminal" :non-forwarding true})
                  (start-tmux! root six-pack-roles))]
     (try
       (handoffd-once root)
@@ -183,6 +185,53 @@
         (finally
           (stop-tmux! sock)
           (stop-tmux! lt-sock))))))
+(deftest handoffd-emits-one-reverse-cleared-event-after-the-last-copy-completes
+  (let [forge (tmp-dir)
+        project (fs/path forge "projects" "cave")
+        roles ["specifier" "coder" "cleaner" "architect"]
+        lt-sock (tmp-tmux-socket)]
+    (fs/create-dirs project)
+    (setup-pack! project roles)
+    (queue-handoff! project {:from "architect" :to "specifier" :task "HTW"
+                             :priority "00" :delivery-kind "reverse"
+                             :non-forwarding true})
+    (queue-handoff! project {:from "architect" :to "coder" :task "HTW"
+                             :priority "00" :delivery-kind "reverse"
+                             :non-forwarding true})
+    (write-file (fs/path forge ".swarmforge/tmux-socket") (str lt-sock "\n"))
+    (run {:dir forge} "tmux" "-S" lt-sock "new-session" "-d"
+         "-s" "swarmforge-lieutenant" "sleep" "120")
+    (let [sock (start-tmux! project roles (tmp-tmux-socket))
+          cleared-notes #(vec (fs/glob (fs/path forge ".swarmforge/notify")
+                                       "*reverse-cleared.notify"))
+          complete! (fn [role]
+                      (let [new-dir (fs/path (pack-worktree project roles role)
+                                             ".swarmforge/handoffs/inbox/new")
+                            completed-dir (fs/path (pack-worktree project roles role)
+                                                   ".swarmforge/handoffs/inbox/completed")
+                            file (first (fs/list-dir new-dir))]
+                        (fs/create-dirs completed-dir)
+                        (fs/move file (fs/path completed-dir (fs/file-name file)))))]
+      (try
+        (handoffd-once project)
+        (is (fs/regular-file? (fs/path project ".swarmforge/daemon/reverse-cycle.edn")))
+        (is (empty? (cleared-notes)))
+        (complete! "specifier")
+        (handoffd-once project)
+        (is (empty? (cleared-notes)))
+        (complete! "coder")
+        (is (empty? (handoff-state/active-synchronization-files project))
+            (mapv str (handoff-state/active-synchronization-files project)))
+        (handoffd-once project)
+        (is (= 1 (count (cleared-notes))))
+        (is (str/includes? (slurp (str (first (cleared-notes))))
+                           "event: reverse-cleared\n"))
+        (is (not (fs/exists? (fs/path project ".swarmforge/daemon/reverse-cycle.edn"))))
+        (handoffd-once project)
+        (is (= 1 (count (cleared-notes))))
+        (finally
+          (stop-tmux! sock)
+          (stop-tmux! lt-sock))))))
 (deftest handoffd-refactorer-back-one-does-not-done-or-hold
   ;; Given four-pack, card in refactorer, reverse copy to coder and forward to architect
   ;; When handoffd delivers
@@ -219,19 +268,19 @@
       (is (not= "done" (task-lane root "HTW")))
       (finally
         (stop-tmux! sock)))))
-(deftest handoffd-six-pack-hardender-dones-because-last-on-component
+(deftest handoffd-six-pack-hardender-terminal-broadcast-dones-once
   (let [root (tmp-dir)
         roles six-pack-roles
         sock (do (setup-pack! root roles {"cleaner" "back-one"
                                           "architect" "back-all"
                                           "QA" "back-all"})
                  (create-task root "HTW" "hardender")
-                 (queue-handoff! root {:from "hardender" :to "specifier" :task "HTW"
-                                       :priority "50" :non-forwarding true})
-                 (doseq [role ["specifier" "coder" "cleaner" "architect"]]
-                   (queue-handoff! root {:from "hardender" :to role :task "HTW"
-                                         :priority "00" :non-forwarding true
-                                         :body reverse-structure-body}))
+                 (queue-handoff! root {:from "hardender"
+                                       :to "specifier,coder,cleaner,architect"
+                                       :task "HTW" :priority "50"
+                                       :delivery-kind "terminal"
+                                       :non-forwarding true
+                                       :body reverse-structure-body})
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
@@ -263,18 +312,18 @@
       (is (not= "done" (task-lane root "HTW")))
       (finally
         (stop-tmux! sock)))))
-(deftest handoffd-six-pack-qa-back-all-dones-because-last
+(deftest handoffd-six-pack-qa-terminal-broadcast-dones-once
   (let [root (tmp-dir)
         roles six-pack-roles
         sock (do (setup-pack! root roles {"cleaner" "back-one"
                                           "architect" "back-all"
                                           "QA" "back-all"})
                  (create-task root "HTW" "QA")
-                 (queue-handoff! root {:from "QA" :to "specifier" :task "HTW"
-                                       :priority "50" :non-forwarding true})
-                 (doseq [role ["specifier" "coder" "cleaner" "architect" "hardender"]]
-                   (queue-handoff! root {:from "QA" :to role :task "HTW"
-                                         :priority "00" :non-forwarding true}))
+                 (queue-handoff! root {:from "QA"
+                                       :to "specifier,coder,cleaner,architect,hardender"
+                                       :task "HTW" :priority "50"
+                                       :delivery-kind "terminal"
+                                       :non-forwarding true})
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
@@ -283,15 +332,14 @@
       (is (= "done" (task-lane root "HTW")))
       (finally
         (stop-tmux! sock)))))
-(deftest handoffd-two-pack-cleaner-back-one-dones-because-last
+(deftest handoffd-two-pack-cleaner-terminal-dones-once
   (let [root (tmp-dir)
         roles ["coder" "cleaner"]
         sock (do (setup-pack! root roles {"cleaner" "back-one"})
                  (create-task root "HTW" "cleaner")
                  (queue-handoff! root {:from "cleaner" :to "coder" :task "HTW"
-                                       :priority "50" :non-forwarding true})
-                 (queue-handoff! root {:from "cleaner" :to "coder" :task "HTW"
-                                       :priority "00" :non-forwarding true})
+                                       :priority "50" :delivery-kind "terminal"
+                                       :non-forwarding true})
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
@@ -387,8 +435,10 @@
         sock (do (setup-pack! root roles)
                  (create-task root "htw-console-app" "hardender")
                  (queue-handoff! root {:from "hardender"
-                                       :to "specifier,coder,cleaner,architect,QA"
-                                       :task "htw-console-app"})
+                                       :to "specifier,coder,cleaner,architect"
+                                       :task "htw-console-app"
+                                       :delivery-kind "terminal"
+                                       :non-forwarding true})
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
@@ -399,27 +449,30 @@
       (is (= [] (pending-names root)))
       (finally
         (stop-tmux! sock)))))
-(deftest component-hardender-last-role-git-handoff-is-done
+(deftest component-hardender-partial-terminal-is-rejected
   ;; Given six-pack, component card in hardender
   ;; When hardender queues git_handoff to specifier,coder (not every other role)
-  ;; Then the card is done because hardender is last on this card
+  ;; Then the daemon rejects it because terminal completion is one exact broadcast
   (let [root (tmp-dir)
         roles six-pack-roles
         sock (do (setup-pack! root roles)
                  (create-task root "htw-console-app" "hardender")
                  (queue-handoff! root {:from "hardender"
                                        :to "specifier,coder"
-                                       :task "htw-console-app"})
+                                       :task "htw-console-app"
+                                       :delivery-kind "terminal"
+                                       :non-forwarding true})
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
-      (is (= "done" (task-lane root "htw-console-app")))
+      (is (= "hardender" (task-lane root "htw-console-app")))
+      (is (seq (handoff-names (fs/path root ".swarmforge/handoffs/failed"))))
       (finally
         (stop-tmux! sock)))))
-(deftest component-hardender-one-recipient-non-forwarding-is-done
+(deftest component-hardender-one-recipient-reverse-does-not-finish-card
   ;; Given six-pack, component card in hardender
   ;; When hardender queues a non-forwarding git_handoff to specifier only
-  ;; Then the card is done, not moved to specifier
+  ;; Then the merge copy is delivered without finishing or moving the card
   (let [root (tmp-dir)
         roles six-pack-roles
         sock (do (setup-pack! root roles)
@@ -427,11 +480,12 @@
                  (queue-handoff! root {:from "hardender"
                                        :to "specifier"
                                        :task "HTW"
+                                       :delivery-kind "reverse"
                                        :non-forwarding true})
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
-      (is (= "done" (task-lane root "HTW")))
+      (is (= "hardender" (task-lane root "HTW")))
       (is (seq (inbox-names root roles "specifier")))
       (finally
         (stop-tmux! sock)))))
@@ -530,6 +584,7 @@
                    (queue-handoff! root {:from "coder" :to "cleaner"
                                          :task "pits"
                                          :task-id (first ids)
+                                         :batch-id "batch_20260904T120000Z_000001"
                                          :batch-task-ids ids}))
                  (start-tmux! root roles))]
     (try
@@ -537,6 +592,11 @@
       (is (= "cleaner" (task-lane root "pits")))
       (is (= "cleaner" (task-lane root "bats")))
       (is (= "coder" (task-lane root "unrelated")))
+      (let [delivered (fs/path (pack-worktree root roles "cleaner")
+                               ".swarmforge/handoffs/inbox/new"
+                               (first (inbox-names root roles "cleaner")))]
+        (is (str/includes? (slurp (str delivered))
+                           "batch_id: batch_20260904T120000Z_000001\n")))
       (finally
         (stop-tmux! sock)))))
 (deftest six-pack-qa-broadcast-marks-the-card-done
@@ -547,7 +607,8 @@
         others "specifier,coder,cleaner,architect,hardender"
         sock (do (setup-pack! root six-pack-roles)
                  (create-task root "htw-console-app" "QA")
-                 (queue-handoff! root {:from "QA" :to others :task "htw-console-app"})
+                 (queue-handoff! root {:from "QA" :to others :task "htw-console-app"
+                                       :delivery-kind "terminal" :non-forwarding true})
                  (start-tmux! root six-pack-roles))]
     (try
       (handoffd-once root)

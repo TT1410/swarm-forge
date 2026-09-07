@@ -76,6 +76,8 @@
 (def pane-heat (atom {}))
 (def pane-status (atom {}))
 (def pane-status-lines (atom {}))
+(def grok-active-sessions-cache (atom {}))
+(def grok-log-status-cache (atom {}))
 
 (declare session-name pane-target live-pane-text role-row pane-sample backend-name
          in-process-for-row in-process-task-names approvals

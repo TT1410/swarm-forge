@@ -65,7 +65,7 @@ this branch carries the copies required for a standalone lieutenant install.
 The host configuration contains one `Lieutenant` line. In this branch it is:
 
 ```conf
-Lieutenant grok
+Lieutenant codex
 ```
 
 That line selects the host agent backend and any additional CLI arguments. The
@@ -235,7 +235,9 @@ next `./swarm`, projects remain stopped until they are opened again.
 4. Each role accepts its work, merges the committed handoff, performs its owned
    part of the job, commits, and hands the card to the next role. The handoff
    daemon moves the board card when delivery succeeds. Batch roles may accept
-   compatible queued cards together.
+   compatible queued cards together. A received batch is one atomic work unit:
+   its manifest identifies the one ancestry-complete commit to merge, and the
+   role must finish every member in one combined outgoing handoff.
 5. Because `specifier` uses the project root, its forward handoff on
    `component` and `QA` routes is held in **Attention** for operator approval
    before delivery to `coder`. Clarification requests and repeated delivery

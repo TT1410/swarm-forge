@@ -160,7 +160,8 @@
 (defn increment-audit! [root task-id]
   (pack-board root true "increment-audit" "--root" (str root)
               "--task-id" task-id "--caller" "handoffd"))
-(defn queue-handoff! [root {:keys [from to task task-id batch-task-ids artifacts non-forwarding priority body]}]
+(defn queue-handoff! [root {:keys [from to task task-id batch-id batch-task-ids artifacts
+                                   delivery-kind non-forwarding priority body]}]
   (let [priority (or priority "50")
         id (str "test-" (System/nanoTime))]
     (write-file
@@ -173,8 +174,10 @@
           "type: git_handoff\n"
           (when task-id (str "task_id: " task-id "\n"))
           "task: " task "\n"
+          (when batch-id (str "batch_id: " batch-id "\n"))
           (when batch-task-ids (str "batch_task_ids: " (pr-str batch-task-ids) "\n"))
           (when artifacts (str "artifacts: " artifacts "\n"))
+          (when delivery-kind (str "delivery_kind: " delivery-kind "\n"))
           (when non-forwarding "non-forwarding: true\n")
           "\n"
           (or body "payload") "\n"))))

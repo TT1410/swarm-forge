@@ -72,6 +72,8 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .audit-count{display:inline-flex;align-items:center;gap:2px;flex:0 0 auto;color:var(--muted);font-size:10px;font-weight:600;font-variant-numeric:tabular-nums;line-height:1.2}
 .audit-icon{font-size:10px}
 .card .status{color:var(--muted);font-size:10px;line-height:14px;height:42px;min-height:42px;white-space:normal;overflow:hidden;overflow-wrap:anywhere;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}
+.card .status-phase{color:var(--green);font-weight:700}
+.card .status-phase-no-session{color:var(--red)}
 .card-rejected .status{color:var(--red);font-weight:700;-webkit-line-clamp:1}
 .card-del{margin-left:auto;padding:1px 6px;font-size:10px;line-height:1.2}
 .card .foot{display:flex;justify-content:flex-end;gap:8px;color:var(--muted);font-size:10px;margin-top:auto}

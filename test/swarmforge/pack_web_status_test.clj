@@ -7,6 +7,26 @@
 
 (use-fixtures :once once-fixture)
 
+(defn grok-session-event [session-id timestamp update & [meta]]
+  {:timestamp timestamp
+   :method "session/update"
+   :params {:sessionId session-id
+            :update update
+            :_meta (or meta {})}})
+
+(defn write-grok-session! [grok-root cwd session-id events]
+  (write-file
+   (fs/path grok-root "active_sessions.json")
+   (json/generate-string [{:session_id session-id
+                           :pid 12345
+                           :cwd (str cwd)
+                           :opened_at "2026-09-06T12:00:00Z"}]))
+  (let [encoded (-> (java.net.URLEncoder/encode (str cwd) "UTF-8")
+                    (str/replace "+" "%20"))]
+    (write-file
+     (fs/path grok-root "sessions" encoded session-id "updates.jsonl")
+     (str (str/join "\n" (map json/generate-string events)) "\n"))))
+
 (deftest pack-web-in-process-card-has-heat
   (let [root (tmp-dir)
         roles ["specifier" "coder"]
@@ -263,6 +283,54 @@
     (is (str/includes? (str (:status card)) "Starting replay-setup"))
     (is (not (str/includes? (str (:status card)) "continue")))
     (is (not (str/includes? (str (:status card)) "python3")))))
+(deftest pack-web-grok-card-status-rejects-pinned-timers-and-plans
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (set-backend! root "grok")
+        _ (create-task root "HTW" "specifier")
+        result (pack-web-env root {} "--test-status-pane" (str root)
+                             (str "I’ll inspect the failing distance specs next.\n"
+                                  "▶ Run the focused specs\n"
+                                  "□ Commit the repair\n"
+                                  "⠸ Thinking… 7.3s                         30s ⇣31.4k\n"
+                                  "0.2s                                      18s ⇣26.1k\n"))
+        card (first (:tasks (json/parse-string (:out result) true)))]
+    (is (zero? (:exit result)))
+    (is (= "I’ll inspect the failing distance specs next." (:status card)))
+    (is (= "working" (:status_phase card)))
+    (is (not (str/includes? (:status card) "Thinking")))
+    (is (not (str/includes? (:status card) "26.1k")))))
+(deftest pack-web-grok-card-status-comes-from-structured-session-log
+  (let [root (tmp-dir)
+        grok-root (tmp-dir)
+        session-id "01a00000-0000-7000-8000-000000000001"
+        _ (setup-pack! root)
+        _ (set-backend! root "grok")
+        _ (create-task root "HTW" "specifier")
+        _ (write-file (role-pane-path root "specifier")
+                      "0.2s                                      18s ⇣26.1k\n")
+        message (grok-session-event
+                 session-id 1
+                 {:sessionUpdate "agent_message_chunk"
+                  :content {:type "text"
+                            :text "The distance tests expose a stale polling result. I’ll trace its cache boundary."}}
+                 {:promptId "prompt-1" :streamStartMs 1})
+        plan (grok-session-event
+              session-id 2
+              {:sessionUpdate "plan"
+               :entries [{:content "Trace the polling cache boundary"
+                          :status "completed"}
+                         {:content "Run the focused distance specs"
+                          :status "in_progress"}]}
+              {:promptId "prompt-1"})
+        _ (write-grok-session! grok-root root session-id [message plan])
+        result (pack-web-env root {"SWARMFORGE_GROK_HOME" (str grok-root)}
+                             "--test-state" (str root))
+        card (first (:tasks (json/parse-string (:out result) true)))]
+    (is (zero? (:exit result)))
+    (is (= "Run the focused distance specs." (:status card)))
+    (is (= "working" (:status_phase card)))
+    (is (not (str/includes? (:status card) "26.1k")))))
 (deftest pack-web-waiting-cards-say-waiting-in-queue
   ;; Given two specifier cards and a pane I'm sentence
   ;; When --test-status-pane

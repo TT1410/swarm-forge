@@ -13,6 +13,9 @@
   ask the operator with `pack_dashboard_request.sh clarify ./tmp/question.txt`.
   Do not ask in the pane. Do not send a `note` handoff unless one of
   the explicit authorities above directed that note.
+- Write every Attention or clarification message in plain language. State the
+  decision or action the operator needs to take. Avoid protocol names, helper
+  internals, and agent shorthand unless that detail is necessary to decide.
 - If the operator's clarification answer is a question, file a new
   `clarify` whose body answers that question and restates the original
   request. If the answer is a directive (including changing Gherkin),
@@ -34,6 +37,10 @@ task: <short-stable-task-name>
   If you are last on that chain, send the terminal handoff. Formatting-only,
   manifest-only, audit-only, generated metadata, and other non-functional churn
   still require a forward down the chain.
+- The helper classifies generated Git delivery as `forward`, `reverse`, or
+  `terminal`. Do not write that reserved classification in the draft. A
+  terminal handoff is one broadcast to the complete upstream recipient set;
+  propagation settings must not create additional reverse copies for it.
 - A reverse (`non-forwarding`) inbound `git_handoff` is merge-only. Merge it,
   then `done_with_current`. Do not send a `git_handoff` for that inbound. The
   helper refuses a `git_handoff` while inbound is `non-forwarding`.
@@ -75,8 +82,10 @@ message: <one line, max 80 chars>
 - If it prints `TASK: <path>`, treat the printed `PAYLOAD` as the task.
 - If it prints `TASK_NAME: <name>`, use that as the stable task name for any
   work you forward from that task.
-- If it prints `BATCH: <path>`, treat each printed `BATCH_ITEM` as part of the
-  current batch in helper-delivered order.
+- If it prints `BATCH: <path>`, treat the declared batch and every printed
+  `BATCH_ITEM` as one atomic work unit. Complete every member, make one combined
+  result commit, and send one outgoing handoff for the whole batch. Never
+  complete or forward one member separately.
 - Use only the task information printed by the helper scripts.
 - If a tmux wake-up arrives while already working on a task, ignore it,
   except a lieutenant stop. If the pane says the lieutenant stopped

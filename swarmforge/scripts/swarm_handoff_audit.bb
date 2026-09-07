@@ -66,6 +66,7 @@
 (defn invocation-fingerprint [draft sender headers]
   {:sender sender
    :task-id (audit-task-id headers)
+   :batch-id (get headers "batch_id")
    :batch-task-ids (audit-task-ids headers)
    :type (get headers "type")
    :recipients (vec (str/split (or (get headers "to") "") #"," -1))
@@ -89,6 +90,7 @@
   {:version 1
    :sender sender
    :task-id (audit-task-id headers)
+   :batch-id (get headers "batch_id")
    :batch-task-ids (audit-task-ids headers)
    :type (get headers "type")
    :recipients (vec recipients)
@@ -104,6 +106,8 @@
   (println "AUDIT_REQUIRED")
   (println "HANDOFF_NOT_QUEUED")
   (println "TASK_ID:" (:task-id candidate))
+  (when-let [batch-id (:batch-id candidate)]
+    (println "BATCH_ID:" batch-id))
   (println "COMMIT:" (:commit candidate))
   (println)
   (println "Re-read the complete inbound task payload and every source it references.")

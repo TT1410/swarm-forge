@@ -50,6 +50,11 @@
   (require 'safe-paths)
   (catch Exception _
     (load-file (str (fs/path script-dir "safe_paths.bb")))))
+(try
+  (require '[handoff-state :as handoff-state])
+  (catch Exception _
+    (load-file (str (fs/path script-dir "handoff_state.bb")))
+    (require '[handoff-state :as handoff-state])))
 
 (declare role-rows halt-live-card!)
 

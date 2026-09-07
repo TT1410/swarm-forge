@@ -202,7 +202,7 @@
 (def terminal-helpers
   ["terminal-app.sh" "iterm2.sh" "ghostty.sh" "windows-terminal.sh" "none.sh"])
 
-(def required-libraries ["card_type.bb" "safe_paths.bb"])
+(def required-libraries ["card_type.bb" "safe_paths.bb" "handoff_state.bb"])
 
 (defn check-helper-scripts! [ctx]
   (doseq [helper required-helpers]

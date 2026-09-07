@@ -372,7 +372,10 @@ function chatAtBottom(history) {
 
 function renderLieutenantStatus(data) {
   const status = $("lieutenant-status");
-  const lines = (data.lieutenant_status || []).slice(-2);
+  const semantic = data.lieutenant_status || [];
+  const lines = data.lieutenant_phase
+    ? ["Lieutenant · " + displayName(data.lieutenant_phase)].concat(semantic.slice(-1))
+    : semantic.slice(-2);
   status.hidden = !data.forge;
   status.replaceChildren();
   lines.forEach((text) => {

@@ -44,7 +44,15 @@ function cardEl(task, opts) {
   if (!thin) {
     const status = document.createElement("div");
     status.className = "status";
-    status.textContent = task.status || "";
+    if (task.status_phase === "working" || task.status_phase === "no session") {
+      const phase = document.createElement("span");
+      phase.className = "status-phase status-phase-" + task.status_phase.replace(/\s+/g, "-");
+      phase.textContent = displayName(task.status_phase);
+      status.appendChild(phase);
+      if (task.status) status.appendChild(document.createTextNode(" · " + task.status));
+    } else {
+      status.textContent = task.status || "";
+    }
     card.appendChild(status);
   }
   card.onclick = () => {

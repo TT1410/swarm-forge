@@ -262,6 +262,7 @@
                  (:out (pack-web root true "--test-state" (str root)))
                  true)]
       (is (true? (:forge state)))
+      (is (= "idle" (:lieutenant_phase state)))
       (is (= ["I'm listing the open projects." "I'll summarize HTW next."]
              (:lieutenant_status state))))))
 (deftest forge-state-keeps-lieutenant-prose-ahead-of-grok-tool-output

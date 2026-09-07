@@ -515,7 +515,7 @@ test.describe("pack dashboard", () => {
       const lines = status.locator(".lt-status-line");
       await expect(lines).toHaveCount(2);
       await expect(lines).toHaveText([
-        "I'm listing the open projects.",
+        "Lieutenant · Idle",
         "I'll summarize HTW next."
       ]);
       await expect(status).toHaveCSS("color", "rgb(47, 107, 58)");
@@ -635,6 +635,7 @@ test.describe("mocked dashboard buttons", () => {
           { name: "Older", lane: "specifier", type: "QA", status: "waiting in queue",
             updated_at: "2026-01-01T00:00:00Z", project: "htw" },
           { name: "Active", lane: "specifier", type: "QA", status: "I'm writing the spec.",
+            status_phase: "working",
             updated_at: "2026-01-02T00:00:00Z", project: "htw" }
         ])
       });
@@ -642,6 +643,8 @@ test.describe("mocked dashboard buttons", () => {
     await page.goto(handle.url);
     const names = page.locator('.col[data-lane="specifier"] .card .name');
     await expect(names).toHaveText(["Active", "Older", "Newer"]);
+    await expect(page.locator('.card[data-task-name="Active"] .status-phase')).toHaveText("Working");
+    await expect(page.locator('.card[data-task-name="Active"] .status')).toContainText("I'm writing the spec.");
   });
 
   test("active cards reserve five lines while batch children and edge cards stay two lines", async ({ page }) => {

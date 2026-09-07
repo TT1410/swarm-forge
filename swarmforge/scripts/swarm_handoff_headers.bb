@@ -120,6 +120,7 @@
       (with-board-task sender)
       with-batch-task-ids
       (fill-card-type sender)
+      (with-delivery-kind sender)
       (with-non-forwarding sender)
       fill-priority))
 
@@ -235,6 +236,8 @@
     (and (= sender (get h "from"))
          (= (set recipients) (set (str/split (or (get h "to") "") #",")))
          (= task-id other-id)
+         (= (get headers "batch_id") (get h "batch_id"))
+         (= (get headers "batch_task_ids") (get h "batch_task_ids"))
          (= canonical-commit (get h "commit")))))
 
 (defn duplicate-errors [sender recipients headers canonical-commit]

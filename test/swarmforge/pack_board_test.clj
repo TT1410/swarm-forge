@@ -468,3 +468,31 @@
       (is (pos? (:exit blocked)))
       (is (str/includes? (:err blocked) "in-flight reverse merge"))
       (is (nil? (task-lane root "next"))))))
+
+(deftest waiting-card-can-be-created-during-reverse-but-cannot-start
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)
+        reverse (fs/path root ".swarmforge/handoffs/inbox/in_process/00_rev.handoff")]
+    (write-file reverse
+                (str "from: architect\nto: specifier\npriority: 00\n"
+                     "type: git_handoff\ntask: current\ndelivery_kind: reverse\n"
+                     "non-forwarding: true\n\nmerge\n"))
+    (let [created (pack-board root true "create" "--root" (str root)
+                              "--name" "next" "--type" "component" "--waiting")]
+      (is (zero? (:exit created)))
+      (is (= "waiting" (task-lane root "next")))
+      (is (empty? (handoff-names (fs/path root ".swarmforge/handoffs/outbox")))))
+    (let [blocked (pack-board root false "move" "--root" (str root)
+                              "--name" "next" "--lane" "specifier"
+                              "--caller" "lieutenant")]
+      (is (pos? (:exit blocked)))
+      (is (str/includes? (:err blocked) "start refused: in-flight reverse merge"))
+      (is (= "waiting" (task-lane root "next"))))
+    (fs/delete reverse)
+    (let [started (pack-board root true "move" "--root" (str root)
+                              "--name" "next" "--lane" "specifier"
+                              "--caller" "lieutenant")]
+      (is (zero? (:exit started)))
+      (is (= "specifier" (task-lane root "next")))
+      (is (= 1 (count (handoff-names
+                       (fs/path root ".swarmforge/handoffs/outbox"))))))))

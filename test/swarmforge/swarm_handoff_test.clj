@@ -779,6 +779,7 @@
           content (when (zero? (:exit result)) (read-file queued))]
       (is (zero? (:exit result)))
       (is (str/includes? (str content) "non-forwarding: true\n"))
+      (is (str/includes? (str content) "delivery_kind: terminal\n"))
       (is (= 1 (count (outbox-handoffs root)))))))
 (deftest swarm-handoff-non-last-role-does-not-tag-non-forwarding
   ;; Given sender is not the last pack role
@@ -797,7 +798,8 @@
           queued (queued-path (:out result))
           content (when (zero? (:exit result)) (read-file queued))]
       (is (zero? (:exit result)))
-      (is (not (str/includes? (str content) "non-forwarding:"))))))
+      (is (not (str/includes? (str content) "non-forwarding:")))
+      (is (str/includes? (str content) "delivery_kind: forward\n")))))
 (deftest swarm-handoff-refactorer-back-one-writes-reverse-copy
   ;; Given four-pack refactorer back-one
   ;; When it queues git_handoff to architect
@@ -820,6 +822,8 @@
     (is (= "coder" (header reverse "to")))
     (is (not (str/includes? (header forward "to") "coder")))
     (is (= "true" (header reverse "non-forwarding")))
+    (is (= "reverse" (header reverse "delivery_kind")))
+    (is (= "forward" (header forward "delivery_kind")))
     (is (not= "true" (header forward "non-forwarding")))
     (is (str/includes? (handoff-body reverse) (str "merge_and_process.sh refactorer " sha)))
     (is (str/includes? (handoff-body reverse) "inbound tree is the structure"))
@@ -829,35 +833,27 @@
     (is (not (str/includes? (handoff-body forward) extra)))
     (is (not (str/includes? (handoff-body reverse) extra)))
     (is (= 2 (count (outbox-handoffs root))))))
-(deftest swarm-handoff-architect-back-all-writes-upstream-copies
+(deftest swarm-handoff-terminal-back-all-writes-one-broadcast
   ;; Given four-pack architect last with back-all
   ;; When it queues git_handoff
-  ;; Then specifier, coder, and refactorer get merge-only copies
+  ;; Then it queues one terminal broadcast, not a broadcast plus reverse copies
   (let [root (tmp-dir)
         _ (init-repo! root)
         _ (setup-project! root four-pack-role-rows)
         _ (commit-work! root)
-        result (queue-git-from! root "architect" "specifier" "HTW")
+        result (queue-git-from! root "architect" "specifier,coder,refactorer" "HTW")
+        queued (first (outbox-handoffs root))
         extra "Please also rewrite the layout."]
     (is (zero? (:exit result)))
-    (doseq [role ["specifier" "coder" "refactorer"]]
-      (let [copy (outbox-to root role)]
-        (is (some? copy) role)
-        (is (str/starts-with? (fs/file-name copy) "00_") role)
-        (is (= "true" (header copy "non-forwarding")) role)
-        (is (= role (header copy "to")) role)
-        (is (str/includes? (handoff-body copy) "merge_and_process.sh architect"))
-        (is (str/includes? (handoff-body copy) "inbound tree is the structure"))
-        (is (not (str/includes? (handoff-body copy) extra)))))
-    (let [forward (first (filter #(str/starts-with? (fs/file-name %) "50_")
-                                 (outbox-handoffs root)))]
-      (is (some? forward))
-      (is (= "specifier" (header forward "to")))
-      (is (= "true" (header forward "non-forwarding")))
-      (is (str/includes? (handoff-body forward) "merge_and_process.sh architect"))
-      (is (str/includes? (handoff-body forward) "inbound tree is the structure"))
-      (is (not (str/includes? (handoff-body forward) "current tree is the structure")))
-      (is (not (str/includes? (handoff-body forward) extra))))))
+    (is (= 1 (count (outbox-handoffs root))))
+    (is (= "specifier,coder,refactorer" (header queued "to")))
+    (is (= "terminal" (header queued "delivery_kind")))
+    (is (= "true" (header queued "non-forwarding")))
+    (is (str/starts-with? (fs/file-name queued) "50_"))
+    (is (str/includes? (handoff-body queued) "merge_and_process.sh architect"))
+    (is (str/includes? (handoff-body queued) "inbound tree is the structure"))
+    (is (not (str/includes? (handoff-body queued) "current tree is the structure")))
+    (is (not (str/includes? (handoff-body queued) extra)))))
 (deftest swarm-handoff-six-pack-architect-back-all-skips-downstream
   ;; Given six-pack architect back-all (not last)
   ;; When it queues git_handoff to hardender
@@ -870,24 +866,25 @@
     (is (zero? (:exit result)))
     (is (= "hardender" (header (outbox-to root "hardender") "to")))
     (is (not= "true" (header (outbox-to root "hardender") "non-forwarding")))
+    (is (= "forward" (header (outbox-to root "hardender") "delivery_kind")))
     (doseq [role ["specifier" "coder" "cleaner"]]
       (is (= "true" (header (outbox-to root role) "non-forwarding")) role)
+      (is (= "reverse" (header (outbox-to root role) "delivery_kind")) role)
       (is (str/starts-with? (fs/file-name (outbox-to root role)) "00_") role))
     (is (nil? (outbox-to root "QA")))))
-(deftest swarm-handoff-six-pack-qa-back-all-copies-every-earlier-window
+(deftest swarm-handoff-six-pack-qa-back-all-writes-one-terminal-broadcast
   (let [root (tmp-dir)
         _ (init-repo! root)
         _ (setup-project! root six-pack-role-rows)
         _ (commit-work! root)
-        result (queue-git-from! root "QA" "specifier" "HTW")]
+        result (queue-git-from! root "QA" "specifier,coder,cleaner,architect,hardender" "HTW")
+        terminal (first (outbox-handoffs root))]
     (is (zero? (:exit result)))
-    (doseq [role ["specifier" "coder" "cleaner" "architect" "hardender"]]
-      (is (some? (outbox-to root role)) role)
-      (is (= "true" (header (outbox-to root role) "non-forwarding")) role))
-    (let [forward (first (filter #(str/starts-with? (fs/file-name %) "50_")
-                                 (outbox-handoffs root)))]
-      (is (= "true" (header forward "non-forwarding"))))))
-(deftest swarm-handoff-two-pack-cleaner-back-one-copies-coder
+    (is (= 1 (count (outbox-handoffs root))))
+    (is (= "specifier,coder,cleaner,architect,hardender" (header terminal "to")))
+    (is (= "terminal" (header terminal "delivery_kind")))
+    (is (= "true" (header terminal "non-forwarding")))))
+(deftest swarm-handoff-two-pack-cleaner-back-one-writes-one-terminal
   (let [root (tmp-dir)
         _ (init-repo! root)
         _ (setup-project! root [["coder" "task" "forward-only"]
@@ -896,10 +893,9 @@
         result (queue-git-from! root "cleaner" "coder" "HTW")]
     (is (zero? (:exit result)))
     (is (= "true" (header (outbox-to root "coder") "non-forwarding")))
-    (is (str/starts-with? (fs/file-name (outbox-to root "coder")) "00_"))
-    (let [forward (first (filter #(str/starts-with? (fs/file-name %) "50_")
-                                 (outbox-handoffs root)))]
-      (is (= "true" (header forward "non-forwarding"))))))
+    (is (= "terminal" (header (outbox-to root "coder") "delivery_kind")))
+    (is (str/starts-with? (fs/file-name (outbox-to root "coder")) "50_"))
+    (is (= 1 (count (outbox-handoffs root))))))
 (deftest swarm-handoff-last-window-forward-only-has-no-reverse-copies
   (let [root (tmp-dir)
         _ (init-repo! root)
@@ -910,6 +906,7 @@
     (is (zero? (:exit result)))
     (is (= 1 (count (outbox-handoffs root))))
     (is (= "true" (header (outbox-to root "coder") "non-forwarding")))
+    (is (= "terminal" (header (outbox-to root "coder") "delivery_kind")))
     (is (str/includes? (handoff-body (outbox-to root "coder"))
                        "inbound tree is the structure"))
     (is (not (str/includes? (handoff-body (outbox-to root "coder"))
@@ -1043,9 +1040,64 @@
       (is (str/includes? (str content) "task: Command syntax\n"))
       (is (= "[\"command-id\" \"validate-id\"]"
              (header queued "batch_task_ids")))
+      (is (= "batch_20260824T182225Z_000001"
+             (header queued "batch_id")))
       (is (= 1 (board-audit-count root "Command syntax")))
       (is (= 1 (board-audit-count root "validate")))
       (is (not (str/includes? (str content) "task: HTW\n"))))))
+
+(deftest swarm-handoff-rejects-a-result-missing-a-batch-member-commit
+  (let [root (tmp-dir)
+        base (init-repo! root)
+        _ (setup-project! root {"sender" "batch" "receiver" "task"})
+        _ (write-file (fs/path root "adaptive.md") "adaptive\n")
+        _ (run {:dir root} "git" "add" "adaptive.md")
+        _ (run {:dir root} "git" "commit" "-q" "-m" "Adaptive result")
+        adaptive (str/trim (:out (run {:dir root} "git" "rev-parse" "HEAD")))
+        _ (run {:dir root} "git" "branch" "complete-batch")
+        _ (run {:dir root} "git" "checkout" "-q" "complete-batch")
+        _ (write-file (fs/path root "tactical.md") "tactical\n")
+        _ (run {:dir root} "git" "add" "tactical.md")
+        _ (run {:dir root} "git" "commit" "-q" "-m" "Tactical result")
+        tactical (str/trim (:out (run {:dir root} "git" "rev-parse" "HEAD")))
+        _ (run {:dir root} "git" "checkout" "-q" "master")
+        batch-id "batch_20260904T120000Z_000001"
+        batch (fs/path root ".swarmforge/handoffs/inbox/in_process" batch-id)
+        members [{:file "50_adaptive.handoff" :handoff-id "adaptive"
+                  :task "adaptive" :task-id "adaptive-id" :task-ids ["adaptive-id"]
+                  :from "coder" :type "git_handoff" :commit adaptive :merge-from "coder"}
+                 {:file "50_tactical.handoff" :handoff-id "tactical"
+                  :task "tactical" :task-id "tactical-id" :task-ids ["tactical-id"]
+                  :from "coder" :type "git_handoff" :commit tactical :merge-from "coder"}]
+        _ (fs/create-dirs batch)
+        _ (write-file (fs/path batch "50_adaptive.handoff")
+                      (handoff {:id "adaptive" :from "coder" :to "sender" :recipient "sender"
+                                :priority "50" :type "git_handoff" :task-id "adaptive-id"
+                                :task "adaptive" :commit adaptive :task-base-commit base}))
+        _ (write-file (fs/path batch "50_tactical.handoff")
+                      (handoff {:id "tactical" :from "coder" :to "sender" :recipient "sender"
+                                :priority "50" :type "git_handoff" :task-id "tactical-id"
+                                :task "tactical" :commit tactical :task-base-commit base}))
+        _ (write-file (fs/path batch "batch_manifest.edn")
+                      (str (pr-str {:version 1 :batch-id batch-id
+                                    :task-ids ["adaptive-id" "tactical-id"]
+                                    :members members :selected-commit tactical
+                                    :selected-from "coder"}) "\n"))
+        _ (write-file (fs/path root ".swarmforge/board/tasks.tsv")
+                      (str "adaptive\tsender\tcreated\tupdated\tadaptive-id\n"
+                           "tactical\tsender\tcreated\tupdated\ttactical-id\n"))
+        draft (fs/path root "tmp" "partial-batch.handoff")]
+    (write-file draft "type: git_handoff\nto: receiver\npriority: 50\ntask: adaptive\n")
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false}
+                      (script "swarm_handoff.sh") (str draft))]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "is incomplete for batch"))
+      (is (fs/directory? batch))
+      (is (fs/regular-file? draft))
+      (is (empty? (outbox-handoffs root)))
+      (is (= ["adaptive\tsender\tcreated\tupdated\tadaptive-id"
+              "tactical\tsender\tcreated\tupdated\ttactical-id"]
+             (str/split-lines (read-file (fs/path root ".swarmforge/board/tasks.tsv"))))))))
 
 (deftest swarm-handoff-preserves-a-propagated-batch-through-task-mode
   (let [root (tmp-dir)

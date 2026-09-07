@@ -31,7 +31,7 @@
 
 (def reserved-fields #{"id" "from" "role" "recipient" "created_at" "enqueued_at"
                        "dequeued_at" "completed_at" "task_base_commit" "non-forwarding"
-                       "card_type" "batch_task_ids"})
+                       "delivery_kind" "card_type" "batch_id" "batch_task_ids"})
 (def allowed-fields #{"type" "to" "priority" "task_id" "task" "commit" "message"})
 (def allowed-types #{"git_handoff" "note"})
 (def script-dir (fs/parent *file*))
@@ -111,7 +111,7 @@
     "note" (str "Re-read your role and constitution.\n\n" note-message)))
 
 (defn write-handoff! [{:keys [headers recipients canonical-commit artifacts sender
-                              priority non-forwarding reverse?]}]
+                              priority non-forwarding delivery-kind reverse?]}]
   (let [timestamp-id (id-timestamp)
         created-at (timestamp)
         sequence (next-sequence)
@@ -119,6 +119,7 @@
         recipient-slug (str/join "_" recipients)
         priority (or priority (get headers "priority"))
         type (get headers "type")
+        delivery-kind (or delivery-kind (get headers "delivery_kind"))
         non-forwarding? (if (some? non-forwarding)
                           non-forwarding
                           (= "true" (get headers "non-forwarding")))
@@ -142,8 +143,12 @@
                       (str "artifacts: " artifacts))
                 (and (= "git_handoff" type) (not (str/blank? (get headers "batch_task_ids"))))
                 (conj (str "batch_task_ids: " (get headers "batch_task_ids")))
+                (and (= "git_handoff" type) (not (str/blank? (get headers "batch_id"))))
+                (conj (str "batch_id: " (get headers "batch_id")))
                 (and (= "git_handoff" type) (not (str/blank? (get headers "card_type"))))
                 (conj (str "card_type: " (get headers "card_type")))
+                (and (= "git_handoff" type) (not (str/blank? delivery-kind)))
+                (conj (str "delivery_kind: " delivery-kind))
                 (and (= "git_handoff" type) (not (str/blank? (current-task-base))))
                 (conj (str "task_base_commit: " (current-task-base)))
                 non-forwarding?
@@ -161,13 +166,16 @@
     outbox-file))
 
 (defn write-handoffs! [ctx]
-  (let [forward (write-handoff! (assoc ctx :reverse? false))
-        reverse (when (= "git_handoff" (get-in ctx [:headers "type"]))
+  (let [git? (= "git_handoff" (get-in ctx [:headers "type"]))
+        terminal? (= "terminal" (get-in ctx [:headers "delivery_kind"]))
+        forward (write-handoff! (assoc ctx :reverse? false))
+        reverse (when (and git? (not terminal?))
                   (mapv (fn [role]
                           (write-handoff! (assoc ctx
                                                  :recipients [role]
                                                  :priority "00"
                                                  :non-forwarding true
+                                                 :delivery-kind "reverse"
                                                  :reverse? true)))
                         (reverse-roles (:sender ctx) (get-in ctx [:headers "task"]))))]
     (into [forward] reverse)))
@@ -220,6 +228,7 @@
                                       (current-work-state-errors headers)
                                       (task-state-errors headers sender)
                                       (ancestry-errors headers (:canonical-commit validation))
+                                      (current-batch-ancestry-errors (:canonical-commit validation))
                                       (task-document-errors headers (:canonical-commit validation))
                                       (duplicate-errors sender
                                                         (:recipients validation)

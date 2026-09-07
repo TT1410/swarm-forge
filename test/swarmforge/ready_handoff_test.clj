@@ -1,5 +1,6 @@
 (ns swarmforge.ready-handoff-test
   (:require [babashka.fs :as fs]
+            [clojure.edn :as edn]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing use-fixtures]]
             [swarmforge.handoff-test-support :refer :all]))
@@ -310,6 +311,135 @@
         (is (= "TASK_NAME: task-a" (nth lines name-i))))
       (is (= 2 (count (fs/glob batch-dir "*.handoff"))))
       (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/20_20260615T000003Z_000003_from_sender_to_receiver.handoff"))))))
+
+(deftest ready-for-next-batch-merges-only-the-ancestry-complete-commit
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        sender (add-worktree! root "sender")
+        receiver (add-worktree! root "receiver")
+        _ (setup-project! root {"sender" "task" "receiver" "batch"})
+        _ (write-file (fs/path root ".swarmforge/roles.tsv")
+                      (format "sender\tsender\t%s\tsession\tSender\tcodex\ttask\nreceiver\treceiver\t%s\tsession\tReceiver\tcodex\tbatch\n"
+                              sender receiver))
+        _ (write-file (fs/path sender "adaptive.md") "adaptive\n")
+        _ (run {:dir sender} "git" "add" "adaptive.md")
+        _ (run {:dir sender} "git" "commit" "-q" "-m" "Adaptive polling")
+        adaptive (str/trim (:out (run {:dir sender} "git" "rev-parse" "HEAD")))
+        _ (write-file (fs/path sender "tactical.md") "tactical\n")
+        _ (run {:dir sender} "git" "add" "tactical.md")
+        _ (run {:dir sender} "git" "commit" "-q" "-m" "Tactical persistence")
+        tactical (str/trim (:out (run {:dir sender} "git" "rev-parse" "HEAD")))]
+    (doseq [dir ["new" "in_process" "completed"]]
+      (fs/create-dirs (fs/path receiver ".swarmforge/handoffs/inbox" dir)))
+    (make-queued-handoff! receiver "50_adaptive.handoff"
+                          {:id "adaptive" :from "sender" :to "receiver"
+                           :recipient "receiver" :task-id "adaptive-id"
+                           :task "adaptive-polling" :commit adaptive})
+    (make-queued-handoff! receiver "50_tactical.handoff"
+                          {:id "tactical" :from "sender" :to "receiver"
+                           :recipient "receiver" :task-id "tactical-id"
+                           :task "tactical-persistence" :commit tactical})
+    (let [result (run {:dir receiver :env {"SWARMFORGE_ROLE" "receiver"}}
+                      (script "ready_for_next.sh"))
+          batch-dir (->> (str/split-lines (:out result))
+                         (some #(when (str/starts-with? % "BATCH: ")
+                                  (subs % (count "BATCH: ")))))
+          manifest (edn/read-string
+                    (read-file (fs/path batch-dir "batch_manifest.edn")))
+          reflog (str/split-lines
+                  (:out (run {:dir receiver} "git" "reflog" "--format=%gs")))]
+      (is (= tactical (:selected-commit manifest)))
+      (is (= [adaptive tactical] (mapv :commit (:members manifest))))
+      (is (= tactical (str/trim (:out (run {:dir receiver} "git" "rev-parse" "HEAD")))))
+      (is (= 1 (count (filter #(str/starts-with? % "merge ") reflog)))))))
+
+(deftest ready-for-next-batch-rejects-non-linear-commits-before-dequeue
+  (let [root (tmp-dir)
+        base (init-repo! root)
+        sender-a (add-worktree! root "sender-a")
+        sender-b (add-worktree! root "sender-b")
+        receiver (add-worktree! root "receiver")
+        _ (setup-project! root {"sender-a" "task" "sender-b" "task" "receiver" "batch"})
+        _ (write-file (fs/path root ".swarmforge/roles.tsv")
+                      (format "sender-a\tsender-a\t%s\tsession\tA\tcodex\ttask\nsender-b\tsender-b\t%s\tsession\tB\tcodex\ttask\nreceiver\treceiver\t%s\tsession\tReceiver\tcodex\tbatch\n"
+                              sender-a sender-b receiver))
+        _ (write-file (fs/path sender-a "a.md") "a\n")
+        _ (run {:dir sender-a} "git" "add" "a.md")
+        _ (run {:dir sender-a} "git" "commit" "-q" "-m" "A")
+        a (head-sha sender-a)
+        _ (write-file (fs/path sender-b "b.md") "b\n")
+        _ (run {:dir sender-b} "git" "add" "b.md")
+        _ (run {:dir sender-b} "git" "commit" "-q" "-m" "B")
+        b (head-sha sender-b)]
+    (doseq [dir ["new" "in_process" "completed"]]
+      (fs/create-dirs (fs/path receiver ".swarmforge/handoffs/inbox" dir)))
+    (make-queued-handoff! receiver "50_a.handoff"
+                          {:id "a" :from "sender-a" :to "receiver" :recipient "receiver"
+                           :task-id "a-id" :task "a" :commit a})
+    (make-queued-handoff! receiver "50_b.handoff"
+                          {:id "b" :from "sender-b" :to "receiver" :recipient "receiver"
+                           :task-id "b-id" :task "b" :commit b})
+    (let [result (run {:dir receiver :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                      (script "ready_for_next.sh"))]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "NON_LINEAR_BATCH"))
+      (is (= base (head-sha receiver)))
+      (is (= 2 (count (fs/glob (fs/path receiver ".swarmforge/handoffs/inbox/new")
+                               "*.handoff"))))
+      (is (empty? (fs/glob (fs/path receiver ".swarmforge/handoffs/inbox/in_process")
+                           "batch_*"))))))
+
+(deftest ready-for-next-batch-declares-and-retains-complete-commit-on-conflict
+  (let [root (tmp-dir)
+        _ (init-repo! root)
+        _ (write-file (fs/path root "shared.txt") "base\n")
+        _ (run {:dir root} "git" "add" "shared.txt")
+        _ (run {:dir root} "git" "commit" "-q" "-m" "Shared base")
+        sender (add-worktree! root "sender")
+        receiver (add-worktree! root "receiver")
+        _ (setup-project! root {"sender" "task" "receiver" "batch"})
+        _ (write-file (fs/path root ".swarmforge/roles.tsv")
+                      (format "sender\tsender\t%s\tsession\tSender\tcodex\ttask\nreceiver\treceiver\t%s\tsession\tReceiver\tcodex\tbatch\n"
+                              sender receiver))
+        _ (write-file (fs/path sender "shared.txt") "adaptive\n")
+        _ (run {:dir sender} "git" "add" "shared.txt")
+        _ (run {:dir sender} "git" "commit" "-q" "-m" "Adaptive polling")
+        adaptive (head-sha sender)
+        _ (write-file (fs/path sender "shared.txt") "adaptive and tactical\n")
+        _ (run {:dir sender} "git" "add" "shared.txt")
+        _ (run {:dir sender} "git" "commit" "-q" "-m" "Tactical persistence")
+        tactical (str/trim (:out (run {:dir sender} "git" "rev-parse" "HEAD")))
+        _ (write-file (fs/path receiver "shared.txt") "receiver structure\n")
+        _ (run {:dir receiver} "git" "add" "shared.txt")
+        _ (run {:dir receiver} "git" "commit" "-q" "-m" "Receiver structure")]
+    (doseq [dir ["new" "in_process" "completed"]]
+      (fs/create-dirs (fs/path receiver ".swarmforge/handoffs/inbox" dir)))
+    (make-queued-handoff! receiver "50_adaptive.handoff"
+                          {:id "adaptive" :from "sender" :to "receiver" :recipient "receiver"
+                           :task-id "adaptive-id" :task "adaptive-polling" :commit adaptive})
+    (make-queued-handoff! receiver "50_tactical.handoff"
+                          {:id "tactical" :from "sender" :to "receiver" :recipient "receiver"
+                           :task-id "tactical-id" :task "tactical-persistence" :commit tactical})
+    (let [first-result (run {:dir receiver :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                            (script "ready_for_next.sh"))
+          batch-dir (->> (str/split-lines (:out first-result))
+                         (some #(when (str/starts-with? % "BATCH: ")
+                                  (subs % (count "BATCH: ")))))
+          manifest (edn/read-string
+                    (read-file (fs/path batch-dir "batch_manifest.edn")))
+          merge-head (str/trim (:out (run {:dir receiver} "git" "rev-parse" "MERGE_HEAD")))
+          resumed (run {:dir receiver :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                       (script "ready_for_next.sh"))]
+      (is (= 1 (:exit first-result)))
+      (is (some? batch-dir))
+      (is (str/includes? (:out first-result)
+                         (str "SELECTED_COMMIT: " (subs tactical 0 10))))
+      (is (= 2 (count (filter #(str/starts-with? % "BATCH_MEMBER: ")
+                              (str/split-lines (:out first-result))))))
+      (is (= tactical (:selected-commit manifest)))
+      (is (= tactical merge-head))
+      (is (str/includes? (:out resumed) (str "BATCH_ID: " (:batch-id manifest))))
+      (is (fs/regular-file? (fs/path batch-dir "batch_manifest.edn"))))))
 (deftest ready-for-next-batch-keeps-same-priority-of-one-card-type
   (let [root (tmp-dir)]
     (init-repo! root)
@@ -493,6 +623,8 @@
                           :from "sender" :to "receiver" :recipient "receiver"
                           :priority "10" :type "git_handoff" :task "task-b"
                           :commit (head-sha root)}))
+    (write-file (fs/path batch "batch_manifest.edn")
+                (str (pr-str {:version 1 :batch-id (fs/file-name batch)}) "\n"))
     (make-queued-handoff! root "20_20260615T000003Z_000003_from_sender_to_receiver.handoff"
                           {:id "20260615T000003Z_000003_from_sender"
                            :priority "20"
@@ -507,6 +639,7 @@
       (is (= 2 (count (fs/glob completed-batch "*.handoff"))))
       (is (every? #(some? (header % "completed_at"))
                   (fs/glob completed-batch "*.handoff")))
+      (is (fs/regular-file? (fs/path completed-batch "batch_manifest.edn")))
       (is (fs/exists? next-file)))))
 (deftest stop-handoff-daemon-stops-running-process-and-removes-pid-file
   (let [root (tmp-dir)]
