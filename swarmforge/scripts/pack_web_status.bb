@@ -202,28 +202,28 @@
       (->> (filterv complete-status-sentence?))))
 
 (def grok-log-initial-bytes (* 8 1024 1024))
-(def grok-message-history 8)
+(def status-message-history 8)
 
 (defn grok-home []
   (fs/path (or (not-empty (System/getenv "SWARMFORGE_GROK_HOME"))
                (not-empty (System/getenv "GROK_HOME"))
                (str (fs/path (System/getProperty "user.home") ".grok")))))
 
-(defn grok-path-identity [path]
+(defn path-identity [path]
   (when path
     (str (try
            (fs/canonicalize path)
            (catch Exception _
              (fs/absolutize path))))))
 
-(defn grok-file-stamp [path]
+(defn file-stamp [path]
   (when (fs/regular-file? path)
     [(fs/size path) (str (fs/last-modified-time path))]))
 
 (defn active-grok-sessions []
   (let [file (fs/path (grok-home) "active_sessions.json")
         key (str file)
-        stamp (grok-file-stamp file)
+        stamp (file-stamp file)
         cached (get @grok-active-sessions-cache key)]
     (if (= stamp (:stamp cached))
       (:sessions cached)
@@ -237,9 +237,9 @@
         sessions))))
 
 (defn active-grok-session [cwd]
-  (let [wanted (grok-path-identity cwd)]
+  (let [wanted (path-identity cwd)]
     (->> (active-grok-sessions)
-         (filter #(= wanted (grok-path-identity (:cwd %))))
+         (filter #(= wanted (path-identity (:cwd %))))
          (sort-by #(or (:opened_at %) ""))
          last)))
 
@@ -268,7 +268,7 @@
       (= 10 (bit-and 0xff (aget bytes i))) i
       :else (recur (inc i)))))
 
-(defn read-grok-log-chunk [path offset]
+(defn read-json-log-chunk [path offset]
   (with-open [file (java.io.RandomAccessFile. (str path) "r")]
     (let [length (.length file)
           continuing? (and (some? offset) (<= (long offset) length))
@@ -308,7 +308,7 @@
                                :text (str (:text last-message) text)
                                :sequence sequence))
                   (conj messages {:key key :text text :sequence sequence}))]
-    (vec (take-last grok-message-history updated))))
+    (vec (take-last status-message-history updated))))
 
 (def active-grok-update-types
   #{"user_message_chunk" "agent_message_chunk" "agent_thought_chunk"
@@ -336,7 +336,7 @@
 
       :else state)))
 
-(defn parse-grok-update [line]
+(defn parse-json-line [line]
   (try
     (json/parse-string line true)
     (catch Exception _ nil)))
@@ -345,11 +345,11 @@
   (let [key (str path)]
     (locking grok-log-status-cache
       (let [cached (get @grok-log-status-cache key (blank-grok-log-state))
-            chunk (read-grok-log-chunk path (:offset cached))
+            chunk (read-json-log-chunk path (:offset cached))
             base (if (:reset? chunk) (blank-grok-log-state) cached)
             refreshed (reduce apply-grok-update
                               (assoc base :offset (:offset chunk))
-                              (keep parse-grok-update (:lines chunk)))]
+                              (keep parse-json-line (:lines chunk)))]
         (swap! grok-log-status-cache assoc key refreshed)
         refreshed))))
 
@@ -402,6 +402,258 @@
          :active? (:active? state)
          :session-id (:session_id session)}))))
 
+(def codex-session-catalog-limit 64)
+(def codex-session-catalog-refresh-ms 5000)
+(def codex-role-session-refresh-ms 2000)
+
+(defn codex-home []
+  (fs/path (or (not-empty (System/getenv "SWARMFORGE_CODEX_HOME"))
+               (not-empty (System/getenv "CODEX_HOME"))
+               (str (fs/path (System/getProperty "user.home") ".codex")))))
+
+(defn modified-ms [path]
+  (try
+    (.toMillis (fs/last-modified-time path))
+    (catch Exception _ 0)))
+
+(defn codex-session-file? [home path]
+  (try
+    (let [sessions (fs/canonicalize (fs/path home "sessions"))
+          file (fs/canonicalize path)]
+      (and (fs/regular-file? file)
+           (fs/starts-with? file sessions)
+           (str/ends-with? (str file) ".jsonl")))
+    (catch Exception _ false)))
+
+(defn read-codex-session-meta [path]
+  (try
+    (with-open [reader (io/reader (str path))]
+      (when-let [line (.readLine reader)]
+        (let [event (json/parse-string line true)
+              payload (:payload event)]
+          (when (= "session_meta" (:type event))
+            {:id (or (:session_id payload) (:id payload))
+             :cwd (:cwd payload)
+             :timestamp (:timestamp payload)
+             :path path}))))
+    (catch Exception _ nil)))
+
+(defn scan-codex-session-catalog [home]
+  (let [sessions (fs/path home "sessions")]
+    (if-not (fs/directory? sessions)
+      []
+      (->> (fs/glob sessions "**/*.jsonl")
+           (sort-by modified-ms #(compare %2 %1))
+           (take codex-session-catalog-limit)
+           (keep read-codex-session-meta)
+           vec))))
+
+(defn codex-session-catalog [home]
+  (let [key (str home)
+        index (fs/path home "session_index.jsonl")
+        stamp (file-stamp index)
+        now (System/currentTimeMillis)
+        cached (get @codex-session-catalog-cache key)
+        fresh? (and cached
+                    (= stamp (:index-stamp cached))
+                    (< (- now (:checked-at cached))
+                       codex-session-catalog-refresh-ms))]
+    (if fresh?
+      (:sessions cached)
+      (let [sessions (scan-codex-session-catalog home)]
+        (swap! codex-session-catalog-cache assoc key
+               {:index-stamp stamp :checked-at now :sessions sessions})
+        sessions))))
+
+(defn latest-codex-session-for-cwd [home cwd]
+  (let [wanted (path-identity cwd)]
+    (some #(when (= wanted (path-identity (:cwd %))) %)
+          (codex-session-catalog home))))
+
+(defn output-lines [& argv]
+  (try
+    (let [result (apply sh argv)]
+      (when (zero? (:exit result))
+        (->> (str/split-lines (:out result))
+             (remove str/blank?)
+             vec)))
+    (catch Exception _ nil)))
+
+(defn positive-pid [text]
+  (let [value (str/trim (or text ""))]
+    (when (re-matches #"[1-9][0-9]*" value) value)))
+
+(defn tmux-pane-pid [socket row]
+  (when socket
+    (some (fn [target]
+            (when-let [line (first (output-lines
+                                    "tmux" "-S" socket "display-message" "-p"
+                                    "-t" target "#{pane_pid}"))]
+              (positive-pid line)))
+          (distinct [(pane-target row) (session-name row)]))))
+
+(defn child-pids [pid]
+  (->> (output-lines "pgrep" "-P" (str pid))
+       (keep positive-pid)
+       vec))
+
+(defn descendant-pids [pid]
+  (loop [frontier [pid] seen #{} found []]
+    (if-let [current (first frontier)]
+      (if (or (contains? seen current) (>= (count seen) 128))
+        (recur (subvec (vec frontier) 1) seen found)
+        (let [children (child-pids current)]
+          (recur (into (subvec (vec frontier) 1) children)
+                 (conj seen current)
+                 (conj found current))))
+      found)))
+
+(defn codex-rollout-for-pid [home pid]
+  (some (fn [line]
+          (when (str/starts-with? line "n")
+            (let [path (subs line 1)]
+              (when (codex-session-file? home path)
+                (fs/path path)))))
+        (output-lines "lsof" "-Fn" "-p" (str pid))))
+
+(defn process-session-inspection? []
+  (and (fs/which "pgrep") (fs/which "lsof")))
+
+(defn resolve-codex-session-path [root row]
+  (let [home (codex-home)
+        cwd (nth row 2 nil)
+        socket (tmux-socket root)
+        pane-pid (when (and socket (process-session-inspection?))
+                   (tmux-pane-pid socket row))]
+    (if pane-pid
+      (when-let [path (some #(codex-rollout-for-pid home %)
+                            (descendant-pids pane-pid))]
+        (let [meta (read-codex-session-meta path)]
+          (when (= (path-identity cwd)
+                   (path-identity (:cwd meta)))
+            path)))
+      (:path (latest-codex-session-for-cwd home cwd)))))
+
+(defn codex-session-path-for-row [root row]
+  (let [home (codex-home)
+        key [(str home) (str root) (first row) (session-name row)]
+        now (System/currentTimeMillis)
+        cached (get @codex-role-session-cache key)]
+    (if (and cached
+             (< (- now (:checked-at cached)) codex-role-session-refresh-ms)
+             (or (nil? (:path cached)) (fs/regular-file? (:path cached))))
+      (:path cached)
+      (let [path (resolve-codex-session-path root row)]
+        (swap! codex-role-session-cache assoc key {:checked-at now :path path})
+        path))))
+
+(defn blank-codex-log-state []
+  {:offset nil :sequence 0 :messages [] :active? false
+   :turn-id nil :session-id nil})
+
+(defn codex-content-text [content]
+  (->> content
+       (keep #(when (string? (:text %)) (:text %)))
+       (str/join "")))
+
+(defn codex-agent-message [event]
+  (let [event-type (:type event)
+        payload (:payload event)
+        item (:item payload)]
+    (cond
+      (and (= "response_item" event-type)
+           (= "message" (:type payload))
+           (= "assistant" (:role payload)))
+      {:id (:id payload)
+       :phase (:phase payload)
+       :text (codex-content-text (:content payload))}
+
+      (and (= "event_msg" event-type)
+           (= "item_completed" (:type payload))
+           (= "agentmessage" (str/lower-case (or (:type item) ""))))
+      {:id (:id item) :phase (:phase item) :text (:text item)})))
+
+(defn append-codex-message [messages message sequence]
+  (let [id (or (:id message) sequence)
+        item {:id id :text (:text message) :sequence sequence}
+        position (first (keep-indexed #(when (= id (:id %2)) %1) messages))
+        updated (if (some? position)
+                  (assoc messages position item)
+                  (conj messages item))]
+    (vec (take-last status-message-history updated))))
+
+(def codex-completed-event-types
+  #{"task_complete" "turn_completed" "task_interrupted" "task_failed"})
+
+(defn codex-progress-event? [event]
+  (let [event-type (:type event)
+        kind (get-in event [:payload :type])]
+    (or (= "response_item" event-type)
+        (and (= "event_msg" event-type)
+             (#{"item_started" "item_completed"} kind)))))
+
+(defn apply-codex-event [state event]
+  (let [kind (get-in event [:payload :type])
+        sequence (inc (:sequence state))
+        state (assoc state :sequence sequence)
+        state (cond
+                (= "session_meta" (:type event))
+                (assoc state :session-id
+                       (or (get-in event [:payload :session_id])
+                           (get-in event [:payload :id])))
+
+                (= "task_started" kind)
+                (assoc state :active? true
+                       :turn-id (get-in event [:payload :turn_id])
+                       :messages [])
+
+                (contains? codex-completed-event-types kind)
+                (assoc state :active? false)
+
+                (codex-progress-event? event)
+                (assoc state :active? true)
+
+                :else state)
+        message (codex-agent-message event)]
+    (if (and (= "commentary" (:phase message))
+             (not (str/blank? (:text message))))
+      (update state :messages append-codex-message message sequence)
+      state)))
+
+(defn refresh-codex-log [path]
+  (let [key (str path)]
+    (locking codex-log-status-cache
+      (let [cached (get @codex-log-status-cache key (blank-codex-log-state))
+            chunk (read-json-log-chunk path (:offset cached))
+            base (if (:reset? chunk) (blank-codex-log-state) cached)
+            refreshed (reduce apply-codex-event
+                              (assoc base :offset (:offset chunk))
+                              (keep parse-json-line (:lines chunk)))]
+        (swap! codex-log-status-cache assoc key refreshed)
+        refreshed))))
+
+(defn codex-log-lines [{:keys [messages]}]
+  (->> messages
+       (keep (fn [{:keys [text]}]
+               (some markdown-status-paragraph
+                     (str/split (or text "") #"\n\s*\n"))))
+       distinct
+       (take-last 2)
+       vec))
+
+(defn codex-status-for-row [root row]
+  (when-let [path (codex-session-path-for-row root row)]
+    (let [state (refresh-codex-log path)]
+      {:lines (codex-log-lines state)
+       :active? (:active? state)
+       :session-id (:session-id state)})))
+
+(defn structured-status-for-row [root row]
+  (case (backend-name row)
+    "grok" (grok-status-for-row row)
+    "codex" (codex-status-for-row root row)
+    nil))
+
 (defn pane-cache-key [root role]
   [(str root) (str role)])
 
@@ -448,9 +700,9 @@
 (defn pane-status-lines-for [root role]
   (let [row (role-row root role)
         backend (when row (backend-name row))
-        grok-status (when (and row (= "grok" backend) (nil? *pane-text*))
-                      (grok-status-for-row row))
-        transcript-lines (:lines grok-status)]
+        structured-status (when (and row (nil? *pane-text*))
+                            (structured-status-for-row root row))
+        transcript-lines (:lines structured-status)]
     (if row
       (if (seq transcript-lines)
         (im-status-lines (pane-cache-key root role)

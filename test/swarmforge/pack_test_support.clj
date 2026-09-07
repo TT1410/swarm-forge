@@ -42,6 +42,20 @@
 (defn write-file [path text]
   (fs/create-dirs (fs/parent path))
   (spit (str path) text))
+(defn write-codex-session! [codex-root cwd session-id events]
+  (let [path (fs/path codex-root "sessions/2026/09/07"
+                      (str "rollout-2026-09-07T12-00-00-" session-id ".jsonl"))
+        meta {:timestamp "2026-09-07T12:00:00Z"
+              :type "session_meta"
+              :payload {:id session-id
+                        :session_id session-id
+                        :timestamp "2026-09-07T12:00:00Z"
+                        :cwd (str cwd)
+                        :originator "codex-tui"}}]
+    (write-file path
+                (str (str/join "\n" (map json/generate-string (cons meta events)))
+                     "\n"))
+    path))
 (defn pack-worktree [root roles role]
   (if (= role (first roles))
     (str root)

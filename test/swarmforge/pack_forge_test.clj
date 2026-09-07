@@ -265,6 +265,43 @@
       (is (= "idle" (:lieutenant_phase state)))
       (is (= ["I'm listing the open projects." "I'll summarize HTW next."]
              (:lieutenant_status state))))))
+(deftest forge-codex-lieutenant-phase-comes-from-structured-session-log
+  (let [root (tmp-dir)
+        codex-root (tmp-dir)
+        session-id "01a00000-0000-7000-8000-000000000003"
+        started {:timestamp "2026-09-07T12:00:01Z"
+                 :type "event_msg"
+                 :payload {:type "task_started" :turn_id "turn-1"}}
+        commentary {:timestamp "2026-09-07T12:00:02Z"
+                    :type "response_item"
+                    :payload {:type "message"
+                              :id "message-1"
+                              :role "assistant"
+                              :phase "commentary"
+                              :content [{:type "output_text"
+                                         :text "I’m reconciling the open projects now."}]}}
+        completed {:timestamp "2026-09-07T12:00:03Z"
+                   :type "event_msg"
+                   :payload {:type "task_complete" :turn_id "turn-1"}}]
+    (seed-mini-forge! root)
+    (fs/create-dirs (fs/path root "projects"))
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "lieutenant\tmaster\t%s\tswarmforge-lieutenant\tLieutenant\tcodex\ttask\tforward-only\n"
+                        root))
+    (write-codex-session! codex-root root session-id [started commentary])
+    (let [working (json/parse-string
+                   (:out (pack-web-env root {"SWARMFORGE_CODEX_HOME" (str codex-root)}
+                                      "--test-state" (str root)))
+                   true)]
+      (is (= "working" (:lieutenant_phase working)))
+      (is (= ["I’m reconciling the open projects now."]
+             (:lieutenant_status working))))
+    (write-codex-session! codex-root root session-id [started commentary completed])
+    (let [idle (json/parse-string
+                (:out (pack-web-env root {"SWARMFORGE_CODEX_HOME" (str codex-root)}
+                                   "--test-state" (str root)))
+                true)]
+      (is (= "idle" (:lieutenant_phase idle))))))
 (deftest forge-state-keeps-lieutenant-prose-ahead-of-grok-tool-output
   ;; Given two lieutenant prose sentences followed by a long Grok command block
   ;; When --test-state

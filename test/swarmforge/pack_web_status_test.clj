@@ -331,6 +331,50 @@
     (is (= "Run the focused distance specs." (:status card)))
     (is (= "working" (:status_phase card)))
     (is (not (str/includes? (:status card) "26.1k")))))
+(deftest pack-web-codex-card-status-comes-from-structured-session-log
+  (let [root (tmp-dir)
+        codex-root (tmp-dir)
+        session-id "01a00000-0000-7000-8000-000000000002"
+        _ (setup-pack! root)
+        _ (create-task root "HTW" "specifier")
+        _ (write-file (role-pane-path root "specifier")
+                      "• Working (18s • esc to interrupt)\n")
+        started {:timestamp "2026-09-07T12:00:01Z"
+                 :type "event_msg"
+                 :payload {:type "task_started" :turn_id "turn-1"}}
+        commentary {:timestamp "2026-09-07T12:00:02Z"
+                    :type "response_item"
+                    :payload {:type "message"
+                              :id "message-1"
+                              :role "assistant"
+                              :phase "commentary"
+                              :content [{:type "output_text"
+                                         :text "The cache boundary is stale. I’ll run the focused distance specs next."}]}}
+        commentary-completed {:timestamp "2026-09-07T12:00:02Z"
+                              :type "event_msg"
+                              :payload {:type "item_completed"
+                                        :item {:type "AgentMessage"
+                                               :id "message-1"
+                                               :phase "commentary"
+                                               :text "The cache boundary is stale. I’ll run the focused distance specs next."}}}
+        final-answer {:timestamp "2026-09-07T12:00:03Z"
+                      :type "response_item"
+                      :payload {:type "message"
+                                :id "message-2"
+                                :role "assistant"
+                                :phase "final_answer"
+                                :content [{:type "output_text"
+                                           :text "Implementation details that do not belong in live status."}]}}
+        _ (write-codex-session! codex-root root session-id
+                                [started commentary commentary-completed final-answer])
+        result (pack-web-env root {"SWARMFORGE_CODEX_HOME" (str codex-root)}
+                             "--test-state" (str root))
+        card (first (:tasks (json/parse-string (:out result) true)))]
+    (is (zero? (:exit result)))
+    (is (= "I’ll run the focused distance specs next." (:status card)))
+    (is (= "working" (:status_phase card)))
+    (is (not (str/includes? (:status card) "Implementation details")))
+    (is (not (str/includes? (:status card) "Working (18s")))))
 (deftest pack-web-waiting-cards-say-waiting-in-queue
   ;; Given two specifier cards and a pane I'm sentence
   ;; When --test-status-pane
