@@ -42,6 +42,7 @@ experimental workflows. They are not `get-swarm-forge` products.
 - `tmux`
 - Babashka (`bb`)
 - `python3` 3.11 or newer with `venv`, for projects whose language is Python
+- `node` and `npm`, for projects whose language is JavaScript or TypeScript
 - At least one configured agent backend: `grok`, `codex`, `claude`, or
   `copilot`
 
@@ -147,6 +148,7 @@ CRAP, DRY, and mutation tool named there for the project's language with
 | Go | project runner | `mutate4go` | `crap4go` | `dry4go` |
 | Java | dedicated test runners | `mutate4java` | `crap4java` | `dry4java` |
 | Python | `pytest`, `coverage` | `mutate4py` | `crap4py` | `symilar` |
+| JavaScript/TypeScript | Vitest, `@vitest/coverage-v8` | `mutate4js` | `crap4js` | `jscpd` |
 
 The Go, Clojure, and Java CRAP, DRY, and mutation tools are cloned from
 `github.com/unclebob/...` into `.swarmforge/tools/` and run with Babashka;
@@ -162,6 +164,14 @@ and `.worktrees/`. `symilar` is the duplicate-code command that ships with
 `pylint`. A Python project produces the
 LCOV those two tools read with `coverage run --branch -m pytest` followed by
 `coverage lcov -o ./tmp/lcov.info`.
+
+The JavaScript tools come from npm into a project-local prefix at
+`.swarmforge/node`, so a pack never edits the project's own `package.json`.
+`mutate4js` is another `mutate4go` port and keeps the embedded-in-source
+manifest; `crap4js` follows `crap4clj`'s report format; `jscpd` is the
+copy-paste detector. Both read the LCOV a coverage run leaves in `coverage/`.
+`mutate4js` parses JavaScript and TypeScript only, so single-file components
+(`.vue`, `.svelte`) stay outside mutation runs.
 
 Role prompts divide ownership inside that law: what a role may change, what it
 must verify, what it must leave to another role, and where its next handoff
@@ -236,7 +246,8 @@ board data, approvals, clarifications, daemon state, and dashboard state. It is
 not product source and agents must not edit it as a substitute for the helper
 commands. `swarm_tool.sh` also installs constitution tools there: cloned
 sources under `.swarmforge/tools/`, the Python virtualenv under
-`.swarmforge/venv/`, and one wrapper per tool under `.swarmforge/bin/`.
+`.swarmforge/venv/`, the npm prefix under `.swarmforge/node/`, and one wrapper
+per tool under `.swarmforge/bin/`.
 
 Agents send committed work with `swarm_handoff.sh`, accept it with
 `ready_for_next.sh`, and finish the current item with `done_with_current.sh`.
