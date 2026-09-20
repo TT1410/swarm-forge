@@ -36,11 +36,7 @@
    "coverage" {:pip "coverage" :bin "coverage" :needs ["pytest"]}
    "crap4py" {:pip "crap4py" :bin "crap4py" :needs ["coverage"]}
    "mutate4py" {:pip "mutate4py" :bin "mutate4py" :needs ["coverage"]}
-   "symilar" {:pip "pylint" :bin "symilar"}
-   "vitest" {:npm "vitest" :bin "vitest"}
-   "jscpd" {:npm "jscpd" :bin "jscpd"}
-   "crap4js" {:npm "crap4js" :bin "crap4js"}
-   "mutate4js" {:npm "mutate4js" :bin "mutate4js"}})
+   "symilar" {:pip "pylint" :bin "symilar"}})
 
 (def usage-text
   (str "Usage:\n"
@@ -187,45 +183,6 @@
                       " command: " script))))
     script))
 
-(defn node-prefix-override []
-  (not-empty (System/getenv "SWARMFORGE_NODE_PREFIX")))
-
-(defn node-prefix [root]
-  (if-let [override (node-prefix-override)]
-    (fs/absolutize (fs/path override))
-    (fs/path root ".swarmforge" "node")))
-
-(defn npm-bin [root name]
-  (fs/path (node-prefix root) "node_modules" ".bin" name))
-
-(defn npm-exe []
-  (or (fs/which "npm")
-      (exit! 1 "JavaScript tools need npm on PATH")))
-
-(defn npm-env [root]
-  (assoc (into {} (System/getenv))
-         "npm_config_cache" (str (fs/path root ".swarmforge" "cache" "npm"))
-         "npm_config_audit" "false"
-         "npm_config_fund" "false"))
-
-(defn npm-install! [root package]
-  (let [prefix (node-prefix root)]
-    (fs/create-dirs prefix)
-    (run-or-exit! (str "Failed to npm install " package)
-                  (sh/sh (str (npm-exe)) "install" "--prefix" (str prefix) package
-                         :env (npm-env root)))))
-
-(defn ensure-npm-tool! [root spec]
-  (let [script (npm-bin root (:bin spec))]
-    (when-not (node-prefix-override)
-      (npm-install! root (:npm spec)))
-    (when-not (fs/exists? script)
-      (exit! 1 (if (node-prefix-override)
-                 (str "SWARMFORGE_NODE_PREFIX is missing " (:bin spec) ": " script)
-                 (str "npm installed " (:npm spec) " but it has no " (:bin spec)
-                      " command: " script))))
-    script))
-
 (defn mutate-rewrite-bash []
   (str "args=()\n"
        "scan=\n"
@@ -268,7 +225,7 @@
 
 (defn rewrite-bash [tool]
   (cond
-    (#{"clj-mutate" "mutate4go" "mutate4java" "mutate4js"} tool) (mutate-rewrite-bash)
+    (#{"clj-mutate" "mutate4go" "mutate4java"} tool) (mutate-rewrite-bash)
     (= "mutate4py" tool) (serial-mutate-rewrite-bash)
     (= "gherkin-mutator" tool) (gherkin-rewrite-bash)
     :else ""))
@@ -318,14 +275,6 @@
      (str (rewrite-bash tool)
           "exec " (sq (str script)) " \"$@\"\n"))))
 
-(defn write-npm-wrapper! [root tool spec]
-  (let [target (wrapper-path root tool)
-        script (ensure-npm-tool! root spec)]
-    (write-wrapper!
-     target
-     (str (rewrite-bash tool)
-          "exec " (sq (str script)) " \"$@\"\n"))))
-
 (defn install-one! [tool]
   (let [spec (tool-spec tool)
         root (project-root)
@@ -334,7 +283,6 @@
                  (:bb-task spec) (write-bb-wrapper! root name (:bb-task spec)
                                                     (ensure-source! root (:source spec)))
                  (:pip spec) (write-venv-wrapper! root name spec)
-                 (:npm spec) (write-npm-wrapper! root name spec)
                  :else (write-mvn-wrapper! root name spec))]
     (println "INSTALLED:" name (str target))))
 
