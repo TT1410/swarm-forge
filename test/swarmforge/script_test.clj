@@ -908,6 +908,88 @@
       (finally
         (fs/delete-tree root)))))
 
+(defn write-fake-node-prefix! [prefix & tools]
+  (doseq [tool tools]
+    (let [script (fs/path prefix "node_modules" ".bin" tool)]
+      (write-file script (str "#!/usr/bin/env bash\necho \"" tool " ARGS: $*\"\n"))
+      (fs/set-posix-file-permissions script "rwxr-xr-x")))
+  prefix)
+
+(defn node-env [prefix]
+  {"SWARMFORGE_NODE_PREFIX" (str prefix)})
+
+(deftest swarm-tool-knows-javascript-tool-names
+  ;; Given a pack project
+  ;; When require runs for stryker
+  ;; Then it is a known tool (missing until ensure), not Unknown tool
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (let [missing (run {:dir root :ok? false}
+                         (script "swarm_tool.sh") "require" "stryker")
+            help (run {:dir root :ok? false} (script "swarm_tool.sh") "--help")
+            listed (str (:err help) (:out help))]
+        (is (not= 0 (:exit missing)))
+        (is (str/includes? (:err missing) "MISSING: stryker"))
+        (is (not (str/includes? (:err missing) "Unknown tool")))
+        (doseq [tool ["jscpd" "crap4js" "stryker"]]
+          (is (str/includes? listed tool))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest swarm-tool-ensure-jscpd-wraps-the-project-npm-prefix
+  ;; Given a project npm prefix that already has jscpd
+  ;; When swarm_tool.sh ensure jscpd
+  ;; Then the wrapper execs that prefix's jscpd and require succeeds
+  (let [root (tmp-dir)
+        prefix (write-fake-node-prefix! (fs/path root "node") "jscpd")]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (run {:dir root :env (node-env prefix)} (script "swarm_tool.sh") "ensure" "jscpd")
+      (let [wrapper (fs/path root ".swarmforge/bin/jscpd")]
+        (is (fs/executable? wrapper))
+        (is (str/includes? (slurp (str wrapper))
+                           (str (fs/path prefix "node_modules" ".bin" "jscpd"))))
+        (is (zero? (:exit (run {:dir root} (script "swarm_tool.sh") "require" "jscpd"))))
+        (is (zero? (:exit (run {:dir root} (script "swarm_tool.sh") "require" "JSCPD")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest swarm-tool-refuses-an-npm-package-without-the-command
+  ;; Given an npm prefix without crap4js
+  ;; When swarm_tool.sh ensure crap4js
+  ;; Then it fails naming the missing command and writes no wrapper
+  (let [root (tmp-dir)
+        prefix (write-fake-node-prefix! (fs/path root "node") "jscpd")]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (let [result (run {:dir root :ok? false :env (node-env prefix)}
+                        (script "swarm_tool.sh") "ensure" "crap4js")]
+        (is (not= 0 (:exit result)))
+        (is (str/includes? (:err result) "crap4js"))
+        (is (not (fs/exists? (fs/path root ".swarmforge/bin/crap4js")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest stryker-wrapper-passes-arguments-through
+  ;; Given an installed stryker wrapper
+  ;; When it is invoked
+  ;; Then its arguments reach stryker unchanged, with no worker flag injected,
+  ;; because stryker takes differential mode and concurrency from its config
+  (let [root (tmp-dir)
+        prefix (write-fake-node-prefix! (fs/path root "node") "stryker")]
+    (try
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+      (run {:dir root :env (node-env prefix)} (script "swarm_tool.sh") "ensure" "stryker")
+      (let [out (:out (run {:dir root} (str (fs/path root ".swarmforge/bin/stryker")) "run"))]
+        (is (= "stryker ARGS: run" (str/trim out))))
+      (finally
+        (fs/delete-tree root)))))
+
 (deftest swarmforge-start-order-opens-dashboard-before-agents
   ;; Given a pack
   ;; When --test-start-order
