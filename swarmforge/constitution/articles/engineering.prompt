@@ -9,6 +9,7 @@
   - Clojure: install with Clojure CLI/deps.edn; mutation `github.com/unclebob/clj-mutate`, CRAP `github.com/unclebob/crap4clj`, DRY `github.com/unclebob/dry4clj`.
   - Java: install with Maven (`mvn`); mutation `github.com/unclebob/mutate4java`, CRAP `github.com/unclebob/crap4java`, DRY `github.com/unclebob/dry4java`.
   - Python: install from PyPI with `swarm_tool.sh ensure <tool>`; mutation `mutate4py` (port of `github.com/unclebob/mutate4go`), CRAP `crap4py` (port of `github.com/unclebob/crap4go` and `crap4clj`), DRY `symilar` (the duplicate-code command that ships with `pylint`).
+  - JavaScript/TypeScript: install from npm with `swarm_tool.sh ensure <tool>`; mutation `stryker` (`@stryker-mutator/core`, Apache-2.0), CRAP `crap4js`, DRY `jscpd`. `crap4js` is a prerelease licensed CC-BY-NC-4.0 and is an original work inspired by `crap4clj`, not a port of it; confirm that licence suits the project before running it, and report it to the operator rather than assuming.
 
 ## Language Defaults
 - For Clojure projects, prefer Babashka where possible.
@@ -20,6 +21,13 @@
 - Python constitution tools need Python 3.11 or newer and run from the project-local virtualenv that `swarm_tool.sh` creates at `.swarmforge/venv`. Do not install them into the system interpreter, into `$HOME`, or with `sudo`, and do not run them from a hand-made venv.
 - `crap4py` and `mutate4py` both read branch coverage as LCOV. Produce it with `coverage run --branch -m pytest` followed by `coverage lcov -o ./tmp/lcov.info`, then pass `--lcov ./tmp/lcov.info`.
 - Run the Python DRY check as `symilar --duplicates=4 <changed python files>`; it takes an explicit file list, not a directory.
+- For JavaScript and TypeScript projects, write Vitest tests. Vitest and its coverage provider are imported by the project's own config and test files, so unlike every other constitution tool they belong in the project's `package.json` as dev dependencies, not in the SwarmForge npm prefix. Add `vitest` and `@vitest/coverage-v8` there if the project lacks them.
+- The other JavaScript tools run from the project-local npm prefix that `swarm_tool.sh` creates at `.swarmforge/node`. Do not add them to the project's `package.json` or install them globally.
+- Produce JavaScript branch coverage as LCOV by configuring `coverage.reporter` to include `lcov` and running `vitest run --coverage`. `crap4js` reads that report; invoke it as `crap4js --coverage-dir coverage --no-delete`, because without `--no-delete` it clears the coverage directory and runs a coverage command of its own.
+- Drive Stryker through its framework-agnostic command runner: `testRunner: "command"` with `commandRunner.command` set to the project's test command. The dedicated `@stryker-mutator/vitest-runner` fails against current Vitest with a circular-structure error and reports every mutant as survived, which reads as a passing run.
+- Stryker mutation is differential through `incremental: true`, which keeps its manifest at `reports/stryker-incremental.json`. Commit that file; do not hand-edit it.
+- Restrict Stryker's `mutate` globs to `.ts` and `.js` modules. Single-file components (`.vue`, `.svelte`) are not mutable units, so keep logic worth mutating in plain modules.
+- Run the JavaScript DRY check as `jscpd <source dir>`. Do not pass `--format`: it defaults to every known format, and naming a subset silently drops the rest, including `.tsx` and `.jsx`. jscpd also skips files below its size thresholds, so read the "Files analyzed" count before trusting a clean result.
 
 ## Design And Testability
 - Work in small, reviewable increments.
@@ -55,7 +63,7 @@
 - Run the relevant local verification command before handoff whenever the project has one.
 
 ## Guardrails
-- Do not invent project-local CRAP, DRY, mutation, or coverage proxies. Install and run the constitution tools (`crap4clj` with cloverage, `dry4clj`, `clj-mutate`, speclj, `crap4py` with coverage, `mutate4py`, `symilar`, pytest, or the language table). Do not treat a homegrown `bb crap` / `bb coverage` / `bb mutation-count` task, or a hand-rolled `make`, `tox`, or `nox` target of the same name, as those tools.
+- Do not invent project-local CRAP, DRY, mutation, or coverage proxies. Install and run the constitution tools (`crap4clj` with cloverage, `dry4clj`, `clj-mutate`, speclj, `crap4py` with coverage, `mutate4py`, `symilar`, pytest, `stryker`, `crap4js`, `jscpd`, Vitest, or the language table). Do not treat a homegrown `bb crap` / `bb coverage` / `bb mutation-count` task, or a hand-rolled `make`, `tox`, or `nox` target of the same name, as those tools.
 - Do not edit mutation testing or Gherkin acceptance mutation manifests by hand; allow approved mutation tools to update those manifests as part of their normal runs.
 - Do not commit unrelated local changes or generated artifacts unless required for the task.
 - Before relying on an unfamiliar command, inspect local help or project documentation.
