@@ -74,6 +74,8 @@ message: <one line, max 80 chars>
   resolution. Do not invent a new `git merge`. Parallel cards on one tree
   will conflict; that is expected.
 - If it prints `NO_TASK`, stop waiting for work.
+- If it prints `PAUSED`, the operator is draining the swarm. Read any printed
+  `NOTE`, then stop waiting for work until a new wake-up arrives.
 - If it prints `TASK: <path>`, treat the printed `PAYLOAD` as the task.
 - If it prints `TASK_NAME: <name>`, use that as the stable task name for any
   work you forward from that task.

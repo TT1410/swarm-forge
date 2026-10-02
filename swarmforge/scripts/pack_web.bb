@@ -10,6 +10,7 @@
 
 (def script-dir (fs/parent *file*))
 (load-file (str (fs/path script-dir "forge.bb")))
+(load-file (str (fs/path script-dir "ready_for_next_guard.bb")))
 
 (def usage-text
   (str "Usage:\n"
@@ -797,7 +798,8 @@
      :approvals (approvals root)
      :work_in_flight (work-in-flight root)
      :chat (list-chat root)
-     :clarifications (list-clarifications root)}))
+     :clarifications (list-clarifications root)
+     :drain (ready-for-next-guard/drain-state root)}))
 
 (defn tagged [project items]
   (mapv #(assoc % :project project) items))

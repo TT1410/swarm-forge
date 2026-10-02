@@ -1,5 +1,6 @@
 (ns swarmforge.script-test
   (:require [babashka.fs :as fs]
+            [cheshire.core :as json]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
@@ -98,6 +99,7 @@
       (write-file (fs/path root "swarmforge/swarmforge.conf")
                   (str "# comment\n"
                        "window coder codex master\n"
+                       "merge-check docker compose config -q\n"
                        "window cleaner codex cleaner batch\n"))
       (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
       (write-file (fs/path root "swarmforge/roles/cleaner.prompt") "cleaner\n")
@@ -1399,3 +1401,199 @@
         (fs/delete-tree base)
         (fs/delete-tree packs)))))
 
+
+(deftest synced-role-prompts-do-not-block-a-later-merge
+  ;; Given a role worktree whose branch lacks the master commit that changed a role prompt
+  ;; When the launcher syncs roles into the worktree and the role later merges that commit
+  ;; Then the worktree is clean and the merge succeeds
+  (let [root (tmp-dir)
+        worktree (fs/path root ".worktrees" "coder")]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "v1\n")
+      (write-file (fs/path root "swarmforge/constitution.prompt") "c1\n")
+      (write-file (fs/path root "swarmforge/constitution/articles/a.prompt") "a1\n")
+      (run {:dir root} "git" "add" "swarmforge")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add prompts")
+      (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-coder" (str worktree) "HEAD")
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "v2\n")
+      (write-file (fs/path root "swarmforge/constitution/articles/a.prompt") "a2\n")
+      (run {:dir root} "git" "commit" "-q" "-am" "Change prompts")
+      (run {:dir root} (script "swarmforge.bb") "--test-sync-worktree-roles" (str root) (str worktree))
+      (is (= "v2\n" (slurp (str (fs/path worktree "swarmforge/roles/coder.prompt")))))
+      (is (str/blank? (:out (run {:dir worktree} "git" "status" "--porcelain"))))
+      (let [merge (run {:dir worktree :ok? false} "git" "merge" "--no-edit" "master")]
+        (is (zero? (:exit merge)) (str (:err merge) (:out merge))))
+      (testing "a second sync with identical content makes no new commit"
+        (let [head (:out (run {:dir worktree} "git" "rev-parse" "HEAD"))]
+          (run {:dir root} (script "swarmforge.bb") "--test-sync-worktree-roles" (str root) (str worktree))
+          (is (= head (:out (run {:dir worktree} "git" "rev-parse" "HEAD"))))))
+      (finally
+        (fs/delete-tree root)))))
+
+(defn handoff-text [from type task]
+  (str "id: 1\nfrom: " from "\nto: coder\npriority: 50\ntype: " type "\ntask: " task "\n\nbody of " task "\n"))
+
+(deftest drain-pauses-new-mail-and-resume-releases-it
+  ;; Given a running swarm with mail waiting for coder
+  ;; When the operator drains
+  ;; Then ready_for_next prints PAUSED and leaves the mail, in-process work still
+  ;; resumes, notes from roles are shown, status reports drained state,
+  ;; and after resume the mail is taken
+  (let [root (tmp-dir)
+        inbox (fs/path root ".swarmforge/handoffs/inbox")
+        env {"SWARMFORGE_ROLE" "coder"}
+        ready #(run {:dir root :env env :ok? false} (script "ready_for_next.sh"))
+        swarm #(run {:dir root} (script "swarmforge.sh") % (str root))]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "coder\tmaster\t%s\tswarmforge-coder\tCoder\tcodex\ttask\n" root))
+      (doseq [dir ["new" "in_process" "completed"]]
+        (fs/create-dirs (fs/path inbox dir)))
+      (write-file (fs/path inbox "new/50_a.handoff") (handoff-text "(New Task)" "note" "card-a"))
+      (is (str/includes? (:out (swarm "drain")) "PAUSED: yes"))
+      (testing "no new mail is taken while paused"
+        (let [result (ready)]
+          (is (zero? (:exit result)))
+          (is (str/includes? (:out result) "PAUSED"))
+          (is (fs/exists? (fs/path inbox "new/50_a.handoff")))))
+      (testing "notes from roles are delivered while paused"
+        (write-file (fs/path inbox "new/40_note.handoff") (handoff-text "cleaner" "note" "fyi"))
+        (let [out (:out (ready))]
+          (is (str/includes? out "body of fyi"))
+          (is (str/includes? out "PAUSED"))
+          (is (fs/exists? (fs/path inbox "completed/40_note.handoff")))
+          (is (not (fs/exists? (fs/path inbox "new/40_note.handoff"))))))
+      (testing "in-process work still resumes and status reports it"
+        (write-file (fs/path inbox "in_process/50_b.handoff") (handoff-text "specifier" "note" "card-b"))
+        (let [out (:out (ready))]
+          (is (str/includes? out "TASK:"))
+          (is (not (str/includes? out "PAUSED"))))
+        (let [status (:out (swarm "status"))]
+          (is (str/includes? status "DRAINED: no"))
+          (is (str/includes? status "BUSY: coder in_process=1")))
+        (fs/move (fs/path inbox "in_process/50_b.handoff") (fs/path inbox "completed/50_b.handoff"))
+        (is (str/includes? (:out (swarm "status")) "DRAINED: yes")))
+      (testing "resume releases the waiting mail"
+        (is (str/includes? (:out (swarm "resume")) "Resumed"))
+        (is (str/includes? (:out (swarm "status")) "PAUSED: no"))
+        (let [out (:out (ready))]
+          (is (str/includes? out "TASK:"))
+          (is (str/includes? out "card-a"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest drain-pauses-batch-receivers
+  ;; Given a batch-mode role with mail waiting and the swarm drained
+  ;; When it asks for the next batch
+  ;; Then it gets PAUSED and the mail stays in inbox/new
+  (let [root (tmp-dir)
+        inbox (fs/path root ".swarmforge/handoffs/inbox")]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "coder\tmaster\t%s\tswarmforge-coder\tCoder\tcodex\tbatch\n" root))
+      (doseq [dir ["new" "in_process" "completed"]]
+        (fs/create-dirs (fs/path inbox dir)))
+      (write-file (fs/path inbox "new/50_a.handoff") (handoff-text "(New Task)" "note" "card-a"))
+      (run {:dir root} (script "swarmforge.sh") "drain" (str root))
+      (let [out (:out (run {:dir root :env {"SWARMFORGE_ROLE" "coder"}} (script "ready_for_next.sh")))]
+        (is (str/includes? out "PAUSED"))
+        (is (fs/exists? (fs/path inbox "new/50_a.handoff")))
+        (is (empty? (fs/list-dir (fs/path inbox "in_process")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(defn hooked-repo! [root]
+  (init-repo! root)
+  (write-file (fs/path root ".swarmforge/roles.tsv")
+              (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+  (run {:dir root} (script "swarmforge.bb") "--test-install-hooks" (str root)))
+
+(defn conflicting-compose-merge! [root]
+  (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"serve\"]\n")
+  (run {:dir root} "git" "add" "compose.yaml")
+  (run {:dir root} "git" "commit" "-q" "-m" "Add compose")
+  (run {:dir root} "git" "checkout" "-q" "-b" "qa")
+  (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"migrate\"]\n")
+  (run {:dir root} "git" "commit" "-q" "-am" "QA compose")
+  (run {:dir root} "git" "checkout" "-q" "-")
+  (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"up\"]\n")
+  (run {:dir root} "git" "commit" "-q" "-am" "Master compose")
+  (is (not (zero? (:exit (run {:dir root :ok? false} "git" "merge" "--no-edit" "qa"))))))
+
+(deftest merge-commit-with-broken-yaml-is-refused
+  ;; Given a merge conflict in compose.yaml resolved with stray characters
+  ;; When the merge is committed
+  ;; Then the commit-msg hook refuses it naming the file, and a fixed file commits
+  (let [root (tmp-dir)]
+    (try
+      (hooked-repo! root)
+      (conflicting-compose-merge! root)
+      (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"migrate\", \"up\"]zrt\n")
+      (run {:dir root} "git" "add" "compose.yaml")
+      (let [refused (run {:dir root :ok? false} "git" "commit" "--no-edit")]
+        (is (not (zero? (:exit refused))))
+        (is (str/includes? (:err refused) "compose.yaml"))
+        (is (str/includes? (:err refused) "git show --cc")))
+      (is (zero? (:exit (run {:dir root :ok? false} "git" "rev-parse" "-q" "--verify" "MERGE_HEAD"))))
+      (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"migrate\", \"up\"]\n")
+      (run {:dir root} "git" "add" "compose.yaml")
+      (run {:dir root} "git" "commit" "-q" "--no-edit")
+      (is (= 2 (count (str/split (str/trim (:out (run {:dir root} "git" "log" "-1" "--format=%P"))) #" "))))
+      (testing "ordinary commits are not checked"
+        (write-file (fs/path root "broken.json") "{nope")
+        (run {:dir root} "git" "add" "broken.json")
+        (is (zero? (:exit (run {:dir root :ok? false} "git" "commit" "-q" "-m" "Not a merge")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest merge-commit-runs-configured-merge-check
+  ;; Given swarmforge.conf names a merge-check command that fails
+  ;; When a merge is committed
+  ;; Then the merge is refused with the command named
+  (let [root (tmp-dir)]
+    (try
+      (hooked-repo! root)
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window specifier codex master\nmerge-check test -f merge-ok\n")
+      (conflicting-compose-merge! root)
+      (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"migrate\", \"up\"]\n")
+      (run {:dir root} "git" "add" "compose.yaml")
+      (let [refused (run {:dir root :ok? false} "git" "commit" "--no-edit")]
+        (is (not (zero? (:exit refused))))
+        (is (str/includes? (:err refused) "test -f merge-ok")))
+      (write-file (fs/path root "merge-ok") "")
+      (is (zero? (:exit (run {:dir root :ok? false} "git" "commit" "-q" "--no-edit"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(defn shell-arg-file [command flag]
+  (second (re-find (re-pattern (str flag "\\S*?\\$\\(cat '([^']+)'\\)")) command)))
+
+(deftest launch-command-passes-role-and-constitution-as-system-instructions
+  ;; Given role and constitution files in the project
+  ;; When SwarmForge builds the claude and codex launch commands
+  ;; Then each points its system-level channel at a file carrying their full text
+  (let [root (tmp-dir)
+        fixtures {"swarmforge/constitution.prompt" "fixture-constitution\n"
+                  "swarmforge/constitution/articles/a.prompt" "fixture-article \"quoted\" \\ end\n"
+                  "swarmforge/roles/coder.prompt" "fixture-role\n"}]
+    (try
+      (doseq [[path text] fixtures]
+        (write-file (fs/path root path) text))
+      (let [claude (:out (run {:dir root} (script "swarmforge.bb") "--test-launch-command" (str root) "claude"))
+            system-file (second (re-find #"--append-system-prompt-file '([^']+)'" claude))
+            system-text (slurp system-file)]
+        (doseq [text (vals fixtures)]
+          (is (str/includes? system-text text)))
+        (is (str/includes? system-text (slurp (str (fs/path root ".swarmforge/prompts/coder.md"))))))
+      (let [codex (:out (run {:dir root} (script "swarmforge.bb") "--test-launch-command" (str root) "codex"))
+            toml-file (shell-arg-file codex "-c developer_instructions=")
+            text (json/parse-string (slurp toml-file))]
+        (is (some? toml-file) codex)
+        (doseq [fixture (vals fixtures)]
+          (is (str/includes? text fixture))))
+      (finally
+        (fs/delete-tree root)))))

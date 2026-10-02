@@ -2982,3 +2982,20 @@
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.pack-ui-test)]
     (System/exit (+ fail error))))
+
+(deftest pack-web-state-reports-drain
+  ;; Given a pack being drained while coder still has in-process work
+  ;; When pack_web --test-state
+  ;; Then drain is paused and not drained, and becomes drained once work clears
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (is (= false (:paused (:drain (web-state root)))))
+    (write-file (fs/path root ".swarmforge/paused") "now\n")
+    (put-in-process! root roles "coder" {:from "specifier" :task "cave-walk"})
+    (let [drain (:drain (web-state root))]
+      (is (= true (:paused drain)))
+      (is (= false (:drained drain)))
+      (is (= ["coder"] (mapv :role (:busy drain)))))
+    (fs/delete-tree (in-process-dir root roles "coder"))
+    (is (= true (:drained (:drain (web-state root)))))))

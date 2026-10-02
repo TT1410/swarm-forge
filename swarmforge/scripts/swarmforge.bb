@@ -3,7 +3,13 @@
 (ns swarmforge
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [cheshire.core :as json]
             [clojure.string :as str]))
+
+(try
+  (require 'ready-for-next-guard)
+  (catch Exception _
+    (load-file (str (fs/path (fs/parent *file*) "ready_for_next_guard.bb")))))
 
 (def session-prefix "swarmforge")
 (def agent-window "swarm")
@@ -131,7 +137,9 @@
   (fail! (str red "Error:" reset " " message)))
 
 (defn skip-config-line? [line]
-  (or (str/blank? line) (str/starts-with? line "#")))
+  (or (str/blank? line)
+      (str/starts-with? line "#")
+      (re-matches #"merge-check(\s.*)?" line)))
 
 (defn special-worktree? [worktree]
   (#{"none" "master"} worktree))
@@ -383,6 +391,35 @@
     (fs/create-dirs dest)
     (fs/copy-tree src dest {:replace-existing true})))
 
+(def synced-role-paths
+  ["swarmforge/roles" "swarmforge/constitution" "swarmforge/constitution.prompt"])
+
+(defn git-in [dir & args]
+  (apply process/sh {:continue true :dir (str dir)} "git" args))
+
+(defn master-tracked-role-files [ctx]
+  (let [result (apply git-in (:working-dir ctx) "ls-files" "--" synced-role-paths)]
+    (if (zero? (:exit result))
+      (vec (remove str/blank? (str/split-lines (:out result))))
+      [])))
+
+(defn mid-merge? [worktree-path]
+  (zero? (:exit (git-in worktree-path "rev-parse" "-q" "--verify" "MERGE_HEAD"))))
+
+(defn commit-synced-roles! [ctx worktree-path]
+  (let [files (filterv #(fs/exists? (fs/path worktree-path %)) (master-tracked-role-files ctx))]
+    (when (seq files)
+      (apply git-in worktree-path "add" "--" files)
+      (when-not (zero? (:exit (apply git-in worktree-path "diff" "--cached" "--quiet" "--" files)))
+        (if (mid-merge? worktree-path)
+          (println (str yellow "Warning: " worktree-path " is mid-merge; synced role prompts left uncommitted." reset))
+          (let [result (apply git-in worktree-path "commit" "-q" "--no-verify"
+                              "-m" "Sync SwarmForge roles and constitution from the project checkout"
+                              "--" files)]
+            (when-not (zero? (:exit result))
+              (println (str yellow "Warning: could not commit synced role prompts in " worktree-path ": "
+                            (str/trim (str (:err result) (:out result))) reset)))))))))
+
 (defn sync-worktree-roles! [ctx worktree-path]
   (copy-tree-into! (:roles-dir ctx) (fs/path worktree-path "swarmforge" "roles"))
   (copy-tree-into! (fs/path (:swarm-forge-dir ctx) "constitution")
@@ -391,7 +428,8 @@
     (fs/create-dirs (fs/path worktree-path "swarmforge"))
     (fs/copy (:constitution-file ctx)
              (fs/path worktree-path "swarmforge" "constitution.prompt")
-             {:replace-existing true})))
+             {:replace-existing true}))
+  (commit-synced-roles! ctx worktree-path))
 
 (defn sync-worktree-scripts! [ctx]
   (doseq [row (:roles ctx)
@@ -499,6 +537,31 @@
                "\n"
                (tool-startup-section role last-role?)))))
 
+(defn standing-instruction-sources [ctx role]
+  (let [constitution-dir (fs/path (:swarm-forge-dir ctx) "constitution")]
+    (->> (concat [(:constitution-file ctx)]
+                 (when (fs/directory? constitution-dir)
+                   (sort-by str (filter fs/regular-file? (fs/glob constitution-dir "**"))))
+                 [(fs/path (:roles-dir ctx) (str role ".prompt"))])
+         (filter fs/regular-file?))))
+
+(defn file-section [ctx file]
+  (str "\n\n----- " (fs/relativize (:working-dir ctx) file) " -----\n\n"
+       (slurp (str file))))
+
+(defn write-system-instruction-files!
+  "The standing instructions an agent keeps across context compaction: the
+  launch prompt plus the full constitution and role prompt text. Codex reads
+  them as a TOML string for `-c developer_instructions=`."
+  [ctx role prompt-file]
+  (let [text (apply str (slurp (str prompt-file))
+                    (map #(file-section ctx %) (standing-instruction-sources ctx role)))
+        system-file (fs/path (:prompts-dir ctx) (str role ".system.md"))
+        toml-file (fs/path (:prompts-dir ctx) (str role ".system.toml-string"))]
+    (spit (str system-file) text)
+    (spit (str toml-file) (json/generate-string text))
+    {:system-file system-file :toml-file toml-file}))
+
 (defn extra-args-prefix [row]
   (let [args (:extra-args row)]
     (if (str/blank? args) "" (str args " "))))
@@ -543,17 +606,21 @@
         base (str "export SWARMFORGE_ROLE=" (sq role)
                   " && export PATH=" (sq (str tool-bin)) ":" (sq (str role-script-dir)) ":$PATH"
                   " && cd " (sq (str role-worktree))
-                  " && ")]
-    (write-agent-instruction-file! ctx role prompt-file (last-pack-role? ctx role))
+                  " && ")
+        _ (write-agent-instruction-file! ctx role prompt-file (last-pack-role? ctx role))
+        system (when initial-prompt? (write-system-instruction-files! ctx role prompt-file))
+        system-file (or (:system-file system) prompt-file)]
     (cond-> (str base
                 (case agent
                   "claude" (str (alt-screen-env agent row)
-                                "claude --append-system-prompt-file " (sq (str prompt-file)) " "
+                                "claude --append-system-prompt-file " (sq (str system-file)) " "
                                 (yolo-flag agent row) "-n " (sq (str "SwarmForge " display)) " "
                                 (extra-args-prefix row)
                                 (when initial-prompt? prompt))
                   "codex" (str "codex -C " (sq (str role-worktree)) " "
                                (no-alt-screen-flag agent row) (yolo-flag agent row)
+                               (when system
+                                 (str "-c developer_instructions=\"$(cat " (sq (str (:toml-file system))) ")\" "))
                                (extra-args-prefix row)
                                (when initial-prompt? prompt))
                   "copilot" (str "copilot -C " (sq (str role-worktree)) " "
@@ -1121,8 +1188,56 @@
 (defn test-dashboard-port! [root]
   (println (or (dashboard-port (context root)) "")))
 
+(defn print-drain-status! [root]
+  (let [state (ready-for-next-guard/drain-state root)]
+    (println (str "PAUSED: " (if (:paused state) "yes" "no")))
+    (println (str "DRAINED: " (if (:drained state) "yes" "no")))
+    (doseq [{:keys [role in_process outbox]} (:busy state)]
+      (println (str "BUSY: " role " in_process=" in_process " outbox=" outbox)))
+    (when (pos? (:project_outbox state))
+      (println (str "BUSY: project outbox=" (:project_outbox state))))))
+
+(defn run-drain! [root]
+  (let [file (ready-for-next-guard/pause-file root)]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file) (str (java.time.Instant/now) "\n"))
+    (println "Draining: roles finish in-process work and take no new mail.")
+    (print-drain-status! root)))
+
+(def wake-message
+  "You have new handoff mail. If idle, run ready_for_next.sh.")
+
+(defn wake-role-with-mail! [socket cols]
+  (let [session (nth cols 3 "")
+        worktree (nth cols 2 "")
+        new-dir (fs/path worktree ".swarmforge" "handoffs" "inbox" "new")]
+    (when (and (not (str/blank? session))
+               (seq (ready-for-next-guard/dir-entries new-dir ready-for-next-guard/handoff-file?))
+               (sh-ok? "tmux" "-S" socket "has-session" "-t" session))
+      (process/sh {:continue true} "tmux" "-S" socket "send-keys" "-t" session "-l" wake-message)
+      (Thread/sleep 150)
+      (process/sh {:continue true} "tmux" "-S" socket "send-keys" "-t" session "C-m")
+      (println (str "Woke " (first cols) ".")))))
+
+(defn run-resume! [root]
+  (let [ctx (context root)
+        socket (when (fs/regular-file? (:tmux-socket-file ctx))
+                 (not-empty (str/trim (slurp (str (:tmux-socket-file ctx))))))]
+    (fs/delete-if-exists (ready-for-next-guard/pause-file (:working-dir ctx)))
+    (println "Resumed: roles take new mail again.")
+    (when socket
+      (doseq [cols (ready-for-next-guard/role-rows-at (:working-dir ctx))]
+        (wake-role-with-mail! socket cols)))))
+
+(defn test-sync-worktree-roles! [root worktree-path]
+  (sync-worktree-roles! (context root) (fs/absolutize worktree-path)))
+
 (defn -main [& args]
   (case (first args)
+    "drain" (run-drain! (str (fs/absolutize (or (second args) (System/getProperty "user.dir")))))
+    "resume" (run-resume! (or (second args) (System/getProperty "user.dir")))
+    "status" (print-drain-status! (str (fs/absolutize (or (second args) (System/getProperty "user.dir")))))
+    "--test-sync-worktree-roles" (test-sync-worktree-roles! (second args) (nth args 2))
     "--test-parse" (test-parse! (or (second args) (System/getProperty "user.dir")))
     "--test-required-helpers" (test-required-helpers!)
     "--test-launch-plan" (test-launch-plan! (or (second args) (System/getProperty "user.dir")))

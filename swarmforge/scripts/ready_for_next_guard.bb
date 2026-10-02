@@ -156,3 +156,78 @@
 (defn wait-message [active]
   ["WAITING_FOR_APPROVAL: current git handoff is still active"
    (str/join "\n" (map #(str "- " %) active))])
+
+(defn pause-file [root]
+  (fs/path root ".swarmforge" "paused"))
+
+(defn paused-at? [root]
+  (boolean (and root (fs/exists? (pause-file root)))))
+
+(defn dir-entries [dir pred]
+  (if (fs/directory? dir)
+    (filterv pred (fs/list-dir dir))
+    []))
+
+(defn handoff-file? [path]
+  (and (fs/regular-file? path) (str/ends-with? (str (fs/file-name path)) ".handoff")))
+
+(defn in-process-entries [inbox]
+  (dir-entries (fs/path inbox "in_process")
+               #(or (handoff-file? %)
+                    (and (fs/directory? %) (str/starts-with? (str (fs/file-name %)) "batch_")))))
+
+(defn queued-outbox-files [worktree]
+  (dir-entries (fs/path worktree ".swarmforge" "handoffs" "outbox") handoff-file?))
+
+(defn role-rows-at [root]
+  (let [file (fs/path root ".swarmforge" "roles.tsv")]
+    (if (fs/exists? file)
+      (->> (str/split-lines (slurp (str file)))
+           (remove str/blank?)
+           (mapv #(str/split % #"\t" -1)))
+      [])))
+
+(defn role-drain-row [cols]
+  (let [worktree (nth cols 2 "")]
+    {:role (first cols)
+     :in_process (count (in-process-entries (fs/path worktree ".swarmforge" "handoffs" "inbox")))
+     :outbox (count (queued-outbox-files worktree))}))
+
+(defn drain-state
+  "Drained means no role has in-process work and no outbox holds queued mail."
+  [root]
+  (let [rows (->> (role-rows-at root)
+                  (remove #(str/blank? (nth % 2 "")))
+                  (mapv role-drain-row))
+        project-outbox (count (queued-outbox-files root))
+        busy (filterv #(pos? (+ (:in_process %) (:outbox %))) rows)]
+    {:paused (paused-at? root)
+     :drained (and (empty? busy) (zero? project-outbox))
+     :busy busy
+     :project_outbox project-outbox}))
+
+(defn role-note? [file]
+  (let [headers (header-map file)
+        from (get headers "from" "")]
+    (and (not= "git_handoff" (get headers "type"))
+         (not (str/blank? from))
+         (not (str/starts-with? from "(")))))
+
+(defn deliver-paused-notes! [inbox]
+  (doseq [file (sort-by #(str (fs/file-name %))
+                        (dir-entries (fs/path inbox "new") #(and (handoff-file? %) (role-note? %))))]
+    (println (str "NOTE: " (fs/file-name file)))
+    (print (slurp (str file)))
+    (println)
+    (fs/create-dirs (fs/path inbox "completed"))
+    (fs/move file (fs/path inbox "completed" (fs/file-name file)) {:replace-existing true})))
+
+(defn exit-if-paused!
+  "While the swarm drains, take no new mail: in-process work continues, notes
+  from other roles are shown and archived, and otherwise print PAUSED."
+  []
+  (let [inbox (fs/path (System/getProperty "user.dir") ".swarmforge" "handoffs" "inbox")]
+    (when (and (paused-at? (project-root)) (empty? (in-process-entries inbox)))
+      (deliver-paused-notes! inbox)
+      (println "PAUSED: the swarm is draining. Take no new work; stop until the operator resumes.")
+      (System/exit 0))))
