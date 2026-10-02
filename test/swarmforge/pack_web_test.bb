@@ -24,6 +24,8 @@
 (defn test-cli! [& args]
   (case (first args)
     "--test-post" (test-post! (second args) (nth args 2 nil) (nth args 3 nil))
+    "--test-notify-scan" (binding [*sync-notify?* true]
+                           (notify-new-attention! (require-root! (second args))))
     "--test-state" (test-state! (second args))
     "--test-html" (test-html!)
     "--test-post-task" (test-post-task! (second args) (nth args 2 nil) (nth args 3 nil))

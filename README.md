@@ -109,6 +109,18 @@ window[-invisible] <role> <backend> <worktree> [task|batch] [forward-only|back-o
 - Supported backends are `codex`, `grok`, `claude`, and `copilot`; remaining
   tokens are passed to that backend.
 
+Two optional setting lines may appear anywhere in the file:
+
+- `dashboard-port <port>` keeps the dashboard on that localhost port. Without
+  it, a restart reuses the previous run's port when it is free again
+  (`.swarmforge/dashboard-port`), otherwise it picks a free one.
+- `notify-cmd <command...>` runs once for each new clarification question or
+  pending approval, through `sh -c`, with the arguments
+  `<event> <id> <role> <summary>` appended (`event` is `clarification` or
+  `approval`). The same values are in `SWARMFORGE_NOTIFY_EVENT`, `_ID`,
+  `_ROLE`, `_TASK`, `_PROJECT`, `_SUMMARY`, and `SWARMFORGE_DASHBOARD_URL`.
+  Output goes to `.swarmforge/notify-cmd.log`. The dashboard chime still plays.
+
 Forge hosts instead use `Lieutenant <backend> [backend arguments...]`.
 Branches may extend the grammar for their own control plane—for example,
 `lieutenant` adds typed `card` routes and the squad branches add

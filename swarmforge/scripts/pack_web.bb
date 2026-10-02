@@ -2280,16 +2280,160 @@
 (defn parse-port [port-str]
   (if (str/blank? port-str) 0 (Long/parseLong port-str)))
 
+(def ^:dynamic *sync-notify?* false)
+(def notify-poll-ms 3000)
+
+(defn conf-setting [root directive]
+  (let [file (fs/path root "swarmforge" "swarmforge.conf")]
+    (when (fs/regular-file? file)
+      (some (fn [raw]
+              (let [[found value] (str/split (str/trim raw) #"\s+" 2)]
+                (when (= directive found)
+                  (not-empty (str/trim (or value ""))))))
+            (str/split-lines (slurp (str file)))))))
+
+(defn first-line [text]
+  (let [line (or (first (remove str/blank? (str/split-lines (or text "")))) "")]
+    (if (> (count line) 200) (str (subs line 0 200) "…") line)))
+
+(defn approval-events [root project]
+  (for [path (pending-files root)
+        :let [headers (:headers (parse-message path))
+              task (or (get headers "task") (get headers "task_id") "")
+              from (or (get headers "from") "")]]
+    {:event "approval"
+     :id (approval-id path)
+     :role from
+     :task task
+     :project project
+     :summary (str "Approval needed: " task " (" from " → " (or (get headers "to") "") ")")}))
+
+(defn clarification-events [root project]
+  (for [item (list-clarifications root)
+        :when (= "pending" (:status item))]
+    {:event "clarification"
+     :id (:id item)
+     :role (or (:role item) "")
+     :task ""
+     :project project
+     :summary (str "Clarification from " (or (:role item) "agent") ": " (first-line (:body item)))}))
+
+(defn attention-roots [root]
+  (if (forge/forge? root)
+    (mapv (fn [name] [(open-project-root root name) name]) (forge/read-open-projects root))
+    [[(str root) ""]]))
+
+(defn attention-events [root]
+  (vec (mapcat (fn [[proot project]]
+                 (try
+                   (concat (approval-events proot project) (clarification-events proot project))
+                   (catch Exception _ [])))
+               (attention-roots root))))
+
+(defn event-key [{:keys [event id project]}]
+  (str project "/" event "/" id))
+
+(defn notified-file [root]
+  (fs/path root ".swarmforge" "dashboard" "notified"))
+
+(defn read-notified [root]
+  (let [file (notified-file root)]
+    (if (fs/regular-file? file)
+      (set (remove str/blank? (str/split-lines (slurp (str file)))))
+      #{})))
+
+(defn write-notified! [root keys]
+  (let [file (notified-file root)]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file) (apply str (map #(str % "\n") (sort keys))))))
+
+(defn dashboard-url [root]
+  (let [file (fs/path root ".swarmforge" "dashboard-url")]
+    (if (fs/regular-file? file) (str/trim (slurp (str file))) "")))
+
+(defn run-notify-cmd! [root cmd {:keys [event id role task project summary]}]
+  (let [pb (java.lang.ProcessBuilder.
+            ^java.util.List [ "sh" "-c" (str cmd " \"$@\"") "swarmforge-notify"
+                             event id role summary])
+        log (fs/file (fs/path root ".swarmforge" "notify-cmd.log"))
+        env (.environment pb)]
+    (doseq [[k v] {"SWARMFORGE_NOTIFY_EVENT" event
+                   "SWARMFORGE_NOTIFY_ID" id
+                   "SWARMFORGE_NOTIFY_ROLE" role
+                   "SWARMFORGE_NOTIFY_TASK" task
+                   "SWARMFORGE_NOTIFY_PROJECT" project
+                   "SWARMFORGE_NOTIFY_SUMMARY" summary
+                   "SWARMFORGE_DASHBOARD_URL" (dashboard-url root)}]
+      (.put env k (str (or v ""))))
+    (fs/create-dirs (fs/parent (fs/path log)))
+    (doto pb
+      (.directory (fs/file root))
+      (.redirectErrorStream true)
+      (.redirectOutput (java.lang.ProcessBuilder$Redirect/appendTo log)))
+    (let [proc (.start pb)]
+      (when *sync-notify?*
+        (.waitFor proc)))))
+
+(defn notify-new-attention!
+  "Run notify-cmd from swarmforge.conf once for each clarification or
+  pending approval not notified before."
+  [root]
+  (when-let [cmd (conf-setting root "notify-cmd")]
+    (let [events (attention-events root)
+          seen (read-notified root)]
+      (doseq [event events
+              :when (not (contains? seen (event-key event)))]
+        (try
+          (run-notify-cmd! root cmd event)
+          (catch Exception e
+            (binding [*out* *err*]
+              (println (str "notify-cmd failed: " (.getMessage e)))))))
+      (write-notified! root (map event-key events)))))
+
+(defn start-notifier! [root]
+  (future
+    (loop []
+      (try
+        (notify-new-attention! root)
+        (catch Exception e
+          (binding [*out* *err*]
+            (println (str "notifier error: " (.getMessage e))))))
+      (Thread/sleep notify-poll-ms)
+      (recur))))
+
+(defn write-dashboard-port! [root port]
+  (let [file (fs/path root ".swarmforge" "dashboard-port")]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file) (str port "\n"))))
+
+(defn run-server [root port]
+  (http/run-server (http-handler root)
+                   {:ip "127.0.0.1"
+                    :port port
+                    :worker-count 8
+                    :legacy-return-value? false}))
+
+(defn start-server [root port]
+  (try
+    (run-server root port)
+    (catch Exception e
+      (if (zero? port)
+        (throw e)
+        (do (binding [*out* *err*]
+              (println (str "dashboard port " port " is unavailable (" (.getMessage e)
+                            "); using a free port"))
+              (flush))
+            (run-server root 0))))))
+
 (defn serve! [root port-str]
   (let [root (require-root! root)
-        server (http/run-server (http-handler root)
-                                {:ip "127.0.0.1"
-                                 :port (parse-port port-str)
-                                 :worker-count 8
-                                 :legacy-return-value? false})
-        url (str "http://127.0.0.1:" (http/server-port server))]
+        server (start-server root (parse-port port-str))
+        port (http/server-port server)
+        url (str "http://127.0.0.1:" port)]
     (write-pack-web-pid! root)
+    (write-dashboard-port! root port)
     (write-dashboard-url! root url)
+    (start-notifier! root)
     (println url)
     (flush)
     @(promise)))

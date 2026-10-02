@@ -2816,6 +2816,112 @@
       (is (= 400 (:status resp)))
       (is (= "pending" (:status (first (:clarifications (web-state root)))))))))
 
+(defn notify-log-lines [file]
+  (if (fs/exists? file)
+    (vec (remove str/blank? (str/split-lines (slurp (str file)))))
+    []))
+
+(deftest pack-web-notify-cmd-runs-once-per-new-question-and-approval
+  ;; Given swarmforge.conf names a notify-cmd, QA asks a question and an approval is pending
+  ;; When the dashboard notifier scans twice
+  ;; Then notify-cmd ran once per item with event, id, role, and summary
+  (let [root (tmp-dir)
+        log (fs/path root "notify.log")
+        hook (fs/path root "notify.sh")]
+    (setup-pack! root ["specifier" "QA"])
+    (write-file hook (str "#!/bin/sh\n"
+                          "echo \"$1|$2|$3|$4|$SWARMFORGE_NOTIFY_EVENT|$SWARMFORGE_NOTIFY_TASK\" >> " log "\n"))
+    (fs/set-posix-file-permissions hook "rwxr-xr-x")
+    (write-file (fs/path root "swarmforge/swarmforge.conf")
+                (str "window specifier codex master\n"
+                     "window QA codex QA\n"
+                     "notify-cmd " hook "\n"))
+    (let [id (ask-clarification! root "QA" "Does the bat drop to any of 20 rooms?\n")]
+      (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_from_specifier_to_QA.handoff")
+                  "from: specifier\nto: QA\ntype: git_handoff\ntask: HTW\n\npayload\n")
+      (pack-web root true "--test-notify-scan" (str root))
+      (pack-web root true "--test-notify-scan" (str root))
+      (let [lines (notify-log-lines log)]
+        (is (= 2 (count lines)))
+        (is (some #(str/starts-with? % (str "clarification|" id "|QA|Clarification from QA: Does the bat drop")) lines))
+        (is (some #(str/starts-with? % "approval|50_from_specifier_to_QA|specifier|Approval needed: HTW") lines))
+        (is (some #(str/ends-with? % "|approval|HTW") lines)))
+      (ask-clarification! root "specifier" "Second question?\n")
+      (pack-web root true "--test-notify-scan" (str root))
+      (is (= 3 (count (notify-log-lines log)))))))
+
+(deftest pack-web-without-notify-cmd-runs-nothing
+  ;; Given no notify-cmd in swarmforge.conf
+  ;; When the notifier scans with a pending question
+  ;; Then nothing is recorded as notified
+  (let [root (tmp-dir)]
+    (setup-pack! root ["QA"])
+    (write-file (fs/path root "swarmforge/swarmforge.conf") "window QA codex master\n")
+    (ask-clarification! root "QA" "Which rooms?\n")
+    (pack-web root true "--test-notify-scan" (str root))
+    (is (not (fs/exists? (fs/path root ".swarmforge/dashboard/notified"))))))
+
+(defn free-port []
+  (with-open [s (java.net.ServerSocket. 0)]
+    (str (.getLocalPort s))))
+
+(defn launcher-root! [conf-extra]
+  (let [root (tmp-dir)]
+    (write-file (fs/path root "swarmforge/constitution.prompt") "Read articles.\n")
+    (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
+    (write-file (fs/path root "swarmforge/swarmforge.conf")
+                (str "window coder codex master\n" conf-extra))
+    root))
+
+(defn chosen-dashboard-port [root]
+  (str/trim (:out (run {:dir root} (script "swarmforge.bb") "--test-dashboard-port" (str root)))))
+
+(deftest swarmforge-dashboard-port-prefers-config-then-previous-port
+  ;; Given a configured dashboard-port, or a previous run's free port, or a busy previous port
+  ;; When the launcher picks the dashboard port
+  ;; Then it uses the configured port, else the previous one, else none (pack_web picks)
+  (let [configured (launcher-root! "dashboard-port 48123\n")
+        previous (launcher-root! "")
+        busy (launcher-root! "")
+        prev-port (free-port)]
+    (write-file (fs/path previous ".swarmforge/dashboard-port") (str prev-port "\n"))
+    (is (= "48123" (chosen-dashboard-port configured)))
+    (is (= prev-port (chosen-dashboard-port previous)))
+    (with-open [s (java.net.ServerSocket. 0 1 (java.net.InetAddress/getByName "127.0.0.1"))]
+      (write-file (fs/path busy ".swarmforge/dashboard-port") (str (.getLocalPort s) "\n"))
+      (is (= "" (chosen-dashboard-port busy))))
+    (is (str/includes? (:out (run {:dir configured} (script "swarmforge.bb") "--test-parse" (str configured)))
+                       "coder Coder"))))
+
+(deftest swarmforge-rejects-an-invalid-dashboard-port
+  (let [root (launcher-root! "dashboard-port 99999\n")
+        result (run {:dir root :ok? false} (script "swarmforge.bb") "--test-parse" (str root))]
+    (is (= 1 (:exit result)))
+    (is (str/includes? (:err result) "Invalid dashboard-port"))))
+
+(deftest pack-web-serve-records-its-port-and-falls-back-when-busy
+  ;; Given a port held by another listener
+  ;; When pack_web --serve asks for it
+  ;; Then it serves on another port and records that port for the next start
+  (with-open [s (java.net.ServerSocket. 0 1 (java.net.InetAddress/getByName "127.0.0.1"))]
+    (let [root (tmp-dir)
+          busy (.getLocalPort s)
+          url-file (fs/path root ".swarmforge/dashboard-url")
+          pb (doto (java.lang.ProcessBuilder. [(script "pack_web.sh") "--serve" (str root) (str busy)])
+               (.directory (java.io.File. (str root))))
+          _ (doto (.environment pb)
+              (.put "PATH" (System/getenv "PATH")))
+          proc (.start pb)]
+      (try
+        (is (wait-file url-file 10000))
+        (let [url (str/trim (slurp (str url-file)))
+              port (str/trim (slurp (str (fs/path root ".swarmforge/dashboard-port"))))]
+          (is (= url (str "http://127.0.0.1:" port)))
+          (is (not= (str busy) port)))
+        (finally
+          (.destroyForcibly proc)
+          (.waitFor proc))))))
+
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.pack-ui-test)]
     (System/exit (+ fail error))))
