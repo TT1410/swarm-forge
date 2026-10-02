@@ -121,7 +121,7 @@
 (defn increment-audit! [root task-id]
   (pack-board root true "increment-audit" "--root" (str root) "--task-id" task-id))
 
-(defn queue-handoff! [root {:keys [from to task artifacts non-forwarding priority body]}]
+(defn queue-handoff! [root {:keys [from to task artifacts non-forwarding priority body with-task-ids]}]
   (let [priority (or priority "50")]
     (write-file
      (fs/path root ".swarmforge/handoffs/outbox"
@@ -132,6 +132,7 @@
           "type: git_handoff\n"
           "task: " task "\n"
           (when artifacts (str "artifacts: " artifacts "\n"))
+          (when with-task-ids (str "with_task_ids: " with-task-ids "\n"))
           (when non-forwarding "non-forwarding: true\n")
           "\n"
           (or body "payload") "\n"))))
@@ -647,25 +648,18 @@
       (finally
         (stop-tmux! sock)))))
 
-(deftest terminal-handoff-dones-finished-batch-cards-in-sender-lane
-  ;; Given two-pack, Command syntax and validation in cleaner, those names in a
-  ;; completed cleaner batch, HTW still in cleaner but not in that batch
-  ;; When cleaner queues a terminal git_handoff named HTW
-  ;; Then Command syntax and validation are done and HTW is done
+(deftest terminal-handoff-dones-every-card-it-carries
+  ;; Given two-pack, HTW, Command syntax and validation in cleaner
+  ;; When cleaner queues a terminal git_handoff for HTW that also carries the other two
+  ;; Then all three cards are done
   (let [root (tmp-dir)
         roles ["coder" "cleaner"]
-        batch (fs/path (pack-worktree root roles "cleaner")
-                       ".swarmforge/handoffs/inbox/completed"
-                       "batch_20260824T150500Z_000001")
         sock (do (setup-pack! root roles)
                  (create-task root "HTW" "cleaner")
                  (create-task root "Command syntax" "cleaner")
                  (create-task root "validation" "cleaner")
-                 (write-file (fs/path batch "50_command.handoff")
-                             "from: coder\nto: cleaner\npriority: 50\ntype: git_handoff\ntask: Command syntax\n\npayload\n")
-                 (write-file (fs/path batch "50_validation.handoff")
-                             "from: coder\nto: cleaner\npriority: 50\ntype: git_handoff\ntask: validation\n\npayload\n")
-                 (queue-handoff! root {:from "cleaner" :to "coder" :task "HTW"})
+                 (queue-handoff! root {:from "cleaner" :to "coder" :task "HTW"
+                                       :with-task-ids "Command syntax,validation"})
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
@@ -697,11 +691,11 @@
       (finally
         (stop-tmux! sock)))))
 
-(deftest terminal-handoff-dones-in-process-batch-cards
+(deftest terminal-handoff-leaves-other-in-process-batch-cards
   ;; Given two-pack, one liners/validate/HHG in an in-process cleaner batch,
   ;; and Command syntax in cleaner but not in that batch
   ;; When cleaner terminals with task one liners before done_with_current
-  ;; Then the three batch cards are done and Command syntax stays in cleaner
+  ;; Then only one liners is done; the other batch cards wait for their own handoff
   (let [root (tmp-dir)
         roles ["coder" "cleaner"]
         batch (fs/path (in-process-dir root roles "cleaner")
@@ -722,8 +716,8 @@
     (try
       (handoffd-once root)
       (is (= "done" (task-lane root "one liners")))
-      (is (= "done" (task-lane root "validate")))
-      (is (= "done" (task-lane root "Holy Hand Grenade")))
+      (is (= "cleaner" (task-lane root "validate")))
+      (is (= "cleaner" (task-lane root "Holy Hand Grenade")))
       (is (= "cleaner" (task-lane root "Command syntax")))
       (finally
         (stop-tmux! sock)))))
@@ -744,6 +738,69 @@
       (is (seq (inbox-names root six-pack-roles "specifier")))
       (is (seq (inbox-names root six-pack-roles "hardender")))
       (is (= [] (pending-names root)))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest approval-skips-a-fix-for-a-card-that-already-moved-on
+  ;; SF-15: a specifier fix for a card already in coder is delivered without approval
+  (let [root (tmp-dir)
+        sock (do (setup-pack! root six-pack-roles)
+                 (create-task root "C14" "coder")
+                 (queue-handoff! root {:from "specifier" :to "coder" :task "C14"})
+                 (start-tmux! root six-pack-roles))]
+    (try
+      (handoffd-once root)
+      (is (= [] (pending-names root)))
+      (is (seq (inbox-names root six-pack-roles "coder")))
+      (is (= "coder" (task-lane root "C14")))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest last-role-return-moves-a-done-card-back
+  ;; SF-35: QA's return handoff takes the card out of done into the recipient lane
+  (let [root (tmp-dir)
+        sock (do (setup-pack! root six-pack-roles)
+                 (create-task root "D40" "done")
+                 (write-file (fs/path root ".swarmforge/handoffs/outbox/50_from_QA_to_coder.handoff")
+                             "from: QA\nto: coder\npriority: 50\ntype: git_handoff\ntask: D40\nreturn: true\n\npayload\n")
+                 (start-tmux! root six-pack-roles))]
+    (try
+      (handoffd-once root)
+      (is (= "coder" (task-lane root "D40")))
+      (is (seq (inbox-names root six-pack-roles "coder")))
+      (finally
+        (stop-tmux! sock)))))
+
+(defn git-commit! [root text]
+  (write-file (fs/path root "work.txt") text)
+  (run {:dir root} "git" "add" "work.txt")
+  (run {:dir root} "git" "commit" "-q" "-m" text)
+  (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD"))))
+
+(deftest newer-merge-only-copy-supersedes-an-unread-older-one
+  ;; SF-16: the recipient keeps one merge-only copy per sender instead of one per commit
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner" "QA"]
+        _ (setup-pack! root roles)
+        _ (run {:dir root} "git" "init" "-q")
+        _ (run {:dir root} "git" "config" "user.email" "t@example.com")
+        _ (run {:dir root} "git" "config" "user.name" "T")
+        older (git-commit! root "one")
+        newer (git-commit! root "two")
+        coder-new (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/new")
+        coder-done (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/completed")
+        _ (write-file (fs/path coder-new "00_old_from_QA_to_coder.handoff")
+                      (str "id: old\nfrom: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask: A\ncommit: "
+                           older "\nnon-forwarding: true\n\nmerge\n"))
+        _ (write-file (fs/path root ".swarmforge/handoffs/outbox/00_new_from_QA_to_coder.handoff")
+                      (str "id: new\nfrom: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask: B\ncommit: "
+                           newer "\nnon-forwarding: true\n\nmerge\n"))
+        sock (start-tmux! root roles)]
+    (try
+      (handoffd-once root)
+      (is (= ["00_new_from_QA_to_coder.handoff"] (inbox-names root roles "coder")))
+      (is (str/includes? (slurp (str (fs/path coder-done "00_old_from_QA_to_coder.handoff")))
+                         "superseded_by: new"))
       (finally
         (stop-tmux! sock)))))
 
@@ -1761,7 +1818,7 @@
     (is (zero? (:exit (pack-web root false "--test-retry-task" (str root)
                                 "50_first" "first"))))
     (is (zero? (:exit (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"}}
-                           (script "done_with_current.sh")))))
+                           (script "done_with_current.sh") "--drop"))))
     (is (fs/exists? completed))
     (is (not (fs/exists? in-process)))
     (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_second.handoff")

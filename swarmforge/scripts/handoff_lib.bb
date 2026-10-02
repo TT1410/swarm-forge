@@ -205,17 +205,43 @@
   (or (some #(when (= key (:id %)) %) cards)
       (some #(when (= key (:name %)) %) cards)))
 
+(defn recursive-handoff-files [dir]
+  (if (fs/directory? dir)
+    (->> (fs/glob dir "**.handoff")
+         (filter fs/regular-file?)
+         vec)
+    []))
+
+(defn outbound-card-ids
+  "Cards named by git handoffs from role-name that wait for approval or delivery."
+  [role-name]
+  (let [root (project-root)
+        dirs (cons (fs/path root ".swarmforge" "handoffs" "pending_approval")
+                   (cons (fs/path root ".swarmforge" "handoffs" "outbox")
+                         (for [cols (role-rows)
+                               :let [wt (nth cols 2 nil)]
+                               :when (not (str/blank? wt))]
+                           (fs/path wt ".swarmforge" "handoffs" "outbox"))))]
+    (->> dirs
+         (mapcat recursive-handoff-files)
+         (filter #(and (= "git_handoff" (header-field % "type"))
+                       (= role-name (header-field % "from"))))
+         (mapcat mail-card-ids)
+         set)))
+
 (defn open-card-ids
   "Cards in current work that still need an outgoing handoff from role-name.
   With a board, only cards still in the role's lane count."
   ([role-name] (open-card-ids role-name (in-process-files)))
   ([role-name files]
    (let [board? (board-present?)
-         cards (board-cards)]
+         cards (board-cards)
+         outbound (outbound-card-ids role-name)]
      (->> files
           (filter card-mail?)
           (mapcat (fn [file] (remove (handed-card-ids file) (mail-card-ids file))))
           distinct
+          (remove outbound)
           (filter (fn [id]
                     (if board?
                       (= role-name (:lane (find-card cards id)))

@@ -465,10 +465,10 @@
         (is (str/includes? (:out result) "task-alpha"))
         (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/40_20260615T000002Z_000002_from_sender_to_receiver.handoff")))))))
 
-(deftest ready-for-next-waits-while-outbound-approval-is-active
-  ;; Given sender has an outbound git_handoff pending approval
+(deftest ready-for-next-starts-other-cards-while-an-approval-is-pending
+  ;; SF-02: Given sender's handoff for task-one waits for approval
   ;; When sender asks for another task
-  ;; Then no new task is dequeued from the inbox
+  ;; Then task-two starts
   (let [root (tmp-dir)]
     (init-repo! root)
     (setup-project! root)
@@ -489,10 +489,30 @@
                    :body "next task"})
     (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false}
                       (script "ready_for_next.sh"))]
+      (is (zero? (:exit result)) (:err result))
+      (is (str/includes? (:out result) "TASK_NAME: task-two"))
+      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/in_process/50_next.handoff"))))))
+
+(deftest ready-for-next-holds-mail-for-the-card-awaiting-approval
+  ;; Given sender's handoff for task-one waits for approval
+  ;; When the only queued mail is for task-one
+  ;; Then sender waits for the approval
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "sender\tmaster\t%s\tsession\tSender\tcodex\ttask\nreceiver\treceiver\t%s\tsession\tReceiver\tcodex\ttask\n"
+                        root (fs/path root ".worktrees/receiver")))
+    (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_pending.handoff")
+                "from: sender\nto: receiver\npriority: 50\ntype: git_handoff\ntask_id: task-one\ntask: task-one\ncommit: 1234567890\n\npayload\n")
+    (put-handoff! root "new" "50_again.handoff"
+                  {:id "again" :from "receiver" :to "sender" :recipient "sender" :priority "50"
+                   :type "git_handoff" :task-id "task-one" :task "task-one" :commit "1234567890"})
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false}
+                      (script "ready_for_next.sh"))]
       (is (= 2 (:exit result)))
       (is (str/includes? (:err result) "WAITING_FOR_APPROVAL"))
-      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_next.handoff")))
-      (is (empty? (fs/glob (fs/path root ".swarmforge/handoffs/inbox/in_process") "*.handoff"))))))
+      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_again.handoff"))))))
 
 (deftest ready-for-next-waits-while-outbound-handoff-is-in-outbox
   ;; Given sender has queued a git_handoff that handoffd has not processed yet
@@ -601,10 +621,10 @@
       (is (str/includes? (read-file (fs/path root ".swarmforge/daemon/handoffd.log"))
                          "notified-unblocked-sender sender")))))
 
-(deftest ready-for-next-batch-waits-while-outbound-approval-is-active
+(deftest ready-for-next-batch-starts-other-cards-while-an-approval-is-pending
   ;; Given a batch-mode sender has an outbound git_handoff pending approval
   ;; When sender asks for the next batch
-  ;; Then no batch is created from queued inbox work
+  ;; Then a batch starts with the other card (SF-02)
   (let [root (tmp-dir)]
     (init-repo! root)
     (setup-project! root {"sender" "batch" "receiver" "task"})
@@ -625,10 +645,10 @@
                    :body "next task"})
     (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false}
                       (script "ready_for_next.sh"))]
-      (is (= 2 (:exit result)))
-      (is (str/includes? (:err result) "WAITING_FOR_APPROVAL"))
-      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_next.handoff")))
-      (is (empty? (fs/glob (fs/path root ".swarmforge/handoffs/inbox/in_process") "batch_*"))))))
+      (is (zero? (:exit result)) (:err result))
+      (is (str/includes? (:out result) "TASK_NAME: task-two"))
+      (is (some #(str/starts-with? (fs/file-name %) "batch_")
+                (fs/list-dir (fs/path root ".swarmforge/handoffs/inbox/in_process")))))))
 
 (deftest ready-for-next-batch-groups-equal-priority-handoffs
   (let [root (tmp-dir)]

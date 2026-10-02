@@ -109,6 +109,50 @@
            distinct
            vec))))
 
+(defn outbox-git-files
+  "Git handoffs from role that the daemon has not delivered or held yet."
+  [role]
+  (if (str/blank? role)
+    []
+    (->> (mapcat recursive-handoff-files (active-outbox-dirs))
+         (filter #(outbound-git-from-role? role %))
+         distinct
+         vec)))
+
+(defn pending-approval-git-files [role]
+  (if (str/blank? role)
+    []
+    (->> (if-let [dir (pending-approval-dir)]
+           (recursive-handoff-files dir)
+           [])
+         (filter #(outbound-git-from-role? role %))
+         vec)))
+
+(defn card-keys [file]
+  (let [headers (header-map file)]
+    (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
+               (str/split (or (get headers "with_task_ids") "") #","))
+         (map #(some-> % str/trim))
+         (remove str/blank?)
+         set)))
+
+(defn held-card-keys [role]
+  (into #{} (mapcat card-keys) (pending-approval-git-files role)))
+
+(defn startable-files
+  "New mail the role may start. A handoff waiting for approval holds back only
+  mail for the same card, not the whole queue."
+  [role files]
+  (let [held (held-card-keys role)]
+    (vec (remove #(some held (card-keys %)) files))))
+
+(defn blocking-files
+  "Outbound files that keep role from taking new work, or nil."
+  [role new-files]
+  (or (seq (outbox-git-files role))
+      (when (and (seq new-files) (empty? (startable-files role new-files)))
+        (seq (pending-approval-git-files role)))))
+
 (defn wait-message [active]
   ["WAITING_FOR_APPROVAL: current git handoff is still active"
    (str/join "\n" (map #(str "- " %) active))])

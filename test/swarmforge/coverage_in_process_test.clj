@@ -294,3 +294,29 @@
 
 (deftest swarm-tool-usage
   (is (fn? swarm-tool/-main)))
+
+(deftest handoffd-renotifies-idle-roles-with-waiting-mail
+  ;; SF-03, SF-17: an idle role with mail is reminded; a busy role is not
+  (let [root (tmp-dir)
+        idle (fs/path root "idle")
+        busy (fs/path root "busy")
+        notified (atom [])]
+    (try
+      (doseq [wt [idle busy]]
+        (fs/create-dirs (fs/path wt ".swarmforge/handoffs/inbox/new"))
+        (spit (str (fs/path wt ".swarmforge/handoffs/inbox/new/50_x.handoff")) "from: a\n\nbody\n"))
+      (fs/create-dirs (fs/path busy ".swarmforge/handoffs/inbox/in_process"))
+      (spit (str (fs/path busy ".swarmforge/handoffs/inbox/in_process/50_y.handoff")) "from: a\n\nbody\n")
+      (handoffd/configure! [(str root)])
+      (reset! handoffd/last-notified {})
+      (reset! handoffd/started-at-ms (- (System/currentTimeMillis) (* 10 handoffd/renotify-ms)))
+      (with-redefs [handoffd/notify! (fn [_ session] (swap! notified conj session))
+                    handoffd/log! (fn [& _])]
+        (let [roles {"idle" {:role "idle" :worktree-path (str idle) :session "idle-s"}
+                     "busy" {:role "busy" :worktree-path (str busy) :session "busy-s"}}]
+          (handoffd/renotify-idle-roles! roles "sock")
+          (is (= ["idle-s"] @notified))
+          (handoffd/renotify-idle-roles! roles "sock")
+          (is (= ["idle-s"] @notified) "waits for the interval before reminding again")))
+      (finally
+        (fs/delete-tree root)))))

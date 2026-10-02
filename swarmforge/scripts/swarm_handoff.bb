@@ -647,7 +647,9 @@
        (str/join ", " (map handoff-lib/card-label open))
        ". Name the card in task: and list other cards carried by the same commit in with_tasks:."))
 
-(defn task-state-errors [headers sender recipients]
+(defn task-state-errors
+  ([headers sender] (task-state-errors headers sender []))
+  ([headers sender recipients]
   (if-not (= "git_handoff" (get headers "type"))
     []
     (let [task-id (or (not-empty (get headers "task_id"))
@@ -667,7 +669,7 @@
         (and (str/blank? task-id) (not (::open-cards headers)))
         (conj "Missing required header 'task_id' for git_handoff.")
         (not (str/blank? task-id))
-        (into (mapcat #(card-state-errors % context) (handoff-card-ids headers)))))))
+        (into (mapcat #(card-state-errors % context) (handoff-card-ids headers))))))))
 
 (def active-states
   [["pending approvals" (fn [] [(fs/path (state-dir) "pending_approval")])]
