@@ -342,6 +342,35 @@
     (fs/create-dirs dest)
     (fs/copy-tree src dest {:replace-existing true})))
 
+(def synced-role-paths
+  ["swarmforge/roles" "swarmforge/constitution" "swarmforge/constitution.prompt"])
+
+(defn git-in [dir & args]
+  (apply process/sh {:continue true :dir (str dir)} "git" args))
+
+(defn master-tracked-role-files [ctx]
+  (let [result (apply git-in (:working-dir ctx) "ls-files" "--" synced-role-paths)]
+    (if (zero? (:exit result))
+      (vec (remove str/blank? (str/split-lines (:out result))))
+      [])))
+
+(defn mid-merge? [worktree-path]
+  (zero? (:exit (git-in worktree-path "rev-parse" "-q" "--verify" "MERGE_HEAD"))))
+
+(defn commit-synced-roles! [ctx worktree-path]
+  (let [files (filterv #(fs/exists? (fs/path worktree-path %)) (master-tracked-role-files ctx))]
+    (when (seq files)
+      (apply git-in worktree-path "add" "--" files)
+      (when-not (zero? (:exit (apply git-in worktree-path "diff" "--cached" "--quiet" "--" files)))
+        (if (mid-merge? worktree-path)
+          (println (str yellow "Warning: " worktree-path " is mid-merge; synced role prompts left uncommitted." reset))
+          (let [result (apply git-in worktree-path "commit" "-q" "--no-verify"
+                              "-m" "Sync SwarmForge roles and constitution from the project checkout"
+                              "--" files)]
+            (when-not (zero? (:exit result))
+              (println (str yellow "Warning: could not commit synced role prompts in " worktree-path ": "
+                            (str/trim (str (:err result) (:out result))) reset)))))))))
+
 (defn sync-worktree-roles! [ctx worktree-path]
   (copy-tree-into! (:roles-dir ctx) (fs/path worktree-path "swarmforge" "roles"))
   (copy-tree-into! (fs/path (:swarm-forge-dir ctx) "constitution")
@@ -350,7 +379,8 @@
     (fs/create-dirs (fs/path worktree-path "swarmforge"))
     (fs/copy (:constitution-file ctx)
              (fs/path worktree-path "swarmforge" "constitution.prompt")
-             {:replace-existing true})))
+             {:replace-existing true}))
+  (commit-synced-roles! ctx worktree-path))
 
 (defn sync-worktree-scripts! [ctx]
   (doseq [row (:roles ctx)
@@ -1041,8 +1071,12 @@
     (println (str (boolean (fs/exists? (dashboard-url-file ctx))) " "
                   (boolean (fs/exists? (pack-web-pid-file ctx)))))))
 
+(defn test-sync-worktree-roles! [root worktree-path]
+  (sync-worktree-roles! (context root) (fs/absolutize worktree-path)))
+
 (defn -main [& args]
   (case (first args)
+    "--test-sync-worktree-roles" (test-sync-worktree-roles! (second args) (nth args 2))
     "--test-parse" (test-parse! (or (second args) (System/getProperty "user.dir")))
     "--test-required-helpers" (test-required-helpers!)
     "--test-launch-plan" (test-launch-plan! (or (second args) (System/getProperty "user.dir")))

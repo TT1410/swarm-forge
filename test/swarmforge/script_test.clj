@@ -1399,3 +1399,32 @@
         (fs/delete-tree base)
         (fs/delete-tree packs)))))
 
+
+(deftest synced-role-prompts-do-not-block-a-later-merge
+  ;; Given a role worktree whose branch lacks the master commit that changed a role prompt
+  ;; When the launcher syncs roles into the worktree and the role later merges that commit
+  ;; Then the worktree is clean and the merge succeeds
+  (let [root (tmp-dir)
+        worktree (fs/path root ".worktrees" "coder")]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "v1\n")
+      (write-file (fs/path root "swarmforge/constitution.prompt") "c1\n")
+      (write-file (fs/path root "swarmforge/constitution/articles/a.prompt") "a1\n")
+      (run {:dir root} "git" "add" "swarmforge")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add prompts")
+      (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-coder" (str worktree) "HEAD")
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "v2\n")
+      (write-file (fs/path root "swarmforge/constitution/articles/a.prompt") "a2\n")
+      (run {:dir root} "git" "commit" "-q" "-am" "Change prompts")
+      (run {:dir root} (script "swarmforge.bb") "--test-sync-worktree-roles" (str root) (str worktree))
+      (is (= "v2\n" (slurp (str (fs/path worktree "swarmforge/roles/coder.prompt")))))
+      (is (str/blank? (:out (run {:dir worktree} "git" "status" "--porcelain"))))
+      (let [merge (run {:dir worktree :ok? false} "git" "merge" "--no-edit" "master")]
+        (is (zero? (:exit merge)) (str (:err merge) (:out merge))))
+      (testing "a second sync with identical content makes no new commit"
+        (let [head (:out (run {:dir worktree} "git" "rev-parse" "HEAD"))]
+          (run {:dir root} (script "swarmforge.bb") "--test-sync-worktree-roles" (str root) (str worktree))
+          (is (= head (:out (run {:dir worktree} "git" "rev-parse" "HEAD"))))))
+      (finally
+        (fs/delete-tree root)))))
