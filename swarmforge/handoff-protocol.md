@@ -381,8 +381,27 @@ Responsibilities:
 - Run inside one agent worktree.
 - Read the current role from `SWARMFORGE_ROLE`.
 - Read that role's receive mode from `.swarmforge/roles.tsv`.
+- When a board exists, refuse with `OPEN_CARDS` (exit 3) while current work
+  holds a forwarded card that is still in this role's lane and has no outgoing
+  `git_handoff` (handed off, pending approval, or in an outbox). Merge-only
+  (`non-forwarding`) copies and role notes carry no card. `--drop` finishes
+  anyway and prints `DROPPED:` for each card left in the lane.
 - Dispatch to `done_with_current_task.sh` for `task` mode.
 - Dispatch to `done_with_current_batch.sh` for `batch` mode.
+
+### Cards in a handoff
+
+A `git_handoff` carries the card named by `task_id`/`task` plus any cards in
+`with_task_ids` (drafted as `with_tasks: <card>[,<card>...]`). `swarm_handoff.sh`
+resolves the drafted `task:` to a card of the current work, a card in the
+sender's lane, or a card already in a recipient's lane, and refuses any other
+card. With no recognizable `task:` it takes the only open card of the current
+work, and refuses when several cards are open. After the handoff it records the
+cards in the current mail's `handed_task_ids`; current work completes only when
+no open card is left (`CURRENT_WORK_OPEN` lists the rest). The daemon moves
+every carried card to the first recipient's lane, or marks every carried card
+Done when the last role sends it. `return: true` sends a card back instead: it
+is not merge-only, it reopens a Done card, and it sends no reverse copies.
 
 ### `ready_for_next_task.sh`
 
@@ -393,7 +412,9 @@ Responsibilities:
 - If an in-process file exists, report that it must be resumed or completed
   before accepting new work.
 - If no in-process file exists, select the first file in `inbox/new/` by sorted
-  filename order.
+  filename order. Mail for a card whose `git_handoff` from this role waits in
+  `pending_approval` is held back; other cards start. An undelivered outbound
+  `git_handoff` in an outbox still blocks all new work.
 - Atomically move that file to `inbox/in_process/`.
 - Add or update `dequeued_at`.
 - Print the accepted task path, sender, message type, priority, and payload.
@@ -509,7 +530,11 @@ Prompts should instruct agents to follow this loop:
 On restart, an agent should run `ready_for_next.sh` and follow its output.
 
 Tmux wake-ups are intentionally lossy. They only prompt an idle agent to check
-its durable inbox. A busy agent can ignore them. After `done_with_current.sh`
+its durable inbox. A busy agent can ignore them. The daemon repeats the wake-up
+every two minutes for a role that has startable mail in `inbox/new/`, nothing
+in `inbox/in_process/`, and no undelivered outbound handoff. A newer merge-only
+copy from the same sender replaces unread older copies whose commits it
+contains. After `done_with_current.sh`
 prints `MAIL_WAITING`, the agent runs `ready_for_next.sh` to accept the next
 item.
 
