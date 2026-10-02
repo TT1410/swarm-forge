@@ -2674,6 +2674,108 @@
     (is (= 400 (:status long)))
     (is (= 404 (:status missing)))))
 
+(defn inbox-new-path [root roles role filename]
+  (fs/path (pack-worktree root roles role) ".swarmforge/handoffs/inbox/new" filename))
+
+(defn put-queued! [root roles role {:keys [task task-id priority from]}]
+  (let [priority (or priority "50")
+        file (inbox-new-path root roles role
+                             (str priority "_20260924T000000Z_000001_from_" (or from "specifier")
+                                  "_to_" role "_" (str/replace task #"\W+" "") ".handoff"))]
+    (write-file file
+                (str "from: " (or from "specifier") "\n"
+                     "to: " role "\n"
+                     "recipient: " role "\n"
+                     "priority: " priority "\n"
+                     "type: git_handoff\n"
+                     (when task-id (str "task_id: " task-id "\n"))
+                     "task: " task "\n"
+                     "\n"
+                     "payload\n"))
+    file))
+
+(deftest pack-web-single-queued-card-shows-queued-not-pane-status
+  ;; Given coder has one card whose mail waits in inbox/new and nothing in process
+  ;; When the dashboard state is read with a busy pane
+  ;; Then the card says waiting in queue, is marked queued, and carries the queue priority
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "C11" "coder")
+        _ (put-queued! root roles "coder" {:task "C11" :task-id (:id (task-card root "C11")) :priority "30"})
+        result (pack-web-env root {} "--test-status-pane" (str root)
+                             "I'm hardening something else.\nesc to interrupt · 1s\n")
+        card (some #(when (= "C11" (:name %)) %) (:tasks (json/parse-string (:out result) true)))]
+    (is (= "waiting in queue" (:status card)))
+    (is (true? (:queued card)))
+    (is (= "coder" (:queue_role card)))
+    (is (= "30" (:queue_priority card)))))
+
+(deftest pack-web-dequeue-removes-a-queued-card
+  ;; Given card C20 queued in specifier inbox/new and C21 queued too
+  ;; When POST /api/tasks/dequeue C20
+  ;; Then C20 is gone from the inbox and the board, archived under removed-tasks, and C21 stays
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (api-post root "/api/tasks" {:name "C20" :text "x"})
+        _ (api-post root "/api/tasks" {:name "C21" :text "y"})
+        id (:id (task-card root "C20"))
+        outbox (outbox-handoffs root)
+        _ (doseq [f outbox]
+            (fs/move f (inbox-new-path root roles "specifier" (str (fs/file-name f)))))
+        resp (api-post root "/api/tasks/dequeue" {:name "C20"})
+        left (inbox-names root roles "specifier")]
+    (is (= 200 (:status resp)))
+    (is (nil? (task-lane root "C20")))
+    (is (= "specifier" (task-lane root "C21")))
+    (is (= 1 (count left)))
+    (is (str/includes? (slurp (str (inbox-new-path root roles "specifier" (first left)))) "task: C21\n"))
+    (is (= 1 (count (handoff-names (fs/path root ".swarmforge/removed-tasks" id)))))
+    (is (fs/exists? (fs/path root ".swarmforge/removed-tasks" id "C20.txt")))))
+
+(deftest pack-web-dequeue-and-priority-refuse-a-card-in-progress
+  ;; Given card C30 in coder in_process
+  ;; When POST /api/tasks/dequeue or /api/tasks/priority
+  ;; Then both answer 409 and the card and mail stay
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "C30" "coder")
+        _ (put-in-process! root roles "coder" {:from "specifier" :task "C30"})
+        dq (api-post root "/api/tasks/dequeue" {:name "C30"})
+        pr (api-post root "/api/tasks/priority" {:name "C30" :priority "10"})]
+    (is (= 409 (:status dq)))
+    (is (str/includes? (get-in dq [:body :error]) "in progress"))
+    (is (= 409 (:status pr)))
+    (is (= "coder" (task-lane root "C30")))
+    (is (= 1 (count (handoff-names (in-process-dir root roles "coder")))))))
+
+(deftest pack-web-priority-reorders-a-queued-card
+  ;; Given C10b and C22 queued in coder at priority 50, C22 first by name
+  ;; When POST /api/tasks/priority C10b to 10
+  ;; Then C10b's file starts with 10_, its header says priority 10, and it sorts first
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "C22" "coder")
+        _ (create-task root "C10b" "coder")
+        _ (put-queued! root roles "coder" {:task "C22" :task-id (:id (task-card root "C22")) :from "a"})
+        _ (put-queued! root roles "coder" {:task "C10b" :task-id (:id (task-card root "C10b")) :from "b"})
+        resp (api-post root "/api/tasks/priority" {:name "C10b" :priority 10})
+        names (sort (inbox-names root roles "coder"))
+        first-file (slurp (str (inbox-new-path root roles "coder" (first names))))
+        bad (api-post root "/api/tasks/priority" {:name "C22" :priority "100"})]
+    (is (= 200 (:status resp)))
+    (is (str/starts-with? (first names) "10_"))
+    (is (str/includes? first-file "task: C10b\n"))
+    (is (str/includes? first-file "priority: 10\n"))
+    (is (not (str/includes? first-file "priority: 50\n")))
+    (is (= 400 (:status bad)))
+    (is (= "30" (:queue_priority
+                 (do (api-post root "/api/tasks/priority" {:name "C22" :priority "30"})
+                     (task-card root "C22")))))))
+
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.pack-ui-test)]
     (System/exit (+ fail error))))

@@ -309,15 +309,49 @@
 (defn pane-status-for [root role]
   (or (last (pane-status-lines-for root role)) ""))
 
-(defn active-card-names [root role]
-  (let [row (role-row root role)
-        names (when row (in-process-task-names (in-process-for-row row)))
-        cards (filter #(= role (:lane %)) (board-tasks root))]
-    (if (seq names)
-      (set names)
-      (if (= 1 (count cards))
-        #{(:name (first cards))}
-        #{}))))
+(defn inbox-new-dir [worktree]
+  (fs/path worktree ".swarmforge" "handoffs" "inbox" "new"))
+
+(defn queued-entry [role path]
+  (let [headers (:headers (parse-message path))]
+    {:role role
+     :priority (or (not-empty (get headers "priority"))
+                   (second (re-find #"^([0-9]{2})_" (str (fs/file-name path)))))
+     :keys (remove str/blank? [(get headers "task_id") (get headers "task")])}))
+
+(defn queued-index
+  "Task id and task name -> {:role :priority} for mail waiting in a role's inbox/new."
+  [root]
+  (reduce (fn [idx row]
+            (let [wt (nth row 2 nil)]
+              (if (str/blank? wt)
+                idx
+                (reduce (fn [idx path]
+                          (let [entry (queued-entry (first row) path)]
+                            (reduce #(update %1 %2 (fn [old] (or old (dissoc entry :keys))))
+                                    idx
+                                    (:keys entry))))
+                        idx
+                        (handoff-files (inbox-new-dir wt))))))
+          {}
+          (role-rows root)))
+
+(defn queued-in [queued task]
+  (or (get queued (:id task)) (get queued (:name task))))
+
+(defn active-card-names
+  ([root role] (active-card-names root role {}))
+  ([root role queued]
+   (let [row (role-row root role)
+         names (when row (in-process-task-names (in-process-for-row row)))
+         cards (filter #(= role (:lane %)) (board-tasks root))
+         card (first cards)]
+     (if (seq names)
+       (set names)
+       (if (and (= 1 (count cards))
+                (not= role (:role (queued-in queued card))))
+         #{(:name card)}
+         #{})))))
 
 (defn rejected-task? [root name]
   (fs/exists? (fs/path root ".swarmforge" "notify" (str "reject-" name))))
@@ -334,19 +368,25 @@
        (remove str/blank?)
        set))
 
-(defn task-with-status [root task]
-  (let [role (:lane task)
-        name (:name task)
-        task-id (:id task)]
-    (assoc task :status
-           (cond
-             (= "done" role) ""
-             (rejected-task? root name) "REJECTED"
-             (or (contains? (pending-approval-ids root) task-id)
-                 (contains? (pending-approval-names root) name)) "Waiting for approval"
-             (contains? (active-card-names root role) name)
-             (pane-status-for root role)
-             :else "waiting in queue"))))
+(defn task-with-status
+  ([root task] (task-with-status root task {}))
+  ([root task queued]
+   (let [role (:lane task)
+         name (:name task)
+         task-id (:id task)
+         waiting (queued-in queued task)
+         status (cond
+                  (= "done" role) ""
+                  (rejected-task? root name) "REJECTED"
+                  (or (contains? (pending-approval-ids root) task-id)
+                      (contains? (pending-approval-names root) name)) "Waiting for approval"
+                  (contains? (active-card-names root role queued) name)
+                  (pane-status-for root role)
+                  :else "waiting in queue")]
+     (cond-> (assoc task :status status)
+       (= "waiting in queue" status) (assoc :queued true)
+       (and (= "waiting in queue" status) waiting) (assoc :queue_role (:role waiting)
+                                                         :queue_priority (:priority waiting))))))
 
 (defn batch-task-names [dir]
   (in-process-task-names (handoff-files dir)))
@@ -399,10 +439,11 @@
 
 (defn tasks [root]
   (let [idx (batch-index root)
+        queued (queued-index root)
         board (mapv (fn [task]
                       (if-let [batch (get idx (:name task))]
-                        (assoc (task-with-status root task) :batch batch)
-                        (task-with-status root task)))
+                        (assoc (task-with-status root task queued) :batch batch)
+                        (task-with-status root task queued)))
                     (board-tasks root))]
     (into (merging-cards root) board)))
 
@@ -1048,6 +1089,110 @@
 (defn post-rename-task [root body]
   (let [{:keys [name to project]} (json/parse-string (or body "{}") true)]
     (json-action #(rename-task! (project-dest root project) name to))))
+
+(defn handoff-state [path]
+  (let [p (str/replace (str path) "\\" "/")]
+    (cond
+      (str/includes? p "/inbox/in_process/") :in-process
+      (str/includes? p "/pending_approval/") :pending
+      (str/includes? p "/inbox/new/") :queued
+      (= "outbox" (str (fs/file-name (fs/parent path)))) :queued
+      :else :history)))
+
+(defn handoff-recipient [path]
+  (get-in (parse-message path) [:headers "recipient"]
+          (get-in (parse-message path) [:headers "to"])))
+
+(defn conflict! [message]
+  (throw (ex-info message {:http-status 409})))
+
+(defn queued-card-handoffs
+  "The card's handoffs still waiting in an inbox/new or outbox.
+  Refuses with 409 when any handoff of the card is in process or waits for approval."
+  [root name]
+  (when (str/blank? name)
+    (bad-request! "Missing task name"))
+  (let [task (or (task-by-name root name)
+                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+        task-id (:id task)
+        by-state (group-by handoff-state (task-handoffs root task-id name))]
+    (when (= "done" (:lane task))
+      (conflict! (str "Card is done: " name)))
+    (when-let [busy (first (:in-process by-state))]
+      (conflict! (str "Card is in progress at " (handoff-recipient busy) "; it can no longer be changed in the queue: " name)))
+    (when (seq (:pending by-state))
+      (conflict! (str "Card is waiting for approval; use Attention: " name)))
+    {:task task :queued (vec (:queued by-state))}))
+
+(defn move-or-conflict! [from to name]
+  (try
+    (fs/move from to {:atomic-move true})
+    (catch java.nio.file.NoSuchFileException _
+      (conflict! (str "Card was just picked up by its role: " name)))))
+
+(defn dequeue-task!
+  "Remove a card that waits in a queue: its queued handoffs are moved to
+  .swarmforge/removed-tasks/<task-id>/ with its body, then the card leaves the board."
+  [root name]
+  (let [{:keys [task queued]} (queued-card-handoffs root name)
+        task-id (:id task)
+        dir (fs/path root ".swarmforge" "removed-tasks" task-id)
+        moved (atom [])]
+    (fs/create-dirs dir)
+    (try
+      (doseq [[i path] (map-indexed vector queued)
+              :let [dest (fs/path dir (str i "_" (fs/file-name path)))]]
+        (move-or-conflict! path dest name)
+        (swap! moved conj [dest path]))
+      (catch Exception e
+        (doseq [[dest path] @moved]
+          (fs/move dest path))
+        (throw e)))
+    (copy-into dir (fs/path root ".swarmforge" "board" (str name ".txt")))
+    (pack-board root "delete" "--name" name)
+    (fs/delete-if-exists (reject-notify root name))))
+
+(defn with-priority-header [content priority]
+  (let [[header body] (str/split content #"\n\n" 2)
+        lines (str/split-lines header)
+        lines (if (some #(str/starts-with? % "priority: ") lines)
+                (mapv #(if (str/starts-with? % "priority: ") (str "priority: " priority) %) lines)
+                (conj (vec lines) (str "priority: " priority)))]
+    (str (str/join "\n" lines) "\n\n" body)))
+
+(defn prioritized-name [filename priority]
+  (if (re-find #"^[0-9]{2}_" filename)
+    (str priority (subs filename 2))
+    (str priority "_" filename)))
+
+(defn reprioritize-handoff! [path priority name]
+  (let [dest (fs/path (fs/parent path) (prioritized-name (str (fs/file-name path)) priority))]
+    (when-not (= (str dest) (str path))
+      (when (fs/exists? dest)
+        (conflict! (str "A queued handoff named " (fs/file-name dest) " already exists.")))
+      (move-or-conflict! path dest name))
+    (let [tmp (fs/create-temp-file {:dir (fs/parent dest) :prefix ".priority."})]
+      (spit (str tmp) (with-priority-header (slurp (str dest)) priority))
+      (fs/move tmp dest {:replace-existing true :atomic-move true}))))
+
+(defn reprioritize-task!
+  "Change the priority of a queued card: the priority header and the
+  NN_ filename prefix that orders inbox/new."
+  [root name priority]
+  (let [priority (or (normalize-priority priority) (bad-request! "Missing priority"))
+        {:keys [queued]} (queued-card-handoffs root name)]
+    (when (empty? queued)
+      (conflict! (str "Card has no queued handoff to reorder: " name)))
+    (doseq [path queued]
+      (reprioritize-handoff! path priority name))))
+
+(defn post-dequeue-task [root body]
+  (let [{:keys [name project]} (json/parse-string (or body "{}") true)]
+    (json-action #(dequeue-task! (project-dest root project) name))))
+
+(defn post-task-priority [root body]
+  (let [{:keys [name priority project]} (json/parse-string (or body "{}") true)]
+    (json-action #(reprioritize-task! (project-dest root project) name priority))))
 
 (defn post-chat [root body]
   (let [{:keys [text]} (json/parse-string (or body "{}") true)
@@ -1775,6 +1920,8 @@
     (= "/api/projects/close" uri) (post-close-project root body)
     (= "/api/tasks" uri) (post-tasks root body)
     (= "/api/tasks/rename" uri) (post-rename-task root body)
+    (= "/api/tasks/dequeue" uri) (post-dequeue-task root body)
+    (= "/api/tasks/priority" uri) (post-task-priority root body)
     (= "/api/tasks/delete" uri)
     (post-delete-task (scoped-approval-root root uri body) body)
     (= "/api/tasks/retry" uri)
