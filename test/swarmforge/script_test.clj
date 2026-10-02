@@ -98,6 +98,7 @@
       (write-file (fs/path root "swarmforge/swarmforge.conf")
                   (str "# comment\n"
                        "window coder codex master\n"
+                       "merge-check docker compose config -q\n"
                        "window cleaner codex cleaner batch\n"))
       (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
       (write-file (fs/path root "swarmforge/roles/cleaner.prompt") "cleaner\n")
@@ -1500,5 +1501,69 @@
         (is (str/includes? out "PAUSED"))
         (is (fs/exists? (fs/path inbox "new/50_a.handoff")))
         (is (empty? (fs/list-dir (fs/path inbox "in_process")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(defn hooked-repo! [root]
+  (init-repo! root)
+  (write-file (fs/path root ".swarmforge/roles.tsv")
+              (format "specifier\tmaster\t%s\tsession\tSpecifier\tcodex\ttask\n" root))
+  (run {:dir root} (script "swarmforge.bb") "--test-install-hooks" (str root)))
+
+(defn conflicting-compose-merge! [root]
+  (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"serve\"]\n")
+  (run {:dir root} "git" "add" "compose.yaml")
+  (run {:dir root} "git" "commit" "-q" "-m" "Add compose")
+  (run {:dir root} "git" "checkout" "-q" "-b" "qa")
+  (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"migrate\"]\n")
+  (run {:dir root} "git" "commit" "-q" "-am" "QA compose")
+  (run {:dir root} "git" "checkout" "-q" "-")
+  (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"up\"]\n")
+  (run {:dir root} "git" "commit" "-q" "-am" "Master compose")
+  (is (not (zero? (:exit (run {:dir root :ok? false} "git" "merge" "--no-edit" "qa"))))))
+
+(deftest merge-commit-with-broken-yaml-is-refused
+  ;; Given a merge conflict in compose.yaml resolved with stray characters
+  ;; When the merge is committed
+  ;; Then the commit-msg hook refuses it naming the file, and a fixed file commits
+  (let [root (tmp-dir)]
+    (try
+      (hooked-repo! root)
+      (conflicting-compose-merge! root)
+      (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"migrate\", \"up\"]zrt\n")
+      (run {:dir root} "git" "add" "compose.yaml")
+      (let [refused (run {:dir root :ok? false} "git" "commit" "--no-edit")]
+        (is (not (zero? (:exit refused))))
+        (is (str/includes? (:err refused) "compose.yaml"))
+        (is (str/includes? (:err refused) "git show --cc")))
+      (is (zero? (:exit (run {:dir root :ok? false} "git" "rev-parse" "-q" "--verify" "MERGE_HEAD"))))
+      (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"migrate\", \"up\"]\n")
+      (run {:dir root} "git" "add" "compose.yaml")
+      (run {:dir root} "git" "commit" "-q" "--no-edit")
+      (is (= 2 (count (str/split (str/trim (:out (run {:dir root} "git" "log" "-1" "--format=%P"))) #" "))))
+      (testing "ordinary commits are not checked"
+        (write-file (fs/path root "broken.json") "{nope")
+        (run {:dir root} "git" "add" "broken.json")
+        (is (zero? (:exit (run {:dir root :ok? false} "git" "commit" "-q" "-m" "Not a merge")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest merge-commit-runs-configured-merge-check
+  ;; Given swarmforge.conf names a merge-check command that fails
+  ;; When a merge is committed
+  ;; Then the merge is refused with the command named
+  (let [root (tmp-dir)]
+    (try
+      (hooked-repo! root)
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window specifier codex master\nmerge-check test -f merge-ok\n")
+      (conflicting-compose-merge! root)
+      (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"migrate\", \"up\"]\n")
+      (run {:dir root} "git" "add" "compose.yaml")
+      (let [refused (run {:dir root :ok? false} "git" "commit" "--no-edit")]
+        (is (not (zero? (:exit refused))))
+        (is (str/includes? (:err refused) "test -f merge-ok")))
+      (write-file (fs/path root "merge-ok") "")
+      (is (zero? (:exit (run {:dir root :ok? false} "git" "commit" "-q" "--no-edit"))))
       (finally
         (fs/delete-tree root)))))

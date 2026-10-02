@@ -108,6 +108,10 @@ window[-invisible] <role> <backend> <worktree> [task|batch] [forward-only|back-o
   merge-only copies for earlier roles after downstream work.
 - Supported backends are `codex`, `grok`, `claude`, and `copilot`; remaining
   tokens are passed to that backend.
+- Optional `merge-check <command>` lines name shell commands (for example
+  `merge-check docker compose config -q`) that must pass before any merge
+  commit. Merge commits also refuse staged YAML or JSON files that no longer
+  parse.
 
 Forge hosts instead use `Lieutenant <backend> [backend arguments...]`.
 Branches may extend the grammar for their own control plane—for example,

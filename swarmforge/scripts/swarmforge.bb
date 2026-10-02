@@ -136,7 +136,9 @@
   (fail! (str red "Error:" reset " " message)))
 
 (defn skip-config-line? [line]
-  (or (str/blank? line) (str/starts-with? line "#")))
+  (or (str/blank? line)
+      (str/starts-with? line "#")
+      (re-matches #"merge-check(\s.*)?" line)))
 
 (defn special-worktree? [worktree]
   (#{"none" "master"} worktree))
