@@ -158,6 +158,24 @@ test.describe("pack dashboard", () => {
     await expect(page.locator("#nt-name")).toBeFocused();
   });
 
+  test("New Task sends the chosen role and priority", async ({ page }) => {
+    let posted = null;
+    await page.route("**/api/tasks", async (route) => {
+      posted = JSON.parse(route.request().postData() || "{}");
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{\"ok\":true}" });
+    });
+    await page.goto(handle.url);
+    await page.locator(".project-header button", { hasText: "New Task" }).click();
+    await expect(page.locator("#nt-name")).toHaveAttribute("maxlength", "80");
+    await expect(page.locator("#nt-role option")).toHaveText(["Master (default)", "Specifier", "Coder"]);
+    await page.locator("#nt-name").fill("D02");
+    await page.locator("#nt-role").selectOption("coder");
+    await page.locator("#nt-priority").fill("10");
+    await page.locator("#nt-ok").click();
+    await expect.poll(() => posted).not.toBeNull();
+    expect(posted).toMatchObject({ name: "D02", project: "htw", role: "coder", priority: "10" });
+  });
+
   test("Attention lists approvals and clarifications", async ({ page }) => {
     await page.goto(handle.url);
     await expect(page.locator("#attention-approvals .att-row")).toContainText("HTW");

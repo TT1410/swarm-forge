@@ -2542,6 +2542,138 @@
       (is (= ["I'm listing the open projects." "I'll summarize HTW next."]
              (:lieutenant_status state))))))
 
+(def long-name (apply str (repeat 81 "x")))
+
+(deftest pack-board-rejects-a-task-name-over-eighty-characters
+  ;; Given a pack
+  ;; When pack_board create gets an 81-character name
+  ;; Then it fails with the limit and no card is written
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        result (create-task root long-name "specifier" false)
+        ok (create-task root (apply str (repeat 80 "y")) "specifier")]
+    (is (not (zero? (:exit result))))
+    (is (str/includes? (:err result) "no longer than 80 characters"))
+    (is (nil? (task-lane root long-name)))
+    (is (zero? (:exit ok)))))
+
+(deftest pack-board-rename-keeps-the-task-id-and-moves-card-files
+  ;; Given card HTW with body, task doc, and an in-process handoff naming it by task_id
+  ;; When pack_board rename --name HTW --to Hunt
+  ;; Then the row, body, doc, and live handoff use Hunt and the task_id is unchanged
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "HTW" "coder")
+        task-id (:id (task-card root "HTW"))
+        live (fs/path (in-process-dir root roles "coder") "50_from_specifier_to_coder.handoff")
+        sent (fs/path root ".swarmforge/handoffs/sent/50_from_specifier_to_coder.handoff")
+        handoff (str "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\n"
+                     "task_id: " task-id "\ntask: HTW\n\npayload\n")
+        _ (write-file live handoff)
+        _ (write-file sent handoff)
+        result (pack-board root true "rename" "--root" (str root) "--name" "htw" "--to" "Hunt")]
+    (is (zero? (:exit result)))
+    (is (nil? (task-lane root "HTW")))
+    (is (= "coder" (task-lane root "Hunt")))
+    (is (= task-id (:id (task-card root "Hunt"))))
+    (is (= "Integrate HTW stories" (slurp (str (fs/path root ".swarmforge/board/Hunt.txt")))))
+    (is (not (fs/exists? (fs/path root ".swarmforge/board/HTW.txt"))))
+    (is (str/starts-with? (slurp (str (fs/path root "tasks/Hunt.md"))) "# Hunt\n"))
+    (is (not (fs/exists? (fs/path root "tasks/HTW.md"))))
+    (is (str/includes? (slurp (str live)) "task: Hunt\n"))
+    (is (str/includes? (slurp (str live)) (str "task_id: " task-id "\n")))
+    (is (str/includes? (slurp (str sent)) "task: HTW\n"))))
+
+(deftest pack-board-rename-rejects-duplicates-and-long-names
+  ;; Given cards HTW and Grenade
+  ;; When renaming HTW to Grenade or to an 81-character name
+  ;; Then both fail and HTW keeps its name
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (create-task root "HTW" "specifier")
+        _ (create-task root "Grenade" "specifier")
+        dup (pack-board root false "rename" "--root" (str root) "--name" "HTW" "--to" "grenade")
+        long (pack-board root false "rename" "--root" (str root) "--name" "HTW" "--to" long-name)
+        missing (pack-board root false "rename" "--root" (str root) "--name" "Nope" "--to" "Yes")]
+    (is (not (zero? (:exit dup))))
+    (is (str/includes? (:err dup) "Duplicate task name"))
+    (is (not (zero? (:exit long))))
+    (is (str/includes? (:err long) "no longer than 80 characters"))
+    (is (not (zero? (:exit missing))))
+    (is (str/includes? (:err missing) "Unknown task name"))
+    (is (= "specifier" (task-lane root "HTW")))))
+
+(defn api-post [root uri body]
+  (json/parse-string
+   (:out (pack-web root true "--test-post" (str root) uri (json/generate-string body)))
+   true))
+
+(defn outbox-handoffs [root]
+  (let [dir (fs/path root ".swarmforge/handoffs/outbox")]
+    (mapv #(fs/path dir %) (sort (handoff-names dir)))))
+
+(deftest pack-web-post-task-rejects-a-name-over-eighty-characters
+  ;; Given a pack
+  ;; When POST /api/tasks gets an 81-character name
+  ;; Then it answers 400 with the limit and creates no card or note
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        resp (api-post root "/api/tasks" {:name long-name :text "too long"})]
+    (is (= 400 (:status resp)))
+    (is (str/includes? (get-in resp [:body :error]) "no longer than 80 characters"))
+    (is (nil? (task-lane root long-name)))
+    (is (empty? (outbox-handoffs root)))))
+
+(deftest pack-web-post-task-routes-to-a-chosen-role-and-priority
+  ;; Given a six-pack
+  ;; When POST /api/tasks names role coder and priority 10
+  ;; Then the card is in coder and the note goes to coder with priority 10 and kind new_task
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)
+        resp (api-post root "/api/tasks" {:name "D02" :text "fix" :role "coder" :priority "10"})
+        note (first (outbox-handoffs root))
+        text (slurp (str note))]
+    (is (= 200 (:status resp)))
+    (is (= "coder" (task-lane root "D02")))
+    (is (str/starts-with? (str (fs/file-name note)) "10_"))
+    (is (str/includes? text "to: coder\n"))
+    (is (str/includes? text "priority: 10\n"))
+    (is (str/includes? text "type: note\n"))
+    (is (str/includes? text "kind: new_task\n"))
+    (is (= 400 (:status (api-post root "/api/tasks" {:name "D03" :role "nobody"}))))
+    (is (= 400 (:status (api-post root "/api/tasks" {:name "D04" :priority "high"}))))
+    (is (nil? (task-lane root "D03")))))
+
+(deftest pack-web-post-task-defaults-to-master-and-fifty
+  ;; Given a six-pack
+  ;; When POST /api/tasks has no role or priority
+  ;; Then the card and note go to specifier with priority 50
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)
+        _ (api-post root "/api/tasks" {:name "C01" :text "x"})
+        note (first (outbox-handoffs root))]
+    (is (= "specifier" (task-lane root "C01")))
+    (is (str/starts-with? (str (fs/file-name note)) "50_"))
+    (is (str/includes? (slurp (str note)) "to: specifier\n"))))
+
+(deftest pack-web-rename-task-keeps-the-card-id
+  ;; Given card HTW created from the dashboard
+  ;; When POST /api/tasks/rename to Hunt
+  ;; Then the card and its queued note carry Hunt with the same id, and long names are refused
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (api-post root "/api/tasks" {:name "HTW" :text "x"})
+        id (:id (task-card root "HTW"))
+        resp (api-post root "/api/tasks/rename" {:name "HTW" :to "Hunt"})
+        long (api-post root "/api/tasks/rename" {:name "Hunt" :to long-name})
+        missing (api-post root "/api/tasks/rename" {:name "Nope" :to "Yes"})]
+    (is (= 200 (:status resp)))
+    (is (= id (:id (task-card root "Hunt"))))
+    (is (str/includes? (slurp (str (first (outbox-handoffs root)))) "task: Hunt\n"))
+    (is (= 400 (:status long)))
+    (is (= 404 (:status missing)))))
+
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.pack-ui-test)]
     (System/exit (+ fail error))))

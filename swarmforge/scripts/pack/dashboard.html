@@ -118,6 +118,9 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .float textarea{min-height:140px;resize:vertical}
 .float .actions{display:flex;gap:8px;justify-content:flex-end}
 .note{font-size:11px;color:var(--muted);margin:-4px 0 10px}
+.nt-route{display:flex;gap:12px;margin-bottom:10px}
+.nt-route select,.nt-route input{border:1px solid #c6cbc5;border-radius:6px;padding:6px 8px;font:inherit;font-size:12px}
+.nt-route input{width:5rem}
 @media (max-width:700px){
   header.top{align-items:flex-start;flex-direction:column}
   header.top .spacer{display:none}
@@ -232,9 +235,13 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
   <div class="float" role="dialog" aria-labelledby="nt-title">
     <div class="titlebar" id="nt-title">New Task</div>
     <div class="body-pad">
-      <p class="note">Creates a card in the master lane and sends name + text to the master agent.</p>
+      <p class="note">Creates a card in the chosen role's lane (master by default) and sends name + text to that agent.</p>
       <label for="nt-name">Name</label>
-      <input id="nt-name" type="text" placeholder="task-name">
+      <input id="nt-name" type="text" placeholder="task-name" maxlength="80">
+      <div class="nt-route">
+        <div><label for="nt-role">Role</label><select id="nt-role"></select></div>
+        <div><label for="nt-priority">Priority</label><input id="nt-priority" type="number" min="0" max="99" value="50" title="00–99; lower runs first"></div>
+      </div>
       <label for="nt-text">Task</label>
       <textarea id="nt-text" placeholder="What the master agent should do…"></textarea>
       <div class="actions">
@@ -381,6 +388,7 @@ let forgePacks = [];
 let allProjects = [];
 let openProjects = [];
 let taskProject = "";
+let lastState = null;
 
 function fillOpenMenu() {
   const list = $("open-project-list");
@@ -1006,6 +1014,7 @@ async function loadState() {
     const res = await fetch("/api/state", {cache: "no-store"});
     if (!res.ok) throw new Error("offline");
     const data = await res.json();
+    lastState = data;
     $("error").textContent = "";
     renderChrome(data);
     renderBoard(data);
@@ -1022,8 +1031,32 @@ function closeNewTask() {
   taskProject = "";
 }
 
+function lanesFor(project) {
+  const data = lastState || {};
+  if (!project) return data.lanes || [];
+  const proj = (data.projects || []).find((p) => p.name === project);
+  return (proj && proj.lanes) || [];
+}
+
+function fillRoleSelect(project) {
+  const select = $("nt-role");
+  select.replaceChildren();
+  const master = document.createElement("option");
+  master.value = "";
+  master.textContent = "Master (default)";
+  select.appendChild(master);
+  lanesFor(project).forEach((lane) => {
+    const opt = document.createElement("option");
+    opt.value = lane;
+    opt.textContent = displayName(lane);
+    select.appendChild(opt);
+  });
+}
+
 function openNewTask(project) {
   taskProject = project || "";
+  fillRoleSelect(taskProject);
+  $("nt-priority").value = "50";
   $("new-task-layer").classList.add("open");
   $("nt-name").focus();
 }
@@ -1166,8 +1199,17 @@ async function submitNewTask() {
   const name = $("nt-name").value.trim();
   const text = $("nt-text").value;
   if (!name) return;
+  if (name.length > 80) {
+    alert("Task name must be no longer than 80 characters (got " + name.length + ").");
+    $("nt-name").focus();
+    return;
+  }
   const payload = {name, text};
   if (taskProject) payload.project = taskProject;
+  const role = $("nt-role").value;
+  const priority = $("nt-priority").value.trim();
+  if (role) payload.role = role;
+  if (priority && priority !== "50") payload.priority = priority;
   const res = await fetch("/api/tasks", {
     method: "POST",
     headers: {"Content-Type": "application/json"},

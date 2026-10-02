@@ -835,13 +835,16 @@
 (defn new-task-id [name]
   (str (id-timestamp) "-" (id-slug name)))
 
-(defn queue-new-task-note! [root task-id name text]
-  (let [to (master-role root)
+(def default-priority "50")
+
+(defn queue-new-task-note! [root task-id name text & [{:keys [role priority]}]]
+  (let [to (or (not-empty role) (master-role root))
+        priority (or (not-empty priority) default-priority)
         now (.format java.time.format.DateTimeFormatter/ISO_INSTANT
                      (java.time.Instant/now))
         stamp (str/replace now #"[^0-9A-Za-z]" "")
         body (or text "")
-        filename (str "50_" stamp "_from_New_Task_to_" (slug to) ".handoff")
+        filename (str priority "_" stamp "_from_New_Task_to_" (slug to) ".handoff")
         outbox (fs/path root ".swarmforge" "handoffs" "outbox")
         file (fs/path outbox filename)]
     (fs/create-dirs outbox)
@@ -849,8 +852,9 @@
           (str "id: " stamp "_from_New_Task\n"
                "from: (New Task)\n"
                "to: " to "\n"
-               "priority: 50\n"
+               "priority: " priority "\n"
                "type: note\n"
+               "kind: new_task\n"
                "task_id: " task-id "\n"
                "task: " name "\n"
                "created_at: " now "\n"
@@ -976,29 +980,74 @@
       (catch Exception e
         (http-error (or (:http-status (ex-data e)) 400) (.getMessage e))))))
 
-(defn create-task! [root name text]
-  (when (str/blank? name)
-    (throw (ex-info "Missing task name" {:http-status 400})))
-  (let [task-id (new-task-id name)]
-  (pack-board root "create"
-              "--name" name
-              "--lane" (master-role root)
-              "--task-id" task-id
-              "--text" (or text ""))
-    (queue-new-task-note! root task-id name (or text ""))))
+(def max-task-name-length 80)
+
+(defn bad-request! [message]
+  (throw (ex-info message {:http-status 400})))
+
+(defn require-task-name! [name]
+  (cond
+    (str/blank? name) (bad-request! "Missing task name")
+    (> (count name) max-task-name-length)
+    (bad-request! (str "Task name must be no longer than " max-task-name-length
+                       " characters (got " (count name) ")."))))
+
+(defn require-lane! [root role]
+  (when-not (some #{role} (lanes root))
+    (bad-request! (str "Unknown role: " role)))
+  role)
+
+(defn normalize-priority [priority]
+  (let [text (str/trim (str (or priority "")))]
+    (cond
+      (str/blank? text) nil
+      (re-matches #"[0-9]{1,2}" text) (format "%02d" (Long/parseLong text))
+      :else (bad-request! (str "Priority must be a number from 00 to 99; got '" text "'.")))))
+
+(defn create-task!
+  ([root name text] (create-task! root name text {}))
+  ([root name text {:keys [role priority]}]
+   (require-task-name! name)
+   (let [lane (if (str/blank? role) (master-role root) (require-lane! root role))
+         priority (or (normalize-priority priority) default-priority)
+         task-id (new-task-id name)]
+     (pack-board root "create"
+                 "--name" name
+                 "--lane" lane
+                 "--task-id" task-id
+                 "--text" (or text ""))
+     (queue-new-task-note! root task-id name (or text "") {:role lane :priority priority}))))
+
+(defn project-dest [root project]
+  (if (forge/forge? root)
+    (if (str/blank? project)
+      (bad-request! "Missing project")
+      (str (forge/project-dir root project)))
+    root))
+
+(defn json-action [f]
+  (try
+    (f)
+    (json-ok)
+    (catch Exception e
+      (http-error (or (:http-status (ex-data e)) 400) (.getMessage e)))))
 
 (defn post-tasks [root body]
-  (let [{:keys [name text project]} (json/parse-string (or body "{}") true)
-        dest (if (and (forge/forge? root) (not (str/blank? project)))
-               (str (forge/project-dir root project))
-               root)]
-    (try
-      (when (and (forge/forge? root) (str/blank? project))
-        (throw (ex-info "Missing project" {:http-status 400})))
-      (create-task! dest name text)
-      (json-ok)
-      (catch Exception e
-        (http-error (or (:http-status (ex-data e)) 400) (.getMessage e))))))
+  (let [{:keys [name text project role priority]} (json/parse-string (or body "{}") true)]
+    (json-action #(create-task! (project-dest root project) name text
+                                {:role role :priority priority}))))
+
+(defn rename-task! [root name to]
+  (when (str/blank? name)
+    (bad-request! "Missing task name"))
+  (require-task-name! (some-> to str/trim))
+  (when-not (task-by-name root name)
+    (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+  (pack-board root "rename" "--name" name "--to" (str/trim to)))
+
+(defn post-rename-task [root body]
+  (let [{:keys [name to project]} (json/parse-string (or body "{}") true)]
+    (json-action #(rename-task! (project-dest root project) name to))))
 
 (defn post-chat [root body]
   (let [{:keys [text]} (json/parse-string (or body "{}") true)
@@ -1725,6 +1774,7 @@
     (= "/api/projects/open" uri) (post-open-project root body)
     (= "/api/projects/close" uri) (post-close-project root body)
     (= "/api/tasks" uri) (post-tasks root body)
+    (= "/api/tasks/rename" uri) (post-rename-task root body)
     (= "/api/tasks/delete" uri)
     (post-delete-task (scoped-approval-root root uri body) body)
     (= "/api/tasks/retry" uri)
