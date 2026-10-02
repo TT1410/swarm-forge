@@ -2999,3 +2999,123 @@
       (is (= ["coder"] (mapv :role (:busy drain)))))
     (fs/delete-tree (in-process-dir root roles "coder"))
     (is (= true (:drained (:drain (web-state root)))))))
+
+(defn git-init! [root]
+  (run {:dir root} "git" "init" "-q")
+  (run {:dir root} "git" "config" "user.email" "test@example.com")
+  (run {:dir root} "git" "config" "user.name" "Test User"))
+
+(defn commit-file! [root text]
+  (write-file (fs/path root "story.md") text)
+  (run {:dir root} "git" "add" "story.md")
+  (run {:dir root} "git" "commit" "-q" "-m" text)
+  (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD"))))
+
+(defn held-handoff! [root task-id task commit]
+  (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+              (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                   "task_id: " task-id "\ntask: " task "\n"
+                   "commit: " commit "\n\npayload\n")))
+
+(deftest pack-web-retry-keeps-later-work-when-the-specifier-moved-on
+  ;; Given card A held for approval while the specifier already works on card B
+  ;; When the operator retries A
+  ;; Then HEAD and B stay, and A is queued again at the front of the specifier inbox
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (git-init! root)
+    (setup-pack! root roles)
+    (commit-file! root "base")
+    (create-task root "A" "specifier")
+    (create-task root "B" "specifier")
+    (let [a-id (:id (task-card root "A"))
+          b-id (:id (task-card root "B"))
+          offer (commit-file! root "offer A")
+          _ (held-handoff! root a-id "A" offer)
+          later (commit-file! root "work on B")
+          b-mail (fs/path (in-process-dir root roles "specifier") "50_b.handoff")]
+      (write-file b-mail (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                              "task_id: " b-id "\ntask: B\n\nB\n"))
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "fix A"))))
+      (is (= later (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))))
+      (is (= ["50_b.handoff"] (handoff-names (in-process-dir root roles "specifier"))))
+      (is (some #(str/starts-with? % "00_retry_") (inbox-names root roles "specifier")))
+      (is (= [] (pending-names root))))))
+
+(deftest pack-web-delete-refuses-when-the-specifier-moved-on
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (git-init! root)
+    (setup-pack! root roles)
+    (commit-file! root "base")
+    (create-task root "A" "specifier")
+    (create-task root "B" "specifier")
+    (let [a-id (:id (task-card root "A"))
+          b-id (:id (task-card root "B"))
+          offer (commit-file! root "offer A")
+          _ (held-handoff! root a-id "A" offer)
+          later (commit-file! root "work on B")]
+      (write-file (fs/path (in-process-dir root roles "specifier") "50_b.handoff")
+                  (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                       "task_id: " b-id "\ntask: B\n\nB\n"))
+      (let [result (pack-web root false "--test-delete-approval" (str root) "50_offer")]
+        (is (not (zero? (:exit result))))
+        (is (= later (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))))
+        (is (= "specifier" (task-lane root "A")))
+        (is (= ["50_offer.handoff"] (pending-names root)))))))
+
+(deftest pack-web-retry-clears-handed-marks-on-restored-mail
+  ;; A retried card must be handed off again, so the restored mail forgets it was handed
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (git-init! root)
+    (setup-pack! root roles)
+    (commit-file! root "base")
+    (create-task root "A" "specifier")
+    (let [a-id (:id (task-card root "A"))
+          offer (commit-file! root "offer A")
+          done (fs/path root ".swarmforge/handoffs/inbox/completed/50_a.handoff")]
+      (held-handoff! root a-id "A" offer)
+      (write-file done (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                            "task_id: " a-id "\ntask: A\nhanded_task_ids: " a-id "\n\nA\n"))
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [restored (fs/path (in-process-dir root roles "specifier") "50_a.handoff")]
+        (is (fs/exists? restored))
+        (is (not (str/includes? (slurp (str restored)) "handed_task_ids")))))))
+
+(deftest pack-web-dequeue-refuses-a-card-sharing-its-handoff
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "C40" "coder")
+        _ (create-task root "C41" "coder")
+        c40 (:id (task-card root "C40"))
+        c41 (:id (task-card root "C41"))]
+    (write-file (inbox-new-path root roles "coder" "50_both.handoff")
+                (str "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\n"
+                     "task_id: " c40 "\ntask: C40\nwith_task_ids: " c41 "\n\npayload\n"))
+    (let [resp (api-post root "/api/tasks/dequeue" {:name "C41"})]
+      (is (= 409 (:status resp)))
+      (is (= "coder" (task-lane root "C41")))
+      (is (= ["50_both.handoff"] (inbox-names root roles "coder"))))))
+
+(deftest same-commit-merge-only-copy-replaces-the-unread-one
+  ;; Per-card handoffs of one commit send one merge-only copy per role, not one per card
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner" "QA"]
+        _ (setup-pack! root roles)
+        _ (git-init! root)
+        sha (commit-file! root "one")
+        coder-new (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/new")
+        _ (write-file (fs/path coder-new "00_a_from_QA_to_coder.handoff")
+                      (str "id: a\nfrom: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask: A\ncommit: "
+                           sha "\nnon-forwarding: true\n\nmerge\n"))
+        _ (write-file (fs/path root ".swarmforge/handoffs/outbox/00_b_from_QA_to_coder.handoff")
+                      (str "id: b\nfrom: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask: B\ncommit: "
+                           sha "\nnon-forwarding: true\n\nmerge\n"))
+        sock (start-tmux! root roles)]
+    (try
+      (handoffd-once root)
+      (is (= ["00_b_from_QA_to_coder.handoff"] (inbox-names root roles "coder")))
+      (finally
+        (stop-tmux! sock)))))

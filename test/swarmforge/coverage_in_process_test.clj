@@ -309,6 +309,7 @@
       (spit (str (fs/path busy ".swarmforge/handoffs/inbox/in_process/50_y.handoff")) "from: a\n\nbody\n")
       (handoffd/configure! [(str root)])
       (reset! handoffd/last-notified {})
+      (reset! handoffd/renotify-counts {})
       (reset! handoffd/started-at-ms (- (System/currentTimeMillis) (* 10 handoffd/renotify-ms)))
       (with-redefs [handoffd/notify! (fn [_ session] (swap! notified conj session))
                     handoffd/log! (fn [& _])]
@@ -317,6 +318,12 @@
           (handoffd/renotify-idle-roles! roles "sock")
           (is (= ["idle-s"] @notified))
           (handoffd/renotify-idle-roles! roles "sock")
-          (is (= ["idle-s"] @notified) "waits for the interval before reminding again")))
+          (is (= ["idle-s"] @notified) "waits for the interval before reminding again")
+          (swap! handoffd/last-notified assoc "idle" (- (System/currentTimeMillis) (inc handoffd/renotify-ms)))
+          (handoffd/renotify-idle-roles! roles "sock")
+          (is (= ["idle-s"] @notified) "backs off after a reminder that changed nothing")
+          (swap! handoffd/last-notified assoc "idle" (- (System/currentTimeMillis) (inc (* 2 handoffd/renotify-ms))))
+          (handoffd/renotify-idle-roles! roles "sock")
+          (is (= ["idle-s" "idle-s"] @notified))))
       (finally
         (fs/delete-tree root)))))

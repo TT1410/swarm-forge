@@ -1945,6 +1945,20 @@
       (is (str/includes? (:err refused) "UI card (ui-card)"))
       (is (fs/exists? (handoff-path root "in_process" "50_ui.handoff"))))))
 
+(deftest swarm-handoff-from-a-plain-note-keeps-the-drafted-task
+  ;; A role note without task_id in process does not block a git_handoff (no board)
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (put-handoff! root "in_process" "50_note.handoff"
+                  {:id "note" :from "receiver" :to "sender" :recipient "sender" :priority "50"
+                   :type "note" :body "please do x"})
+    (commit-work! root)
+    (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: do-x\n")]
+      (is (zero? (:exit result)) (:err result))
+      (is (= "do-x" (header (queued-path (:out result)) "task_id")))
+      (is (not (fs/exists? (handoff-path root "in_process" "50_note.handoff")))))))
+
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.handoff-test)]
     (System/exit (+ fail error))))

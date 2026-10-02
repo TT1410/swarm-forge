@@ -285,14 +285,25 @@
   (or (:name (handoff-lib/find-card (board-cards) id))
       (some-> (in-process-mail-for-card id) (header-field "task"))))
 
+(defn with-board-or-lane-task [headers sender]
+  (let [card (board-card-named (get headers "task"))
+        filled (if card
+                 (assoc headers "task_id" (:id card) "task" (:name card))
+                 (with-lane-task headers sender))]
+    (if (and (str/blank? (get filled "task_id"))
+             (not (str/blank? (get filled "task"))))
+      (assoc filled "task_id" (get filled "task"))
+      filled)))
+
 (defn with-current-work-task [headers sender]
   (if-let [id (card-id-for (get headers "task"))]
     (assoc headers "task_id" id)
     (let [open (handoff-lib/open-card-ids sender (in-process-task-files))]
       (cond
         (= 1 (count open)) (assoc headers "task_id" (first open))
-        (empty? open) (with-in-process-task headers)
-        :else (assoc headers ::open-cards open)))))
+        (seq open) (assoc headers ::open-cards open)
+        (some handoff-lib/card-mail? (in-process-task-files)) (with-in-process-task headers)
+        :else (with-board-or-lane-task headers sender)))))
 
 (defn with-card-name [headers]
   (let [id (get headers "task_id")
@@ -319,14 +330,7 @@
     (let [filled (cond
                    (not (str/blank? (get headers "task_id"))) headers
                    (current-work-present?) (with-current-work-task headers sender)
-                   :else (let [card (board-card-named (get headers "task"))
-                               filled (if card
-                                        (assoc headers "task_id" (:id card) "task" (:name card))
-                                        (with-lane-task headers sender))]
-                           (if (and (str/blank? (get filled "task_id"))
-                                    (not (str/blank? (get filled "task"))))
-                             (assoc filled "task_id" (get filled "task"))
-                             filled)))]
+                   :else (with-board-or-lane-task headers sender))]
       (-> filled
           with-card-name
           with-extra-tasks))))

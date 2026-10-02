@@ -169,11 +169,17 @@
   (or (not-empty (header-field file "task_id"))
       (not-empty (header-field file "task"))))
 
-(defn mail-card-ids [file]
-  (->> (cons (mail-task-id file) (split-list (header-field file "with_task_ids")))
-       (remove str/blank?)
-       distinct
-       vec))
+(declare board-cards find-card)
+
+(defn mail-card-ids
+  "Cards a mail carries, as board task ids when the board knows the card."
+  [file]
+  (let [cards (board-cards)]
+    (->> (cons (mail-task-id file) (split-list (header-field file "with_task_ids")))
+         (remove str/blank?)
+         (map #(or (:id (find-card cards %)) %))
+         distinct
+         vec)))
 
 (defn handed-card-ids [file]
   (set (split-list (header-field file "handed_task_ids"))))

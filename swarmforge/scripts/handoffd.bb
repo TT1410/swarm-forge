@@ -28,6 +28,7 @@
 (def log-file nil)
 (def stopping-flag (atom false))
 (def last-notified (atom {}))
+(def renotify-counts (atom {}))
 (def started-at-ms (atom (System/currentTimeMillis)))
 
 (defn configure!
@@ -129,6 +130,9 @@
 (defn notify-role! [socket role-info]
   (notify! socket (:session role-info))
   (swap! last-notified assoc (:role role-info) (System/currentTimeMillis)))
+
+(defn reset-renotify-backoff! [role]
+  (swap! renotify-counts dissoc role))
 
 (defn move-with-collision [source target-dir]
   (fs/create-dirs target-dir)
@@ -294,11 +298,14 @@
 
 (defn new-card-from-master?
   "Approval guards cards leaving the master lane for the first time. A fix for
-  a card that already moved on (the card sits in another lane) is not held."
+  cards that already moved on (they sit in another lane) is not held."
   [roles headers]
-  (let [lane (board-lane-for-key (task-key headers))]
-    (or (nil? lane)
-        (= lane (master-role-name roles)))))
+  (boolean
+   (some (fn [key]
+           (let [lane (board-lane-for-key key)]
+             (or (nil? lane)
+                 (= lane (master-role-name roles)))))
+         (handoff-task-keys headers))))
 
 (defn should-hold? [roles headers]
   (and (= "git_handoff" (get headers "type"))
@@ -367,8 +374,8 @@
     (and (non-forwarding? old)
          (= (get headers "from") (get old "from"))
          (not (str/blank? (get old "commit")))
-         (not= (get old "commit") (get headers "commit"))
-         (commit-contains? (get headers "commit") (get old "commit")))))
+         (or (= (get old "commit") (get headers "commit"))
+             (commit-contains? (get headers "commit") (get old "commit"))))))
 
 (defn supersede-merge-copies!
   "A newer merge-only copy from the same sender contains the older ones, so
@@ -378,15 +385,19 @@
         completed-dir (fs/path (:worktree-path role-info) ".swarmforge" "handoffs" "inbox" "completed")]
     (doseq [path (listed-handoffs new-dir)
             :when (superseded-copy? headers path)]
-      (let [message (parse-message path)
-            superseded (assoc (:headers message)
-                              "superseded_by" (get headers "id")
-                              "completed_at" (now))]
+      (let [target (fs/path completed-dir (fs/file-name path))]
         (fs/create-dirs completed-dir)
-        (spit (str (fs/path completed-dir (fs/file-name path)))
-              (render-message superseded (:body message)))
-        (fs/delete path)
-        (log! "superseded" (str path) "by" (get headers "id"))))))
+        (when (try
+                (fs/move path target {:atomic-move true})
+                true
+                (catch java.nio.file.NoSuchFileException _
+                  false))
+          (let [message (parse-message target)
+                superseded (assoc (:headers message)
+                                  "superseded_by" (get headers "id")
+                                  "completed_at" (now))]
+            (spit (str target) (render-message superseded (:body message)))
+            (log! "superseded" (str path) "by" (get headers "id"))))))))
 
 (defn deliver! [roles socket sender-role path]
   (let [filename (fs/file-name path)
@@ -408,7 +419,8 @@
                 (supersede-merge-copies! role-info headers))
               (when-not (fs/exists? target)
                 (spit (str target) (render-message (:headers delivered) (:body delivered))))
-              (notify-role! socket role-info))))
+              (notify-role! socket role-info)
+              (reset-renotify-backoff! recipient))))
         (move-with-collision path (sent-dir roles sender-role))
         (archive-sender! headers)
         (maybe-notify-unblocked-sender! roles socket headers sender-role)
@@ -442,9 +454,15 @@
 (defn pause-file []
   (fs/path state-dir "paused"))
 
+(def renotify-max-ms (* 16 60 1000))
+
+(defn renotify-interval [role]
+  (min renotify-max-ms
+       (* renotify-ms (bit-shift-left 1 (min 4 (get @renotify-counts role 0))))))
+
 (defn renotify-due? [role now-ms]
   (and (>= (- now-ms @started-at-ms) renotify-ms)
-       (>= (- now-ms (get @last-notified role @started-at-ms)) renotify-ms)))
+       (>= (- now-ms (get @last-notified role @started-at-ms)) (renotify-interval role))))
 
 (defn mail-card-keys [path]
   (handoff-task-keys (:headers (parse-message path))))
@@ -471,10 +489,12 @@
   (when-not (fs/exists? (pause-file))
     (let [now-ms (System/currentTimeMillis)]
       (doseq [role-info (vals roles)
-              :when (and (renotify-due? (:role role-info) now-ms)
-                         (idle-with-mail? roles role-info))]
+              :let [idle? (idle-with-mail? roles role-info)]
+              :when (do (when-not idle? (reset-renotify-backoff! (:role role-info)))
+                        (and idle? (renotify-due? (:role role-info) now-ms)))]
         (try
           (notify-role! socket role-info)
+          (swap! renotify-counts update (:role role-info) (fnil inc 0))
           (log! "renotified" (:role role-info))
           (catch Exception e
             (swap! last-notified assoc (:role role-info) now-ms)
