@@ -205,6 +205,40 @@
       (validate-window! ctx line-no role agent worktree receive-mode roles worktrees)
       (window-row ctx role agent worktree receive-mode propagation (extra-args-str extra-tokens) visible?))))
 
+(def setting-directives
+  "Optional single-line settings in swarmforge.conf (not role windows):
+  dashboard-port <port>   keep the dashboard on this localhost port
+  notify-cmd <command>    run on a new clarification or pending approval (read by pack_web)"
+  #{"dashboard-port" "notify-cmd"})
+
+(defn setting-line [line]
+  (let [[directive value] (str/split (str/trim line) #"\s+" 2)]
+    (when (setting-directives directive)
+      [directive (str/trim (or value ""))])))
+
+(defn valid-port? [value]
+  (boolean (and (re-matches #"[0-9]{1,5}" (or value ""))
+                (<= 1 (Long/parseLong value) 65535))))
+
+(defn validate-setting! [line-no [directive value]]
+  (case directive
+    "dashboard-port"
+    (reject-if (not (valid-port? value))
+               (str "Invalid dashboard-port on line " line-no ": expected a port from 1 to 65535"))
+    "notify-cmd"
+    (reject-if (str/blank? value)
+               (str "Missing command for notify-cmd on line " line-no))))
+
+(defn config-setting [ctx directive]
+  (let [file (:config-file ctx)]
+    (when (fs/regular-file? file)
+      (some (fn [raw]
+              (let [line (str/trim raw)]
+                (when-not (skip-config-line? line)
+                  (when-let [[found value] (setting-line line)]
+                    (when (= directive found) (not-empty value))))))
+            (str/split-lines (slurp (str file)))))))
+
 (defn require-master-worktree! [rows]
   (let [masters (filterv #(= "master" (:worktree-name %)) rows)]
     (reject-if (not= 1 (count masters))
@@ -222,8 +256,15 @@
     (if-let [[line-index raw-line] (first lines)]
       (let [line-no (inc line-index)
             line (str/trim raw-line)]
-        (if (skip-config-line? line)
+        (cond
+          (skip-config-line? line)
           (recur (next lines) rows roles worktrees)
+
+          (setting-line line)
+          (do (validate-setting! line-no (setting-line line))
+              (recur (next lines) rows roles worktrees))
+
+          :else
           (let [row (parse-window-line ctx line-no line roles worktrees)
                 worktree (:worktree-name row)]
             (recur (next lines)
@@ -743,11 +784,47 @@
   (when (and (open-browser?) (command-exists? "open"))
     (process/sh {:continue true} "open" url)))
 
+(defn dashboard-port-file [ctx]
+  (fs/path (:state-dir ctx) "dashboard-port"))
+
+(defn previous-dashboard-port [ctx]
+  (let [file (dashboard-port-file ctx)]
+    (when (fs/regular-file? file)
+      (let [value (str/trim (slurp (str file)))]
+        (when (valid-port? value) value)))))
+
+(defn port-free? [port]
+  (try
+    (with-open [_ (java.net.ServerSocket. (Integer/parseInt port) 1
+                                          (java.net.InetAddress/getByName "127.0.0.1"))]
+      true)
+    (catch Exception _ false)))
+
+(defn wait-port-free [port timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (cond
+        (port-free? port) true
+        (> (System/currentTimeMillis) deadline) false
+        :else (do (Thread/sleep 100) (recur))))))
+
+(defn dashboard-port
+  "The configured dashboard-port, else the port of the previous run when it
+  is free again, else nil (pack_web then picks a free port)."
+  [ctx]
+  (let [configured (config-setting ctx "dashboard-port")
+        previous (previous-dashboard-port ctx)]
+    (cond
+      (valid-port? configured) (do (wait-port-free configured 3000) configured)
+      (and previous (wait-port-free previous 3000)) previous
+      :else nil)))
+
 (defn start-pack-web! [ctx]
   (stop-existing-pack-web! ctx)
   (let [script (str (fs/path (:script-dir ctx) "pack_web.sh"))
-        log (fs/path (:state-dir ctx) "dashboard.log")]
-    (process/process [script "--serve" (str (:working-dir ctx))]
+        log (fs/path (:state-dir ctx) "dashboard.log")
+        port (dashboard-port ctx)]
+    (process/process (cond-> [script "--serve" (str (:working-dir ctx))] port (conj port))
                      {:out (str log) :err :out})
     (when-not (wait-for-file (dashboard-url-file ctx) 5000)
       (fail! (str red "Error:" reset " Dashboard did not start.")))
@@ -1041,6 +1118,9 @@
     (println (str (boolean (fs/exists? (dashboard-url-file ctx))) " "
                   (boolean (fs/exists? (pack-web-pid-file ctx)))))))
 
+(defn test-dashboard-port! [root]
+  (println (or (dashboard-port (context root)) "")))
+
 (defn -main [& args]
   (case (first args)
     "--test-parse" (test-parse! (or (second args) (System/getProperty "user.dir")))
@@ -1058,6 +1138,7 @@
     "--test-sleep-inhibitor-prefix" (test-sleep-inhibitor-prefix!)
     "--test-ensure-codex-trust" (test-ensure-codex-trust! (second args))
     "--test-reset-pack-web-state" (test-reset-pack-web-state! (second args))
+    "--test-dashboard-port" (test-dashboard-port! (second args))
     "--test-tmux-base-indexes" (test-tmux-base-indexes! (second args))
     "--test-create-role-session" (test-create-role-session! (second args) (nth args 2))
     "--start-project" (run-project! (second args))

@@ -75,6 +75,10 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .card-del{margin-left:auto;padding:1px 6px;font-size:10px;line-height:1.2}
 .card .foot{display:flex;justify-content:flex-end;gap:8px;color:var(--muted);font-size:10px;margin-top:auto}
 .card-thin{min-height:0;padding:4px 8px;gap:0}
+.card-queued{border-style:dashed;background:#f6f7f2}
+.pill-queued{align-self:flex-start;background:#e3e8f2;color:#33476b}
+.card-menu-btn{flex:0 0 auto;border:0;background:none;padding:0 2px;font:inherit;font-size:12px;line-height:1;color:var(--muted);cursor:pointer}
+.card-menu-btn:hover{color:var(--ink)}
 .timer{font-variant-numeric:tabular-nums}
 .rail{background:var(--panel);display:flex;flex-direction:column;min-height:0;overflow:hidden;font-size:12px;scrollbar-gutter:stable}
 .rail section{padding:10px 12px;border-bottom:1px solid var(--line-soft);display:flex;flex-direction:column;min-height:0}
@@ -102,6 +106,8 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .wif-therm[data-heat="6"] .bar:nth-child(-n+6){background:var(--green)}
 .ts-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}.ts-head h2{margin:0;flex:1}
 .history{flex:1;min-height:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;display:flex;flex-direction:column;gap:8px;font-size:11px}
+.clar-also{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;color:var(--muted);font-size:11px}
+.clar-also label{display:inline-flex;gap:2px;align-items:center;color:var(--ink)}
 .att-row input[type=text]{flex:1;min-width:8rem;border:1px solid #c6cbc5;border-radius:6px;padding:4px 6px;font:inherit;font-size:11px}
 .bubble-you{border-left:3px solid #6b7c72;padding-left:8px;white-space:pre-wrap}
 .bubble-ts{color:#4a4f4c;padding-left:12px;font-style:italic;white-space:pre-wrap}
@@ -118,6 +124,9 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .float textarea{min-height:140px;resize:vertical}
 .float .actions{display:flex;gap:8px;justify-content:flex-end}
 .note{font-size:11px;color:var(--muted);margin:-4px 0 10px}
+.nt-route{display:flex;gap:12px;margin-bottom:10px}
+.nt-route select,.nt-route input{border:1px solid #c6cbc5;border-radius:6px;padding:6px 8px;font:inherit;font-size:12px}
+.nt-route input{width:5rem}
 @media (max-width:700px){
   header.top{align-items:flex-start;flex-direction:column}
   header.top .spacer{display:none}
@@ -232,9 +241,13 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
   <div class="float" role="dialog" aria-labelledby="nt-title">
     <div class="titlebar" id="nt-title">New Task</div>
     <div class="body-pad">
-      <p class="note">Creates a card in the master lane and sends name + text to the master agent.</p>
+      <p class="note">Creates a card in the chosen role's lane (master by default) and sends name + text to that agent.</p>
       <label for="nt-name">Name</label>
-      <input id="nt-name" type="text" placeholder="task-name">
+      <input id="nt-name" type="text" placeholder="task-name" maxlength="80">
+      <div class="nt-route">
+        <div><label for="nt-role">Role</label><select id="nt-role"></select></div>
+        <div><label for="nt-priority">Priority</label><input id="nt-priority" type="number" min="0" max="99" value="50" title="00–99; lower runs first"></div>
+      </div>
       <label for="nt-text">Task</label>
       <textarea id="nt-text" placeholder="What the master agent should do…"></textarea>
       <div class="actions">
@@ -280,8 +293,18 @@ function cardEl(task, opts) {
   auditValue.textContent = String(task.audit_count || 0);
   audit.append(auditIcon, auditValue);
   title.appendChild(audit);
+  if (!task.merging && task.lane !== "done") title.appendChild(cardMenu(task));
   card.appendChild(title);
-  if (!thin && task.status) {
+  if (task.queued) {
+    card.classList.add("card-queued");
+    card.setAttribute("data-queued", "true");
+    const pill = document.createElement("span");
+    pill.className = "pill pill-queued";
+    pill.textContent = "Queued" + (task.queue_priority ? " · P" + task.queue_priority : "");
+    pill.title = "Waiting in " + (task.queue_role || task.lane || "the") + "'s queue; not started yet";
+    card.appendChild(pill);
+  }
+  if (!thin && task.status && !task.queued) {
     const status = document.createElement("div");
     status.className = "status";
     status.textContent = task.status;
@@ -293,6 +316,112 @@ function cardEl(task, opts) {
     openGrowable("/task?" + qs, "task-" + (task.name || ""));
   };
   return card;
+}
+
+const openCardMenus = new Set();
+
+function cardMenuKey(task) {
+  return (task.project || "") + "\n" + (task.name || "");
+}
+
+function cardMenuItem(label, action) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = label;
+  btn.onclick = (event) => {
+    event.stopPropagation();
+    document.querySelectorAll(".card-menu.open").forEach((el) => el.classList.remove("open"));
+    openCardMenus.clear();
+    action();
+  };
+  return btn;
+}
+
+function cardMenu(task) {
+  const key = cardMenuKey(task);
+  const wrap = document.createElement("span");
+  wrap.className = "menu card-menu";
+  wrap.dataset.cardMenu = key;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "card-menu-btn";
+  btn.title = "Card actions";
+  btn.setAttribute("aria-label", "Card actions");
+  btn.textContent = "⋯";
+  const list = document.createElement("div");
+  list.className = "menu-list";
+  list.appendChild(cardMenuItem("Rename…", () => renameTask(task)));
+  if (task.queued) {
+    list.appendChild(cardMenuItem("Change priority…", () => reprioritizeTask(task)));
+    list.appendChild(cardMenuItem("Remove from queue", () => dequeueTask(task)));
+  }
+  const place = () => {
+    const box = btn.getBoundingClientRect();
+    list.style.top = box.bottom + "px";
+    list.style.left = box.left + "px";
+  };
+  btn.onclick = (event) => {
+    event.stopPropagation();
+    wrap.classList.toggle("open");
+    if (wrap.classList.contains("open")) {
+      openCardMenus.add(key);
+      place();
+    } else {
+      openCardMenus.delete(key);
+    }
+  };
+  wrap.onclick = (event) => event.stopPropagation();
+  wrap.append(btn, list);
+  if (openCardMenus.has(key)) {
+    wrap.classList.add("open");
+    requestAnimationFrame(place);
+  }
+  return wrap;
+}
+
+async function postTaskAction(path, payload) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    let msg = "Request failed";
+    try { msg = (await res.json()).error || msg; } catch (_) {}
+    alert(msg);
+  }
+  loadState();
+  return res.ok;
+}
+
+function taskPayload(task, extra) {
+  const payload = Object.assign({name: task.name}, extra || {});
+  if (task.project) payload.project = task.project;
+  return payload;
+}
+
+async function renameTask(task) {
+  const to = prompt("New name for " + task.name + " (max 80 characters)", task.name);
+  if (to === null) return;
+  const name = to.trim();
+  if (!name || name === task.name) return;
+  if (name.length > 80) {
+    alert("Task name must be no longer than 80 characters (got " + name.length + ").");
+    return;
+  }
+  await postTaskAction("/api/tasks/rename", taskPayload(task, {to: name}));
+}
+
+async function reprioritizeTask(task) {
+  const value = prompt("Priority for " + task.name + " (00–99, lower runs first; 00 = front, 99 = back)",
+    task.queue_priority || "50");
+  if (value === null || !value.trim()) return;
+  await postTaskAction("/api/tasks/priority", taskPayload(task, {priority: value.trim()}));
+}
+
+async function dequeueTask(task) {
+  if (!confirm("Remove " + task.name + " from the queue? Its queued mail is moved to .swarmforge/removed-tasks and the card leaves the board.")) return;
+  await postTaskAction("/api/tasks/dequeue", taskPayload(task));
 }
 
 function columnEl(lane, tasks, project) {
@@ -381,6 +510,7 @@ let forgePacks = [];
 let allProjects = [];
 let openProjects = [];
 let taskProject = "";
+let lastState = null;
 
 function fillOpenMenu() {
   const list = $("open-project-list");
@@ -747,6 +877,7 @@ async function viewDoc(path, approvalId, project) {
 
 const openDocMenus = new Set();
 const clarDrafts = {};
+const clarAlso = {};
 
 function artifactMenu(paths, item) {
   const id = item && item.id ? item.id : "";
@@ -920,7 +1051,8 @@ function openClarification(item) {
   win.document.getElementById("clar-ok").onclick = async () => {
     const text = box.value;
     clarDrafts[item.id] = text;
-    await postClarification(item.id, text);
+    const row = document.querySelector("#attention-clarifications [data-clar-id=\"" + item.id + "\"]");
+    await postClarification(item.id, text, alsoRoles(row && row.closest(".att-row")));
     win.close();
   };
 }
@@ -956,19 +1088,53 @@ function clarificationRow(item) {
   send.textContent = "Submit";
   row.addEventListener("submit", (event) => {
     event.preventDefault();
-    postClarification(item.id, input.value);
+    postClarification(item.id, input.value, alsoRoles(row));
   });
-  row.append(pill, pair, summary, input, open, send);
+  row.append(pill, pair, summary, input, alsoPicker(item), open, send);
   return row;
 }
 
-async function postClarification(id, text) {
+function alsoPicker(item) {
+  const box = document.createElement("span");
+  box.className = "clar-also";
+  box.title = "Also send the answer to these roles";
+  const others = lanesFor(item.project).filter((lane) => lane !== item.role);
+  if (!others.length) return box;
+  box.append("Also:");
+  others.forEach((lane) => {
+    const label = document.createElement("label");
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.value = lane;
+    check.dataset.alsoRole = lane;
+    const key = item.id + "\n" + lane;
+    check.checked = !!clarAlso[key];
+    check.addEventListener("change", () => { clarAlso[key] = check.checked; });
+    label.append(check, " " + displayName(lane));
+    box.appendChild(label);
+  });
+  return box;
+}
+
+function alsoRoles(row) {
+  if (!row) return [];
+  return [...row.querySelectorAll("[data-also-role]:checked")].map((el) => el.value);
+}
+
+async function postClarification(id, text, also) {
   if (!text || !text.trim()) return;
-  await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
+  const payload = {text};
+  if (also && also.length) payload.also = also;
+  const res = await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({text})
+    body: JSON.stringify(payload)
   });
+  if (!res.ok) {
+    let msg = "Could not send the answer";
+    try { msg = (await res.json()).error || msg; } catch (_) {}
+    alert(msg);
+  }
   loadState();
 }
 
@@ -1006,6 +1172,7 @@ async function loadState() {
     const res = await fetch("/api/state", {cache: "no-store"});
     if (!res.ok) throw new Error("offline");
     const data = await res.json();
+    lastState = data;
     $("error").textContent = "";
     renderChrome(data);
     renderBoard(data);
@@ -1022,8 +1189,32 @@ function closeNewTask() {
   taskProject = "";
 }
 
+function lanesFor(project) {
+  const data = lastState || {};
+  if (!project) return data.lanes || [];
+  const proj = (data.projects || []).find((p) => p.name === project);
+  return (proj && proj.lanes) || [];
+}
+
+function fillRoleSelect(project) {
+  const select = $("nt-role");
+  select.replaceChildren();
+  const master = document.createElement("option");
+  master.value = "";
+  master.textContent = "Master (default)";
+  select.appendChild(master);
+  lanesFor(project).forEach((lane) => {
+    const opt = document.createElement("option");
+    opt.value = lane;
+    opt.textContent = displayName(lane);
+    select.appendChild(opt);
+  });
+}
+
 function openNewTask(project) {
   taskProject = project || "";
+  fillRoleSelect(taskProject);
+  $("nt-priority").value = "50";
   $("new-task-layer").classList.add("open");
   $("nt-name").focus();
 }
@@ -1166,8 +1357,17 @@ async function submitNewTask() {
   const name = $("nt-name").value.trim();
   const text = $("nt-text").value;
   if (!name) return;
+  if (name.length > 80) {
+    alert("Task name must be no longer than 80 characters (got " + name.length + ").");
+    $("nt-name").focus();
+    return;
+  }
   const payload = {name, text};
   if (taskProject) payload.project = taskProject;
+  const role = $("nt-role").value;
+  const priority = $("nt-priority").value.trim();
+  if (role) payload.role = role;
+  if (priority && priority !== "50") payload.priority = priority;
   const res = await fetch("/api/tasks", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -1476,6 +1676,7 @@ document.addEventListener("click", (event) => {
     document.querySelectorAll(".menu.open").forEach((el) => {
       el.classList.remove("open");
       if (el.dataset.docId) openDocMenus.delete(el.dataset.docId);
+      if (el.dataset.cardMenu) openCardMenus.delete(el.dataset.cardMenu);
     });
   }
   const btn = event.target.closest("[data-open-agent]");
