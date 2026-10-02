@@ -1428,3 +1428,77 @@
           (is (= head (:out (run {:dir worktree} "git" "rev-parse" "HEAD"))))))
       (finally
         (fs/delete-tree root)))))
+
+(defn handoff-text [from type task]
+  (str "id: 1\nfrom: " from "\nto: coder\npriority: 50\ntype: " type "\ntask: " task "\n\nbody of " task "\n"))
+
+(deftest drain-pauses-new-mail-and-resume-releases-it
+  ;; Given a running swarm with mail waiting for coder
+  ;; When the operator drains
+  ;; Then ready_for_next prints PAUSED and leaves the mail, in-process work still
+  ;; resumes, notes from roles are shown, status reports drained state,
+  ;; and after resume the mail is taken
+  (let [root (tmp-dir)
+        inbox (fs/path root ".swarmforge/handoffs/inbox")
+        env {"SWARMFORGE_ROLE" "coder"}
+        ready #(run {:dir root :env env :ok? false} (script "ready_for_next.sh"))
+        swarm #(run {:dir root} (script "swarmforge.sh") % (str root))]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "coder\tmaster\t%s\tswarmforge-coder\tCoder\tcodex\ttask\n" root))
+      (doseq [dir ["new" "in_process" "completed"]]
+        (fs/create-dirs (fs/path inbox dir)))
+      (write-file (fs/path inbox "new/50_a.handoff") (handoff-text "(New Task)" "note" "card-a"))
+      (is (str/includes? (:out (swarm "drain")) "PAUSED: yes"))
+      (testing "no new mail is taken while paused"
+        (let [result (ready)]
+          (is (zero? (:exit result)))
+          (is (str/includes? (:out result) "PAUSED"))
+          (is (fs/exists? (fs/path inbox "new/50_a.handoff")))))
+      (testing "notes from roles are delivered while paused"
+        (write-file (fs/path inbox "new/40_note.handoff") (handoff-text "cleaner" "note" "fyi"))
+        (let [out (:out (ready))]
+          (is (str/includes? out "body of fyi"))
+          (is (str/includes? out "PAUSED"))
+          (is (fs/exists? (fs/path inbox "completed/40_note.handoff")))
+          (is (not (fs/exists? (fs/path inbox "new/40_note.handoff"))))))
+      (testing "in-process work still resumes and status reports it"
+        (write-file (fs/path inbox "in_process/50_b.handoff") (handoff-text "specifier" "note" "card-b"))
+        (let [out (:out (ready))]
+          (is (str/includes? out "TASK:"))
+          (is (not (str/includes? out "PAUSED"))))
+        (let [status (:out (swarm "status"))]
+          (is (str/includes? status "DRAINED: no"))
+          (is (str/includes? status "BUSY: coder in_process=1")))
+        (fs/move (fs/path inbox "in_process/50_b.handoff") (fs/path inbox "completed/50_b.handoff"))
+        (is (str/includes? (:out (swarm "status")) "DRAINED: yes")))
+      (testing "resume releases the waiting mail"
+        (is (str/includes? (:out (swarm "resume")) "Resumed"))
+        (is (str/includes? (:out (swarm "status")) "PAUSED: no"))
+        (let [out (:out (ready))]
+          (is (str/includes? out "TASK:"))
+          (is (str/includes? out "card-a"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest drain-pauses-batch-receivers
+  ;; Given a batch-mode role with mail waiting and the swarm drained
+  ;; When it asks for the next batch
+  ;; Then it gets PAUSED and the mail stays in inbox/new
+  (let [root (tmp-dir)
+        inbox (fs/path root ".swarmforge/handoffs/inbox")]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "coder\tmaster\t%s\tswarmforge-coder\tCoder\tcodex\tbatch\n" root))
+      (doseq [dir ["new" "in_process" "completed"]]
+        (fs/create-dirs (fs/path inbox dir)))
+      (write-file (fs/path inbox "new/50_a.handoff") (handoff-text "(New Task)" "note" "card-a"))
+      (run {:dir root} (script "swarmforge.sh") "drain" (str root))
+      (let [out (:out (run {:dir root :env {"SWARMFORGE_ROLE" "coder"}} (script "ready_for_next.sh")))]
+        (is (str/includes? out "PAUSED"))
+        (is (fs/exists? (fs/path inbox "new/50_a.handoff")))
+        (is (empty? (fs/list-dir (fs/path inbox "in_process")))))
+      (finally
+        (fs/delete-tree root)))))

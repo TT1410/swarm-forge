@@ -202,6 +202,12 @@ get-swarm-forge lieutenant
 ./swarm
 ```
 
+To restart a running pack safely, drain it first. `./swarm drain` lets roles
+finish their in-process work while `ready_for_next.sh` prints `PAUSED` instead
+of taking new mail (notes between roles still arrive). `./swarm status` reports
+`DRAINED: yes` once no role has in-process work or queued outbox mail. Restart
+with `./swarm`, then `./swarm resume` wakes roles that have mail waiting.
+
 The selected product's README describes its routes, roles, worktrees, project
 lifecycle, and dashboard behavior. The branch configuration—not this README—is
 the authority for current backend assignments and topology.

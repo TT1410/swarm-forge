@@ -110,6 +110,7 @@
             (fail! 1 (str/trim (str (:err result) "\n" (:out result))))))))))
 
 (defn -main []
+  (ready-for-next-guard/exit-if-paused!)
   (let [inbox (inbox-dir)
         new-dir (fs/path inbox "new")
         in-process-dir (fs/path inbox "in_process")

@@ -423,7 +423,8 @@ function renderChrome(data) {
   const dot = document.createElement("span");
   dot.className = "dot";
   dot.textContent = "●";
-  $("pack-meta").append(dot, " live · master = " + master);
+  const drain = data.drain && data.drain.paused ? (data.drain.drained ? " · drained (paused)" : " · draining") : "";
+  $("pack-meta").append(dot, " live · master = " + master + drain);
   $("btn-open-master-rail").textContent = "Open " + master;
   $("btn-open-master-rail").setAttribute("data-open-agent", masterRole);
   $("master-title").textContent = master;

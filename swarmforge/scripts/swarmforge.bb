@@ -5,6 +5,11 @@
             [babashka.process :as process]
             [clojure.string :as str]))
 
+(try
+  (require 'ready-for-next-guard)
+  (catch Exception _
+    (load-file (str (fs/path (fs/parent *file*) "ready_for_next_guard.bb")))))
+
 (def session-prefix "swarmforge")
 (def agent-window "swarm")
 (def pane-history-limit 10000)
@@ -1071,11 +1076,55 @@
     (println (str (boolean (fs/exists? (dashboard-url-file ctx))) " "
                   (boolean (fs/exists? (pack-web-pid-file ctx)))))))
 
+(defn print-drain-status! [root]
+  (let [state (ready-for-next-guard/drain-state root)]
+    (println (str "PAUSED: " (if (:paused state) "yes" "no")))
+    (println (str "DRAINED: " (if (:drained state) "yes" "no")))
+    (doseq [{:keys [role in_process outbox]} (:busy state)]
+      (println (str "BUSY: " role " in_process=" in_process " outbox=" outbox)))
+    (when (pos? (:project_outbox state))
+      (println (str "BUSY: project outbox=" (:project_outbox state))))))
+
+(defn run-drain! [root]
+  (let [file (ready-for-next-guard/pause-file root)]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file) (str (java.time.Instant/now) "\n"))
+    (println "Draining: roles finish in-process work and take no new mail.")
+    (print-drain-status! root)))
+
+(def wake-message
+  "You have new handoff mail. If idle, run ready_for_next.sh.")
+
+(defn wake-role-with-mail! [socket cols]
+  (let [session (nth cols 3 "")
+        worktree (nth cols 2 "")
+        new-dir (fs/path worktree ".swarmforge" "handoffs" "inbox" "new")]
+    (when (and (not (str/blank? session))
+               (seq (ready-for-next-guard/dir-entries new-dir ready-for-next-guard/handoff-file?))
+               (sh-ok? "tmux" "-S" socket "has-session" "-t" session))
+      (process/sh {:continue true} "tmux" "-S" socket "send-keys" "-t" session "-l" wake-message)
+      (Thread/sleep 150)
+      (process/sh {:continue true} "tmux" "-S" socket "send-keys" "-t" session "C-m")
+      (println (str "Woke " (first cols) ".")))))
+
+(defn run-resume! [root]
+  (let [ctx (context root)
+        socket (when (fs/regular-file? (:tmux-socket-file ctx))
+                 (not-empty (str/trim (slurp (str (:tmux-socket-file ctx))))))]
+    (fs/delete-if-exists (ready-for-next-guard/pause-file (:working-dir ctx)))
+    (println "Resumed: roles take new mail again.")
+    (when socket
+      (doseq [cols (ready-for-next-guard/role-rows-at (:working-dir ctx))]
+        (wake-role-with-mail! socket cols)))))
+
 (defn test-sync-worktree-roles! [root worktree-path]
   (sync-worktree-roles! (context root) (fs/absolutize worktree-path)))
 
 (defn -main [& args]
   (case (first args)
+    "drain" (run-drain! (str (fs/absolutize (or (second args) (System/getProperty "user.dir")))))
+    "resume" (run-resume! (or (second args) (System/getProperty "user.dir")))
+    "status" (print-drain-status! (str (fs/absolutize (or (second args) (System/getProperty "user.dir")))))
     "--test-sync-worktree-roles" (test-sync-worktree-roles! (second args) (nth args 2))
     "--test-parse" (test-parse! (or (second args) (System/getProperty "user.dir")))
     "--test-required-helpers" (test-required-helpers!)
