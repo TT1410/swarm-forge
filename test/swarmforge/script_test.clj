@@ -1,5 +1,6 @@
 (ns swarmforge.script-test
   (:require [babashka.fs :as fs]
+            [cheshire.core :as json]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]))
@@ -1565,5 +1566,34 @@
         (is (str/includes? (:err refused) "test -f merge-ok")))
       (write-file (fs/path root "merge-ok") "")
       (is (zero? (:exit (run {:dir root :ok? false} "git" "commit" "-q" "--no-edit"))))
+      (finally
+        (fs/delete-tree root)))))
+
+(defn shell-arg-file [command flag]
+  (second (re-find (re-pattern (str flag "\\S*?\\$\\(cat '([^']+)'\\)")) command)))
+
+(deftest launch-command-passes-role-and-constitution-as-system-instructions
+  ;; Given role and constitution files in the project
+  ;; When SwarmForge builds the claude and codex launch commands
+  ;; Then each points its system-level channel at a file carrying their full text
+  (let [root (tmp-dir)
+        fixtures {"swarmforge/constitution.prompt" "fixture-constitution\n"
+                  "swarmforge/constitution/articles/a.prompt" "fixture-article \"quoted\" \\ end\n"
+                  "swarmforge/roles/coder.prompt" "fixture-role\n"}]
+    (try
+      (doseq [[path text] fixtures]
+        (write-file (fs/path root path) text))
+      (let [claude (:out (run {:dir root} (script "swarmforge.bb") "--test-launch-command" (str root) "claude"))
+            system-file (second (re-find #"--append-system-prompt-file '([^']+)'" claude))
+            system-text (slurp system-file)]
+        (doseq [text (vals fixtures)]
+          (is (str/includes? system-text text)))
+        (is (str/includes? system-text (slurp (str (fs/path root ".swarmforge/prompts/coder.md"))))))
+      (let [codex (:out (run {:dir root} (script "swarmforge.bb") "--test-launch-command" (str root) "codex"))
+            toml-file (shell-arg-file codex "-c developer_instructions=")
+            text (json/parse-string (slurp toml-file))]
+        (is (some? toml-file) codex)
+        (doseq [fixture (vals fixtures)]
+          (is (str/includes? text fixture))))
       (finally
         (fs/delete-tree root)))))
