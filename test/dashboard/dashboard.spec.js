@@ -211,6 +211,22 @@ test.describe("pack dashboard", () => {
     }
   });
 
+  test("Clarification answer can also go to other roles", async ({ page }) => {
+    let posted = null;
+    await page.route("**/api/clarifications/**", async (route) => {
+      posted = JSON.parse(route.request().postData() || "{}");
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{\"ok\":true}" });
+    });
+    await page.goto(handle.url);
+    const row = page.locator("#attention-clarifications .att-row");
+    await expect(row.locator("[data-also-role]")).toHaveCount(1);
+    await row.locator("[data-also-role=\"coder\"]").check();
+    await row.locator("input[type=text]").fill("Yes, all 20.");
+    await row.locator("button", { hasText: "Submit" }).click();
+    await expect.poll(() => posted).not.toBeNull();
+    expect(posted).toEqual({ text: "Yes, all 20.", also: ["coder"] });
+  });
+
   test("Attention lists approvals and clarifications", async ({ page }) => {
     await page.goto(handle.url);
     await expect(page.locator("#attention-approvals .att-row")).toContainText("HTW");

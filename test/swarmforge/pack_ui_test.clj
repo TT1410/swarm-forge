@@ -2776,6 +2776,46 @@
                  (do (api-post root "/api/tasks/priority" {:name "C22" :priority "30"})
                      (task-card root "C22")))))))
 
+(defn ask-clarification! [root role text]
+  (let [question (fs/path root "tmp" (str role "-question.txt"))]
+    (write-file question text)
+    (str/trim (:out (run {:dir root :env {"SWARMFORGE_ROLE" role}}
+                         (script "pack_dashboard_request.sh")
+                         "clarify" (str question))))))
+
+(deftest pack-web-clarification-answer-also-reaches-extra-roles
+  ;; Given coder asks about a scenario that specifier owns
+  ;; When the operator answers with also = specifier
+  ;; Then both coder and specifier panes get the answer and the record lists specifier
+  (let [root (tmp-dir)
+        argv-file (str (fs/path root "tmux.argv"))]
+    (setup-pack! root ["specifier" "coder"])
+    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (let [id (ask-clarification! root "coder" "Is VAC-3 still valid after C15?\n")
+          resp (pack-web-env root {"SWARMFORGE_TMUX_STUB" argv-file}
+                             "--test-post" (str root)
+                             (str "/api/clarifications/" id "/answer")
+                             (json/generate-string {:text "No, drop VAC-3." :also ["specifier" "coder"]}))
+          argv (read-argv argv-file)
+          targets (set (keep #(when (some #{"-l"} %) (nth % 5)) argv))
+          done (first (:clarifications (web-state root)))]
+      (is (= 200 (:status (json/parse-string (:out resp) true))))
+      (is (= #{"coder:Coder.0" "specifier:Specifier.0"} targets))
+      (is (= 2 (count (filter #(and (some #{"-l"} %) (str/includes? (last %) "No, drop VAC-3.")) argv))))
+      (is (= "done" (:status done)))
+      (is (= ["specifier"] (:also done))))))
+
+(deftest pack-web-clarification-answer-refuses-an-unknown-extra-role
+  ;; Given QA asks a question
+  ;; When the operator answers with also = nobody
+  ;; Then the answer is refused with 400 and the question stays pending
+  (let [root (tmp-dir)]
+    (setup-pack! root ["QA"])
+    (let [id (ask-clarification! root "QA" "Which rooms?\n")
+          resp (api-post root (str "/api/clarifications/" id "/answer") {:text "All." :also "nobody"})]
+      (is (= 400 (:status resp)))
+      (is (= "pending" (:status (first (:clarifications (web-state root)))))))))
+
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.pack-ui-test)]
     (System/exit (+ fail error))))

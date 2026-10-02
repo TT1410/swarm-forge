@@ -106,6 +106,8 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .wif-therm[data-heat="6"] .bar:nth-child(-n+6){background:var(--green)}
 .ts-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}.ts-head h2{margin:0;flex:1}
 .history{flex:1;min-height:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;display:flex;flex-direction:column;gap:8px;font-size:11px}
+.clar-also{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;color:var(--muted);font-size:11px}
+.clar-also label{display:inline-flex;gap:2px;align-items:center;color:var(--ink)}
 .att-row input[type=text]{flex:1;min-width:8rem;border:1px solid #c6cbc5;border-radius:6px;padding:4px 6px;font:inherit;font-size:11px}
 .bubble-you{border-left:3px solid #6b7c72;padding-left:8px;white-space:pre-wrap}
 .bubble-ts{color:#4a4f4c;padding-left:12px;font-style:italic;white-space:pre-wrap}
@@ -875,6 +877,7 @@ async function viewDoc(path, approvalId, project) {
 
 const openDocMenus = new Set();
 const clarDrafts = {};
+const clarAlso = {};
 
 function artifactMenu(paths, item) {
   const id = item && item.id ? item.id : "";
@@ -1048,7 +1051,8 @@ function openClarification(item) {
   win.document.getElementById("clar-ok").onclick = async () => {
     const text = box.value;
     clarDrafts[item.id] = text;
-    await postClarification(item.id, text);
+    const row = document.querySelector("#attention-clarifications [data-clar-id=\"" + item.id + "\"]");
+    await postClarification(item.id, text, alsoRoles(row && row.closest(".att-row")));
     win.close();
   };
 }
@@ -1084,19 +1088,53 @@ function clarificationRow(item) {
   send.textContent = "Submit";
   row.addEventListener("submit", (event) => {
     event.preventDefault();
-    postClarification(item.id, input.value);
+    postClarification(item.id, input.value, alsoRoles(row));
   });
-  row.append(pill, pair, summary, input, open, send);
+  row.append(pill, pair, summary, input, alsoPicker(item), open, send);
   return row;
 }
 
-async function postClarification(id, text) {
+function alsoPicker(item) {
+  const box = document.createElement("span");
+  box.className = "clar-also";
+  box.title = "Also send the answer to these roles";
+  const others = lanesFor(item.project).filter((lane) => lane !== item.role);
+  if (!others.length) return box;
+  box.append("Also:");
+  others.forEach((lane) => {
+    const label = document.createElement("label");
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.value = lane;
+    check.dataset.alsoRole = lane;
+    const key = item.id + "\n" + lane;
+    check.checked = !!clarAlso[key];
+    check.addEventListener("change", () => { clarAlso[key] = check.checked; });
+    label.append(check, " " + displayName(lane));
+    box.appendChild(label);
+  });
+  return box;
+}
+
+function alsoRoles(row) {
+  if (!row) return [];
+  return [...row.querySelectorAll("[data-also-role]:checked")].map((el) => el.value);
+}
+
+async function postClarification(id, text, also) {
   if (!text || !text.trim()) return;
-  await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
+  const payload = {text};
+  if (also && also.length) payload.also = also;
+  const res = await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({text})
+    body: JSON.stringify(payload)
   });
+  if (!res.ok) {
+    let msg = "Could not send the answer";
+    try { msg = (await res.json()).error || msg; } catch (_) {}
+    alert(msg);
+  }
   loadState();
 }
 
