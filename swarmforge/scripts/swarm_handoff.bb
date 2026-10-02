@@ -19,8 +19,11 @@
        "type: git_handoff\n"
        "to: <role>[,<role>...]\n"
        "priority: NN\n"
-       "task: <short-stable-task-name>\n\n"
+       "task: <short-stable-task-name>\n"
+       "with_tasks: <card>[,<card>...]   (optional: more cards carried by the same commit)\n"
+       "return: true                     (optional: send the card back for more work; reopens a done card)\n\n"
        "The helper fills priority 50, commit, artifacts, and task_id from current work or the board card.\n"
+       "When current work holds several cards, name the card in task: and hand off each card.\n"
        "Do not type a SHA or a hidden task_id. Extra headers (coverage, CRAP) are invalid.\n"
        "Extra lines after the headers are ignored.\n\n"
        "type: note\n"
@@ -29,8 +32,10 @@
        "message: <one line, max 80 chars>"))
 
 (def reserved-fields #{"id" "from" "role" "recipient" "created_at" "enqueued_at"
-                       "dequeued_at" "completed_at" "task_base_commit" "non-forwarding"})
-(def allowed-fields #{"type" "to" "priority" "task_id" "task" "commit" "message"})
+                       "dequeued_at" "completed_at" "task_base_commit" "non-forwarding"
+                       "with_task_ids" "handed_task_ids"})
+(def allowed-fields #{"type" "to" "priority" "task_id" "task" "commit" "message"
+                      "with_tasks" "return"})
 (def allowed-types #{"git_handoff" "note"})
 (def script-dir (fs/parent *file*))
 (try
@@ -189,15 +194,55 @@
         (conj (str "Ambiguous current work: empty in-process batch "
                    (first empty-batches) "."))))))
 
-(defn complete-current-after-git-handoff! [headers]
+(defn return-handoff? [headers]
+  (= "true" (get headers "return")))
+
+(defn handoff-card-ids [headers]
+  (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
+             (handoff-lib/split-list (get headers "with_task_ids")))
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn in-process-card-ids []
+  (->> (in-process-task-files)
+       (filter handoff-lib/card-mail?)
+       (mapcat handoff-lib/mail-card-ids)
+       distinct
+       vec))
+
+(defn mark-handed! [ids]
+  (doseq [file (in-process-task-files)
+          :when (handoff-lib/card-mail? file)
+          :let [hit (filter (set (handoff-lib/mail-card-ids file)) ids)]
+          :when (seq hit)]
+    (handoff-lib/set-header! file "handed_task_ids"
+                             (str/join "," (distinct (concat (sort (handoff-lib/handed-card-ids file)) hit))))))
+
+(defn run-done-with-current! []
+  (let [result (sh (str (fs/path script-dir "done_with_current.sh")))]
+    (print (:out result))
+    (binding [*out* *err*]
+      (print (:err result)))
+    (when-not (zero? (:exit result))
+      (exit! (:exit result) "CURRENT COMPLETION FAILED after handoff queued."))))
+
+(defn complete-current-after-git-handoff! [headers sender]
   (when (and (= "git_handoff" (get headers "type"))
              (current-work-present?))
-    (let [result (sh (str (fs/path script-dir "done_with_current.sh")))]
-      (print (:out result))
-      (binding [*out* *err*]
-        (print (:err result)))
-      (when-not (zero? (:exit result))
-        (exit! (:exit result) "CURRENT COMPLETION FAILED after handoff queued.")))))
+    (let [ids (handoff-card-ids headers)
+          current (set (in-process-card-ids))]
+      (if (and (seq current) (not-any? current ids))
+        (println "CURRENT_WORK_KEPT: this handoff names no card of the current work.")
+        (do
+          (mark-handed! ids)
+          (let [open (handoff-lib/open-card-ids sender (in-process-task-files))]
+            (if (seq open)
+              (do
+                (println "CURRENT_WORK_OPEN: these cards of the current work still need a git_handoff:")
+                (doseq [id open]
+                  (println "-" (handoff-lib/card-label id))))
+              (run-done-with-current!))))))))
 
 (defn with-lane-task [headers sender]
   (let [cards (board-cards-in-lane sender)
@@ -221,20 +266,70 @@
       id (assoc "task_id" id)
       name (assoc "task" name))))
 
+(defn in-process-mail-for-card [key]
+  (some #(when (and (handoff-lib/card-mail? %)
+                    (or (= key (header-field % "task"))
+                        (some #{key} (handoff-lib/mail-card-ids %))))
+           %)
+        (in-process-task-files)))
+
+(defn card-id-for [key]
+  (when-not (str/blank? key)
+    (or (:id (handoff-lib/find-card (board-cards) key))
+        (when-let [file (in-process-mail-for-card key)]
+          (if (= key (header-field file "task"))
+            (handoff-task-id file)
+            key)))))
+
+(defn card-name-for [id]
+  (or (:name (handoff-lib/find-card (board-cards) id))
+      (some-> (in-process-mail-for-card id) (header-field "task"))))
+
+(defn with-current-work-task [headers sender]
+  (if-let [id (card-id-for (get headers "task"))]
+    (assoc headers "task_id" id)
+    (let [open (handoff-lib/open-card-ids sender (in-process-task-files))]
+      (cond
+        (= 1 (count open)) (assoc headers "task_id" (first open))
+        (empty? open) (with-in-process-task headers)
+        :else (assoc headers ::open-cards open)))))
+
+(defn with-card-name [headers]
+  (let [id (get headers "task_id")
+        name (when-not (str/blank? id) (card-name-for id))
+        keep-draft? (and name
+                         (> (count name) 80)
+                         (not (str/blank? (get headers "task"))))]
+    (cond-> headers
+      (and name (not keep-draft?)) (assoc "task" name))))
+
+(defn with-extra-tasks [headers]
+  (let [entries (handoff-lib/split-list (get headers "with_tasks"))
+        resolved (map (juxt identity card-id-for) entries)
+        unknown (keep (fn [[entry id]] (when-not id entry)) resolved)
+        own (get headers "task_id")
+        ids (->> resolved (keep second) (remove #{own}) distinct)]
+    (cond-> (dissoc headers "with_tasks")
+      (seq ids) (assoc "with_task_ids" (str/join "," ids))
+      (seq unknown) (assoc ::unknown-extra-tasks (vec unknown)))))
+
 (defn with-board-task [headers sender]
   (if-not (= "git_handoff" (get headers "type"))
     headers
-    (cond
-      (not (str/blank? (get headers "task_id"))) headers
-      (not-empty (current-in-process-task-id)) (with-in-process-task headers)
-      :else (let [card (board-card-named (get headers "task"))
-                  filled (if card
-                           (assoc headers "task_id" (:id card) "task" (:name card))
-                           (with-lane-task headers sender))]
-              (if (and (str/blank? (get filled "task_id"))
-                       (not (str/blank? (get filled "task"))))
-                (assoc filled "task_id" (get filled "task"))
-                filled)))))
+    (let [filled (cond
+                   (not (str/blank? (get headers "task_id"))) headers
+                   (current-work-present?) (with-current-work-task headers sender)
+                   :else (let [card (board-card-named (get headers "task"))
+                               filled (if card
+                                        (assoc headers "task_id" (:id card) "task" (:name card))
+                                        (with-lane-task headers sender))]
+                           (if (and (str/blank? (get filled "task_id"))
+                                    (not (str/blank? (get filled "task"))))
+                             (assoc filled "task_id" (get filled "task"))
+                             filled)))]
+      (-> filled
+          with-card-name
+          with-extra-tasks))))
 
 (defn pack-role-names []
   (->> (str/split-lines (slurp (str (roles-file))))
@@ -257,16 +352,21 @@
 
 (defn with-non-forwarding [headers sender]
   (if (and (= "git_handoff" (get headers "type"))
-           (last-pack-role? sender))
+           (last-pack-role? sender)
+           (not (return-handoff? headers)))
     (assoc headers "non-forwarding" "true")
     headers))
 
 (defn inbound-handoffs []
   (in-process-task-files))
 
-(defn inbound-non-forwarding? []
-  (boolean (some #(= "true" (header-field % "non-forwarding"))
-                 (inbound-handoffs))))
+(defn inbound-non-forwarding?
+  "True when every mail of the current work is a merge-only copy, so the
+  role has nothing to forward."
+  []
+  (let [files (inbound-handoffs)]
+    (boolean (and (seq files)
+                  (every? #(= "true" (header-field % "non-forwarding")) files)))))
 
 (defn role-worktree [role]
   (some (fn [line]
@@ -403,6 +503,8 @@
    :recipients (vec (str/split (or (get headers "to") "") #"," -1))
    :priority (get headers "priority")
    :task (get headers "task")
+   :with-task-ids (get headers "with_task_ids")
+   :return (return-handoff? headers)
    :commit (get headers "commit")
    :task-base-commit (or (current-task-base) "")
    :non-forwarding (= "true" (get headers "non-forwarding"))
@@ -425,6 +527,8 @@
    :recipients (vec recipients)
    :priority (get headers "priority")
    :task (get headers "task")
+   :with-task-ids (get headers "with_task_ids")
+   :return (return-handoff? headers)
    :commit canonical-commit
    :artifacts (vec artifacts)
    :task-base-commit (or (current-task-base) "")
@@ -517,25 +621,53 @@
     (and (not (str/blank? name))
          (fs/exists? (fs/path (state-root) "notify" (str "reject-" name))))))
 
-(defn task-state-errors [headers sender]
+(defn card-state-errors [id {:keys [sender recipients current return?]}]
+  (let [task (board-task id)
+        lanes (set (cons sender recipients))
+        lane (:lane task)]
+    (cond-> []
+      (and (seq current) (not (current id)) (not (and task (lanes lane))))
+      (conj (format "Handoff task_id '%s' does not match current in-process task_id '%s'%s."
+                    id (str/join "', '" (sort current))
+                    (if (board-present?)
+                      (str " or a card in the lane of " sender " or a recipient")
+                      "")))
+      (and (empty? current) (board-present?) (not task))
+      (conj (format "Handoff task_id '%s' is not a current board task." id))
+      (and (empty? current) task (not (lanes lane)) (not= "done" lane))
+      (conj (format "Task '%s' is in the %s lane; %s may hand off only its current work, cards in its own lane, or cards already in a recipient's lane."
+                    (:name task) lane sender))
+      (and task (= "done" lane) (not return?))
+      (conj (format "Task '%s' is done and cannot accept new handoffs." (:name task)))
+      (rejected-task? task)
+      (conj (format "Task '%s' is rejected and must be retried before handoff." (:name task))))))
+
+(defn open-cards-error [open]
+  (str "Current work holds " (count open) " cards that still need a handoff: "
+       (str/join ", " (map handoff-lib/card-label open))
+       ". Name the card in task: and list other cards carried by the same commit in with_tasks:."))
+
+(defn task-state-errors [headers sender recipients]
   (if-not (= "git_handoff" (get headers "type"))
     []
     (let [task-id (or (not-empty (get headers "task_id"))
                       (get headers "task"))
-          in-process-id (current-in-process-task-id)
-          task (board-task task-id)]
+          context {:sender sender
+                   :recipients recipients
+                   :current (set (in-process-card-ids))
+                   :return? (return-handoff? headers)}]
       (cond-> []
-        (str/blank? task-id)
+        (::open-cards headers)
+        (conj (open-cards-error (::open-cards headers)))
+        (seq (::unknown-extra-tasks headers))
+        (conj (str "with_tasks names unknown cards: "
+                   (str/join ", " (::unknown-extra-tasks headers)) "."))
+        (and (some? (get headers "return")) (not (return-handoff? headers)))
+        (conj (format "Header 'return' must be 'true'; got '%s'." (get headers "return")))
+        (and (str/blank? task-id) (not (::open-cards headers)))
         (conj "Missing required header 'task_id' for git_handoff.")
-        (and in-process-id (not= task-id in-process-id))
-        (conj (format "Handoff task_id '%s' does not match current in-process task_id '%s'."
-                      task-id in-process-id))
-        (and (board-present?) (nil? in-process-id) (not task))
-        (conj (format "Handoff task_id '%s' is not a current board task." task-id))
-        (and task (= "done" (:lane task)))
-        (conj (format "Task '%s' is done and cannot accept new handoffs." (:name task)))
-        (rejected-task? task)
-        (conj (format "Task '%s' is rejected and must be retried before handoff." (:name task)))))))
+        (not (str/blank? task-id))
+        (into (mapcat #(card-state-errors % context) (handoff-card-ids headers)))))))
 
 (def active-states
   [["pending approvals" (fn [] [(fs/path (state-dir) "pending_approval")])]
@@ -681,7 +813,7 @@
           [nil (format "Header 'commit' must resolve to a commit; '%s' resolves to '%s'." commit object-type)])))))
 
 (def allowed-fields-by-type
-  {"git_handoff" #{"type" "to" "priority" "task_id" "task" "commit"}
+  {"git_handoff" #{"type" "to" "priority" "task_id" "task" "commit" "with_tasks" "return"}
    "note" #{"type" "to" "priority" "message"}})
 
 (defn field-allowed? [type field]
@@ -719,7 +851,7 @@
 (defn git-required-errors [headers]
   (let [task-name (get headers "task")]
     (cond-> []
-      (str/blank? (get headers "task_id"))
+      (and (str/blank? (get headers "task_id")) (not (::open-cards headers)))
       (conj "Missing required header 'task_id' for git_handoff.")
       (str/blank? task-name)
       (conj "Missing required header 'task' for git_handoff.")
@@ -830,6 +962,10 @@
                       (str "task: " (get headers "task"))
                       (str "commit: " canonical-commit)
                       (str "artifacts: " artifacts))
+                (and (= "git_handoff" type) (not (str/blank? (get headers "with_task_ids"))))
+                (conj (str "with_task_ids: " (get headers "with_task_ids")))
+                (and (= "git_handoff" type) (return-handoff? headers) (not reverse?))
+                (conj "return: true")
                 (and (= "git_handoff" type) (not (str/blank? (current-task-base))))
                 (conj (str "task_base_commit: " (current-task-base)))
                 non-forwarding?
@@ -846,6 +982,11 @@
     (fs/move tmp-file outbox-file)
     outbox-file))
 
+(defn reverse-copy-roles [{:keys [headers sender recipients]}]
+  (when (and (= "git_handoff" (get headers "type"))
+             (not (return-handoff? headers)))
+    (remove (set recipients) (reverse-roles sender))))
+
 (defn write-handoffs! [ctx]
   (let [forward (write-handoff! (assoc ctx :reverse? false))
         reverse (when (= "git_handoff" (get-in ctx [:headers "type"]))
@@ -855,7 +996,7 @@
                                                  :priority "00"
                                                  :non-forwarding true
                                                  :reverse? true)))
-                        (reverse-roles (:sender ctx))))]
+                        (reverse-copy-roles ctx)))]
     (into [forward] reverse)))
 
 (defn error-report [draft errors]
@@ -904,7 +1045,7 @@
               all-errors (vec (concat errors
                                       (:errors validation)
                                       (current-work-state-errors headers)
-                                      (task-state-errors headers sender)
+                                      (task-state-errors headers sender (:recipients validation))
                                       (ancestry-errors headers (:canonical-commit validation))
                                       (duplicate-errors sender
                                                         (:recipients validation)
@@ -934,7 +1075,7 @@
                 (fs/delete draft)
                 (doseq [outbox-file outbox-files]
                   (println "HANDOFF QUEUED:" (str outbox-file)))
-                (complete-current-after-git-handoff! headers)))))))))
+                (complete-current-after-git-handoff! headers sender)))))))))
 
 (when (= (str *file*) (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))

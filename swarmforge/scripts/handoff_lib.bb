@@ -146,6 +146,88 @@
          vec)
     []))
 
+(defn split-list [value]
+  (->> (str/split (or value "") #",")
+       (map str/trim)
+       (remove str/blank?)
+       vec))
+
+(defn batch-dirs [dir]
+  (if (fs/exists? dir)
+    (->> (fs/list-dir dir)
+         (filter #(and (fs/directory? %) (str/starts-with? (fs/file-name %) "batch_")))
+         (sort-by #(fs/file-name %))
+         vec)
+    []))
+
+(defn in-process-files []
+  (let [dir (fs/path (inbox-dir) "in_process")]
+    (into (handoff-files dir)
+          (mapcat handoff-files (batch-dirs dir)))))
+
+(defn mail-task-id [file]
+  (or (not-empty (header-field file "task_id"))
+      (not-empty (header-field file "task"))))
+
+(defn mail-card-ids [file]
+  (->> (cons (mail-task-id file) (split-list (header-field file "with_task_ids")))
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn handed-card-ids [file]
+  (set (split-list (header-field file "handed_task_ids"))))
+
+(defn card-mail?
+  "Mail that carries a card the receiving role must hand off: forwarding
+  git handoffs and notes that name a board task (new or retried cards)."
+  [file]
+  (boolean (and (not= "true" (header-field file "non-forwarding"))
+                (or (= "git_handoff" (header-field file "type"))
+                    (not-empty (header-field file "task_id")))
+                (seq (mail-card-ids file)))))
+
+(defn board-file []
+  (fs/path (project-root) ".swarmforge" "board" "tasks.tsv"))
+
+(defn board-present? []
+  (fs/exists? (board-file)))
+
+(defn board-cards []
+  (if (board-present?)
+    (->> (str/split-lines (slurp (str (board-file))))
+         (remove str/blank?)
+         (mapv #(let [[name lane _created _updated task-id] (str/split % #"\t" -1)]
+                  {:name name :lane lane :id (or (not-empty task-id) name)})))
+    []))
+
+(defn find-card [cards key]
+  (or (some #(when (= key (:id %)) %) cards)
+      (some #(when (= key (:name %)) %) cards)))
+
+(defn open-card-ids
+  "Cards in current work that still need an outgoing handoff from role-name.
+  With a board, only cards still in the role's lane count."
+  ([role-name] (open-card-ids role-name (in-process-files)))
+  ([role-name files]
+   (let [board? (board-present?)
+         cards (board-cards)]
+     (->> files
+          (filter card-mail?)
+          (mapcat (fn [file] (remove (handed-card-ids file) (mail-card-ids file))))
+          distinct
+          (filter (fn [id]
+                    (if board?
+                      (= role-name (:lane (find-card cards id)))
+                      true)))
+          vec))))
+
+(defn card-label [id]
+  (let [card (find-card (board-cards) id)]
+    (if (and card (not= id (:name card)))
+      (str (:name card) " (" id ")")
+      id)))
+
 (defn print-batch [batch-dir]
   (let [files (handoff-files batch-dir)]
     (when (empty? files)
@@ -233,6 +315,7 @@
    "print-task" (fn [args] (print-task (second args)))
    "print-batch" (fn [args] (print-batch (second args)))
    "next-sequence" (fn [_] (println (next-sequence)))
+   "open-cards" (fn [_] (doseq [id (open-card-ids (role))] (println (card-label id))))
    "finish-done" (fn [_] (finish-done!))})
 
 (defn -main [& args]
