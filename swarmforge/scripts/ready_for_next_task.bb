@@ -110,6 +110,7 @@
             (fail! 1 (str/trim (str (:err result) "\n" (:out result))))))))))
 
 (defn -main []
+  (ready-for-next-guard/exit-if-paused!)
   (let [inbox (inbox-dir)
         new-dir (fs/path inbox "new")
         in-process-dir (fs/path inbox "in_process")
@@ -131,9 +132,11 @@
           (merge-git-handoff! file)
           (print-task file))
         (let [new-files (handoff-files new-dir)]
-          (when-let [active (seq (ready-for-next-guard/active-outbound-git-files
-                                  (ready-for-next-guard/current-role)))]
+          (when-let [active (ready-for-next-guard/blocking-files
+                             (ready-for-next-guard/current-role) new-files)]
             (apply fail! 2 (ready-for-next-guard/wait-message active)))
+          (let [new-files (ready-for-next-guard/startable-files
+                           (ready-for-next-guard/current-role) new-files)]
           (if (empty? new-files)
             (println "NO_TASK")
             (let [source-file (first new-files)
@@ -144,7 +147,7 @@
               (set-header! target-file "dequeued_at" (timestamp))
               (set-header! target-file "task_base_commit" (current-head))
               (merge-git-handoff! target-file)
-              (print-task target-file))))))))
+              (print-task target-file)))))))))
 
 (when (= (str *file*) (System/getProperty "babashka.file"))
   (-main))

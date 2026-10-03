@@ -158,6 +158,75 @@ test.describe("pack dashboard", () => {
     await expect(page.locator("#nt-name")).toBeFocused();
   });
 
+  test("New Task sends the chosen role and priority", async ({ page }) => {
+    let posted = null;
+    await page.route("**/api/tasks", async (route) => {
+      posted = JSON.parse(route.request().postData() || "{}");
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{\"ok\":true}" });
+    });
+    await page.goto(handle.url);
+    await page.locator(".project-header button", { hasText: "New Task" }).click();
+    await expect(page.locator("#nt-name")).toHaveAttribute("maxlength", "80");
+    await expect(page.locator("#nt-role option")).toHaveText(["Master (default)", "Specifier", "Coder"]);
+    await page.locator("#nt-name").fill("D02");
+    await page.locator("#nt-role").selectOption("coder");
+    await page.locator("#nt-priority").fill("10");
+    await page.locator("#nt-ok").click();
+    await expect.poll(() => posted).not.toBeNull();
+    expect(posted).toMatchObject({ name: "D02", project: "htw", role: "coder", priority: "10" });
+  });
+
+  test("queued card shows Queued and its menu reorders, renames, and removes it", async ({ page }) => {
+    const local = await startDashboard();
+    const project = path.join(local.root, "projects/htw");
+    try {
+      fs.appendFileSync(
+        path.join(project, ".swarmforge/board/tasks.tsv"),
+        "Q1\tcoder\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-q1\t0\n"
+      );
+      writeFile(
+        path.join(project, ".worktrees/coder/.swarmforge/handoffs/inbox/new/50_q1_from_specifier_to_coder.handoff"),
+        "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\n" +
+          "task_id: 20260101T000000Z-q1\ntask: Q1\n\npayload\n"
+      );
+      await page.goto(local.url);
+      const card = page.locator(".card[data-task-name=\"Q1\"]");
+      await expect(card.locator(".pill-queued")).toHaveText("Queued · P50");
+      await card.locator(".card-menu-btn").click();
+      page.once("dialog", (dialog) => dialog.accept("10"));
+      await card.locator(".card-menu .menu-list button", { hasText: "Change priority" }).click();
+      await expect(page.locator(".card[data-task-name=\"Q1\"] .pill-queued")).toHaveText("Queued · P10");
+      await page.locator(".card[data-task-name=\"Q1\"] .card-menu-btn").click();
+      page.once("dialog", (dialog) => dialog.accept("Q1 renamed"));
+      await page.locator(".card[data-task-name=\"Q1\"] .card-menu .menu-list button", { hasText: "Rename" }).click();
+      const renamed = page.locator(".card[data-task-name=\"Q1 renamed\"]");
+      await expect(renamed).toHaveCount(1);
+      await renamed.locator(".card-menu-btn").click();
+      page.once("dialog", (dialog) => dialog.accept());
+      await renamed.locator(".card-menu .menu-list button", { hasText: "Remove from queue" }).click();
+      await expect(page.locator(".card[data-task-name=\"Q1 renamed\"]")).toHaveCount(0);
+      expect(fs.readdirSync(path.join(project, ".worktrees/coder/.swarmforge/handoffs/inbox/new"))).toEqual([]);
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("Clarification answer can also go to other roles", async ({ page }) => {
+    let posted = null;
+    await page.route("**/api/clarifications/**", async (route) => {
+      posted = JSON.parse(route.request().postData() || "{}");
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{\"ok\":true}" });
+    });
+    await page.goto(handle.url);
+    const row = page.locator("#attention-clarifications .att-row");
+    await expect(row.locator("[data-also-role]")).toHaveCount(1);
+    await row.locator("[data-also-role=\"coder\"]").check();
+    await row.locator("input[type=text]").fill("Yes, all 20.");
+    await row.locator("button", { hasText: "Submit" }).click();
+    await expect.poll(() => posted).not.toBeNull();
+    expect(posted).toEqual({ text: "Yes, all 20.", also: ["coder"] });
+  });
+
   test("Attention lists approvals and clarifications", async ({ page }) => {
     await page.goto(handle.url);
     await expect(page.locator("#attention-approvals .att-row")).toContainText("HTW");
