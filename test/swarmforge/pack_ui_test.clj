@@ -121,7 +121,7 @@
 (defn increment-audit! [root task-id]
   (pack-board root true "increment-audit" "--root" (str root) "--task-id" task-id))
 
-(defn queue-handoff! [root {:keys [from to task artifacts non-forwarding priority body]}]
+(defn queue-handoff! [root {:keys [from to task artifacts non-forwarding priority body with-task-ids]}]
   (let [priority (or priority "50")]
     (write-file
      (fs/path root ".swarmforge/handoffs/outbox"
@@ -132,6 +132,7 @@
           "type: git_handoff\n"
           "task: " task "\n"
           (when artifacts (str "artifacts: " artifacts "\n"))
+          (when with-task-ids (str "with_task_ids: " with-task-ids "\n"))
           (when non-forwarding "non-forwarding: true\n")
           "\n"
           (or body "payload") "\n"))))
@@ -647,25 +648,18 @@
       (finally
         (stop-tmux! sock)))))
 
-(deftest terminal-handoff-dones-finished-batch-cards-in-sender-lane
-  ;; Given two-pack, Command syntax and validation in cleaner, those names in a
-  ;; completed cleaner batch, HTW still in cleaner but not in that batch
-  ;; When cleaner queues a terminal git_handoff named HTW
-  ;; Then Command syntax and validation are done and HTW is done
+(deftest terminal-handoff-dones-every-card-it-carries
+  ;; Given two-pack, HTW, Command syntax and validation in cleaner
+  ;; When cleaner queues a terminal git_handoff for HTW that also carries the other two
+  ;; Then all three cards are done
   (let [root (tmp-dir)
         roles ["coder" "cleaner"]
-        batch (fs/path (pack-worktree root roles "cleaner")
-                       ".swarmforge/handoffs/inbox/completed"
-                       "batch_20260824T150500Z_000001")
         sock (do (setup-pack! root roles)
                  (create-task root "HTW" "cleaner")
                  (create-task root "Command syntax" "cleaner")
                  (create-task root "validation" "cleaner")
-                 (write-file (fs/path batch "50_command.handoff")
-                             "from: coder\nto: cleaner\npriority: 50\ntype: git_handoff\ntask: Command syntax\n\npayload\n")
-                 (write-file (fs/path batch "50_validation.handoff")
-                             "from: coder\nto: cleaner\npriority: 50\ntype: git_handoff\ntask: validation\n\npayload\n")
-                 (queue-handoff! root {:from "cleaner" :to "coder" :task "HTW"})
+                 (queue-handoff! root {:from "cleaner" :to "coder" :task "HTW"
+                                       :with-task-ids "Command syntax,validation"})
                  (start-tmux! root roles))]
     (try
       (handoffd-once root)
@@ -697,11 +691,11 @@
       (finally
         (stop-tmux! sock)))))
 
-(deftest terminal-handoff-dones-in-process-batch-cards
+(deftest terminal-handoff-leaves-other-in-process-batch-cards
   ;; Given two-pack, one liners/validate/HHG in an in-process cleaner batch,
   ;; and Command syntax in cleaner but not in that batch
   ;; When cleaner terminals with task one liners before done_with_current
-  ;; Then the three batch cards are done and Command syntax stays in cleaner
+  ;; Then only one liners is done; the other batch cards wait for their own handoff
   (let [root (tmp-dir)
         roles ["coder" "cleaner"]
         batch (fs/path (in-process-dir root roles "cleaner")
@@ -722,8 +716,8 @@
     (try
       (handoffd-once root)
       (is (= "done" (task-lane root "one liners")))
-      (is (= "done" (task-lane root "validate")))
-      (is (= "done" (task-lane root "Holy Hand Grenade")))
+      (is (= "cleaner" (task-lane root "validate")))
+      (is (= "cleaner" (task-lane root "Holy Hand Grenade")))
       (is (= "cleaner" (task-lane root "Command syntax")))
       (finally
         (stop-tmux! sock)))))
@@ -744,6 +738,69 @@
       (is (seq (inbox-names root six-pack-roles "specifier")))
       (is (seq (inbox-names root six-pack-roles "hardender")))
       (is (= [] (pending-names root)))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest approval-skips-a-fix-for-a-card-that-already-moved-on
+  ;; SF-15: a specifier fix for a card already in coder is delivered without approval
+  (let [root (tmp-dir)
+        sock (do (setup-pack! root six-pack-roles)
+                 (create-task root "C14" "coder")
+                 (queue-handoff! root {:from "specifier" :to "coder" :task "C14"})
+                 (start-tmux! root six-pack-roles))]
+    (try
+      (handoffd-once root)
+      (is (= [] (pending-names root)))
+      (is (seq (inbox-names root six-pack-roles "coder")))
+      (is (= "coder" (task-lane root "C14")))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest last-role-return-moves-a-done-card-back
+  ;; SF-35: QA's return handoff takes the card out of done into the recipient lane
+  (let [root (tmp-dir)
+        sock (do (setup-pack! root six-pack-roles)
+                 (create-task root "D40" "done")
+                 (write-file (fs/path root ".swarmforge/handoffs/outbox/50_from_QA_to_coder.handoff")
+                             "from: QA\nto: coder\npriority: 50\ntype: git_handoff\ntask: D40\nreturn: true\n\npayload\n")
+                 (start-tmux! root six-pack-roles))]
+    (try
+      (handoffd-once root)
+      (is (= "coder" (task-lane root "D40")))
+      (is (seq (inbox-names root six-pack-roles "coder")))
+      (finally
+        (stop-tmux! sock)))))
+
+(defn git-commit! [root text]
+  (write-file (fs/path root "work.txt") text)
+  (run {:dir root} "git" "add" "work.txt")
+  (run {:dir root} "git" "commit" "-q" "-m" text)
+  (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD"))))
+
+(deftest newer-merge-only-copy-supersedes-an-unread-older-one
+  ;; SF-16: the recipient keeps one merge-only copy per sender instead of one per commit
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner" "QA"]
+        _ (setup-pack! root roles)
+        _ (run {:dir root} "git" "init" "-q")
+        _ (run {:dir root} "git" "config" "user.email" "t@example.com")
+        _ (run {:dir root} "git" "config" "user.name" "T")
+        older (git-commit! root "one")
+        newer (git-commit! root "two")
+        coder-new (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/new")
+        coder-done (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/completed")
+        _ (write-file (fs/path coder-new "00_old_from_QA_to_coder.handoff")
+                      (str "id: old\nfrom: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask: A\ncommit: "
+                           older "\nnon-forwarding: true\n\nmerge\n"))
+        _ (write-file (fs/path root ".swarmforge/handoffs/outbox/00_new_from_QA_to_coder.handoff")
+                      (str "id: new\nfrom: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask: B\ncommit: "
+                           newer "\nnon-forwarding: true\n\nmerge\n"))
+        sock (start-tmux! root roles)]
+    (try
+      (handoffd-once root)
+      (is (= ["00_new_from_QA_to_coder.handoff"] (inbox-names root roles "coder")))
+      (is (str/includes? (slurp (str (fs/path coder-done "00_old_from_QA_to_coder.handoff")))
+                         "superseded_by: new"))
       (finally
         (stop-tmux! sock)))))
 
@@ -1761,7 +1818,7 @@
     (is (zero? (:exit (pack-web root false "--test-retry-task" (str root)
                                 "50_first" "first"))))
     (is (zero? (:exit (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"}}
-                           (script "done_with_current.sh")))))
+                           (script "done_with_current.sh") "--drop"))))
     (is (fs/exists? completed))
     (is (not (fs/exists? in-process)))
     (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_second.handoff")
@@ -2542,6 +2599,698 @@
       (is (= ["I'm listing the open projects." "I'll summarize HTW next."]
              (:lieutenant_status state))))))
 
+(def long-name (apply str (repeat 81 "x")))
+
+(deftest pack-board-rejects-a-task-name-over-eighty-characters
+  ;; Given a pack
+  ;; When pack_board create gets an 81-character name
+  ;; Then it fails with the limit and no card is written
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        result (create-task root long-name "specifier" false)
+        ok (create-task root (apply str (repeat 80 "y")) "specifier")]
+    (is (not (zero? (:exit result))))
+    (is (str/includes? (:err result) "no longer than 80 characters"))
+    (is (nil? (task-lane root long-name)))
+    (is (zero? (:exit ok)))))
+
+(deftest pack-board-rename-keeps-the-task-id-and-moves-card-files
+  ;; Given card HTW with body, task doc, and an in-process handoff naming it by task_id
+  ;; When pack_board rename --name HTW --to Hunt
+  ;; Then the row, body, doc, and live handoff use Hunt and the task_id is unchanged
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "HTW" "coder")
+        task-id (:id (task-card root "HTW"))
+        live (fs/path (in-process-dir root roles "coder") "50_from_specifier_to_coder.handoff")
+        sent (fs/path root ".swarmforge/handoffs/sent/50_from_specifier_to_coder.handoff")
+        handoff (str "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\n"
+                     "task_id: " task-id "\ntask: HTW\n\npayload\n")
+        _ (write-file live handoff)
+        _ (write-file sent handoff)
+        result (pack-board root true "rename" "--root" (str root) "--name" "htw" "--to" "Hunt")]
+    (is (zero? (:exit result)))
+    (is (nil? (task-lane root "HTW")))
+    (is (= "coder" (task-lane root "Hunt")))
+    (is (= task-id (:id (task-card root "Hunt"))))
+    (is (= "Integrate HTW stories" (slurp (str (fs/path root ".swarmforge/board/Hunt.txt")))))
+    (is (not (fs/exists? (fs/path root ".swarmforge/board/HTW.txt"))))
+    (is (str/starts-with? (slurp (str (fs/path root "tasks/Hunt.md"))) "# Hunt\n"))
+    (is (not (fs/exists? (fs/path root "tasks/HTW.md"))))
+    (is (str/includes? (slurp (str live)) "task: Hunt\n"))
+    (is (str/includes? (slurp (str live)) (str "task_id: " task-id "\n")))
+    (is (str/includes? (slurp (str sent)) "task: HTW\n"))))
+
+(deftest pack-board-rename-rejects-duplicates-and-long-names
+  ;; Given cards HTW and Grenade
+  ;; When renaming HTW to Grenade or to an 81-character name
+  ;; Then both fail and HTW keeps its name
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (create-task root "HTW" "specifier")
+        _ (create-task root "Grenade" "specifier")
+        dup (pack-board root false "rename" "--root" (str root) "--name" "HTW" "--to" "grenade")
+        long (pack-board root false "rename" "--root" (str root) "--name" "HTW" "--to" long-name)
+        missing (pack-board root false "rename" "--root" (str root) "--name" "Nope" "--to" "Yes")]
+    (is (not (zero? (:exit dup))))
+    (is (str/includes? (:err dup) "Duplicate task name"))
+    (is (not (zero? (:exit long))))
+    (is (str/includes? (:err long) "no longer than 80 characters"))
+    (is (not (zero? (:exit missing))))
+    (is (str/includes? (:err missing) "Unknown task name"))
+    (is (= "specifier" (task-lane root "HTW")))))
+
+(defn api-post [root uri body]
+  (json/parse-string
+   (:out (pack-web root true "--test-post" (str root) uri (json/generate-string body)))
+   true))
+
+(defn outbox-handoffs [root]
+  (let [dir (fs/path root ".swarmforge/handoffs/outbox")]
+    (mapv #(fs/path dir %) (sort (handoff-names dir)))))
+
+(deftest pack-web-post-task-rejects-a-name-over-eighty-characters
+  ;; Given a pack
+  ;; When POST /api/tasks gets an 81-character name
+  ;; Then it answers 400 with the limit and creates no card or note
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        resp (api-post root "/api/tasks" {:name long-name :text "too long"})]
+    (is (= 400 (:status resp)))
+    (is (str/includes? (get-in resp [:body :error]) "no longer than 80 characters"))
+    (is (nil? (task-lane root long-name)))
+    (is (empty? (outbox-handoffs root)))))
+
+(deftest pack-web-post-task-routes-to-a-chosen-role-and-priority
+  ;; Given a six-pack
+  ;; When POST /api/tasks names role coder and priority 10
+  ;; Then the card is in coder and the note goes to coder with priority 10 and kind new_task
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)
+        resp (api-post root "/api/tasks" {:name "D02" :text "fix" :role "coder" :priority "10"})
+        note (first (outbox-handoffs root))
+        text (slurp (str note))]
+    (is (= 200 (:status resp)))
+    (is (= "coder" (task-lane root "D02")))
+    (is (str/starts-with? (str (fs/file-name note)) "10_"))
+    (is (str/includes? text "to: coder\n"))
+    (is (str/includes? text "priority: 10\n"))
+    (is (str/includes? text "type: note\n"))
+    (is (str/includes? text "kind: new_task\n"))
+    (is (= 400 (:status (api-post root "/api/tasks" {:name "D03" :role "nobody"}))))
+    (is (= 400 (:status (api-post root "/api/tasks" {:name "D04" :priority "high"}))))
+    (is (nil? (task-lane root "D03")))))
+
+(deftest pack-web-post-task-defaults-to-master-and-fifty
+  ;; Given a six-pack
+  ;; When POST /api/tasks has no role or priority
+  ;; Then the card and note go to specifier with priority 50
+  (let [root (tmp-dir)
+        _ (setup-pack! root six-pack-roles)
+        _ (api-post root "/api/tasks" {:name "C01" :text "x"})
+        note (first (outbox-handoffs root))]
+    (is (= "specifier" (task-lane root "C01")))
+    (is (str/starts-with? (str (fs/file-name note)) "50_"))
+    (is (str/includes? (slurp (str note)) "to: specifier\n"))))
+
+(deftest pack-web-rename-task-keeps-the-card-id
+  ;; Given card HTW created from the dashboard
+  ;; When POST /api/tasks/rename to Hunt
+  ;; Then the card and its queued note carry Hunt with the same id, and long names are refused
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (api-post root "/api/tasks" {:name "HTW" :text "x"})
+        id (:id (task-card root "HTW"))
+        resp (api-post root "/api/tasks/rename" {:name "HTW" :to "Hunt"})
+        long (api-post root "/api/tasks/rename" {:name "Hunt" :to long-name})
+        missing (api-post root "/api/tasks/rename" {:name "Nope" :to "Yes"})]
+    (is (= 200 (:status resp)))
+    (is (= id (:id (task-card root "Hunt"))))
+    (is (str/includes? (slurp (str (first (outbox-handoffs root)))) "task: Hunt\n"))
+    (is (= 400 (:status long)))
+    (is (= 404 (:status missing)))))
+
+(defn inbox-new-path [root roles role filename]
+  (fs/path (pack-worktree root roles role) ".swarmforge/handoffs/inbox/new" filename))
+
+(defn put-queued! [root roles role {:keys [task task-id priority from]}]
+  (let [priority (or priority "50")
+        file (inbox-new-path root roles role
+                             (str priority "_20260924T000000Z_000001_from_" (or from "specifier")
+                                  "_to_" role "_" (str/replace task #"\W+" "") ".handoff"))]
+    (write-file file
+                (str "from: " (or from "specifier") "\n"
+                     "to: " role "\n"
+                     "recipient: " role "\n"
+                     "priority: " priority "\n"
+                     "type: git_handoff\n"
+                     (when task-id (str "task_id: " task-id "\n"))
+                     "task: " task "\n"
+                     "\n"
+                     "payload\n"))
+    file))
+
+(deftest pack-web-single-queued-card-shows-queued-not-pane-status
+  ;; Given coder has one card whose mail waits in inbox/new and nothing in process
+  ;; When the dashboard state is read with a busy pane
+  ;; Then the card says waiting in queue, is marked queued, and carries the queue priority
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "C11" "coder")
+        _ (put-queued! root roles "coder" {:task "C11" :task-id (:id (task-card root "C11")) :priority "30"})
+        result (pack-web-env root {} "--test-status-pane" (str root)
+                             "I'm hardening something else.\nesc to interrupt · 1s\n")
+        card (some #(when (= "C11" (:name %)) %) (:tasks (json/parse-string (:out result) true)))]
+    (is (= "waiting in queue" (:status card)))
+    (is (true? (:queued card)))
+    (is (= "coder" (:queue_role card)))
+    (is (= "30" (:queue_priority card)))))
+
+(deftest pack-web-dequeue-removes-a-queued-card
+  ;; Given card C20 queued in specifier inbox/new and C21 queued too
+  ;; When POST /api/tasks/dequeue C20
+  ;; Then C20 is gone from the inbox and the board, archived under removed-tasks, and C21 stays
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (api-post root "/api/tasks" {:name "C20" :text "x"})
+        _ (api-post root "/api/tasks" {:name "C21" :text "y"})
+        id (:id (task-card root "C20"))
+        outbox (outbox-handoffs root)
+        _ (doseq [f outbox]
+            (fs/move f (inbox-new-path root roles "specifier" (str (fs/file-name f)))))
+        resp (api-post root "/api/tasks/dequeue" {:name "C20"})
+        left (inbox-names root roles "specifier")]
+    (is (= 200 (:status resp)))
+    (is (nil? (task-lane root "C20")))
+    (is (= "specifier" (task-lane root "C21")))
+    (is (= 1 (count left)))
+    (is (str/includes? (slurp (str (inbox-new-path root roles "specifier" (first left)))) "task: C21\n"))
+    (is (= 1 (count (handoff-names (fs/path root ".swarmforge/removed-tasks" id)))))
+    (is (fs/exists? (fs/path root ".swarmforge/removed-tasks" id "C20.txt")))))
+
+(deftest pack-web-dequeue-and-priority-refuse-a-card-in-progress
+  ;; Given card C30 in coder in_process
+  ;; When POST /api/tasks/dequeue or /api/tasks/priority
+  ;; Then both answer 409 and the card and mail stay
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "C30" "coder")
+        _ (put-in-process! root roles "coder" {:from "specifier" :task "C30"})
+        dq (api-post root "/api/tasks/dequeue" {:name "C30"})
+        pr (api-post root "/api/tasks/priority" {:name "C30" :priority "10"})]
+    (is (= 409 (:status dq)))
+    (is (str/includes? (get-in dq [:body :error]) "in progress"))
+    (is (= 409 (:status pr)))
+    (is (= "coder" (task-lane root "C30")))
+    (is (= 1 (count (handoff-names (in-process-dir root roles "coder")))))))
+
+(deftest pack-web-priority-reorders-a-queued-card
+  ;; Given C10b and C22 queued in coder at priority 50, C22 first by name
+  ;; When POST /api/tasks/priority C10b to 10
+  ;; Then C10b's file starts with 10_, its header says priority 10, and it sorts first
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "C22" "coder")
+        _ (create-task root "C10b" "coder")
+        _ (put-queued! root roles "coder" {:task "C22" :task-id (:id (task-card root "C22")) :from "a"})
+        _ (put-queued! root roles "coder" {:task "C10b" :task-id (:id (task-card root "C10b")) :from "b"})
+        resp (api-post root "/api/tasks/priority" {:name "C10b" :priority 10})
+        names (sort (inbox-names root roles "coder"))
+        first-file (slurp (str (inbox-new-path root roles "coder" (first names))))
+        bad (api-post root "/api/tasks/priority" {:name "C22" :priority "100"})]
+    (is (= 200 (:status resp)))
+    (is (str/starts-with? (first names) "10_"))
+    (is (str/includes? first-file "task: C10b\n"))
+    (is (str/includes? first-file "priority: 10\n"))
+    (is (not (str/includes? first-file "priority: 50\n")))
+    (is (= 400 (:status bad)))
+    (is (= "30" (:queue_priority
+                 (do (api-post root "/api/tasks/priority" {:name "C22" :priority "30"})
+                     (task-card root "C22")))))))
+
+(defn ask-clarification! [root role text]
+  (let [question (fs/path root "tmp" (str role "-question.txt"))]
+    (write-file question text)
+    (str/trim (:out (run {:dir root :env {"SWARMFORGE_ROLE" role}}
+                         (script "pack_dashboard_request.sh")
+                         "clarify" (str question))))))
+
+(deftest pack-web-clarification-answer-also-reaches-extra-roles
+  ;; Given coder asks about a scenario that specifier owns
+  ;; When the operator answers with also = specifier
+  ;; Then both coder and specifier panes get the answer and the record lists specifier
+  (let [root (tmp-dir)
+        argv-file (str (fs/path root "tmux.argv"))]
+    (setup-pack! root ["specifier" "coder"])
+    (write-file (fs/path root ".swarmforge/tmux-socket") (str (fs/path root "tmux.sock") "\n"))
+    (let [id (ask-clarification! root "coder" "Is VAC-3 still valid after C15?\n")
+          resp (pack-web-env root {"SWARMFORGE_TMUX_STUB" argv-file}
+                             "--test-post" (str root)
+                             (str "/api/clarifications/" id "/answer")
+                             (json/generate-string {:text "No, drop VAC-3." :also ["specifier" "coder"]}))
+          argv (read-argv argv-file)
+          targets (set (keep #(when (some #{"-l"} %) (nth % 5)) argv))
+          done (first (:clarifications (web-state root)))]
+      (is (= 200 (:status (json/parse-string (:out resp) true))))
+      (is (= #{"coder:Coder.0" "specifier:Specifier.0"} targets))
+      (is (= 2 (count (filter #(and (some #{"-l"} %) (str/includes? (last %) "No, drop VAC-3.")) argv))))
+      (is (= "done" (:status done)))
+      (is (= ["specifier"] (:also done))))))
+
+(deftest pack-web-clarification-answer-refuses-an-unknown-extra-role
+  ;; Given QA asks a question
+  ;; When the operator answers with also = nobody
+  ;; Then the answer is refused with 400 and the question stays pending
+  (let [root (tmp-dir)]
+    (setup-pack! root ["QA"])
+    (let [id (ask-clarification! root "QA" "Which rooms?\n")
+          resp (api-post root (str "/api/clarifications/" id "/answer") {:text "All." :also "nobody"})]
+      (is (= 400 (:status resp)))
+      (is (= "pending" (:status (first (:clarifications (web-state root)))))))))
+
+(defn notify-log-lines [file]
+  (if (fs/exists? file)
+    (vec (remove str/blank? (str/split-lines (slurp (str file)))))
+    []))
+
+(deftest pack-web-notify-cmd-runs-once-per-new-question-and-approval
+  ;; Given swarmforge.conf names a notify-cmd, QA asks a question and an approval is pending
+  ;; When the dashboard notifier scans twice
+  ;; Then notify-cmd ran once per item with event, id, role, and summary
+  (let [root (tmp-dir)
+        log (fs/path root "notify.log")
+        hook (fs/path root "notify.sh")]
+    (setup-pack! root ["specifier" "QA"])
+    (write-file hook (str "#!/bin/sh\n"
+                          "echo \"$1|$2|$3|$4|$SWARMFORGE_NOTIFY_EVENT|$SWARMFORGE_NOTIFY_TASK\" >> " log "\n"))
+    (fs/set-posix-file-permissions hook "rwxr-xr-x")
+    (write-file (fs/path root "swarmforge/swarmforge.conf")
+                (str "window specifier codex master\n"
+                     "window QA codex QA\n"
+                     "notify-cmd " hook "\n"))
+    (let [id (ask-clarification! root "QA" "Does the bat drop to any of 20 rooms?\n")]
+      (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_from_specifier_to_QA.handoff")
+                  "from: specifier\nto: QA\ntype: git_handoff\ntask: HTW\n\npayload\n")
+      (pack-web root true "--test-notify-scan" (str root))
+      (pack-web root true "--test-notify-scan" (str root))
+      (let [lines (notify-log-lines log)]
+        (is (= 2 (count lines)))
+        (is (some #(str/starts-with? % (str "clarification|" id "|QA|Clarification from QA: Does the bat drop")) lines))
+        (is (some #(str/starts-with? % "approval|50_from_specifier_to_QA|specifier|Approval needed: HTW") lines))
+        (is (some #(str/ends-with? % "|approval|HTW") lines)))
+      (ask-clarification! root "specifier" "Second question?\n")
+      (pack-web root true "--test-notify-scan" (str root))
+      (is (= 3 (count (notify-log-lines log)))))))
+
+(deftest pack-web-without-notify-cmd-runs-nothing
+  ;; Given no notify-cmd in swarmforge.conf
+  ;; When the notifier scans with a pending question
+  ;; Then nothing is recorded as notified
+  (let [root (tmp-dir)]
+    (setup-pack! root ["QA"])
+    (write-file (fs/path root "swarmforge/swarmforge.conf") "window QA codex master\n")
+    (ask-clarification! root "QA" "Which rooms?\n")
+    (pack-web root true "--test-notify-scan" (str root))
+    (is (not (fs/exists? (fs/path root ".swarmforge/dashboard/notified"))))))
+
+(defn free-port []
+  (with-open [s (java.net.ServerSocket. 0)]
+    (str (.getLocalPort s))))
+
+(defn launcher-root! [conf-extra]
+  (let [root (tmp-dir)]
+    (write-file (fs/path root "swarmforge/constitution.prompt") "Read articles.\n")
+    (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
+    (write-file (fs/path root "swarmforge/swarmforge.conf")
+                (str "window coder codex master\n" conf-extra))
+    root))
+
+(defn chosen-dashboard-port [root]
+  (str/trim (:out (run {:dir root} (script "swarmforge.bb") "--test-dashboard-port" (str root)))))
+
+(deftest swarmforge-dashboard-port-prefers-config-then-previous-port
+  ;; Given a configured dashboard-port, or a previous run's free port, or a busy previous port
+  ;; When the launcher picks the dashboard port
+  ;; Then it uses the configured port, else the previous one, else none (pack_web picks)
+  (let [configured (launcher-root! "dashboard-port 48123\n")
+        previous (launcher-root! "")
+        busy (launcher-root! "")
+        prev-port (free-port)]
+    (write-file (fs/path previous ".swarmforge/dashboard-port") (str prev-port "\n"))
+    (is (= "48123" (chosen-dashboard-port configured)))
+    (is (= prev-port (chosen-dashboard-port previous)))
+    (with-open [s (java.net.ServerSocket. 0 1 (java.net.InetAddress/getByName "127.0.0.1"))]
+      (write-file (fs/path busy ".swarmforge/dashboard-port") (str (.getLocalPort s) "\n"))
+      (is (= "" (chosen-dashboard-port busy))))
+    (is (str/includes? (:out (run {:dir configured} (script "swarmforge.bb") "--test-parse" (str configured)))
+                       "coder Coder"))))
+
+(deftest swarmforge-rejects-an-invalid-dashboard-port
+  (let [root (launcher-root! "dashboard-port 99999\n")
+        result (run {:dir root :ok? false} (script "swarmforge.bb") "--test-parse" (str root))]
+    (is (= 1 (:exit result)))
+    (is (str/includes? (:err result) "Invalid dashboard-port"))))
+
+(deftest pack-web-serve-records-its-port-and-falls-back-when-busy
+  ;; Given a port held by another listener
+  ;; When pack_web --serve asks for it
+  ;; Then it serves on another port and records that port for the next start
+  (with-open [s (java.net.ServerSocket. 0 1 (java.net.InetAddress/getByName "127.0.0.1"))]
+    (let [root (tmp-dir)
+          busy (.getLocalPort s)
+          url-file (fs/path root ".swarmforge/dashboard-url")
+          pb (doto (java.lang.ProcessBuilder. [(script "pack_web.sh") "--serve" (str root) (str busy)])
+               (.directory (java.io.File. (str root))))
+          _ (doto (.environment pb)
+              (.put "PATH" (System/getenv "PATH")))
+          proc (.start pb)]
+      (try
+        (is (wait-file url-file 10000))
+        (let [url (str/trim (slurp (str url-file)))
+              port (str/trim (slurp (str (fs/path root ".swarmforge/dashboard-port"))))]
+          (is (= url (str "http://127.0.0.1:" port)))
+          (is (not= (str busy) port)))
+        (finally
+          (.destroyForcibly proc)
+          (.waitFor proc))))))
+
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.pack-ui-test)]
     (System/exit (+ fail error))))
+
+(deftest pack-web-state-reports-drain
+  ;; Given a pack being drained while coder still has in-process work
+  ;; When pack_web --test-state
+  ;; Then drain is paused and not drained, and becomes drained once work clears
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (is (= false (:paused (:drain (web-state root)))))
+    (write-file (fs/path root ".swarmforge/paused") "now\n")
+    (put-in-process! root roles "coder" {:from "specifier" :task "cave-walk"})
+    (let [drain (:drain (web-state root))]
+      (is (= true (:paused drain)))
+      (is (= false (:drained drain)))
+      (is (= ["coder"] (mapv :role (:busy drain)))))
+    (fs/delete-tree (in-process-dir root roles "coder"))
+    (is (= true (:drained (:drain (web-state root)))))))
+
+(defn git-init! [root]
+  (run {:dir root} "git" "init" "-q")
+  (run {:dir root} "git" "config" "user.email" "test@example.com")
+  (run {:dir root} "git" "config" "user.name" "Test User"))
+
+(defn commit-file! [root text]
+  (write-file (fs/path root "story.md") text)
+  (run {:dir root} "git" "add" "story.md")
+  (run {:dir root} "git" "commit" "-q" "-m" text)
+  (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD"))))
+
+(defn held-handoff! [root task-id task commit]
+  (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+              (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                   "task_id: " task-id "\ntask: " task "\n"
+                   "commit: " commit "\n\npayload\n")))
+
+(deftest pack-web-retry-keeps-later-work-when-the-specifier-moved-on
+  ;; Given card A held for approval while the specifier already works on card B
+  ;; When the operator retries A
+  ;; Then HEAD and B stay, and A is queued again at the front of the specifier inbox
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (git-init! root)
+    (setup-pack! root roles)
+    (commit-file! root "base")
+    (create-task root "A" "specifier")
+    (create-task root "B" "specifier")
+    (let [a-id (:id (task-card root "A"))
+          b-id (:id (task-card root "B"))
+          offer (commit-file! root "offer A")
+          _ (held-handoff! root a-id "A" offer)
+          later (commit-file! root "work on B")
+          b-mail (fs/path (in-process-dir root roles "specifier") "50_b.handoff")]
+      (write-file b-mail (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                              "task_id: " b-id "\ntask: B\n\nB\n"))
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "fix A"))))
+      (is (= later (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))))
+      (is (= ["50_b.handoff"] (handoff-names (in-process-dir root roles "specifier"))))
+      (is (some #(str/starts-with? % "00_retry_") (inbox-names root roles "specifier")))
+      (is (= [] (pending-names root))))))
+
+(deftest pack-web-delete-refuses-when-the-specifier-moved-on
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (git-init! root)
+    (setup-pack! root roles)
+    (commit-file! root "base")
+    (create-task root "A" "specifier")
+    (create-task root "B" "specifier")
+    (let [a-id (:id (task-card root "A"))
+          b-id (:id (task-card root "B"))
+          offer (commit-file! root "offer A")
+          _ (held-handoff! root a-id "A" offer)
+          later (commit-file! root "work on B")]
+      (write-file (fs/path (in-process-dir root roles "specifier") "50_b.handoff")
+                  (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                       "task_id: " b-id "\ntask: B\n\nB\n"))
+      (let [result (pack-web root false "--test-delete-approval" (str root) "50_offer")]
+        (is (not (zero? (:exit result))))
+        (is (= later (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))))
+        (is (= "specifier" (task-lane root "A")))
+        (is (= ["50_offer.handoff"] (pending-names root)))))))
+
+(deftest pack-web-retry-clears-handed-marks-on-restored-mail
+  ;; A retried card must be handed off again, so the restored mail forgets it was handed
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (git-init! root)
+    (setup-pack! root roles)
+    (commit-file! root "base")
+    (create-task root "A" "specifier")
+    (let [a-id (:id (task-card root "A"))
+          offer (commit-file! root "offer A")
+          done (fs/path root ".swarmforge/handoffs/inbox/completed/50_a.handoff")]
+      (held-handoff! root a-id "A" offer)
+      (write-file done (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                            "task_id: " a-id "\ntask: A\nhanded_task_ids: " a-id "\n\nA\n"))
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [restored (fs/path (in-process-dir root roles "specifier") "50_a.handoff")]
+        (is (fs/exists? restored))
+        (is (not (str/includes? (slurp (str restored)) "handed_task_ids")))))))
+
+(deftest pack-web-dequeue-refuses-a-card-sharing-its-handoff
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "C40" "coder")
+        _ (create-task root "C41" "coder")
+        c40 (:id (task-card root "C40"))
+        c41 (:id (task-card root "C41"))]
+    (write-file (inbox-new-path root roles "coder" "50_both.handoff")
+                (str "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\n"
+                     "task_id: " c40 "\ntask: C40\nwith_task_ids: " c41 "\n\npayload\n"))
+    (let [resp (api-post root "/api/tasks/dequeue" {:name "C41"})]
+      (is (= 409 (:status resp)))
+      (is (= "coder" (task-lane root "C41")))
+      (is (= ["50_both.handoff"] (inbox-names root roles "coder"))))))
+
+(deftest same-commit-merge-only-copy-replaces-the-unread-one
+  ;; Per-card handoffs of one commit send one merge-only copy per role, not one per card
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner" "QA"]
+        _ (setup-pack! root roles)
+        _ (git-init! root)
+        sha (commit-file! root "one")
+        coder-new (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/new")
+        _ (write-file (fs/path coder-new "00_a_from_QA_to_coder.handoff")
+                      (str "id: a\nfrom: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask: A\ncommit: "
+                           sha "\nnon-forwarding: true\n\nmerge\n"))
+        _ (write-file (fs/path root ".swarmforge/handoffs/outbox/00_b_from_QA_to_coder.handoff")
+                      (str "id: b\nfrom: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask: B\ncommit: "
+                           sha "\nnon-forwarding: true\n\nmerge\n"))
+        sock (start-tmux! root roles)]
+    (try
+      (handoffd-once root)
+      (is (= ["00_b_from_QA_to_coder.handoff"] (inbox-names root roles "coder")))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest pack-web-retry-and-delete-keep-a-later-card-already-delivered
+  ;; Given card A held while the specifier already delivered card B on top of it and went idle
+  ;; When the operator retries or deletes A
+  ;; Then Delete refuses, Retry keeps HEAD and queues A again
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (git-init! root)
+    (setup-pack! root roles)
+    (commit-file! root "base")
+    (create-task root "A" "specifier")
+    (create-task root "B" "specifier")
+    (let [a-id (:id (task-card root "A"))
+          b-id (:id (task-card root "B"))
+          offer (commit-file! root "offer A")
+          _ (held-handoff! root a-id "A" offer)
+          later (commit-file! root "offer B")
+          head #(str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+      (write-file (fs/path root ".swarmforge/handoffs/sent/50_b.handoff")
+                  (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                       "task_id: " b-id "\ntask: B\ncommit: " later "\n\npayload\n"))
+      (is (not (zero? (:exit (pack-web root false "--test-delete-approval" (str root) "50_offer")))))
+      (is (= later (head)))
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "fix A"))))
+      (is (= later (head)))
+      (is (some #(str/starts-with? % "00_retry_") (inbox-names root roles "specifier"))))))
+
+(deftest pack-web-retry-requeue-carries-every-card
+  ;; Given A held together with B while the specifier works on C
+  ;; When the operator retries
+  ;; Then the retry note carries B too and B's mail forgets it was handed
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (doseq [n ["A" "B" "C"]] (create-task root n "specifier"))
+    (let [[a b c] (map #(:id (task-card root %)) ["A" "B" "C"])
+          b-done (fs/path root ".swarmforge/handoffs/inbox/completed/50_b.handoff")]
+      (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+                  (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                       "task_id: " a "\ntask: A\nwith_task_ids: " b "\n\npayload\n"))
+      (write-file b-done (str "from: (New Task)\nto: specifier\ntype: note\n"
+                              "task_id: " b "\ntask: B\nhanded_task_ids: " b "\n\nB\n"))
+      (write-file (fs/path (in-process-dir root roles "specifier") "50_c.handoff")
+                  (str "from: (New Task)\nto: specifier\ntype: note\ntask_id: " c "\ntask: C\n\nC\n"))
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [note (first (filter #(str/starts-with? % "00_retry_") (inbox-names root roles "specifier")))]
+        (is (str/includes? (slurp (str (inbox-new-path root roles "specifier" note)))
+                           (str "with_task_ids: " b "\n")))
+        (is (not (str/includes? (slurp (str b-done)) "handed_task_ids")))))))
+
+(defn- in-process-entries [root roles role]
+  (let [dir (in-process-dir root roles role)]
+    (if (fs/exists? dir)
+      (sort (map #(str (fs/file-name %)) (fs/list-dir dir)))
+      [])))
+
+(defn- held-pair! [root a b]
+  (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+              (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                   "task_id: " a "\ntask: A\nwith_task_ids: " b "\n\npayload\n")))
+
+(defn- completed-mail! [root name id task completed-at]
+  (write-file (fs/path root ".swarmforge/handoffs/inbox/completed" name)
+              (str "from: (New Task)\nto: specifier\ntype: note\n"
+                   "task_id: " id "\ntask: " task "\nhanded_task_ids: " id
+                   "\ncompleted_at: " completed-at "\n\n" task "\n")))
+
+(deftest pack-web-retry-restores-a-batch-senders-cards-as-one-batch
+  ;; Given a batch-mode specifier whose handoff of A and B is held
+  ;; When the operator retries
+  ;; Then A's and B's mail come back in one batch folder that ready_for_next_batch accepts
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (spit (str (fs/path root ".swarmforge/roles.tsv"))
+          (str/replace-first (slurp (str (fs/path root ".swarmforge/roles.tsv"))) "\ttask\t" "\tbatch\t"))
+    (doseq [n ["A" "B"]] (create-task root n "specifier"))
+    (let [[a b] (map #(:id (task-card root %)) ["A" "B"])]
+      (held-pair! root a b)
+      (completed-mail! root "50_a.handoff" a "A" "2026-10-01T10:00:00Z")
+      (completed-mail! root "50_b.handoff" b "B" "2026-10-01T10:00:00Z")
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [[batch & more] (in-process-entries root roles "specifier")]
+        (is (str/starts-with? batch "batch_"))
+        (is (empty? more))
+        (is (= ["50_a.handoff" "50_b.handoff"]
+               (sort (map #(str (fs/file-name %))
+                          (fs/list-dir (fs/path (in-process-dir root roles "specifier") batch)))))))
+      (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"}}
+                        (script "ready_for_next_batch.sh"))]
+        (is (zero? (:exit result)))
+        (is (str/includes? (:out result) "COUNT: 2"))))))
+
+(deftest pack-web-retry-gives-a-task-sender-one-mail-for-several-cards
+  ;; Given a task-mode specifier whose handoff of A and B is held, with an older round of A
+  ;; When the operator retries
+  ;; Then one retry note carrying both cards is in process and every mail stays completed
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (doseq [n ["A" "B"]] (create-task root n "specifier"))
+    (let [[a b] (map #(:id (task-card root %)) ["A" "B"])]
+      (held-pair! root a b)
+      (completed-mail! root "50_a_old.handoff" a "A" "2026-09-30T10:00:00Z")
+      (completed-mail! root "50_a.handoff" a "A" "2026-10-01T10:00:00Z")
+      (completed-mail! root "50_b.handoff" b "B" "2026-10-01T10:00:00Z")
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [entries (in-process-entries root roles "specifier")]
+        (is (= 1 (count entries)))
+        (is (str/starts-with? (first entries) "50_retry_"))
+        (is (str/includes? (slurp (str (fs/path (in-process-dir root roles "specifier") (first entries))))
+                           (str "with_task_ids: " b "\n"))))
+      (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"}}
+                        (script "ready_for_next.sh"))]
+        (is (zero? (:exit result)))))))
+
+(deftest pack-web-retry-restores-only-the-newest-round-of-a-card
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "specifier")
+    (let [a (:id (task-card root "A"))]
+      (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+                  (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                       "task_id: " a "\ntask: A\n\npayload\n"))
+      (completed-mail! root "50_a_old.handoff" a "A" "2026-09-30T10:00:00Z")
+      (completed-mail! root "50_a_new.handoff" a "A" "2026-10-01T10:00:00Z")
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (is (= ["50_a_new.handoff"] (in-process-entries root roles "specifier")))
+      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/completed/50_a_old.handoff"))))))
+
+(deftest pack-web-dequeue-and-priority-refuse-mail-still-in-the-outbox
+  ;; The daemon may be delivering outbox mail, so only inbox mail is changed
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (api-post root "/api/tasks" {:name "C50" :text "x"})
+        dq (api-post root "/api/tasks/dequeue" {:name "C50"})
+        pr (api-post root "/api/tasks/priority" {:name "C50" :priority "10"})]
+    (is (= 409 (:status dq)))
+    (is (= 409 (:status pr)))
+    (is (= "specifier" (task-lane root "C50")))
+    (is (= 1 (count (outbox-handoffs root))))
+    (fs/move (first (outbox-handoffs root))
+             (inbox-new-path root roles "specifier" "50_c50.handoff"))
+    (is (= 200 (:status (api-post root "/api/tasks/priority" {:name "C50" :priority "10"}))))
+    (is (= ["10_c50.handoff"]
+           (mapv #(str (fs/file-name %))
+                 (fs/list-dir (fs/path (pack-worktree root roles "specifier") ".swarmforge/handoffs/inbox/new")))))))
+
+(deftest pack-web-delete-approval-keeps-other-cards-mail
+  ;; Deleting A drops A's own mail, keeps B's mail that also names A,
+  ;; and refuses while live mail carries A together with B
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "specifier")
+    (create-task root "B" "specifier")
+    (let [a (:id (task-card root "A"))
+          b (:id (task-card root "B"))
+          b-sent (fs/path root ".swarmforge/handoffs/sent/50_b.handoff")
+          b-live (inbox-new-path root roles "coder" "50_b.handoff")
+          b-mail (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                      "task_id: " b "\ntask: B\nwith_task_ids: " a "\n\npayload\n")
+          held #(write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+                            (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                                 "task_id: " a "\ntask: A\n\npayload\n"))]
+      (held)
+      (write-file b-live b-mail)
+      (is (not (zero? (:exit (pack-web root false "--test-delete-approval" (str root) "50_offer")))))
+      (is (= "specifier" (task-lane root "A")))
+      (fs/move b-live b-sent)
+      (is (zero? (:exit (pack-web root false "--test-delete-approval" (str root) "50_offer"))))
+      (is (nil? (task-lane root "A")))
+      (is (fs/exists? b-sent)))))

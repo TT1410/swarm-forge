@@ -175,10 +175,10 @@ Examples:
 
 #### Terminal broadcast
 
-The terminal handoff is the last role's `git_handoff` whose `to:` is every
-other role in the pack. That set, not a count of names, marks the card Done.
-Each recipient merges that commit (`merge_and_process.sh`) and stops; they do
-not re-forward. A partial `to:` list is not terminal.
+The terminal handoff is any `git_handoff` from the last role without
+`return: true`; it marks every card it carries Done. By convention its `to:`
+is every other role in the pack. Each recipient merges that commit
+(`merge_and_process.sh`) and stops; they do not re-forward.
 
 Examples:
 
@@ -381,8 +381,40 @@ Responsibilities:
 - Run inside one agent worktree.
 - Read the current role from `SWARMFORGE_ROLE`.
 - Read that role's receive mode from `.swarmforge/roles.tsv`.
+- When a board exists, refuse with `OPEN_CARDS` (exit 3) while current work
+  holds a forwarded card that is still in this role's lane and has no outgoing
+  `git_handoff` (handed off, pending approval, or in an outbox). Without a
+  board, finish and print `NOT_HANDED_OFF:` for each such card. Merge-only
+  (`non-forwarding`) copies and role notes carry no card. `--drop` finishes
+  anyway and prints `DROPPED:` for each card left in the lane.
 - Dispatch to `done_with_current_task.sh` for `task` mode.
 - Dispatch to `done_with_current_batch.sh` for `batch` mode.
+
+### Cards in a handoff
+
+A `git_handoff` carries the card named by `task_id`/`task` plus any cards in
+`with_task_ids` (drafted as `with_tasks: <card>[,<card>...]`). `swarm_handoff.sh`
+resolves the drafted `task:` to a card of the current work, a card in the
+sender's lane, or a card already in a recipient's lane, and refuses any other
+card. With no recognizable `task:` it takes the only open card of the current
+work, and refuses when several cards are open. After the handoff it records the
+cards in the current mail's `handed_task_ids`; current work completes only when
+no open card is left (`CURRENT_WORK_OPEN` lists the rest). The daemon moves
+every carried card to the first recipient's lane, or marks every carried card
+Done when the last role sends it. `return: true` sends a card back instead: it
+is not merge-only, it reopens a Done card, and it sends no reverse copies.
+
+The handoff sends the sender worktree HEAD; a typed `commit` is ignored. When
+a later card's commit is already on top, `card_commit: <sha>` sends that
+earlier commit instead; it must be on the sender branch and descend from the
+card's task base.
+
+`artifacts` lists the files changed since the `task_base_commit` of the mail
+that carries the card. Notes without a card and merge-only copies give no
+base; without one, artifacts come from the commit itself. When that diff is
+empty (card work committed under a merge-only copy or a note, or a no-change
+merge on top), artifacts come from the base of a recently completed mail.
+`swarm_handoff.sh` refuses only when none of these shows a change.
 
 ### `ready_for_next_task.sh`
 
@@ -393,7 +425,9 @@ Responsibilities:
 - If an in-process file exists, report that it must be resumed or completed
   before accepting new work.
 - If no in-process file exists, select the first file in `inbox/new/` by sorted
-  filename order.
+  filename order. Mail for a card whose `git_handoff` from this role waits in
+  `pending_approval` is held back; other cards start. An undelivered outbound
+  `git_handoff` in an outbox still blocks all new work.
 - Atomically move that file to `inbox/in_process/`.
 - Add or update `dequeued_at`.
 - Print the accepted task path, sender, message type, priority, and payload.
@@ -509,7 +543,13 @@ Prompts should instruct agents to follow this loop:
 On restart, an agent should run `ready_for_next.sh` and follow its output.
 
 Tmux wake-ups are intentionally lossy. They only prompt an idle agent to check
-its durable inbox. A busy agent can ignore them. After `done_with_current.sh`
+its durable inbox. A busy agent can ignore them. The daemon repeats the wake-up
+for a role that has startable mail in `inbox/new/`, nothing in
+`inbox/in_process/`, and no undelivered outbound handoff: first after two
+minutes, then backing off to 4, 8 and at most 16 minutes until the role takes
+work or new mail arrives. A newer merge-only
+copy from the same sender replaces unread older copies whose commits it
+contains. After `done_with_current.sh`
 prints `MAIL_WAITING`, the agent runs `ready_for_next.sh` to accept the next
 item.
 

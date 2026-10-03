@@ -92,6 +92,10 @@
       (println "TASK_NAME:" task-name))
     (when task-id
       (println "TASK_ID:" task-id))
+    (when (= "true" (header-field file "non-forwarding"))
+      (println "MERGE_ONLY: true"))
+    (when (= "true" (header-field file "return"))
+      (println "RETURNED: true"))
     (println "PAYLOAD:")
     (print (body file))))
 
@@ -138,6 +142,7 @@
         dir))))
 
 (defn -main []
+  (ready-for-next-guard/exit-if-paused!)
   (let [inbox (inbox-dir)
         new-dir (fs/path inbox "new")
         in-process-dir (fs/path inbox "in_process")
@@ -159,9 +164,11 @@
           (merge-batch! batch-dir)
           (print-batch batch-dir))
         (let [new-files (handoff-files new-dir)]
-          (when-let [active (seq (ready-for-next-guard/active-outbound-git-files
-                                  (ready-for-next-guard/current-role)))]
+          (when-let [active (ready-for-next-guard/blocking-files
+                             (ready-for-next-guard/current-role) new-files)]
             (apply fail! 2 (ready-for-next-guard/wait-message active)))
+          (let [new-files (ready-for-next-guard/startable-files
+                           (ready-for-next-guard/current-role) new-files)]
           (if (empty? new-files)
             (println "NO_TASK")
             (let [batch-priority (header-value (first new-files) "priority" "50")
@@ -178,7 +185,7 @@
               (when (empty? selected-files)
                 (fail! 2 (str "AMBIGUOUS_TASK_STATE: no tasks selected for batch priority " batch-priority ".")))
               (merge-batch! batch-dir)
-              (print-batch batch-dir))))))))
+              (print-batch batch-dir)))))))))
 
 (when (= (str *file*) (System/getProperty "babashka.file"))
   (-main))

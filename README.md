@@ -108,6 +108,22 @@ window[-invisible] <role> <backend> <worktree> [task|batch] [forward-only|back-o
   merge-only copies for earlier roles after downstream work.
 - Supported backends are `codex`, `grok`, `claude`, and `copilot`; remaining
   tokens are passed to that backend.
+- Optional `merge-check <command>` lines name shell commands (for example
+  `merge-check docker compose config -q`) that must pass before any merge
+  commit. Merge commits also refuse staged YAML or JSON files that no longer
+  parse.
+
+Two optional setting lines may appear anywhere in the file:
+
+- `dashboard-port <port>` keeps the dashboard on that localhost port. Without
+  it, a restart reuses the previous run's port when it is free again
+  (`.swarmforge/dashboard-port`), otherwise it picks a free one.
+- `notify-cmd <command...>` runs once for each new clarification question or
+  pending approval, through `sh -c`, with the arguments
+  `<event> <id> <role> <summary>` appended (`event` is `clarification` or
+  `approval`). The same values are in `SWARMFORGE_NOTIFY_EVENT`, `_ID`,
+  `_ROLE`, `_TASK`, `_PROJECT`, `_SUMMARY`, and `SWARMFORGE_DASHBOARD_URL`.
+  Output goes to `.swarmforge/notify-cmd.log`. The dashboard chime still plays.
 
 Forge hosts instead use `Lieutenant <backend> [backend arguments...]`.
 Branches may extend the grammar for their own control plane—for example,
@@ -201,6 +217,12 @@ Or install a forge in an empty directory:
 get-swarm-forge lieutenant
 ./swarm
 ```
+
+To restart a running pack safely, drain it first. `./swarm drain` lets roles
+finish their in-process work while `ready_for_next.sh` prints `PAUSED` instead
+of taking new mail (notes between roles still arrive). `./swarm status` reports
+`DRAINED: yes` once no role has in-process work or queued outbox mail. Restart
+with `./swarm`, then `./swarm resume` wakes roles that have mail waiting.
 
 The selected product's README describes its routes, roles, worktrees, project
 lifecycle, and dashboard behavior. The branch configuration—not this README—is

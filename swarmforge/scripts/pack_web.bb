@@ -10,6 +10,7 @@
 
 (def script-dir (fs/parent *file*))
 (load-file (str (fs/path script-dir "forge.bb")))
+(load-file (str (fs/path script-dir "ready_for_next_guard.bb")))
 
 (def usage-text
   (str "Usage:\n"
@@ -309,15 +310,49 @@
 (defn pane-status-for [root role]
   (or (last (pane-status-lines-for root role)) ""))
 
-(defn active-card-names [root role]
-  (let [row (role-row root role)
-        names (when row (in-process-task-names (in-process-for-row row)))
-        cards (filter #(= role (:lane %)) (board-tasks root))]
-    (if (seq names)
-      (set names)
-      (if (= 1 (count cards))
-        #{(:name (first cards))}
-        #{}))))
+(defn inbox-new-dir [worktree]
+  (fs/path worktree ".swarmforge" "handoffs" "inbox" "new"))
+
+(defn queued-entry [role path]
+  (let [headers (:headers (parse-message path))]
+    {:role role
+     :priority (or (not-empty (get headers "priority"))
+                   (second (re-find #"^([0-9]{2})_" (str (fs/file-name path)))))
+     :keys (remove str/blank? [(get headers "task_id") (get headers "task")])}))
+
+(defn queued-index
+  "Task id and task name -> {:role :priority} for mail waiting in a role's inbox/new."
+  [root]
+  (reduce (fn [idx row]
+            (let [wt (nth row 2 nil)]
+              (if (str/blank? wt)
+                idx
+                (reduce (fn [idx path]
+                          (let [entry (queued-entry (first row) path)]
+                            (reduce #(update %1 %2 (fn [old] (or old (dissoc entry :keys))))
+                                    idx
+                                    (:keys entry))))
+                        idx
+                        (handoff-files (inbox-new-dir wt))))))
+          {}
+          (role-rows root)))
+
+(defn queued-in [queued task]
+  (or (get queued (:id task)) (get queued (:name task))))
+
+(defn active-card-names
+  ([root role] (active-card-names root role {}))
+  ([root role queued]
+   (let [row (role-row root role)
+         names (when row (in-process-task-names (in-process-for-row row)))
+         cards (filter #(= role (:lane %)) (board-tasks root))
+         card (first cards)]
+     (if (seq names)
+       (set names)
+       (if (and (= 1 (count cards))
+                (not= role (:role (queued-in queued card))))
+         #{(:name card)}
+         #{})))))
 
 (defn rejected-task? [root name]
   (fs/exists? (fs/path root ".swarmforge" "notify" (str "reject-" name))))
@@ -334,19 +369,25 @@
        (remove str/blank?)
        set))
 
-(defn task-with-status [root task]
-  (let [role (:lane task)
-        name (:name task)
-        task-id (:id task)]
-    (assoc task :status
-           (cond
-             (= "done" role) ""
-             (rejected-task? root name) "REJECTED"
-             (or (contains? (pending-approval-ids root) task-id)
-                 (contains? (pending-approval-names root) name)) "Waiting for approval"
-             (contains? (active-card-names root role) name)
-             (pane-status-for root role)
-             :else "waiting in queue"))))
+(defn task-with-status
+  ([root task] (task-with-status root task {}))
+  ([root task queued]
+   (let [role (:lane task)
+         name (:name task)
+         task-id (:id task)
+         waiting (queued-in queued task)
+         status (cond
+                  (= "done" role) ""
+                  (rejected-task? root name) "REJECTED"
+                  (or (contains? (pending-approval-ids root) task-id)
+                      (contains? (pending-approval-names root) name)) "Waiting for approval"
+                  (contains? (active-card-names root role queued) name)
+                  (pane-status-for root role)
+                  :else "waiting in queue")]
+     (cond-> (assoc task :status status)
+       (= "waiting in queue" status) (assoc :queued true)
+       (and (= "waiting in queue" status) waiting) (assoc :queue_role (:role waiting)
+                                                         :queue_priority (:priority waiting))))))
 
 (defn batch-task-names [dir]
   (in-process-task-names (handoff-files dir)))
@@ -399,10 +440,11 @@
 
 (defn tasks [root]
   (let [idx (batch-index root)
+        queued (queued-index root)
         board (mapv (fn [task]
                       (if-let [batch (get idx (:name task))]
-                        (assoc (task-with-status root task) :batch batch)
-                        (task-with-status root task)))
+                        (assoc (task-with-status root task queued) :batch batch)
+                        (task-with-status root task queued)))
                     (board-tasks root))]
     (into (merging-cards root) board)))
 
@@ -710,6 +752,7 @@
     {:id (get headers "id")
      :status (get headers "status")
      :role (get headers "role")
+     :also (comma-list (get headers "also"))
      :body (or body "")
      :response (str/replace (get headers "response" "") #"\\n" "\n")
      :created_at (get headers "created_at")}))
@@ -755,7 +798,8 @@
      :approvals (approvals root)
      :work_in_flight (work-in-flight root)
      :chat (list-chat root)
-     :clarifications (list-clarifications root)}))
+     :clarifications (list-clarifications root)
+     :drain (ready-for-next-guard/drain-state root)}))
 
 (defn tagged [project items]
   (mapv #(assoc % :project project) items))
@@ -835,13 +879,16 @@
 (defn new-task-id [name]
   (str (id-timestamp) "-" (id-slug name)))
 
-(defn queue-new-task-note! [root task-id name text]
-  (let [to (master-role root)
+(def default-priority "50")
+
+(defn queue-new-task-note! [root task-id name text & [{:keys [role priority]}]]
+  (let [to (or (not-empty role) (master-role root))
+        priority (or (not-empty priority) default-priority)
         now (.format java.time.format.DateTimeFormatter/ISO_INSTANT
                      (java.time.Instant/now))
         stamp (str/replace now #"[^0-9A-Za-z]" "")
         body (or text "")
-        filename (str "50_" stamp "_from_New_Task_to_" (slug to) ".handoff")
+        filename (str priority "_" stamp "_from_New_Task_to_" (slug to) ".handoff")
         outbox (fs/path root ".swarmforge" "handoffs" "outbox")
         file (fs/path outbox filename)]
     (fs/create-dirs outbox)
@@ -849,8 +896,9 @@
           (str "id: " stamp "_from_New_Task\n"
                "from: (New Task)\n"
                "to: " to "\n"
-               "priority: 50\n"
+               "priority: " priority "\n"
                "type: note\n"
+               "kind: new_task\n"
                "task_id: " task-id "\n"
                "task: " name "\n"
                "created_at: " now "\n"
@@ -890,12 +938,23 @@
     (or (not-empty (get headers "task_id"))
         (get headers "task"))))
 
+(defn handoff-card-ids
+  "Every card a handoff carries: its task plus any with_task_ids."
+  [path]
+  (let [headers (:headers (parse-message path))]
+    (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
+               (str/split (or (get headers "with_task_ids") "") #","))
+         (map #(some-> % str/trim))
+         (remove str/blank?)
+         distinct
+         vec)))
+
 (defn task-handoffs [root task-id & aliases]
-  (->> (handoff-dirs root)
-       (mapcat glob-handoffs)
-       (filter #(contains? (set (remove str/blank? (cons task-id aliases)))
-                           (handoff-task-id %)))
-       vec))
+  (let [wanted (set (remove str/blank? (cons task-id aliases)))]
+    (->> (handoff-dirs root)
+         (mapcat glob-handoffs)
+         (filter #(some wanted (handoff-card-ids %)))
+         vec)))
 
 (defn copy-into [dir path]
   (when (fs/regular-file? path)
@@ -909,9 +968,14 @@
     (doseq [path (task-handoffs root task-id name)]
       (copy-into dir path))))
 
-(defn drop-task-handoffs! [root task-id & aliases]
-  (doseq [path (apply task-handoffs root task-id aliases)]
-    (fs/delete-if-exists path)))
+(defn drop-task-handoffs!
+  "Drop the handoffs whose own task is the card. Mail that only carries the
+  card next to another task belongs to that task and stays."
+  [root task-id & aliases]
+  (let [wanted (set (remove str/blank? (cons task-id aliases)))]
+    (doseq [path (apply task-handoffs root task-id aliases)
+            :when (contains? wanted (handoff-task-id path))]
+      (fs/delete-if-exists path))))
 
 (defn audit-task-id [path]
   (try
@@ -976,29 +1040,193 @@
       (catch Exception e
         (http-error (or (:http-status (ex-data e)) 400) (.getMessage e))))))
 
-(defn create-task! [root name text]
-  (when (str/blank? name)
-    (throw (ex-info "Missing task name" {:http-status 400})))
-  (let [task-id (new-task-id name)]
-  (pack-board root "create"
-              "--name" name
-              "--lane" (master-role root)
-              "--task-id" task-id
-              "--text" (or text ""))
-    (queue-new-task-note! root task-id name (or text ""))))
+(def max-task-name-length 80)
+
+(defn bad-request! [message]
+  (throw (ex-info message {:http-status 400})))
+
+(defn require-task-name! [name]
+  (cond
+    (str/blank? name) (bad-request! "Missing task name")
+    (> (count name) max-task-name-length)
+    (bad-request! (str "Task name must be no longer than " max-task-name-length
+                       " characters (got " (count name) ")."))))
+
+(defn require-lane! [root role]
+  (when-not (some #{role} (lanes root))
+    (bad-request! (str "Unknown role: " role)))
+  role)
+
+(defn normalize-priority [priority]
+  (let [text (str/trim (str (or priority "")))]
+    (cond
+      (str/blank? text) nil
+      (re-matches #"[0-9]{1,2}" text) (format "%02d" (Long/parseLong text))
+      :else (bad-request! (str "Priority must be a number from 00 to 99; got '" text "'.")))))
+
+(defn create-task!
+  ([root name text] (create-task! root name text {}))
+  ([root name text {:keys [role priority]}]
+   (require-task-name! name)
+   (let [lane (if (str/blank? role) (master-role root) (require-lane! root role))
+         priority (or (normalize-priority priority) default-priority)
+         task-id (new-task-id name)]
+     (pack-board root "create"
+                 "--name" name
+                 "--lane" lane
+                 "--task-id" task-id
+                 "--text" (or text ""))
+     (queue-new-task-note! root task-id name (or text "") {:role lane :priority priority}))))
+
+(defn project-dest [root project]
+  (if (forge/forge? root)
+    (if (str/blank? project)
+      (bad-request! "Missing project")
+      (str (forge/project-dir root project)))
+    root))
+
+(defn json-action [f]
+  (try
+    (f)
+    (json-ok)
+    (catch Exception e
+      (http-error (or (:http-status (ex-data e)) 400) (.getMessage e)))))
 
 (defn post-tasks [root body]
-  (let [{:keys [name text project]} (json/parse-string (or body "{}") true)
-        dest (if (and (forge/forge? root) (not (str/blank? project)))
-               (str (forge/project-dir root project))
-               root)]
+  (let [{:keys [name text project role priority]} (json/parse-string (or body "{}") true)]
+    (json-action #(create-task! (project-dest root project) name text
+                                {:role role :priority priority}))))
+
+(defn rename-task! [root name to]
+  (when (str/blank? name)
+    (bad-request! "Missing task name"))
+  (require-task-name! (some-> to str/trim))
+  (when-not (task-by-name root name)
+    (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+  (pack-board root "rename" "--name" name "--to" (str/trim to)))
+
+(defn post-rename-task [root body]
+  (let [{:keys [name to project]} (json/parse-string (or body "{}") true)]
+    (json-action #(rename-task! (project-dest root project) name to))))
+
+(defn handoff-state [path]
+  (let [p (str/replace (str path) "\\" "/")]
+    (cond
+      (str/includes? p "/inbox/in_process/") :in-process
+      (str/includes? p "/pending_approval/") :pending
+      (str/includes? p "/inbox/new/") :queued
+      (= "outbox" (str (fs/file-name (fs/parent path)))) :queued
+      :else :history)))
+
+(defn handoff-recipient [path]
+  (get-in (parse-message path) [:headers "recipient"]
+          (get-in (parse-message path) [:headers "to"])))
+
+(defn conflict! [message]
+  (throw (ex-info message {:http-status 409})))
+
+(defn queued-card-handoffs
+  "The card's handoffs still waiting in an inbox/new or outbox.
+  Refuses with 409 when any handoff of the card is in process or waits for approval."
+  [root name]
+  (when (str/blank? name)
+    (bad-request! "Missing task name"))
+  (let [task (or (task-by-name root name)
+                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+        task-id (:id task)
+        by-state (group-by handoff-state (task-handoffs root task-id name))]
+    (when (= "done" (:lane task))
+      (conflict! (str "Card is done: " name)))
+    (when-let [busy (first (:in-process by-state))]
+      (conflict! (str "Card is in progress at " (handoff-recipient busy) "; it can no longer be changed in the queue: " name)))
+    (when (seq (:pending by-state))
+      (conflict! (str "Card is waiting for approval; use Attention: " name)))
+    (when (some #(> (count (handoff-card-ids %)) 1) (:queued by-state))
+      (conflict! (str "Card travels in a handoff that carries other cards too: " name)))
+    (when (some #(= "outbox" (str (fs/file-name (fs/parent %)))) (:queued by-state))
+      (conflict! (str "Card is being delivered; try again in a moment: " name)))
+    {:task task :queued (vec (:queued by-state))}))
+
+(defn move-or-conflict! [from to name]
+  (try
+    (fs/move from to {:atomic-move true})
+    (catch java.nio.file.NoSuchFileException _
+      (conflict! (str "Card was just picked up by its role: " name)))))
+
+(defn dequeue-task!
+  "Remove a card that waits in a queue: its queued handoffs are moved to
+  .swarmforge/removed-tasks/<task-id>/ with its body, then the card leaves the board."
+  [root name]
+  (let [{:keys [task queued]} (queued-card-handoffs root name)
+        task-id (:id task)
+        dir (fs/path root ".swarmforge" "removed-tasks" task-id)
+        moved (atom [])]
+    (fs/create-dirs dir)
     (try
-      (when (and (forge/forge? root) (str/blank? project))
-        (throw (ex-info "Missing project" {:http-status 400})))
-      (create-task! dest name text)
-      (json-ok)
+      (doseq [[i path] (map-indexed vector queued)
+              :let [dest (fs/path dir (str i "_" (fs/file-name path)))]]
+        (move-or-conflict! path dest name)
+        (swap! moved conj [dest path]))
       (catch Exception e
-        (http-error (or (:http-status (ex-data e)) 400) (.getMessage e))))))
+        (doseq [[dest path] @moved]
+          (fs/move dest path))
+        (throw e)))
+    (copy-into dir (fs/path root ".swarmforge" "board" (str name ".txt")))
+    (pack-board root "delete" "--name" name)
+    (fs/delete-if-exists (reject-notify root name))))
+
+(defn with-priority-header [content priority]
+  (let [[header body] (str/split content #"\n\n" 2)
+        lines (str/split-lines header)
+        lines (if (some #(str/starts-with? % "priority: ") lines)
+                (mapv #(if (str/starts-with? % "priority: ") (str "priority: " priority) %) lines)
+                (conj (vec lines) (str "priority: " priority)))]
+    (str (str/join "\n" lines) "\n\n" body)))
+
+(defn prioritized-name [filename priority]
+  (if (re-find #"^[0-9]{2}_" filename)
+    (str priority (subs filename 2))
+    (str priority "_" filename)))
+
+(defn claim-handoff!
+  "Take a queued handoff away from its role before rewriting it: an atomic
+  rename to a hidden, non-.handoff name in the same inbox. 409 when the role
+  picked it up first."
+  [path name]
+  (let [claim (fs/path (fs/parent path) (str ".claim_" (fs/file-name path) ".part"))]
+    (move-or-conflict! path claim name)
+    claim))
+
+(defn reprioritize-handoff! [path priority name]
+  (let [dest (fs/path (fs/parent path) (prioritized-name (str (fs/file-name path)) priority))]
+    (when (and (not= (str dest) (str path)) (fs/exists? dest))
+      (conflict! (str "A queued handoff named " (fs/file-name dest) " already exists.")))
+    (let [claim (claim-handoff! path name)]
+      (spit (str claim) (with-priority-header (slurp (str claim)) priority))
+      (try
+        (fs/move claim dest {:atomic-move true})
+        (catch java.nio.file.FileAlreadyExistsException _
+          (fs/move claim path {:atomic-move true})
+          (conflict! (str "A queued handoff named " (fs/file-name dest) " already exists.")))))))
+
+(defn reprioritize-task!
+  "Change the priority of a queued card: the priority header and the
+  NN_ filename prefix that orders inbox/new."
+  [root name priority]
+  (let [priority (or (normalize-priority priority) (bad-request! "Missing priority"))
+        {:keys [queued]} (queued-card-handoffs root name)]
+    (when (empty? queued)
+      (conflict! (str "Card has no queued handoff to reorder: " name)))
+    (doseq [path queued]
+      (reprioritize-handoff! path priority name))))
+
+(defn post-dequeue-task [root body]
+  (let [{:keys [name project]} (json/parse-string (or body "{}") true)]
+    (json-action #(dequeue-task! (project-dest root project) name))))
+
+(defn post-task-priority [root body]
+  (let [{:keys [name priority project]} (json/parse-string (or body "{}") true)]
+    (json-action #(reprioritize-task! (project-dest root project) name priority))))
 
 (defn post-chat [root body]
   (let [{:keys [text]} (json/parse-string (or body "{}") true)
@@ -1011,10 +1239,11 @@
 (defn clar-pending-file [root id]
   (fs/path (clar-pending-dir root) (str id ".request")))
 
-(defn render-clarification [{:keys [id status role body response created_at]}]
+(defn render-clarification [{:keys [id status role also body response created_at]}]
   (str "id: " id "\n"
        "status: " status "\n"
        (when-not (str/blank? role) (str "role: " role "\n"))
+       (when (seq also) (str "also: " (str/join "," also) "\n"))
        "created_at: " created_at "\n"
        (when-not (str/blank? response)
          (str "response: " (str/replace response #"\n" (constantly "\\n")) "\n"))
@@ -1022,19 +1251,37 @@
        (or body "")
        (when-not (str/ends-with? (or body "") "\n") "\n")))
 
-(defn answer-clarification! [root id text]
-  (let [src (clar-pending-file root id)]
-    (when-not (fs/regular-file? src)
-      (throw (ex-info (str "Unknown clarification: " id) {:http-status 404})))
-    (let [entry (parse-clarification src)
-          dest (fs/path (clar-done-dir root) (str id ".request"))
-          role (:role entry)]
-      (fs/create-dirs (fs/parent dest))
-      (spit (str dest) (render-clarification (assoc entry
-                                                   :status "done"
-                                                   :response text)))
-      (fs/delete-if-exists src)
-      (inject-role! root role (clar-wake id role (:body entry) text)))))
+(defn also-roles [value]
+  (cond
+    (sequential? value) (->> value (map #(str/trim (str %))) (remove str/blank?) vec)
+    (string? value) (comma-list value)
+    :else []))
+
+(defn require-also-roles! [root asker roles]
+  (doseq [role roles]
+    (when-not (role-row root role)
+      (throw (ex-info (str "Unknown role: " role) {:http-status 400}))))
+  (vec (distinct (remove #{asker} roles))))
+
+(defn answer-clarification!
+  ([root id text] (answer-clarification! root id text []))
+  ([root id text also]
+   (let [src (clar-pending-file root id)]
+     (when-not (fs/regular-file? src)
+       (throw (ex-info (str "Unknown clarification: " id) {:http-status 404})))
+     (let [entry (parse-clarification src)
+           dest (fs/path (clar-done-dir root) (str id ".request"))
+           role (:role entry)
+           also (require-also-roles! root role (also-roles also))]
+       (fs/create-dirs (fs/parent dest))
+       (spit (str dest) (render-clarification (assoc entry
+                                                    :status "done"
+                                                    :also also
+                                                    :response text)))
+       (fs/delete-if-exists src)
+       (inject-role! root role (clar-wake id role (:body entry) text))
+       (doseq [other also]
+         (inject-role! root other (clar-wake id role (:body entry) text)))))))
 
 (defn clarification-route [uri]
   (let [path (first (str/split (or uri "") #"\?"))]
@@ -1043,8 +1290,8 @@
 
 (defn post-clarification [root uri body]
   (if-let [id (clarification-route uri)]
-    (let [text (or (:text (json/parse-string (or body "{}") true)) "")]
-      (answer-clarification! root id text)
+    (let [{:keys [text also]} (json/parse-string (or body "{}") true)]
+      (answer-clarification! root id (or text "") also)
       (json-ok))
     {:status 404 :body "Not found"}))
 
@@ -1170,15 +1417,125 @@
 (defn task-inbox-files [worktree state task-id task]
   (let [wanted (set (remove str/blank? [task-id task]))]
     (->> (glob-handoffs (fs/path worktree ".swarmforge" "handoffs" "inbox" state))
-         (filter #(contains? wanted (handoff-task-id %)))
+         (filter #(some wanted (handoff-card-ids %)))
          vec)))
 
-(defn write-retry-in-process! [worktree headers]
+(defn strip-header! [path field]
+  (let [prefix (str field ": ")
+        [head body] (str/split (slurp (str path)) #"\n\n" 2)
+        kept (remove #(str/starts-with? % prefix) (str/split-lines head))]
+    (spit (str path) (str (str/join "\n" kept) "\n\n" body))))
+
+(defn later-git-handoff-in?
+  "Another git handoff from the sender, for other cards, among paths whose
+  commit contains the held commit."
+  [wt sender commit wanted paths]
+  (some (fn [path]
+          (let [headers (:headers (parse-message path))
+                other (get headers "commit")]
+            (and (= "git_handoff" (get headers "type"))
+                 (= sender (get headers "from"))
+                 (not-any? wanted (handoff-card-ids path))
+                 (not (str/blank? other))
+                 (git-ok? wt "merge-base" "--is-ancestor" commit other))))
+        paths))
+
+(defn later-handoff-on-top?
+  "Another git handoff from the sender, still held or queued, whose commit
+  contains the held commit."
+  [root wt sender commit wanted]
+  (boolean
+   (and commit (git-repo? wt)
+        (later-git-handoff-in?
+         wt sender commit wanted
+         (concat (glob-handoffs (fs/path root ".swarmforge" "handoffs" "pending_approval"))
+                 (glob-handoffs (fs/path wt ".swarmforge" "handoffs" "outbox"))
+                 (glob-handoffs (fs/path root ".swarmforge" "handoffs" "outbox")))))))
+
+(defn head-built-on?
+  "The worktree HEAD is a later commit that contains the held commit."
+  [wt commit]
+  (boolean
+   (and commit (git-repo? wt)
+        (git-ok? wt "rev-parse" "--verify" commit)
+        (not= (git! wt "rev-parse" "HEAD") (git! wt "rev-parse" commit))
+        (git-ok? wt "merge-base" "--is-ancestor" commit "HEAD"))))
+
+(defn later-delivery-on-top?
+  "HEAD moved past the held commit and the sender already delivered a git
+  handoff built on it: that later card is out, so HEAD must stay."
+  [wt sender commit wanted]
+  (boolean
+   (and (head-built-on? wt commit)
+        (later-git-handoff-in? wt sender commit wanted
+                               (glob-handoffs (fs/path wt ".swarmforge" "handoffs" "sent"))))))
+
+(defn sender-moved-on?
+  "True when the sender went on to another card after the held handoff: it
+  holds in-process work for another card, or another of its handoffs, held,
+  queued or already delivered, is built on the held commit. Then rewinding
+  the worktree would throw that work away."
+  [root wt sender commit task-id task]
+  (let [in-proc (glob-handoffs (fs/path wt ".swarmforge" "handoffs" "inbox" "in_process"))
+        wanted (set (remove str/blank? [task-id task]))]
+    (boolean (or (some #(not-any? wanted (handoff-card-ids %)) in-proc)
+                 (later-handoff-on-top? root wt sender commit wanted)
+                 (later-delivery-on-top? wt sender commit wanted)))))
+
+(defn header-card-ids [headers]
+  (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
+             (str/split (or (get headers "with_task_ids") "") #","))
+       (map #(some-> % str/trim))
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn requeue-retry! [wt headers]
   (let [task-id (or (not-empty (get headers "task_id")) (get headers "task"))
         task (or (get headers "task") task-id)
+        new-dir (fs/path wt ".swarmforge" "handoffs" "inbox" "new")
+        with-ids (rest (header-card-ids headers))
+        file (fs/path new-dir (str "00_retry_" (str/replace (or task-id "task") #"[^A-Za-z0-9]+" "_") ".handoff"))]
+    (doseq [path (distinct (concat (task-inbox-files wt "completed" task-id task)
+                                   (mapcat #(task-inbox-files wt "completed" % nil) with-ids)))]
+      (strip-header! path "handed_task_ids"))
+    (fs/create-dirs new-dir)
+    (spit (str file)
+          (str "from: (Retry)\n"
+               "to: " (get headers "from") "\n"
+               "priority: 00\n"
+               "type: note\n"
+               "task_id: " task-id "\n"
+               "task: " task "\n"
+               (when (seq with-ids) (str "with_task_ids: " (str/join "," with-ids) "\n"))
+               "\n"
+               "Retry audit. Redo this card on top of the current tree.\n"))))
+
+(defn role-batch-mode? [root role]
+  (= "batch" (some-> (some #(when (= role (first %)) %) (role-rows root))
+                     (nth 6 nil)
+                     str/trim)))
+
+(defn retry-target-dir
+  "Where restored mail goes: the in-process folder for a task-mode role, a new
+  batch folder for a batch-mode role, whose helpers refuse loose files."
+  [worktree batch?]
+  (let [dir (fs/path worktree ".swarmforge" "handoffs" "inbox" "in_process")]
+    (if-not batch?
+      dir
+      (let [stamp (.format (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd'T'HHmmss'Z'")
+                           (.atZone (java.time.Instant/now) java.time.ZoneOffset/UTC))]
+        (loop [n 1]
+          (let [candidate (fs/path dir (format "batch_%s_%06d" stamp n))]
+            (if (fs/exists? candidate) (recur (inc n)) candidate)))))))
+
+(defn write-retry-in-process! [worktree headers batch?]
+  (let [task-id (or (not-empty (get headers "task_id")) (get headers "task"))
+        task (or (get headers "task") task-id)
+        extra (not-empty (get headers "with_task_ids"))
         base (not-empty (get headers "task_base_commit"))
         from (or (get headers "from") "")
-        dir (fs/path worktree ".swarmforge" "handoffs" "inbox" "in_process")
+        dir (retry-target-dir worktree batch?)
         file (fs/path dir (str "50_retry_" (str/replace (or task-id "task") #"[^A-Za-z0-9]+" "_") ".handoff"))]
     (when-not (str/blank? task-id)
       (fs/create-dirs dir)
@@ -1189,24 +1546,43 @@
                  "type: note\n"
                  "task_id: " task-id "\n"
                  "task: " task "\n"
+                 (when extra (str "with_task_ids: " extra "\n"))
                  (when base (str "task_base_commit: " base "\n"))
                  "\n"
                  "Retry audit.\n")))))
 
-(defn restore-task-base! [root headers]
+(defn newest-completed-mail
+  "The card's latest completed mail; earlier rounds stay completed."
+  [worktree id]
+  (->> (task-inbox-files worktree "completed" id nil)
+       (sort-by (fn [file]
+                  [(or (get-in (parse-message file) [:headers "completed_at"]) "")
+                   (str (fs/file-name file))]))
+       last))
+
+(defn restore-task-base!
+  "Put the mail of every card the held handoff carried back in process, so
+  the sender redoes them. A task-mode role holds one mail at a time, so cards
+  spread over several mails come back as one retry note."
+  [root headers]
   (let [task-id (or (not-empty (get headers "task_id")) (get headers "task"))
         task (get headers "task")
-        wt (worktree-for root (get headers "from"))
+        ids (header-card-ids headers)
+        sender (get headers "from")
+        wt (worktree-for root sender)
+        batch? (role-batch-mode? root sender)
         in-proc (task-inbox-files wt "in_process" task-id task)
-        done (task-inbox-files wt "completed" task-id task)]
+        done (->> ids (keep #(newest-completed-mail wt %)) distinct vec)]
     (cond
       (seq in-proc) nil
-      (seq done)
-      (let [src (first done)
-            dest-dir (fs/path wt ".swarmforge" "handoffs" "inbox" "in_process")]
+      (and (seq done) (or batch? (= 1 (count done))))
+      (let [dest-dir (retry-target-dir wt batch?)]
         (fs/create-dirs dest-dir)
-        (fs/move src (fs/path dest-dir (fs/file-name src)) {:replace-existing true}))
-      :else (write-retry-in-process! wt headers))))
+        (doseq [src done
+                :let [dest (fs/path dest-dir (fs/file-name src))]]
+          (fs/move src dest {:replace-existing true})
+          (strip-header! dest "handed_task_ids")))
+      :else (write-retry-in-process! wt headers batch?))))
 
 (defn approval-doc-paths [headers reviews]
   (vec (distinct (concat (comma-list (get headers "artifacts"))
@@ -1220,16 +1596,20 @@
         commit (not-empty (get headers "commit"))
         n (if (git-repo? root) (next-rejected-n root task-id) 1)
         wt (worktree-for root (get headers "from"))
-        reviews (read-reviews root id)]
+        reviews (read-reviews root id)
+        moved-on? (sender-moved-on? root wt (get headers "from") commit task-id task)]
     (doseq [path (approval-doc-paths headers reviews)]
       (append-task-review! root task-id path comments))
     (when commit
       (snapshot-rejected! root task-id commit n)
-      (restore-commit! wt commit))
+      (when-not moved-on?
+        (restore-commit! wt commit)))
     (fs/delete-if-exists src)
     (drop-reviews! root id)
     (drop-task-audits! root task-id task)
-    (restore-task-base! root headers)
+    (if moved-on?
+      (requeue-retry! wt headers)
+      (restore-task-base! root headers))
     (increment-audit-count! root task-id)
     (when-not (str/blank? task)
       (inject-master! root (retry-message task comments reviews)))))
@@ -1242,6 +1622,13 @@
         commit (not-empty (get headers "commit"))
         n (if (git-repo? root) (next-rejected-n root task-id) 1)
         wt (worktree-for root (get headers "from"))]
+    (when (sender-moved-on? root wt (get headers "from") commit task-id task)
+      (conflict! (str "The " (get headers "from") " has moved on past this card; Delete would discard later work. Use Retry: " task)))
+    (when (not-empty (get headers "with_task_ids"))
+      (conflict! (str "This handoff carries several cards; use Retry: " task)))
+    (when (some #(and (not= :history (handoff-state %)) (> (count (handoff-card-ids %)) 1))
+                (task-handoffs root task-id task))
+      (conflict! (str "Live mail carries this card together with other cards; use Retry: " task)))
     (when commit
       (snapshot-rejected! root task-id commit n))
     (rollback-to-base! wt headers)
@@ -1725,6 +2112,9 @@
     (= "/api/projects/open" uri) (post-open-project root body)
     (= "/api/projects/close" uri) (post-close-project root body)
     (= "/api/tasks" uri) (post-tasks root body)
+    (= "/api/tasks/rename" uri) (post-rename-task root body)
+    (= "/api/tasks/dequeue" uri) (post-dequeue-task root body)
+    (= "/api/tasks/priority" uri) (post-task-priority root body)
     (= "/api/tasks/delete" uri)
     (post-delete-task (scoped-approval-root root uri body) body)
     (= "/api/tasks/retry" uri)
@@ -2063,16 +2453,166 @@
 (defn parse-port [port-str]
   (if (str/blank? port-str) 0 (Long/parseLong port-str)))
 
+(def ^:dynamic *sync-notify?* false)
+(def notify-poll-ms 3000)
+
+(defn conf-setting [root directive]
+  (let [file (fs/path root "swarmforge" "swarmforge.conf")]
+    (when (fs/regular-file? file)
+      (some (fn [raw]
+              (let [[found value] (str/split (str/trim raw) #"\s+" 2)]
+                (when (= directive found)
+                  (not-empty (str/trim (or value ""))))))
+            (str/split-lines (slurp (str file)))))))
+
+(defn first-line [text]
+  (let [line (or (first (remove str/blank? (str/split-lines (or text "")))) "")]
+    (if (> (count line) 200) (str (subs line 0 200) "…") line)))
+
+(defn approval-events [root project]
+  (for [path (pending-files root)
+        :let [headers (:headers (parse-message path))
+              task (or (get headers "task") (get headers "task_id") "")
+              from (or (get headers "from") "")]]
+    {:event "approval"
+     :id (approval-id path)
+     :role from
+     :task task
+     :project project
+     :summary (str "Approval needed: " task " (" from " → " (or (get headers "to") "") ")")}))
+
+(defn clarification-events [root project]
+  (for [item (list-clarifications root)
+        :when (= "pending" (:status item))]
+    {:event "clarification"
+     :id (:id item)
+     :role (or (:role item) "")
+     :task ""
+     :project project
+     :summary (str "Clarification from " (or (:role item) "agent") ": " (first-line (:body item)))}))
+
+(defn attention-roots [root]
+  (if (forge/forge? root)
+    (mapv (fn [name] [(open-project-root root name) name]) (forge/read-open-projects root))
+    [[(str root) ""]]))
+
+(defn attention-scan
+  "Events of every open project, plus the projects that failed to read."
+  [root]
+  (reduce (fn [acc [proot project]]
+            (try
+              (update acc :events into (concat (approval-events proot project)
+                                               (clarification-events proot project)))
+              (catch Exception _
+                (update acc :failed conj project))))
+          {:events [] :failed #{}}
+          (attention-roots root)))
+
+(defn event-key [{:keys [event id project]}]
+  (str project "/" event "/" id))
+
+(defn notified-file [root]
+  (fs/path root ".swarmforge" "dashboard" "notified"))
+
+(defn read-notified [root]
+  (let [file (notified-file root)]
+    (if (fs/regular-file? file)
+      (set (remove str/blank? (str/split-lines (slurp (str file)))))
+      #{})))
+
+(defn write-notified! [root keys]
+  (let [file (notified-file root)]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file) (apply str (map #(str % "\n") (sort keys))))))
+
+(defn dashboard-url [root]
+  (let [file (fs/path root ".swarmforge" "dashboard-url")]
+    (if (fs/regular-file? file) (str/trim (slurp (str file))) "")))
+
+(defn run-notify-cmd! [root cmd {:keys [event id role task project summary]}]
+  (let [pb (java.lang.ProcessBuilder.
+            ^java.util.List [ "sh" "-c" (str cmd " \"$@\"") "swarmforge-notify"
+                             event id role summary])
+        log (fs/file (fs/path root ".swarmforge" "notify-cmd.log"))
+        env (.environment pb)]
+    (doseq [[k v] {"SWARMFORGE_NOTIFY_EVENT" event
+                   "SWARMFORGE_NOTIFY_ID" id
+                   "SWARMFORGE_NOTIFY_ROLE" role
+                   "SWARMFORGE_NOTIFY_TASK" task
+                   "SWARMFORGE_NOTIFY_PROJECT" project
+                   "SWARMFORGE_NOTIFY_SUMMARY" summary
+                   "SWARMFORGE_DASHBOARD_URL" (dashboard-url root)}]
+      (.put env k (str (or v ""))))
+    (fs/create-dirs (fs/parent (fs/path log)))
+    (doto pb
+      (.directory (fs/file root))
+      (.redirectErrorStream true)
+      (.redirectOutput (java.lang.ProcessBuilder$Redirect/appendTo log)))
+    (let [proc (.start pb)]
+      (when *sync-notify?*
+        (.waitFor proc)))))
+
+(defn notify-new-attention!
+  "Run notify-cmd from swarmforge.conf once for each clarification or
+  pending approval not notified before."
+  [root]
+  (when-let [cmd (conf-setting root "notify-cmd")]
+    (let [{:keys [events failed]} (attention-scan root)
+          seen (read-notified root)
+          kept (filter #(contains? failed (first (str/split % #"/" 2))) seen)]
+      (doseq [event events
+              :when (not (contains? seen (event-key event)))]
+        (try
+          (run-notify-cmd! root cmd event)
+          (catch Exception e
+            (binding [*out* *err*]
+              (println (str "notify-cmd failed: " (.getMessage e)))))))
+      (write-notified! root (distinct (concat kept (map event-key events)))))))
+
+(defn start-notifier! [root]
+  (future
+    (loop []
+      (try
+        (notify-new-attention! root)
+        (catch Exception e
+          (binding [*out* *err*]
+            (println (str "notifier error: " (.getMessage e))))))
+      (Thread/sleep notify-poll-ms)
+      (recur))))
+
+(defn write-dashboard-port! [root port]
+  (let [file (fs/path root ".swarmforge" "dashboard-port")]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file) (str port "\n"))))
+
+(defn run-server [root port]
+  (http/run-server (http-handler root)
+                   {:ip "127.0.0.1"
+                    :port port
+                    :worker-count 8
+                    :legacy-return-value? false}))
+
+(defn start-server [root port]
+  (try
+    (run-server root port)
+    (catch Exception e
+      (if (zero? port)
+        (throw e)
+        (do (binding [*out* *err*]
+              (println (str "dashboard port " port " is unavailable (" (.getMessage e)
+                            "); using a free port"))
+              (flush))
+            (run-server root 0))))))
+
 (defn serve! [root port-str]
   (let [root (require-root! root)
-        server (http/run-server (http-handler root)
-                                {:ip "127.0.0.1"
-                                 :port (parse-port port-str)
-                                 :worker-count 8
-                                 :legacy-return-value? false})
-        url (str "http://127.0.0.1:" (http/server-port server))]
+        server (start-server root (parse-port port-str))
+        port (http/server-port server)
+        url (str "http://127.0.0.1:" port)]
     (write-pack-web-pid! root)
+    (write-dashboard-port! root port)
     (write-dashboard-url! root url)
+    (start-notifier! root)
     (println url)
     (flush)
     @(promise)))

@@ -109,6 +109,141 @@
            distinct
            vec))))
 
+(defn outbox-git-files
+  "Git handoffs from role that the daemon has not delivered or held yet."
+  [role]
+  (if (str/blank? role)
+    []
+    (->> (mapcat recursive-handoff-files (active-outbox-dirs))
+         (filter #(outbound-git-from-role? role %))
+         distinct
+         vec)))
+
+(defn pending-approval-git-files [role]
+  (if (str/blank? role)
+    []
+    (->> (if-let [dir (pending-approval-dir)]
+           (recursive-handoff-files dir)
+           [])
+         (filter #(outbound-git-from-role? role %))
+         vec)))
+
+(defn card-keys [file]
+  (let [headers (header-map file)]
+    (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
+               (str/split (or (get headers "with_task_ids") "") #","))
+         (map #(some-> % str/trim))
+         (remove str/blank?)
+         set)))
+
+(defn held-card-keys [role]
+  (into #{} (mapcat card-keys) (pending-approval-git-files role)))
+
+(defn startable-files
+  "New mail the role may start. A handoff waiting for approval holds back only
+  mail for the same card, not the whole queue."
+  [role files]
+  (let [held (held-card-keys role)]
+    (vec (remove #(some held (card-keys %)) files))))
+
+(defn blocking-files
+  "Outbound files that keep role from taking new work, or nil."
+  [role new-files]
+  (or (seq (outbox-git-files role))
+      (when (and (seq new-files) (empty? (startable-files role new-files)))
+        (seq (pending-approval-git-files role)))))
+
 (defn wait-message [active]
   ["WAITING_FOR_APPROVAL: current git handoff is still active"
    (str/join "\n" (map #(str "- " %) active))])
+
+(defn pause-file [root]
+  (fs/path root ".swarmforge" "paused"))
+
+(defn paused-at? [root]
+  (boolean (and root (fs/exists? (pause-file root)))))
+
+(defn dir-entries [dir pred]
+  (if (fs/directory? dir)
+    (filterv pred (fs/list-dir dir))
+    []))
+
+(defn handoff-file? [path]
+  (and (fs/regular-file? path) (str/ends-with? (str (fs/file-name path)) ".handoff")))
+
+(defn in-process-entries [inbox]
+  (dir-entries (fs/path inbox "in_process")
+               #(or (handoff-file? %)
+                    (and (fs/directory? %) (str/starts-with? (str (fs/file-name %)) "batch_")))))
+
+(defn queued-outbox-files [worktree]
+  (dir-entries (fs/path worktree ".swarmforge" "handoffs" "outbox") handoff-file?))
+
+(defn role-rows-at [root]
+  (let [file (fs/path root ".swarmforge" "roles.tsv")]
+    (if (fs/exists? file)
+      (->> (str/split-lines (slurp (str file)))
+           (remove str/blank?)
+           (mapv #(str/split % #"\t" -1)))
+      [])))
+
+(defn role-drain-row [cols]
+  (let [worktree (nth cols 2 "")]
+    {:role (first cols)
+     :in_process (count (in-process-entries (fs/path worktree ".swarmforge" "handoffs" "inbox")))
+     :outbox (count (queued-outbox-files worktree))}))
+
+(defn drain-state
+  "Drained means no role has in-process work and no outbox holds queued mail."
+  [root]
+  (let [rows (->> (role-rows-at root)
+                  (remove #(str/blank? (nth % 2 "")))
+                  (mapv role-drain-row))
+        project-outbox (count (queued-outbox-files root))
+        busy (filterv #(pos? (+ (:in_process %) (:outbox %))) rows)]
+    {:paused (paused-at? root)
+     :drained (and (empty? busy) (zero? project-outbox))
+     :busy busy
+     :project_outbox project-outbox}))
+
+(defn role-note? [file]
+  (let [headers (header-map file)
+        from (get headers "from" "")]
+    (and (not= "git_handoff" (get headers "type"))
+         (not (str/blank? from))
+         (not (str/starts-with? from "(")))))
+
+(defn deliver-paused-notes! [inbox]
+  (doseq [file (sort-by #(str (fs/file-name %))
+                        (dir-entries (fs/path inbox "new") #(and (handoff-file? %) (role-note? %))))]
+    (println (str "NOTE: " (fs/file-name file)))
+    (print (slurp (str file)))
+    (println)
+    (fs/create-dirs (fs/path inbox "completed"))
+    (fs/move file (fs/path inbox "completed" (fs/file-name file)) {:replace-existing true})))
+
+(defn role-worktree
+  "The current role's worktree from roles.tsv, else the git top level, so a
+  role running from a subdirectory still sees its own inbox."
+  []
+  (let [role (current-role)]
+    (or (some (fn [cols]
+                (let [wt (nth cols 2 nil)]
+                  (when (and role (= role (first cols)) (not (str/blank? wt)))
+                    wt)))
+              (role-rows))
+        (git-root)
+        (System/getProperty "user.dir"))))
+
+(defn role-inbox []
+  (fs/path (role-worktree) ".swarmforge" "handoffs" "inbox"))
+
+(defn exit-if-paused!
+  "While the swarm drains, take no new mail: in-process work continues, notes
+  from other roles are shown and archived, and otherwise print PAUSED."
+  []
+  (let [inbox (role-inbox)]
+    (when (and (paused-at? (project-root)) (empty? (in-process-entries inbox)))
+      (deliver-paused-notes! inbox)
+      (println "PAUSED: the swarm is draining. Take no new work; stop until the operator resumes.")
+      (System/exit 0))))
