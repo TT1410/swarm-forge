@@ -377,6 +377,7 @@
                     "00_from_refactorer_to_coder.handoff")
            (str "from: refactorer\nto: coder\npriority: 00\ntype: git_handoff\n"
                 "task: htw\nnon-forwarding: true\n\nmerge\n"))
+        _ (queue-inbox-mail! root roles "coder" {:from "specifier" :task "jump"})
         result (pack-web-env root {} "--test-status-pane" (str root)
                              "• The reverse handoff is structurally reconciled.\n")
         state (json/parse-string (:out result) true)
@@ -408,7 +409,8 @@
   (let [root (tmp-dir)
         _ (setup-pack! root six-pack-roles)
         _ (create-task root "HTW" "specifier")
-        _ (create-task root "Command Syntax" "specifier")]
+        _ (create-task root "Command Syntax" "specifier")
+        _ (queue-inbox-mail! root six-pack-roles "specifier" {:from "(New Task)" :task "Command Syntax"})]
     (write-file
      (fs/path root ".swarmforge/handoffs/pending_approval/50_from_specifier_to_coder.handoff")
      "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\ntask: HTW\n\npayload\n")
@@ -1626,3 +1628,271 @@
         (is (retry-note-name? first-name))
         (is (str/includes? (slurp (str (inbox-new-path root roles "specifier" first-name)))
                            "card_type: component\n"))))))
+
+(defn card-meta [root name]
+  (let [id (:id (task-card root name))
+        file (fs/path root ".swarmforge/board/meta" (str id ".edn"))]
+    (when (fs/exists? file) (clojure.edn/read-string (slurp (str file))))))
+
+(defn lieutenant-start! [root name lane ok?]
+  (pack-board root ok? "move" "--root" (str root) "--name" name "--lane" lane "--caller" "lieutenant"))
+
+(deftest pack-web-state-reports-whether-the-handoff-daemon-runs
+  ;; Given no daemon pid, then a live pid, then a dead one
+  ;; Then the state says the daemon is down, running, down
+  (let [root (tmp-dir)]
+    (setup-pack! root ["specifier" "coder"])
+    (is (= {:running false} (:daemon (web-state root))))
+    (write-file (fs/path root ".swarmforge/daemon/handoffd.pid")
+                (str (.pid (java.lang.ProcessHandle/current)) "\n"))
+    (is (= {:running true} (:daemon (web-state root))))
+    (write-file (fs/path root ".swarmforge/daemon/handoffd.pid") "999999999\n")
+    (is (= {:running false} (:daemon (web-state root))))))
+
+(deftest pack-web-card-without-mail-says-stuck-not-queued
+  ;; Given two cards in coder: one with queued mail, one whose mail is gone
+  ;; Then the first is queued and the second says no mail, flagged stuck
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (create-task root "Orphan" "coder")
+    (queue-inbox-mail! root roles "coder" {:from "specifier" :task "HTW"})
+    (let [by-name (into {} (map (juxt :name identity) (:tasks (web-state root))))]
+      (is (= true (:queued (get by-name "HTW"))))
+      (is (nil? (:stuck (get by-name "HTW"))))
+      (is (= "no_mail" (:stuck (get by-name "Orphan"))))
+      (is (= "stuck" (:status_phase (get by-name "Orphan"))))
+      (is (nil? (:queued (get by-name "Orphan"))))
+      (is (str/starts-with? (:status (get by-name "Orphan")) "No mail")))))
+
+(deftest pack-web-lone-card-without-mail-is-not-shown-as-worked-on
+  ;; Given the only card in coder has no mail anywhere but one completed
+  ;; Then it is flagged stuck instead of borrowing coder's pane status
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (write-file (fs/path (pack-worktree root roles "coder")
+                         ".swarmforge/handoffs/inbox/completed/50_htw.handoff")
+                "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\ntask: HTW\n\npayload\n")
+    (is (= "no_mail" (:stuck (task-card root "HTW"))))))
+
+(deftest pack-web-waiting-and-done-cards-are-never-stuck
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (api-post root "/api/tasks" {:name "Later" :text "x" :type "utility"})
+    (create-task root "Old" "coder")
+    (pack-board root true "done" "--root" (str root) "--name" "Old" "--caller" "handoffd")
+    (is (nil? (:stuck (task-card root "Later"))))
+    (is (= "Waiting to start" (:status (task-card root "Later"))))
+    (is (nil? (:stuck (task-card root "Old"))))))
+
+(deftest pack-web-card-whose-delivery-failed-shows-the-error
+  ;; Given HTW's handoff landed in failed/ with an error
+  ;; Then the card says delivery failed with that error
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "HTW" "specifier")
+    (write-file (fs/path root ".swarmforge/handoffs/failed/50_htw.handoff")
+                "id: 1_from_specifier\nfrom: specifier\nto: nobody\npriority: 50\ntype: git_handoff\ntask: HTW\n\npayload\n")
+    (write-file (fs/path root ".swarmforge/handoffs/failed/50_htw.handoff.error") "unknown recipient nobody\n")
+    (let [card (task-card root "HTW")]
+      (is (= "failed" (:stuck card)))
+      (is (= "Delivery failed: unknown recipient nobody" (:status card))))))
+
+(deftest pack-web-card-handing-off-or-held-is-not-stuck
+  ;; Given HTW's handoff waits in the outbox
+  ;; Then the card says Handing off, and Handoff held until Resume while paused
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "HTW" "specifier")
+    (queue-handoff! root {:from "specifier" :to "coder" :task "HTW"})
+    (is (= "Handing off" (:status (task-card root "HTW"))))
+    (write-file (fs/path root ".swarmforge/paused") "now\n")
+    (is (= "Handoff held until Resume" (:status (task-card root "HTW"))))
+    (is (= "held" (:status_phase (task-card root "HTW"))))))
+
+(deftest pack-web-marks-a-card-returned-for-rework
+  ;; Given QA returned HTW to coder once before, and now again
+  ;; Then the card shows who returned it and how many returns it had;
+  ;; once coder forwards it again the badge goes but the count stays
+  (let [root (tmp-dir)
+        roles ["specifier" "coder" "QA"]
+        coder-wt (pack-worktree root roles "coder")
+        qa-wt (pack-worktree root roles "QA")
+        mail (fn [id from to ret]
+               (str "id: " id "_from_" from "\nfrom: " from "\nto: " to "\npriority: 50\n"
+                    "type: git_handoff\ntask: HTW\n" (when ret "return: true\n") "\npayload\n"))]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (write-file (fs/path coder-wt ".swarmforge/handoffs/inbox/completed/50_a.handoff")
+                (mail "20260101T000001000000Z_1" "QA" "coder" true))
+    (write-file (fs/path qa-wt ".swarmforge/handoffs/sent/50_a.handoff")
+                (mail "20260101T000001000000Z_1" "QA" "coder" true))
+    (write-file (fs/path coder-wt ".swarmforge/handoffs/inbox/new/50_b.handoff")
+                (mail "20260101T000002000000Z_1" "QA" "coder" true))
+    (let [card (task-card root "HTW")]
+      (is (= "QA" (:returned_from card)))
+      (is (= 2 (:return_count card))))
+    (fs/move (fs/path coder-wt ".swarmforge/handoffs/inbox/new/50_b.handoff")
+             (fs/path coder-wt ".swarmforge/handoffs/inbox/completed/50_b.handoff"))
+    (write-file (fs/path qa-wt ".swarmforge/handoffs/inbox/new/50_c.handoff")
+                (mail "20260101T000003000000Z_1" "coder" "QA" false))
+    (pack-board root true "move" "--root" (str root) "--name" "HTW" "--lane" "QA" "--caller" "handoffd")
+    (let [card (task-card root "HTW")]
+      (is (nil? (:returned_from card)))
+      (is (= 2 (:return_count card))))))
+
+(deftest new-task-level-orders-the-start-note
+  ;; Given New Task makes a utility card at level high
+  ;; Then the card waits with its level and no mail
+  ;; When the lieutenant starts it
+  ;; Then its start note goes out with priority 30
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (is (= 200 (:status (api-post root "/api/tasks" {:name "HTW" :text "Hunt" :type "utility" :level "high"}))))
+    (let [card (task-card root "HTW")]
+      (is (= "waiting" (:lane card)))
+      (is (= "high" (:level card)))
+      (is (nil? (:stuck card))))
+    (is (= {:level "high"} (card-meta root "HTW")))
+    (is (= [] (outbox-handoffs root)))
+    (is (zero? (:exit (lieutenant-start! root "HTW" "coder" true))))
+    (is (= "coder" (task-lane root "HTW")))
+    (let [[file] (outbox-handoffs root)
+          text (slurp (str file))]
+      (is (str/starts-with? (str (fs/file-name file)) "30_"))
+      (is (str/includes? text "priority: 30"))
+      (is (str/includes? text "Hunt")))
+    (is (= "Handing off" (:status (task-card root "HTW"))))))
+
+(deftest new-task-refuses-an-unknown-level
+  (let [root (tmp-dir)]
+    (setup-pack! root ["specifier" "coder"])
+    (let [resp (api-post root "/api/tasks" {:name "HTW" :type "utility" :level "urgent"})]
+      (is (= 400 (:status resp)))
+      (is (str/includes? (get-in resp [:body :error]) "Level must be")))
+    (is (nil? (task-lane root "HTW")))))
+
+(deftest task-level-change-reorders-queued-mail-and-skips-merge-copies
+  ;; Given a queued coder card and a 00 merge-only copy of it
+  ;; When its level becomes critical
+  ;; Then its forward mail moves to 10 and the merge copy stays 00
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        new-dir (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/new")]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (put-queued! root roles "coder" {:task "HTW" :task-id (:id (task-card root "HTW"))})
+    (write-file (fs/path new-dir "00_merge_from_QA_to_coder.handoff")
+                (str "from: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask_id: "
+                     (:id (task-card root "HTW")) "\ntask: HTW\nnon-forwarding: true\n\nmerge\n"))
+    (is (= 200 (:status (api-post root "/api/tasks/priority" {:name "HTW" :level "critical"}))))
+    (let [names (set (handoff-names new-dir))]
+      (is (contains? names "00_merge_from_QA_to_coder.handoff"))
+      (is (= 2 (count names)))
+      (is (some #(str/starts-with? % "10_") names)))
+    (is (= "critical" (:level (task-card root "HTW"))))))
+
+(deftest task-level-change-reorders-held-outbox-mail-while-paused
+  ;; Given HTW's handoff is held in the outbox while paused
+  ;; When its level becomes low
+  ;; Then the held handoff takes priority 70; unpaused outbox mail is refused
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        outbox (fs/path root ".swarmforge/handoffs/outbox")]
+    (setup-pack! root roles)
+    (create-task root "HTW" "specifier")
+    (queue-handoff! root {:from "specifier" :to "coder" :task "HTW" :task-id (:id (task-card root "HTW"))})
+    (is (= 409 (:status (api-post root "/api/tasks/priority" {:name "HTW" :priority "20"}))))
+    (write-file (fs/path root ".swarmforge/paused") "now\n")
+    (is (= 200 (:status (api-post root "/api/tasks/priority" {:name "HTW" :level "low"}))))
+    (is (every? #(str/starts-with? % "70_") (handoff-names outbox)))
+    (is (str/includes? (slurp (str (first (fs/glob outbox "*.handoff")))) "priority: 70"))))
+
+(deftest blockers-hold-a-waiting-card-until-they-are-done
+  ;; Given A in coder and B waiting, blocked by A and related to A
+  ;; Then B shows its blocker, A shows it blocks B, and the lieutenant
+  ;; cannot start B; a cycle or self link is refused
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "coder")
+    (is (= 200 (:status (api-post root "/api/tasks" {:name "B" :type "utility" :blocked_by ["A"] :related ["A"]}))))
+    (let [b (task-card root "B")
+          a (task-card root "A")]
+      (is (= [{:name "A" :done false}] (:blockers b)))
+      (is (= true (:blocked b)))
+      (is (= ["A"] (:related b)))
+      (is (= ["B"] (:blocks a))))
+    (let [result (lieutenant-start! root "B" "coder" false)]
+      (is (not (zero? (:exit result))))
+      (is (str/includes? (:err result) "blocked by A")))
+    (is (= "waiting" (task-lane root "B")))
+    (is (= 400 (:status (api-post root "/api/tasks/links" {:name "A" :blocked_by ["B"]}))))
+    (is (= 400 (:status (api-post root "/api/tasks/links" {:name "B" :blocked_by ["B"]}))))
+    (is (= 400 (:status (api-post root "/api/tasks/links" {:name "B" :blocked_by ["Nope"]}))))
+    (pack-board root true "done" "--root" (str root) "--name" "A" "--caller" "handoffd")
+    (is (nil? (:blocked (task-card root "B"))))
+    (is (= [{:name "A" :done true}] (:blockers (task-card root "B"))))
+    (is (zero? (:exit (lieutenant-start! root "B" "coder" true))))
+    (is (= "coder" (task-lane root "B")))))
+
+(deftest links-can-be-cleared-and-a-deleted-blocker-no-longer-holds-a-card
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "coder")
+    (create-task root "C" "coder")
+    (api-post root "/api/tasks" {:name "B" :type "utility"})
+    (is (= 200 (:status (api-post root "/api/tasks/links" {:name "B" :blocked_by ["A" "C"]}))))
+    (is (= true (:blocked (task-card root "B"))))
+    (pack-board root true "delete" "--root" (str root) "--name" "A")
+    (is (= [{:name "C" :done false}] (:blockers (task-card root "B"))))
+    (is (= 200 (:status (api-post root "/api/tasks/links" {:name "B" :blocked_by []}))))
+    (is (nil? (:blockers (task-card root "B"))))
+    (is (nil? (card-meta root "B")) "empty meta leaves no file")
+    (is (zero? (:exit (lieutenant-start! root "B" "coder" true))))))
+
+(deftest deleting-a-card-deletes-its-meta
+  (let [root (tmp-dir)]
+    (setup-pack! root ["specifier" "coder"])
+    (api-post root "/api/tasks" {:name "B" :type "utility" :level "low"})
+    (let [id (:id (task-card root "B"))
+          file (fs/path root ".swarmforge/board/meta" (str id ".edn"))]
+      (is (fs/exists? file))
+      (pack-board root true "delete" "--root" (str root) "--name" "B")
+      (is (not (fs/exists? file))))))
+
+(deftest pause-and-resume-endpoints-drive-the-swarm-pause-file
+  ;; Given a swarm
+  ;; When the dashboard posts /api/pause, then /api/resume
+  ;; Then the pause file appears and goes, and Retry is refused while paused
+  (let [root (tmp-dir)
+        pause (fs/path root ".swarmforge/paused")]
+    (setup-pack! root ["specifier" "coder"])
+    (is (= 200 (:status (api-post root "/api/pause" {}))))
+    (is (fs/exists? pause))
+    (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_hold.handoff")
+                "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\ntask: HTW\n\npayload\n")
+    (let [resp (api-post root "/api/tasks/retry" {:id "50_hold" :comments "again"})]
+      (is (= 409 (:status resp)))
+      (is (str/includes? (get-in resp [:body :error]) "paused")))
+    (is (fs/exists? (fs/path root ".swarmforge/handoffs/pending_approval/50_hold.handoff")))
+    (is (= 200 (:status (api-post root "/api/resume" {}))))
+    (is (not (fs/exists? pause)))))
+
+(deftest waiting-todo-and-done-are-not-role-names
+  (doseq [role ["waiting" "todo" "done"]]
+    (let [root (tmp-dir)]
+      (write-file (fs/path root "swarmforge/swarmforge.conf") (str "window " role " codex master\n"))
+      (write-file (fs/path root (str "swarmforge/roles/" role ".prompt")) "x\n")
+      (write-file (fs/path root "swarmforge/constitution.prompt") "x\n")
+      (let [result (run {:dir root :ok? false} "bb" (script "swarmforge.bb") "--test-parse" (str root))]
+        (is (not (zero? (:exit result))) role)
+        (is (str/includes? (str (:out result) (:err result)) "board columns") role)))))

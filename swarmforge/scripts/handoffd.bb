@@ -173,9 +173,11 @@
         failed-dir (fs/path (fs/parent (fs/parent path)) "failed")]
     (log! "failed" (str path) reason)
     (clear-retry-state! headers path)
+    ;; The reason sits next to the failed file, where the dashboard reads it.
     (let [moved (move-with-collision path failed-dir)]
       (spit (str (fs/path failed-dir (str (fs/file-name moved) ".error")))
-            (str reason "\n")))))
+            (str reason "\n"))
+      moved)))
 
 (defn recipient-list [headers]
   (some->> (get headers "to")
@@ -853,8 +855,23 @@
                          (str/ends-with? (fs/file-name %) ".handoff")))
            (sort-by #(fs/file-name %))))))
 
+(def daemon-mode? (atom false))
+
+(def own-pid (str (.pid (java.lang.ProcessHandle/current))))
+
+(defn delete-own-pid-file! []
+  (when (= own-pid (try (str/trim (slurp (str pid-file))) (catch Exception _ nil)))
+    (fs/delete-if-exists pid-file)))
+
+(defn daemon-superseded?
+  "The daemon's pid file is gone (its project was deleted) or names another
+  daemon. Either way this one must stop, or two daemons deliver the same mail."
+  []
+  (and @daemon-mode?
+       (not= own-pid (try (str/trim (slurp (str pid-file))) (catch Exception _ nil)))))
+
 (defn should-stop? []
-  (or @stopping-flag (fs/exists? stop-file)))
+  (or @stopping-flag (fs/exists? stop-file) (daemon-superseded?)))
 
 (defn sleep-poll! [ms]
   (loop [remaining ms]
@@ -863,18 +880,31 @@
         (Thread/sleep step)
         (recur (- remaining step))))))
 
-(defn process-outbox-file! [roles socket path]
+(defn pause-file []
+  (fs/path state-dir "paused"))
+
+(defn paused? []
+  (fs/exists? (pause-file)))
+
+(defn process-outbox-file!
+  "Deliver one outbox file. While the swarm is paused a git handoff stays in
+  the outbox, so no card changes lane until resume; one that needs approval
+  still goes to approval, and notes are still delivered."
+  [roles socket path]
   (let [headers (:headers (parse-message path))
         from (get headers "from")]
-    (if (should-hold? roles headers)
+    (cond
+      (should-hold? roles headers)
       (do
         (hold! (fs/path path))
         (try (notify-lieutenant! headers)
              (catch Exception e (log! "lieutenant-event-failed" (.getMessage e)))))
-      (deliver! roles socket (or from "") (fs/path path)))))
 
-(defn pause-file []
-  (fs/path state-dir "paused"))
+      (and (paused?) (= "git_handoff" (get headers "type")))
+      nil
+
+      :else
+      (deliver! roles socket (or from "") (fs/path path)))))
 
 (defn renotify-interval [role]
   (min renotify-max-ms
@@ -884,8 +914,13 @@
   (and (>= (- now-ms @started-at-ms) renotify-ms)
        (>= (- now-ms (get @last-notified role @started-at-ms)) (renotify-interval role))))
 
-(defn mail-card-keys [path]
-  (batch-task-keys (:headers (parse-message path))))
+(defn mail-card-keys
+  "A role can take mail between the listing and this read; mail that is gone
+  carries no cards."
+  [path]
+  (try
+    (batch-task-keys (:headers (parse-message path)))
+    (catch java.io.IOException _ [])))
 
 (defn startable-mail? [role-info]
   (let [held (->> (listed-handoffs (pending-dir))
@@ -907,10 +942,15 @@
   "Agents that ended their turn miss the one-shot wake message; remind idle
   roles that still have mail, backing off while they stay idle."
   [roles socket]
-  (when-not (fs/exists? (pause-file))
+  (when-not (paused?)
     (let [now-ms (System/currentTimeMillis)]
       (doseq [role-info (vals roles)
-              :let [idle? (idle-with-mail? roles role-info)]
+              :let [idle? (try
+                            (idle-with-mail? roles role-info)
+                            (catch Exception e
+                              (log! "renotify-skipped" (:role role-info) (.getMessage e))
+                              ::unknown))]
+              :when (not= ::unknown idle?)
               :when (do (when-not idle? (reset-renotify-backoff! (:role role-info)))
                         (and idle? (renotify-due? (:role role-info) now-ms)))]
         (try
@@ -961,23 +1001,37 @@
 (defn shutdown! []
   (reset! stopping-flag true)
   (try
-    (fs/delete-if-exists pid-file)
+    (delete-own-pid-file!)
     (log! "stopped")
     (catch Exception _ nil)))
+
+(def last-poll-error (atom nil))
 
 (defn run-daemon! []
   (fs/create-dirs daemon-dir)
   (fs/delete-if-exists stop-file)
-  (spit (str pid-file) (str (.pid (java.lang.ProcessHandle/current)) "\n"))
+  (spit (str pid-file) (str own-pid "\n"))
+  (reset! daemon-mode? true)
   (reset! started-at-ms (System/currentTimeMillis))
   (.addShutdownHook (Runtime/getRuntime) (Thread. shutdown!))
   (log! "started")
   (try
     (while (not (should-stop?))
-      (poll-once!)
+      ;; One bad poll (a file that moved mid-read, a missing socket file)
+      ;; must not end the daemon: every queued handoff would wait forever.
+      ;; The same error every second (a swarm that is not running) is
+      ;; logged once until it changes or a poll succeeds.
+      (try
+        (poll-once!)
+        (reset! last-poll-error nil)
+        (catch Exception e
+          (let [msg (.getMessage e)]
+            (when (not= msg @last-poll-error)
+              (reset! last-poll-error msg)
+              (log! "poll-error" msg)))))
       (sleep-poll! poll-ms))
     (finally
-      (fs/delete-if-exists pid-file)
+      (delete-own-pid-file!)
       (log! "stopped"))))
 
 (defn -main [& args]

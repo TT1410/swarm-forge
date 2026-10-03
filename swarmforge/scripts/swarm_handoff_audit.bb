@@ -63,6 +63,16 @@
     (fs/delete-if-exists path))
   (remove-empty-sender-audit-dir! sender))
 
+(declare cards-level-priority)
+
+(defn audited-priority
+  "A priority that comes from the card's level is not the role's choice, so
+  a level change on the dashboard between audit and resubmit keeps the audit."
+  [headers]
+  (let [priority (get headers "priority")
+        level-priority (cards-level-priority headers)]
+    (if (and level-priority (= priority level-priority)) "level" priority)))
+
 (defn invocation-fingerprint [draft sender headers]
   {:sender sender
    :task-id (audit-task-id headers)
@@ -70,7 +80,7 @@
    :batch-task-ids (audit-task-ids headers)
    :type (get headers "type")
    :recipients (vec (str/split (or (get headers "to") "") #"," -1))
-   :priority (get headers "priority")
+   :priority (audited-priority headers)
    :task (get headers "task")
    :commit (get headers "commit")
    :task-base-commit (or (current-task-base) "")
@@ -94,7 +104,7 @@
    :batch-task-ids (audit-task-ids headers)
    :type (get headers "type")
    :recipients (vec recipients)
-   :priority (get headers "priority")
+   :priority (audited-priority headers)
    :task (get headers "task")
    :commit canonical-commit
    :artifacts (vec artifacts)

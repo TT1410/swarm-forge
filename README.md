@@ -246,6 +246,58 @@ next `./swarm`, projects remain stopped until they are opened again.
    before it in window order. After that complete delivery, the board moves the
    card to **Done**.
 
+### Pause, daemon restart, levels, and links
+
+Each project band has a **Pause** button; `./swarm drain projects/<name>` does
+the same from a shell. Roles finish their current turn, `ready_for_next.sh`
+prints `PAUSED` instead of taking new mail (notes between roles still arrive),
+and the project's handoff daemon keeps every git handoff in its outbox, so no
+card changes lane. Handoffs that need approval still go to Attention. A card
+the lieutenant starts from Waiting gets its start note, but the role does not
+take it until Resume. Retry is refused while paused. The band shows a PAUSED banner with what is
+still finishing and how many handoffs are held. `./swarm status
+projects/<name>` reports `DRAINED: yes` once no role has in-process work and
+prints `HELD:` (paused) or `QUEUED:` for outbox handoffs. **Resume** or `./swarm
+resume projects/<name>` delivers the held handoffs (each inbox takes them in
+priority order) and wakes roles that have mail. While paused, a held card can
+still change level or priority, or leave the queue.
+
+If a project's handoff daemon stops, no handoff is delivered and its band shows
+a HANDOFFS STOPPED banner. Its **Restart daemon** button, or `./swarm daemon
+projects/<name>`, starts it again. The daemon also stops by itself when its pid
+file is gone or names another daemon, so a deleted or restarted project never
+keeps two daemons delivering the same mail. After updating SwarmForge scripts
+in a running project, restart its daemon so the one that holds handoffs during
+a pause is the new one.
+
+New Task gives a typed card a level: Critical, High, Normal or Low. The level
+sets the priority of the card's handoffs at every role (10, 30, 50, 70; lower
+runs first), starting with the note that starts it from Waiting, whenever the
+agent leaves the default 50 or no priority. A priority the role chose on
+purpose, such as a `00` follow-up, still wins, merge-only copies keep their
+priority, and cards without a level keep the priority the agent typed. A
+batch takes the level of its most urgent card. **Change level…** in the card
+menu sets a new level and reorders the card's waiting mail; a batch that also
+carries other cards keeps its priority. Because batch roles take only mail of
+one priority (and card type) per batch, cards of different levels are batched
+separately, and Low cards wait while higher-level work keeps arriving. Levels
+are kept in `.swarmforge/board/meta/<task-id>.edn`.
+
+**Links…** in the card menu (or the New Task dialog) records which cards block
+a card and which are related. Links are kept by task id, so renames keep them.
+A self link or a cycle is refused. A card with an unfinished blocker stays in
+Waiting: the lieutenant's start of it is refused until every blocker is done
+or the operator removes the link. Blockers never hold mail that is already in
+the pipeline, and a deleted blocker no longer holds a card.
+
+Cards also show why they are not moving: Handing off, Handoff held until
+Resume, Delivery failed (with the error from `handoffs/failed/`), or No mail
+when nothing will pick the card up (drawn red). A card a later role sent back
+with `return: true` shows who returned it and how many times it was returned.
+Questions in Attention keep their line breaks, can be expanded, and take a
+multi-line answer (Enter adds a line, Ctrl/Cmd+Enter sends); **Open** shows the
+question and answer in a larger in-page dialog.
+
 The chat rail talks only to the host lieutenant. Agent names in **Work Queue**
 open live captures of project-agent panes; the agents themselves continue to
 run in tmux.

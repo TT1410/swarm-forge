@@ -1400,3 +1400,60 @@
       (is (zero? (:exit result)) (:err result))
       (is (not (str/includes? (str (:out result) (:err result)) "OPEN_CARDS")))
       (is (= "card-a" (header (handoff-path root "completed" "50_a.handoff") "handed_task_ids"))))))
+
+(defn card-level! [root task-id level]
+  (write-file (fs/path root ".swarmforge/board/meta" (str task-id ".edn"))
+              (str "{:level \"" level "\"}\n")))
+
+(deftest swarm-handoff-takes-priority-from-the-card-level
+  ;; Given U1 has level high
+  ;; When coder hands U1 to cleaner with priority: 50 typed in the draft
+  ;; Then the handoff carries priority 30 from the level
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["U1" "coder" "u1" "utility"]])
+    (card-level! root "u1" "high")
+    (commit-work! root)
+    (let [result (submit-draft! root "coder" "type: git_handoff\nto: cleaner\npriority: 50\ntask: U1\n")
+          queued (queued-path (:out result))]
+      (is (zero? (:exit result)) (:err result))
+      (is (= "30" (header queued "priority")))
+      (is (str/starts-with? (str (fs/file-name queued)) "30_")))))
+
+(deftest swarm-handoff-keeps-a-priority-the-role-chose-over-the-card-level
+  ;; Given U1 has level low
+  ;; When coder hands U1 on with priority: 00 typed in the draft
+  ;; Then the handoff keeps 00, so a role's urgent follow-up still goes first
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["U1" "coder" "u1" "utility"]])
+    (card-level! root "u1" "low")
+    (commit-work! root)
+    (let [result (submit-draft! root "coder" "type: git_handoff\nto: cleaner\npriority: 00\ntask: U1\n")
+          queued (queued-path (:out result))]
+      (is (zero? (:exit result)) (:err result))
+      (is (= "00" (header queued "priority"))))))
+
+(deftest swarm-handoff-keeps-the-audit-when-the-level-changes-before-resubmit
+  ;; Given coder's first submit of U1 asked for an audit at level high
+  ;; When the level becomes critical before the resubmit
+  ;; Then the resubmit is queued at 10 without a new audit
+  (let [root (tmp-dir)
+        draft (fs/path root "tmp" "u1.handoff")
+        opts {:dir root :env {"SWARMFORGE_ROLE" "coder"} :ok? false}]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["U1" "coder" "u1" "utility"]])
+    (card-level! root "u1" "high")
+    (commit-work! root)
+    (write-file draft "type: git_handoff\nto: cleaner\npriority: 50\ntask: U1\n")
+    (let [first-call (run opts (script "swarm_handoff.sh") (str draft))]
+      (is (str/includes? (:out first-call) "AUDIT_REQUIRED") (:err first-call)))
+    (card-level! root "u1" "critical")
+    (let [second-call (run opts (script "swarm_handoff.sh") (str draft))
+          queued (queued-path (:out second-call))]
+      (is (zero? (:exit second-call)) (:err second-call))
+      (is (not (str/includes? (:out second-call) "AUDIT_REQUIRED")))
+      (is (= "10" (header queued "priority"))))))

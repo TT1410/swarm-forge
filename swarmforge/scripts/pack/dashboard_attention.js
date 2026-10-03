@@ -334,103 +334,128 @@ function attentionRow(item) {
   return row;
 }
 
-function fillClarWindow(win, item) {
-  const request = item.body || "";
-  const draft = clarDrafts[item.id] || "";
-  win.document.open();
-  win.document.write(
-    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Clarification</title>" +
-    "<style>html,body{height:100%;margin:0;display:flex;flex-direction:column;background:#f8f8f5;color:#1e221f;font-family:ui-sans-serif,system-ui,sans-serif}" +
-    "header{flex:0 0 auto;padding:8px 10px;background:linear-gradient(180deg,#eceee8,#e0e3dc);border-bottom:1px solid #d5d9d2;font-weight:600;font-size:13px}" +
-    "#clar-request{flex:1 1 50%;min-height:4rem;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;background:#fffef9;font:13px/1.45 ui-sans-serif,system-ui,sans-serif}" +
-    ".doc-split{flex:0 0 6px;cursor:row-resize;background:#d5d9d2}" +
-    ".doc-split:hover{background:#b8bfb6}" +
-    "#clar-response-pane{flex:1 1 50%;min-height:4rem;display:flex;flex-direction:column;padding:10px 12px;background:#fff;gap:6px}" +
-    "label{font-size:10px;text-transform:uppercase;font-weight:700;color:#68726c}" +
-    "textarea{flex:1;min-height:4rem;width:100%;border:1px solid #c6cbc5;border-radius:6px;padding:8px;font:13px/1.45 ui-sans-serif,system-ui,sans-serif;resize:none}" +
-    ".actions{display:flex;gap:8px;justify-content:flex-end}" +
-    "button{border:1px solid #9aa59e;background:#fff;padding:5px 12px;border-radius:7px;font-size:12px;cursor:pointer}" +
-    "#clar-ok{background:#3d5a45;border-color:#3d5a45;color:#fff}" +
-    "</style></head><body>" +
-    "<header>Clarification requested from: " + escapeHtml(item.role || "agent") + "</header>" +
-    "<pre id=\"clar-request\">" + escapeHtml(request) + "</pre>" +
-    "<div class=\"doc-split\" id=\"clar-split\" title=\"Drag to resize\"></div>" +
-    "<div id=\"clar-response-pane\"><label for=\"clar-response\">Response</label>" +
-    "<textarea id=\"clar-response\">" + escapeHtml(draft) + "</textarea>" +
-    "<div class=\"actions\">" +
-    "<button type=\"button\" id=\"clar-dismiss\">Dismiss</button>" +
-    "<button type=\"button\" id=\"clar-ok\">OK</button></div></div>" +
-    "</body></html>"
-  );
-  win.document.close();
-  bindVSplit(win, win.document.getElementById("clar-split"),
-    win.document.getElementById("clar-request"),
-    win.document.getElementById("clar-response-pane"));
+let clarOpenId = null;
+const clarExpanded = {};
+
+function syncClarDraft(id, text, except) {
+  clarDrafts[id] = text;
+  const rowBox = document.querySelector("#attention-clarifications textarea[data-clar-id=\"" + id + "\"]");
+  if (rowBox && rowBox !== except) rowBox.value = text;
+  const modalBox = $("clar-response");
+  if (clarOpenId === id && modalBox !== except) modalBox.value = text;
+}
+
+function sendOnCtrlEnter(box, send) {
+  box.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      send();
+    }
+  });
+}
+
+function closeClarification() {
+  clarOpenId = null;
+  $("clar-layer").classList.remove("open");
+}
+
+function clarAsker(item) {
+  return item.source === "lieutenant" ? "lieutenant" : (item.role || "agent");
 }
 
 function openClarification(item) {
-  const win = window.open("about:blank", "clar-" + encodeURIComponent(item.id || "") + "-" + Date.now(),
-    "resizable=yes,scrollbars=yes,width=720,height=520");
-  if (!win) return;
-  fillClarWindow(win, item);
-  const box = win.document.getElementById("clar-response");
-  const syncDraft = () => {
-    const text = box.value;
-    clarDrafts[item.id] = text;
-    const live = document.querySelector("[data-clar-id=\"" + item.id + "\"]");
-    if (live) live.value = text;
-  };
-  win.document.getElementById("clar-ok").onclick = async () => {
-    syncDraft();
-    const row = document.querySelector("#attention-clarifications [data-clar-id=\"" + item.id + "\"]");
-    await postClarification(item.id, box.value, alsoRoles(row && row.closest(".att-row")));
-    win.close();
-  };
-  win.document.getElementById("clar-dismiss").onclick = () => {
-    syncDraft();
-    win.close();
-  };
+  clarOpenId = item.id;
+  $("clar-title").textContent = "Clarification requested from: " + clarAsker(item) +
+    (item.task ? " · " + (item.project ? item.project + "/" : "") + item.task : "");
+  $("clar-request").textContent = item.body || "";
+  $("clar-response").value = clarDrafts[item.id] || "";
+  $("clar-also-box").replaceChildren(alsoPicker(item));
+  $("clar-layer").classList.add("open");
+  $("clar-response").focus();
+}
+
+async function sendOpenClarification() {
+  const id = clarOpenId;
+  if (!id) return;
+  const ok = await postClarification(id, $("clar-response").value, alsoRoles($("clar-also-box")));
+  if (ok && clarOpenId === id) closeClarification();
+}
+
+function setupClarificationDialog() {
+  $("clar-response").addEventListener("input", () => {
+    if (clarOpenId) syncClarDraft(clarOpenId, $("clar-response").value, $("clar-response"));
+  });
+  sendOnCtrlEnter($("clar-response"), sendOpenClarification);
+  $("clar-ok").onclick = sendOpenClarification;
+  $("clar-cancel").onclick = closeClarification;
+  $("clar-layer").addEventListener("click", (event) => {
+    if (event.target === $("clar-layer")) closeClarification();
+  });
 }
 
 function clarificationRow(item) {
   const row = document.createElement("form");
-  row.className = "att-row";
+  row.className = "att-row clar-row";
+  const head = document.createElement("div");
+  head.className = "clar-head";
   const pill = document.createElement("span");
   pill.className = "pill pill-warn";
-  const who = item.source === "lieutenant" ? "lieutenant" : (item.role || "agent");
-  pill.textContent = "Clarification requested from: " + who;
+  pill.textContent = "Clarification requested from: " + clarAsker(item);
   const pair = attentionWorkPair(item.project, item.task);
-  const summary = document.createElement("span");
-  summary.className = "att-summary";
-  summary.textContent = item.body || "";
-  summary.title = item.body || "";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.placeholder = "Answer…";
-  input.dataset.clarId = item.id || "";
-  input.value = clarDrafts[item.id] || "";
-  input.addEventListener("input", () => {
-    clarDrafts[item.id] = input.value;
-  });
+  const spacer = document.createElement("span");
+  spacer.className = "spacer";
+  const body = document.createElement("div");
+  body.className = "clar-body";
+  body.textContent = item.body || "";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "btn btn-sm clar-toggle";
+  const applyExpanded = () => {
+    const open = !!clarExpanded[item.id];
+    body.classList.toggle("clamped", !open);
+    toggle.textContent = open ? "Collapse" : "Expand";
+  };
+  toggle.onclick = (event) => {
+    event.preventDefault();
+    clarExpanded[item.id] = !clarExpanded[item.id];
+    applyExpanded();
+  };
+  applyExpanded();
   const open = document.createElement("button");
   open.type = "button";
   open.className = "att-expand";
-  open.title = "Open full window";
-  open.setAttribute("aria-label", "Open full window");
-  open.textContent = "\u2922";
+  open.title = "Open in a larger dialog";
+  open.setAttribute("aria-label", "Open in a larger dialog");
+  open.textContent = "⤢";
   open.onclick = (event) => {
     event.preventDefault();
     openClarification(item);
   };
+  head.append(pill, pair, spacer, toggle, open);
+  const input = document.createElement("textarea");
+  input.className = "clar-answer";
+  input.rows = 2;
+  input.placeholder = "Answer… (Ctrl+Enter sends)";
+  input.dataset.clarId = item.id || "";
+  input.value = clarDrafts[item.id] || "";
+  input.addEventListener("input", () => syncClarDraft(item.id, input.value, input));
+  const submit = () => postClarification(item.id, input.value, alsoRoles(row));
+  sendOnCtrlEnter(input, submit);
+  const foot = document.createElement("div");
+  foot.className = "clar-foot";
+  const hint = document.createElement("span");
+  hint.className = "clar-hint";
+  hint.textContent = "Enter adds a line · Ctrl+Enter sends";
   const send = document.createElement("button");
   send.type = "submit";
   send.className = "btn btn-sm btn-primary";
   send.textContent = "Submit";
   row.addEventListener("submit", (event) => {
     event.preventDefault();
-    postClarification(item.id, input.value, alsoRoles(row));
+    submit();
   });
-  row.append(pill, pair, summary, open, input, alsoPicker(item), send);
+  foot.append(hint, alsoPicker(item), send);
+  row.append(head, body, input, foot);
   return row;
 }
 
@@ -459,7 +484,13 @@ function alsoPicker(item) {
     check.dataset.alsoRole = lane;
     const key = item.id + "\n" + lane;
     check.checked = !!clarAlso[key];
-    check.addEventListener("change", () => { clarAlso[key] = check.checked; });
+    check.dataset.alsoKey = key;
+    check.addEventListener("change", () => {
+      clarAlso[key] = check.checked;
+      document.querySelectorAll("[data-also-key]").forEach((other) => {
+        if (other.dataset.alsoKey === key) other.checked = check.checked;
+      });
+    });
     label.append(check, " " + displayName(lane));
     box.appendChild(label);
   });
@@ -471,21 +502,34 @@ function alsoRoles(row) {
   return [...row.querySelectorAll("[data-also-role]:checked")].map((el) => el.value);
 }
 
+const clarInFlight = new Set();
+
 async function postClarification(id, text, also) {
-  if (!text || !text.trim()) return;
+  if (!text || !text.trim()) return false;
+  if (clarInFlight.has(id)) return false;
+  clarInFlight.add(id);
   const payload = {text};
   if (also && also.length) payload.also = also;
-  const res = await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(payload)
-  });
-  if (!res.ok) {
-    let msg = "Could not send the answer";
-    try { msg = (await res.json()).error || msg; } catch (_) {}
-    alert(msg);
+  let ok = false;
+  try {
+    const res = await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    ok = res.ok;
+    if (!res.ok) {
+      let msg = "Could not send the answer";
+      try { msg = (await res.json()).error || msg; } catch (_) {}
+      alert(msg);
+    }
+  } catch (_) {
+    alert("Could not send the answer");
   }
+  if (ok) delete clarDrafts[id];
+  clarInFlight.delete(id);
   loadState();
+  return ok;
 }
 
 function renderApprovals(items) {
@@ -556,6 +600,7 @@ function renderClarifications(items) {
   [...box.querySelectorAll("[data-clar-id]")].forEach((input) => {
     if (!live[input.dataset.clarId]) input.closest(".att-row").remove();
   });
+  if (clarOpenId && !live[clarOpenId]) closeClarification();
   pending.forEach((item) => {
     if (!box.querySelector("[data-clar-id=\"" + item.id + "\"]")) {
       box.appendChild(clarificationRow(item));

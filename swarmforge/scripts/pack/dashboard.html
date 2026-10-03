@@ -23,10 +23,12 @@
         <button class="btn" type="button" id="btn-open-project">Open Project</button>
         <div class="menu-list" id="open-project-list"></div>
       </div>
+      <button class="btn" type="button" id="btn-pause">Pause</button>
       <button class="btn btn-primary" type="button" id="btn-new-task">New Task</button>
     </div>
   </header>
   <p id="error" class="error"></p>
+  <div id="swarm-banners"></div>
 
   <div class="attention" id="attention">
     <div class="tag">Attention</div>
@@ -93,6 +95,40 @@
   </div>
 </div>
 
+<div class="float-layer" id="links-layer">
+  <div class="float" role="dialog" aria-labelledby="ln-title">
+    <div class="titlebar" id="ln-title">Links</div>
+    <div class="body-pad">
+      <p class="note">A waiting card with an unfinished blocker does not start. Related cards are only shown.</p>
+      <label for="ln-blockers">Blocked by</label>
+      <select id="ln-blockers" class="link-picker" multiple></select>
+      <label for="ln-related">Related</label>
+      <select id="ln-related" class="link-picker" multiple></select>
+      <div class="actions">
+        <button type="button" class="btn" id="ln-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="ln-ok">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="float-layer" id="clar-layer">
+  <div class="float" role="dialog" aria-labelledby="clar-title">
+    <div class="titlebar" id="clar-title">Clarification</div>
+    <div class="body-pad">
+      <label>Question</label>
+      <pre id="clar-request"></pre>
+      <label for="clar-response">Answer</label>
+      <textarea id="clar-response" placeholder="Answer… (Ctrl+Enter sends)"></textarea>
+      <div class="actions">
+        <span id="clar-also-box"></span>
+        <button type="button" class="btn" id="clar-cancel">Close</button>
+        <button type="button" class="btn btn-primary" id="clar-ok">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="float-layer" id="new-task-layer">
   <div class="float" role="dialog" aria-labelledby="nt-title">
     <div class="titlebar" id="nt-title">New Task</div>
@@ -102,6 +138,18 @@
       <input id="nt-name" type="text" placeholder="task-name" maxlength="80">
       <label>Type</label>
       <div class="pack-radios" id="nt-types">
+      </div>
+      <div id="nt-card-options">
+        <div class="nt-route">
+          <div><label for="nt-level">Level</label><select id="nt-level">
+            <option value="critical">Critical</option>
+            <option value="high">High</option>
+            <option value="normal" selected>Normal</option>
+            <option value="low">Low</option>
+          </select></div>
+        </div>
+        <label for="nt-blockers">Blocked by (the lieutenant starts the card when these are done)</label>
+        <select id="nt-blockers" class="link-picker" multiple></select>
       </div>
       <label for="nt-text">Task</label>
       <textarea id="nt-text" placeholder="What the starting agent should do…"></textarea>

@@ -338,6 +338,8 @@
                          (keys reviews)))))
 
 (defn retry-approval! [root id comments]
+  (when (ready-for-next-guard/paused-at? root)
+    (conflict! "The swarm is paused. Resume it before Retry: Retry restarts the work at once."))
   (let [src (require-pending! root id)
         headers (:headers (parse-message src))
         task (get headers "task")

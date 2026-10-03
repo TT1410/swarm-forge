@@ -30,7 +30,10 @@
 (defn write-reviews! [root id reviews]
   (let [file (reviews-file root id)]
     (fs/create-dirs (fs/parent file))
-    (spit (str file) (json/generate-string reviews))))
+    ;; Write then rename, so a reader never sees a half-written file.
+    (let [tmp (fs/path (fs/parent file) (str "." (fs/file-name file) ".tmp"))]
+      (spit (str tmp) (json/generate-string reviews))
+      (fs/move tmp file {:replace-existing true :atomic-move true}))))
 
 (defn drop-reviews! [root id]
   (fs/delete-if-exists (reviews-file root id)))

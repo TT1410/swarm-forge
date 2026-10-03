@@ -19,7 +19,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed;transform:none}
 .btn:disabled:hover,.btn[disabled]:hover{background:#fff;border-color:#9aa59e;color:var(--ink)}
 .btn-approve:disabled:hover,.btn-approve[disabled]:hover{background:#2f6b3a;border-color:#2f6b3a;color:#fff}
-.attention{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;overflow:hidden;position:relative;z-index:30}
+.attention{display:grid;grid-template-columns:auto minmax(0,1fr);gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:30vh;overflow:auto;resize:vertical;position:relative;z-index:30}
 .attention .tag{font-weight:700;text-transform:uppercase;font-size:10px;color:#8a5a0a;padding-top:4px}
 #attention-rows{min-width:0}
 .att-row{display:flex;flex-wrap:nowrap;gap:8px;align-items:center;background:rgba(255,255,255,.65);border:1px solid #efd7a8;border-radius:6px;padding:4px 8px;margin:0 0 4px;min-width:0;overflow:hidden}
@@ -136,3 +136,34 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .card-menu-btn:hover{color:var(--ink)}
 .clar-also{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;color:var(--muted);font-size:11px}
 .clar-also label{display:inline-flex;gap:2px;align-items:center;color:var(--ink)}
+.card-stuck{border:2px solid var(--red);background:#fff4f4}
+.card-stuck .status{color:var(--red);font-weight:600}
+.pill-level{flex:0 0 auto;margin-left:4px;font-weight:700}
+.level-critical{background:#f6d0d0;color:#8b1a1a}
+.level-high{background:#fde2c4;color:#8a4a0a}
+.level-low{background:#e6e8e4;color:#59615b}
+.card-links{flex:0 0 auto;margin-left:4px;font-size:10px;line-height:1;color:var(--muted);cursor:help}
+.card-links.blocked{color:var(--red)}
+.return-count{display:inline-flex;align-items:center;gap:1px;flex:0 0 auto;margin-left:4px;color:#8a4a0a;font-size:10px;font-weight:700}
+.status-returned{color:#8a4a0a;font-weight:700}
+.link-picker{width:100%;min-height:5.5em;border:1px solid #c6cbc5;border-radius:6px;font:inherit;font-size:12px;margin-bottom:10px}
+.nt-route{display:flex;gap:12px;margin-bottom:10px}
+.nt-route select{border:1px solid #c6cbc5;border-radius:6px;padding:6px 8px;font:inherit;font-size:12px}
+.clar-row{flex-direction:column;align-items:stretch;gap:6px;padding:6px 8px}
+.clar-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.clar-head .spacer{flex:1}
+.clar-body{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.45;color:var(--ink);background:#fffef9;border:1px solid #efd7a8;border-radius:6px;padding:6px 8px}
+.clar-body.clamped{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.clar-answer{width:100%;min-height:3.2em;border:1px solid #c6cbc5;border-radius:6px;padding:6px 8px;font:inherit;font-size:12px;line-height:1.4;resize:vertical}
+.clar-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
+.clar-hint{color:var(--muted);font-size:10px;margin-right:auto}
+#clar-layer .float{width:min(820px,94vw);min-width:min(560px,94vw)}
+#clar-request{margin:0 0 10px;padding:10px;max-height:45vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;border:1px solid var(--line);border-radius:6px;font:13px/1.45 ui-sans-serif,system-ui,sans-serif}
+#clar-response{min-height:160px}
+.swarm-banner{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 14px;font-size:13px;border-bottom:1px solid var(--line)}
+.swarm-banner strong{font-size:14px;letter-spacing:.04em}
+.swarm-banner .detail{flex:1;min-width:12rem}
+.banner-paused{background:#e3e8f2;color:#22324f;border-bottom-color:#9fb0cf}
+.banner-daemon{background:#fbe4e4;color:var(--red);border-bottom-color:#e0a6a6}
+.project-band .swarm-banner{border:1px solid var(--line);border-radius:8px;margin:0 0 8px}
+.paused-board .card{opacity:.6}

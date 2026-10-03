@@ -342,6 +342,56 @@
     (println "Usage: handoff_lib.bb <command> [args...]"))
   (System/exit 2))
 
+;; Card meta: per-card settings the board row has no column for (level,
+;; how a TODO card starts, blockers). Keyed by task id, which survives a
+;; rename, in .swarmforge/board/meta/<task-id>.edn.
+
+(def level-priorities
+  "Task level -> handoff priority. Lower runs first; the gaps keep equal-level
+  cards batching together."
+  {"critical" "10" "high" "30" "normal" "50" "low" "70"})
+
+(defn level-priority [level]
+  (get level-priorities (some-> level str/lower-case str/trim)))
+
+(defn card-meta-file [root task-id]
+  (fs/path root ".swarmforge" "board" "meta"
+           (str (str/replace (str task-id) #"[^A-Za-z0-9._-]" "_") ".edn")))
+
+(defn read-card-meta [root task-id]
+  (let [file (when-not (str/blank? (str task-id)) (card-meta-file root task-id))]
+    (or (when (and file (fs/regular-file? file))
+          (try
+            (let [value (clojure.edn/read-string (slurp (str file)))]
+              (when (map? value) value))
+            (catch Exception _ nil)))
+        {})))
+
+(defn write-card-meta! [root task-id meta]
+  (let [file (card-meta-file root task-id)
+        dir (fs/parent file)]
+    (fs/create-dirs dir)
+    (if (empty? meta)
+      (fs/delete-if-exists file)
+      (let [tmp (fs/create-temp-file {:dir dir :prefix ".meta."})]
+        (spit (str tmp) (str (pr-str meta) "\n"))
+        (fs/move tmp file {:replace-existing true :atomic-move true})))))
+
+(def card-meta-lock
+  "The dashboard changes level, links and start role on separate request
+  threads; one lock keeps a read-modify-write from losing another's edit."
+  (Object.))
+
+(defn update-card-meta! [root task-id f & args]
+  (locking card-meta-lock
+    (let [meta (apply f (read-card-meta root task-id) args)]
+      (write-card-meta! root task-id meta)
+      meta)))
+
+(defn delete-card-meta! [root task-id]
+  (when-not (str/blank? (str task-id))
+    (fs/delete-if-exists (card-meta-file root task-id))))
+
 (def lib-commands
   {"role" (fn [_] (println (role)))
    "state-dir" (fn [_] (println (state-dir)))
