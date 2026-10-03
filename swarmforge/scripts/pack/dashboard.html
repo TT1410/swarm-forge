@@ -26,7 +26,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed;transform:none}
 .btn:disabled:hover,.btn[disabled]:hover{background:#fff;border-color:#9aa59e;color:var(--ink)}
 .btn-approve:disabled:hover,.btn-approve[disabled]:hover{background:#2f6b3a;border-color:#2f6b3a;color:#fff}
-.attention{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:120px;overflow:auto;position:relative;z-index:30}
+.attention{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:40vh;min-height:2.5rem;overflow:auto;resize:vertical;position:relative;z-index:30}
 .attention .tag{font-weight:700;text-transform:uppercase;font-size:10px;color:#8a5a0a;padding-top:4px}
 .att-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(255,255,255,.65);border:1px solid #efd7a8;border-radius:6px;padding:4px 8px;margin:0 0 4px}
 .att-work{text-decoration:underline}
@@ -106,6 +106,17 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .wif-therm[data-heat="6"] .bar:nth-child(-n+6){background:var(--green)}
 .ts-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}.ts-head h2{margin:0;flex:1}
 .history{flex:1;min-height:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;display:flex;flex-direction:column;gap:8px;font-size:11px}
+.clar-row{flex-direction:column;align-items:stretch;gap:6px;padding:6px 8px}
+.clar-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.clar-head .spacer{flex:1}
+.clar-body{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.45;color:var(--ink);background:#fffef9;border:1px solid #efd7a8;border-radius:6px;padding:6px 8px;max-height:none}
+.clar-body.clamped{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.clar-answer{width:100%;min-height:3.2em;border:1px solid #c6cbc5;border-radius:6px;padding:6px 8px;font:inherit;font-size:12px;line-height:1.4;resize:vertical}
+.clar-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
+.clar-hint{color:var(--muted);font-size:10px;margin-right:auto}
+#clar-layer .float{width:min(820px,94vw);min-width:min(560px,94vw)}
+#clar-request{margin:0 0 10px;padding:10px;max-height:45vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;border:1px solid var(--line);border-radius:6px;font:13px/1.45 ui-sans-serif,system-ui,sans-serif}
+#clar-response{min-height:160px}
 .clar-also{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;color:var(--muted);font-size:11px}
 .clar-also label{display:inline-flex;gap:2px;align-items:center;color:var(--ink)}
 .att-row input[type=text]{flex:1;min-width:8rem;border:1px solid #c6cbc5;border-radius:6px;padding:4px 6px;font:inherit;font-size:11px}
@@ -241,6 +252,23 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
       <div class="actions">
         <button type="button" class="btn" id="np-cancel">Cancel</button>
         <button type="button" class="btn btn-primary" id="np-ok">OK</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="float-layer" id="clar-layer">
+  <div class="float" role="dialog" aria-labelledby="clar-title">
+    <div class="titlebar" id="clar-title">Clarification</div>
+    <div class="body-pad">
+      <label>Question</label>
+      <pre id="clar-request"></pre>
+      <label for="clar-response">Answer</label>
+      <textarea id="clar-response" placeholder="Answer… (Ctrl+Enter sends)"></textarea>
+      <div class="actions">
+        <span id="clar-also-box"></span>
+        <button type="button" class="btn" id="clar-cancel">Close</button>
+        <button type="button" class="btn btn-primary" id="clar-ok">Send</button>
       </div>
     </div>
   </div>
@@ -1115,69 +1143,94 @@ function attentionRow(item) {
   return row;
 }
 
-function fillClarWindow(win, item) {
-  const request = item.body || "";
-  const draft = clarDrafts[item.id] || "";
-  win.document.open();
-  win.document.write(
-    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Clarification</title>" +
-    "<style>html,body{height:100%;margin:0;display:flex;flex-direction:column;background:#f8f8f5;color:#1e221f;font-family:ui-sans-serif,system-ui,sans-serif}" +
-    "header{flex:0 0 auto;padding:8px 10px;background:linear-gradient(180deg,#eceee8,#e0e3dc);border-bottom:1px solid #d5d9d2;font-weight:600;font-size:13px}" +
-    "#clar-request{flex:1 1 50%;min-height:4rem;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;background:#fffef9;font:13px/1.45 ui-sans-serif,system-ui,sans-serif}" +
-    ".doc-split{flex:0 0 6px;cursor:row-resize;background:#d5d9d2}" +
-    ".doc-split:hover{background:#b8bfb6}" +
-    "#clar-response-pane{flex:1 1 50%;min-height:4rem;display:flex;flex-direction:column;padding:10px 12px;background:#fff;gap:6px}" +
-    "label{font-size:10px;text-transform:uppercase;font-weight:700;color:#68726c}" +
-    "textarea{flex:1;min-height:4rem;width:100%;border:1px solid #c6cbc5;border-radius:6px;padding:8px;font:13px/1.45 ui-sans-serif,system-ui,sans-serif;resize:none}" +
-    ".actions{display:flex;justify-content:flex-end}" +
-    "button{border:1px solid #9aa59e;background:#3d5a45;border-color:#3d5a45;color:#fff;padding:5px 12px;border-radius:7px;font-size:12px;cursor:pointer}" +
-    "</style></head><body>" +
-    "<header>Clarification requested from: " + escapeHtml(item.role || "agent") + "</header>" +
-    "<pre id=\"clar-request\">" + escapeHtml(request) + "</pre>" +
-    "<div class=\"doc-split\" id=\"clar-split\" title=\"Drag to resize\"></div>" +
-    "<div id=\"clar-response-pane\"><label for=\"clar-response\">Response</label>" +
-    "<textarea id=\"clar-response\">" + escapeHtml(draft) + "</textarea>" +
-    "<div class=\"actions\"><button type=\"button\" id=\"clar-ok\">OK</button></div></div>" +
-    "</body></html>"
-  );
-  win.document.close();
-  bindVSplit(win, win.document.getElementById("clar-split"),
-    win.document.getElementById("clar-request"),
-    win.document.getElementById("clar-response-pane"));
+let clarOpenId = null;
+const clarExpanded = {};
+
+function clarItemById(id) {
+  const data = lastState || {};
+  return (data.clarifications || []).find((item) => item.id === id && item.status === "pending") || null;
+}
+
+function syncClarDraft(id, text, except) {
+  clarDrafts[id] = text;
+  const rowBox = document.querySelector("#attention-clarifications textarea[data-clar-id=\"" + id + "\"]");
+  if (rowBox && rowBox !== except) rowBox.value = text;
+  const modalBox = $("clar-response");
+  if (clarOpenId === id && modalBox !== except) modalBox.value = text;
+}
+
+function sendOnCtrlEnter(box, send) {
+  box.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      send();
+    }
+  });
+}
+
+function closeClarification() {
+  clarOpenId = null;
+  $("clar-layer").classList.remove("open");
 }
 
 function openClarification(item) {
-  const win = window.open("about:blank", "clar-" + encodeURIComponent(item.id || "") + "-" + Date.now(),
-    "resizable=yes,scrollbars=yes,width=720,height=520");
-  if (!win) return;
-  fillClarWindow(win, item);
-  const box = win.document.getElementById("clar-response");
-  win.document.getElementById("clar-ok").onclick = async () => {
-    const text = box.value;
-    clarDrafts[item.id] = text;
-    const row = document.querySelector("#attention-clarifications [data-clar-id=\"" + item.id + "\"]");
-    await postClarification(item.id, text, alsoRoles(row && row.closest(".att-row")));
-    win.close();
-  };
+  clarOpenId = item.id;
+  $("clar-title").textContent = "Clarification requested from: " + (item.role || "agent") +
+    (item.task ? " · " + (item.project ? item.project + "/" : "") + item.task : "");
+  $("clar-request").textContent = item.body || "";
+  $("clar-response").value = clarDrafts[item.id] || "";
+  $("clar-also-box").replaceChildren(alsoPicker(item));
+  $("clar-layer").classList.add("open");
+  $("clar-response").focus();
+}
+
+async function sendOpenClarification() {
+  const id = clarOpenId;
+  if (!id) return;
+  const ok = await postClarification(id, $("clar-response").value, alsoRoles($("clar-also-box")));
+  if (ok && clarOpenId === id) closeClarification();
+}
+
+function setupClarificationDialog() {
+  $("clar-response").addEventListener("input", () => {
+    if (clarOpenId) syncClarDraft(clarOpenId, $("clar-response").value, $("clar-response"));
+  });
+  sendOnCtrlEnter($("clar-response"), sendOpenClarification);
+  $("clar-ok").onclick = sendOpenClarification;
+  $("clar-cancel").onclick = closeClarification;
+  $("clar-layer").addEventListener("click", (event) => {
+    if (event.target === $("clar-layer")) closeClarification();
+  });
 }
 
 function clarificationRow(item) {
   const row = document.createElement("form");
-  row.className = "att-row";
+  row.className = "att-row clar-row";
+  const head = document.createElement("div");
+  head.className = "clar-head";
   const pill = document.createElement("span");
   pill.className = "pill pill-warn";
   pill.textContent = "Clarification requested from: " + (item.role || "agent");
   const pair = attentionWorkPair(item.project, item.task);
-  const summary = document.createElement("span");
-  summary.textContent = item.body || "";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.placeholder = "Answer…";
-  input.dataset.clarId = item.id || "";
-  input.value = clarDrafts[item.id] || "";
-  input.addEventListener("input", () => {
-    clarDrafts[item.id] = input.value;
-  });
+  const spacer = document.createElement("span");
+  spacer.className = "spacer";
+  const body = document.createElement("div");
+  body.className = "clar-body";
+  body.textContent = item.body || "";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "btn btn-sm";
+  const applyExpanded = () => {
+    const open = !!clarExpanded[item.id];
+    body.classList.toggle("clamped", !open);
+    toggle.textContent = open ? "Collapse" : "Expand";
+  };
+  toggle.onclick = (event) => {
+    event.preventDefault();
+    clarExpanded[item.id] = !clarExpanded[item.id];
+    applyExpanded();
+  };
+  applyExpanded();
   const open = document.createElement("button");
   open.type = "button";
   open.className = "btn btn-sm";
@@ -1186,15 +1239,31 @@ function clarificationRow(item) {
     event.preventDefault();
     openClarification(item);
   };
+  head.append(pill, pair, spacer, toggle, open);
+  const input = document.createElement("textarea");
+  input.className = "clar-answer";
+  input.rows = 2;
+  input.placeholder = "Answer… (Ctrl+Enter sends)";
+  input.dataset.clarId = item.id || "";
+  input.value = clarDrafts[item.id] || "";
+  input.addEventListener("input", () => syncClarDraft(item.id, input.value, input));
+  const submit = () => postClarification(item.id, input.value, alsoRoles(row));
+  sendOnCtrlEnter(input, submit);
+  const foot = document.createElement("div");
+  foot.className = "clar-foot";
+  const hint = document.createElement("span");
+  hint.className = "clar-hint";
+  hint.textContent = "Enter adds a line · Ctrl+Enter sends";
   const send = document.createElement("button");
   send.type = "submit";
   send.className = "btn btn-sm btn-primary";
   send.textContent = "Submit";
   row.addEventListener("submit", (event) => {
     event.preventDefault();
-    postClarification(item.id, input.value, alsoRoles(row));
+    submit();
   });
-  row.append(pill, pair, summary, input, alsoPicker(item), open, send);
+  foot.append(hint, alsoPicker(item), send);
+  row.append(head, body, input, foot);
   return row;
 }
 
@@ -1213,7 +1282,13 @@ function alsoPicker(item) {
     check.dataset.alsoRole = lane;
     const key = item.id + "\n" + lane;
     check.checked = !!clarAlso[key];
-    check.addEventListener("change", () => { clarAlso[key] = check.checked; });
+    check.dataset.alsoKey = key;
+    check.addEventListener("change", () => {
+      clarAlso[key] = check.checked;
+      document.querySelectorAll("[data-also-key]").forEach((other) => {
+        if (other.dataset.alsoKey === key) other.checked = check.checked;
+      });
+    });
     label.append(check, " " + displayName(lane));
     box.appendChild(label);
   });
@@ -1226,20 +1301,28 @@ function alsoRoles(row) {
 }
 
 async function postClarification(id, text, also) {
-  if (!text || !text.trim()) return;
+  if (!text || !text.trim()) return false;
   const payload = {text};
   if (also && also.length) payload.also = also;
-  const res = await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(payload)
-  });
-  if (!res.ok) {
-    let msg = "Could not send the answer";
-    try { msg = (await res.json()).error || msg; } catch (_) {}
-    alert(msg);
+  let ok = false;
+  try {
+    const res = await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    ok = res.ok;
+    if (!res.ok) {
+      let msg = "Could not send the answer";
+      try { msg = (await res.json()).error || msg; } catch (_) {}
+      alert(msg);
+    }
+  } catch (_) {
+    alert("Could not send the answer");
   }
+  if (ok) delete clarDrafts[id];
   loadState();
+  return ok;
 }
 
 function renderApprovals(items) {
@@ -1258,6 +1341,7 @@ function renderClarifications(items) {
   [...box.querySelectorAll("[data-clar-id]")].forEach((input) => {
     if (!live[input.dataset.clarId]) input.closest(".att-row").remove();
   });
+  if (clarOpenId && !live[clarOpenId]) closeClarification();
   pending.forEach((item) => {
     if (!box.querySelector("[data-clar-id=\"" + item.id + "\"]")) {
       box.appendChild(clarificationRow(item));
@@ -1794,6 +1878,7 @@ document.addEventListener("click", (event) => {
                     "agent-" + (project ? project + "-" : "") + role);
   }
 });
+setupClarificationDialog();
 loadState();
 setInterval(loadState, 2000);
 </script>

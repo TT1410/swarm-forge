@@ -221,7 +221,7 @@ test.describe("pack dashboard", () => {
     const row = page.locator("#attention-clarifications .att-row");
     await expect(row.locator("[data-also-role]")).toHaveCount(1);
     await row.locator("[data-also-role=\"coder\"]").check();
-    await row.locator("input[type=text]").fill("Yes, all 20.");
+    await row.locator("textarea.clar-answer").fill("Yes, all 20.");
     await row.locator("button", { hasText: "Submit" }).click();
     await expect.poll(() => posted).not.toBeNull();
     expect(posted).toEqual({ text: "Yes, all 20.", also: ["coder"] });
@@ -396,18 +396,66 @@ test.describe("pack dashboard", () => {
     }
   });
 
-  test("Clarification Open posts the answer", async ({ page, context }) => {
+  test("Clarification Open posts the answer from an in-page dialog", async ({ page }) => {
     const local = await startDashboard();
     try {
       await page.goto(local.url);
-      const popupPromise = context.waitForEvent("page");
       await page.locator("#attention-clarifications button", { hasText: "Open" }).click();
-      const clar = await popupPromise;
-      await clar.waitForLoadState("domcontentloaded");
-      await expect(clar.locator("#clar-request")).toContainText("Does the bat drop to any of 20 rooms?");
-      await clar.locator("#clar-response").fill("Yes, any of the 20 rooms.");
-      await clar.locator("#clar-ok").click();
+      await expect(page.locator("#clar-layer")).toBeVisible();
+      await expect(page.locator("#clar-request")).toContainText("Does the bat drop to any of 20 rooms?");
+      await page.locator("#clar-response").fill("Yes, any of the 20 rooms.");
+      await expect(page.locator("#attention-clarifications textarea.clar-answer"))
+        .toHaveValue("Yes, any of the 20 rooms.");
+      await page.locator("#clar-ok").click();
       await expect(page.locator("#attention-clarifications .att-row")).toHaveCount(0);
+      await expect(page.locator("#clar-layer")).toBeHidden();
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("Clarification keeps the question's line breaks and takes a multi-line answer", async ({ page }) => {
+    const local = await startDashboard();
+    let posted = null;
+    try {
+      writeFile(
+        path.join(local.root, "projects/htw/.swarmforge/dashboard/clarifications/pending/clar-1.request"),
+        "id: clar-1\nstatus: pending\nrole: specifier\ncreated_at: 2026-01-01T00:00:00Z\n\n" +
+          "Two questions:\n1. Does the bat drop to any of 20 rooms?\n2. Can it drop into a pit?\n"
+      );
+      await page.route("**/api/clarifications/**", async (route) => {
+        posted = JSON.parse(route.request().postData() || "{}");
+        await route.fulfill({ status: 200, contentType: "application/json", body: "{\"ok\":true}" });
+      });
+      await page.goto(local.url);
+      const body = page.locator("#attention-clarifications .clar-body");
+      await expect(body).toHaveCSS("white-space", "pre-wrap");
+      expect(await body.evaluate((el) => el.textContent)).toContain("questions:\n1. Does");
+      const answer = page.locator("#attention-clarifications textarea.clar-answer");
+      await answer.fill("Yes.");
+      await answer.press("Enter");
+      await answer.type("No pits.");
+      expect(posted).toBeNull();
+      await answer.press("Control+Enter");
+      await expect.poll(() => posted).not.toBeNull();
+      expect(posted).toEqual({ text: "Yes.\nNo pits." });
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("a paused project shows a banner and a Resume button", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      writeFile(path.join(local.root, "projects/htw/.swarmforge/paused"), "now\n");
+      await page.goto(local.url);
+      const banner = page.locator(".project-band [data-banner=\"paused\"]");
+      await expect(banner).toContainText("PAUSED");
+      await expect(banner).toContainText("No task moves until Resume.");
+      await expect(page.locator(".project-header [data-pause-toggle=\"resume\"]")).toHaveText("Resume");
+      fs.rmSync(path.join(local.root, "projects/htw/.swarmforge/paused"));
+      await expect(banner).toHaveCount(0);
+      await expect(page.locator(".project-header [data-pause-toggle=\"pause\"]")).toHaveText("Pause");
     } finally {
       await stopDashboard(local);
     }
