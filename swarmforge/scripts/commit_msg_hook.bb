@@ -2,6 +2,8 @@
 
 (ns commit-msg-hook
   (:require [babashka.fs :as fs]
+            [cheshire.core :as json]
+            [clj-yaml.core :as yaml]
             [clojure.java.shell :as sh]
             [clojure.string :as str]))
 
@@ -50,9 +52,128 @@
 (defn append-byline [text role-name]
   (str (str/trimr text) "\n\n" (byline role-name) "\n"))
 
+(defn merging? []
+  (zero? (:exit (sh/sh "git" "rev-parse" "-q" "--verify" "MERGE_HEAD"))))
+
+(defn config-file? [path]
+  (boolean (re-find #"(?i)\.(ya?ml|json)$" path)))
+
+(defn staged-config-files []
+  (let [result (sh/sh "git" "diff" "--cached" "--name-only" "--diff-filter=ACMR" "HEAD")]
+    (if (zero? (:exit result))
+      (filterv config-file? (remove str/blank? (str/split-lines (:out result))))
+      [])))
+
+(def yaml-limits
+  "SnakeYAML's defaults refuse large or alias-heavy files that git merges fine."
+  {:code-point-limit Integer/MAX_VALUE
+   :max-aliases-for-collections 10000})
+
+(defn parse-config-text! [path text]
+  (if (re-find #"(?i)\.json$" path)
+    (json/parse-string text)
+    (dorun (apply yaml/parse-string text :load-all true :unknown-tag-fn :value
+                  (mapcat identity yaml-limits)))))
+
+(defn parse-message [path text]
+  (try
+    (parse-config-text! path text)
+    nil
+    (catch Exception e
+      (str/trim (str (or (ex-message e) e))))))
+
+(defn blob-text [rev path]
+  (let [result (sh/sh "git" "show" (str rev ":" path))]
+    (when (zero? (:exit result))
+      (:out result))))
+
+(defn parent-parsed? [path]
+  (some (fn [rev]
+          (when-let [text (blob-text rev path)]
+            (nil? (parse-message path text))))
+        ["HEAD" "MERGE_HEAD"]))
+
+(defn config-error
+  "Only a file the merge broke: the staged copy fails to parse while a parent's
+  copy parsed. Files no parent could parse (JSONC, templated YAML) pass."
+  [path]
+  (when-let [text (blob-text "" path)]
+    (when-let [message (parse-message path text)]
+      (when (parent-parsed? path)
+        {:path path :message message}))))
+
+(defn conf-merge-checks []
+  (when-let [file (roles-file)]
+    (let [conf (fs/path (fs/parent (fs/parent file)) "swarmforge" "swarmforge.conf")]
+      (when (fs/regular-file? conf)
+        (->> (str/split-lines (slurp (str conf)))
+             (map str/trim)
+             (keep #(second (re-matches #"merge-check\s+(.+)" %)))
+             vec)))))
+
+(defn merge-check-timeout-seconds []
+  (let [value (System/getenv "SWARMFORGE_MERGE_CHECK_TIMEOUT")]
+    (if (and value (re-matches #"[0-9]+" value))
+      (Long/parseLong value)
+      300)))
+
+(defn kill-tree! [proc]
+  (let [handle (.toHandle proc)]
+    (run! #(.destroyForcibly %) (iterator-seq (.iterator (.descendants handle))))
+    (.destroyForcibly handle)))
+
+(defn run-check [command]
+  (let [proc (-> (ProcessBuilder. ["sh" "-c" command])
+                 (.directory (java.io.File. (str (or (git-toplevel) "."))))
+                 (.redirectErrorStream true)
+                 (.start))
+        out (future (slurp (.getInputStream proc)))
+        seconds (merge-check-timeout-seconds)]
+    (.close (.getOutputStream proc))
+    (if (.waitFor proc seconds java.util.concurrent.TimeUnit/SECONDS)
+      {:exit (.exitValue proc) :out (deref out 5000 "")}
+      (do (kill-tree! proc)
+          {:exit 124
+           :out (str "timed out after " seconds " s")}))))
+
+(defn check-error [command]
+  (let [result (run-check command)]
+    (when-not (zero? (:exit result))
+      {:command command
+       :output (str/trim (:out result))})))
+
+(defn refuse-merge! [lines]
+  (binding [*out* *err*]
+    (println "MERGE_CHECK_FAILED: the merge commit was refused.")
+    (doseq [line lines]
+      (println line))
+    (println "Compare the merge result with each parent:")
+    (println "  git diff --cached HEAD -- <file>")
+    (println "  git diff --cached MERGE_HEAD -- <file>")
+    (println "Fix the file, git add it, and commit again. Then review with: git show --cc HEAD"))
+  (System/exit 1))
+
+(defn check-merge!
+  "Merge commits only: staged YAML/JSON must still parse, and every
+  `merge-check <command>` line in swarmforge.conf must pass."
+  []
+  (when (merging?)
+    (let [parse-errors (keep config-error (staged-config-files))
+          check-errors (keep check-error (conf-merge-checks))]
+      (when (or (seq parse-errors) (seq check-errors))
+        (refuse-merge!
+         (concat
+          (for [{:keys [path message]} parse-errors]
+            (str "- " path " no longer parses:\n"
+                 (str/join "\n" (map #(str "    " %) (str/split-lines message)))))
+          (for [{:keys [command output]} check-errors]
+            (str "- merge-check failed: " command
+                 (when-not (str/blank? output) (str "\n" output))))))))))
+
 (defn -main [& args]
   (when-not (= 1 (count args))
     (System/exit 0))
+  (check-merge!)
   (when-let [role-name (role)]
     (let [msg-file (first args)
           text (slurp msg-file)]

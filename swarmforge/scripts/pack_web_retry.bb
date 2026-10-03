@@ -154,40 +154,184 @@
          (filter #(some wanted (handoff-task-ids %)))
          vec)))
 
-(defn write-retry-in-process! [worktree headers]
+(defn strip-header! [path field]
+  (let [prefix (str field ": ")
+        [head body] (str/split (slurp (str path)) #"\n\n" 2)
+        kept (remove #(str/starts-with? % prefix) (str/split-lines head))]
+    (spit (str path) (str (str/join "\n" kept) "\n\n" body))))
+
+(defn header-card-ids
+  "Every card a handoff carries: its batch_task_ids, or else its task."
+  [headers]
+  (let [batch (header-batch-task-ids headers)]
+    (vec (distinct (remove str/blank?
+                           (if (seq batch)
+                             batch
+                             [(or (not-empty (get headers "task_id")) (get headers "task"))]))))))
+
+(defn later-git-handoff-in?
+  "Another git handoff from the sender, for other cards, among paths whose
+  commit contains the held commit."
+  [wt sender commit wanted paths]
+  (some (fn [path]
+          (let [headers (:headers (parse-message path))
+                other (get headers "commit")]
+            (and (= "git_handoff" (get headers "type"))
+                 (= sender (get headers "from"))
+                 (not-any? wanted (handoff-task-ids path))
+                 (not (str/blank? other))
+                 (git-ok? wt "merge-base" "--is-ancestor" commit other))))
+        paths))
+
+(defn later-handoff-on-top?
+  "Another git handoff from the sender, still held or queued, whose commit
+  contains the held commit."
+  [root wt sender commit wanted]
+  (boolean
+   (and commit (git-repo? wt)
+        (later-git-handoff-in?
+         wt sender commit wanted
+         (concat (glob-handoffs (fs/path root ".swarmforge" "handoffs" "pending_approval"))
+                 (glob-handoffs (fs/path wt ".swarmforge" "handoffs" "outbox"))
+                 (glob-handoffs (fs/path root ".swarmforge" "handoffs" "outbox")))))))
+
+(defn head-built-on?
+  "The worktree HEAD is a later commit that contains the held commit."
+  [wt commit]
+  (boolean
+   (and commit (git-repo? wt)
+        (git-ok? wt "rev-parse" "--verify" commit)
+        (not= (git! wt "rev-parse" "HEAD") (git! wt "rev-parse" commit))
+        (git-ok? wt "merge-base" "--is-ancestor" commit "HEAD"))))
+
+(defn later-delivery-on-top?
+  "HEAD moved past the held commit and the sender already delivered a git
+  handoff built on it: that later card is out, so HEAD must stay."
+  [wt sender commit wanted]
+  (boolean
+   (and (head-built-on? wt commit)
+        (later-git-handoff-in? wt sender commit wanted
+                               (glob-handoffs (fs/path wt ".swarmforge" "handoffs" "sent"))))))
+
+(defn sender-moved-on?
+  "True when the sender went on to another card after the held handoff: it
+  holds in-process work for another card, or another of its handoffs, held,
+  queued or already delivered, is built on the held commit. Then rewinding
+  the worktree would throw that work away."
+  [root wt sender commit headers]
+  (let [in-proc (glob-handoffs (fs/path wt ".swarmforge" "handoffs" "inbox" "in_process"))
+        wanted (set (header-card-ids headers))]
+    (boolean (or (some #(not-any? wanted (handoff-task-ids %)) in-proc)
+                 (later-handoff-on-top? root wt sender commit wanted)
+                 (later-delivery-on-top? wt sender commit wanted)))))
+
+(defn held-card-type
+  "The card type the held handoff carried, or else its board card's type."
+  [root headers]
+  (or (not-empty (get headers "card_type"))
+      (let [ids (set (remove str/blank? [(get headers "task_id") (get headers "task")]))]
+        (some #(when (or (ids (:id %)) (ids (:name %))) (not-empty (:type %)))
+              (board-tasks root)))))
+
+(defn retry-note
+  "A note that asks the sender to redo the held handoff's cards."
+  [root headers priority text]
   (let [task-id (or (not-empty (get headers "task_id")) (get headers "task"))
         task (or (get headers "task") task-id)
-        base (not-empty (get headers "task_base_commit"))
-        from (or (get headers "from") "")
-        dir (fs/path worktree ".swarmforge" "handoffs" "inbox" "in_process")
-        file (fs/path dir (str "50_retry_" (str/replace (or task-id "task") #"[^A-Za-z0-9]+" "_") ".handoff"))]
+        ids (header-card-ids headers)
+        card-type (held-card-type root headers)
+        base (not-empty (get headers "task_base_commit"))]
+    (str "from: (Retry)\n"
+         "to: " (or (get headers "from") "") "\n"
+         "priority: " priority "\n"
+         "type: note\n"
+         "task_id: " task-id "\n"
+         "task: " task "\n"
+         (when card-type (str "card_type: " card-type "\n"))
+         (when (next ids) (str "batch_task_ids: " (pr-str ids) "\n"))
+         (when base (str "task_base_commit: " base "\n"))
+         "\n"
+         text)))
+
+(defn retry-file-name
+  "Inbox names start with priority then a timestamp; a zero timestamp puts
+  the retry ahead of every other mail of its priority."
+  [priority task-id]
+  (str priority "_00000000T000000Z_000000_retry_"
+       (str/replace (or task-id "task") #"[^A-Za-z0-9]+" "_") ".handoff"))
+
+(defn requeue-retry!
+  "Queue the retry at the head of the sender's inbox instead of rewinding
+  its worktree, which already holds later work."
+  [root wt headers]
+  (let [task-id (or (not-empty (get headers "task_id")) (get headers "task"))
+        ids (header-card-ids headers)
+        new-dir (fs/path wt ".swarmforge" "handoffs" "inbox" "new")
+        file (fs/path new-dir (retry-file-name "00" task-id))]
+    (doseq [path (distinct (mapcat #(task-inbox-files wt "completed" % nil) ids))]
+      (strip-header! path "handed_task_ids"))
+    (fs/create-dirs new-dir)
+    (spit (str file)
+          (retry-note root (dissoc headers "task_base_commit") "00"
+                      "Retry audit. Redo this card on top of the current tree.\n"))))
+
+(defn role-batch-mode? [root role]
+  (= "batch" (some-> (role-row root role) (nth 6 nil) str/trim)))
+
+(defn retry-target-dir
+  "Where restored mail goes: the in-process folder for a task-mode role, a new
+  batch folder for a batch-mode role, whose helpers refuse loose files."
+  [worktree batch?]
+  (let [dir (fs/path worktree ".swarmforge" "handoffs" "inbox" "in_process")]
+    (if-not batch?
+      dir
+      (let [stamp (.format (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd'T'HHmmss'Z'")
+                           (.atZone (java.time.Instant/now) java.time.ZoneOffset/UTC))]
+        (loop [n 1]
+          (let [candidate (fs/path dir (format "batch_%s_%06d" stamp n))]
+            (if (fs/exists? candidate) (recur (inc n)) candidate)))))))
+
+(defn write-retry-in-process! [root worktree headers batch?]
+  (let [task-id (or (not-empty (get headers "task_id")) (get headers "task"))
+        dir (retry-target-dir worktree batch?)
+        file (fs/path dir (retry-file-name "50" task-id))]
     (when-not (str/blank? task-id)
       (fs/create-dirs dir)
-      (spit (str file)
-            (str "from: (Retry)\n"
-                 "to: " from "\n"
-                 "priority: 50\n"
-                 "type: note\n"
-                 "task_id: " task-id "\n"
-                 "task: " task "\n"
-                 (when base (str "task_base_commit: " base "\n"))
-                 "\n"
-                 "Retry audit.\n")))))
+      (spit (str file) (retry-note root headers "50" "Retry audit.\n")))))
 
-(defn restore-task-base! [root headers]
+(defn newest-completed-mail
+  "The card's latest completed mail; earlier rounds stay completed."
+  [worktree id]
+  (->> (task-inbox-files worktree "completed" id nil)
+       (sort-by (fn [file]
+                  [(or (get-in (parse-message file) [:headers "completed_at"]) "")
+                   (str (fs/file-name file))]))
+       last))
+
+(defn restore-task-base!
+  "Put the newest mail of every card the held handoff carried back in
+  process, so the sender redoes them. A batch-mode sender gets them as a new
+  batch; a task-mode sender holds one mail at a time, so cards spread over
+  several mails come back as one retry note naming them in batch_task_ids."
+  [root headers]
   (let [task-id (or (not-empty (get headers "task_id")) (get headers "task"))
         task (get headers "task")
-        wt (worktree-for root (get headers "from"))
+        ids (header-card-ids headers)
+        sender (get headers "from")
+        wt (worktree-for root sender)
+        batch? (role-batch-mode? root sender)
         in-proc (task-inbox-files wt "in_process" task-id task)
-        done (task-inbox-files wt "completed" task-id task)]
+        done (->> ids (keep #(newest-completed-mail wt %)) distinct vec)]
     (cond
       (seq in-proc) nil
-      (seq done)
-      (let [src (first done)
-            dest-dir (fs/path wt ".swarmforge" "handoffs" "inbox" "in_process")]
+      (and (seq done) (or batch? (= 1 (count done))))
+      (let [dest-dir (retry-target-dir wt batch?)]
         (fs/create-dirs dest-dir)
-        (fs/move src (fs/path dest-dir (fs/file-name src)) {:replace-existing true}))
-      :else (write-retry-in-process! wt headers))))
+        (doseq [src done
+                :let [dest (fs/path dest-dir (fs/file-name src))]]
+          (fs/move src dest {:replace-existing true})
+          (strip-header! dest "handed_task_ids")))
+      :else (write-retry-in-process! root wt headers batch?))))
 
 (defn approval-doc-paths [headers reviews]
   (vec (distinct (concat (comma-list (get headers "artifacts"))
@@ -201,16 +345,20 @@
         commit (not-empty (get headers "commit"))
         n (if (git-repo? root) (next-rejected-n root task-id) 1)
         wt (worktree-for root (get headers "from"))
-        reviews (read-reviews root id)]
+        reviews (read-reviews root id)
+        moved-on? (sender-moved-on? root wt (get headers "from") commit headers)]
     (doseq [path (approval-doc-paths headers reviews)]
       (append-task-review! root task-id path comments))
     (when commit
       (snapshot-rejected! root task-id commit n)
-      (restore-commit! wt commit))
+      (when-not moved-on?
+        (restore-commit! wt commit)))
     (fs/delete-if-exists src)
     (drop-reviews! root id)
     (drop-task-audits! root task-id task)
-    (restore-task-base! root headers)
+    (if moved-on?
+      (requeue-retry! root wt headers)
+      (restore-task-base! root headers))
     (increment-audit-count! root task-id)
     (write-latest-audit-findings! root task-id reviews comments)
     (when-not (str/blank? task)
@@ -224,6 +372,13 @@
         commit (not-empty (get headers "commit"))
         n (if (git-repo? root) (next-rejected-n root task-id) 1)
         wt (worktree-for root (get headers "from"))]
+    (when (sender-moved-on? root wt (get headers "from") commit headers)
+      (conflict! (str "The " (get headers "from") " has moved on past this card; Delete would discard later work. Use Retry: " task)))
+    (when (next (header-card-ids headers))
+      (conflict! (str "This handoff carries several cards; use Retry: " task)))
+    (when (some #(and (not= :history (handoff-state %)) (next (handoff-task-ids %)))
+                (task-handoffs root task-id task))
+      (conflict! (str "Live mail carries this card together with other cards; use Retry: " task)))
     (when commit
       (snapshot-rejected! root task-id commit n))
     (rollback-to-base! wt headers)

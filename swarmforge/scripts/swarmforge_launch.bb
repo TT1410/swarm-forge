@@ -92,6 +92,31 @@
     "--no-alt-screen "
     ""))
 
+(defn standing-instruction-sources [ctx role]
+  (let [constitution-dir (fs/path (:swarm-forge-dir ctx) "constitution")]
+    (->> (concat [(:constitution-file ctx)]
+                 (when (fs/directory? constitution-dir)
+                   (sort-by str (filter fs/regular-file? (fs/glob constitution-dir "**"))))
+                 [(fs/path (:roles-dir ctx) (str role ".prompt"))])
+         (filter fs/regular-file?))))
+
+(defn file-section [ctx file]
+  (str "\n\n----- " (fs/relativize (:working-dir ctx) file) " -----\n\n"
+       (slurp (str file))))
+
+(defn write-system-instruction-files!
+  "The standing instructions an agent keeps across context compaction: the
+  launch prompt plus the full constitution and role prompt text. Codex reads
+  them as a TOML string for `-c developer_instructions=`."
+  [ctx role prompt-file]
+  (let [text (apply str (slurp (str prompt-file))
+                    (map #(file-section ctx %) (standing-instruction-sources ctx role)))
+        system-file (fs/path (:prompts-dir ctx) (str role ".system.md"))
+        toml-file (fs/path (:prompts-dir ctx) (str role ".system.toml-string"))]
+    (spit (str system-file) text)
+    (spit (str toml-file) (json/generate-string text))
+    {:system-file system-file :toml-file toml-file}))
+
 (defn launch-command [ctx index row]
   (let [role (:role row)
         agent (:agent row)
@@ -107,17 +132,21 @@
         base (str "export SWARMFORGE_ROLE=" (sq role)
                   " && export PATH=" (sq (str tool-bin)) ":" (sq (str role-script-dir)) ":$PATH"
                   " && cd " (sq (str role-worktree))
-                  " && ")]
-    (write-agent-instruction-file! ctx role prompt-file (last-pack-role? ctx role))
+                  " && ")
+        _ (write-agent-instruction-file! ctx role prompt-file (last-pack-role? ctx role))
+        system (when initial-prompt? (write-system-instruction-files! ctx role prompt-file))
+        system-file (or (:system-file system) prompt-file)]
     (cond-> (str base
                 (case agent
                   "claude" (str (alt-screen-env agent row)
-                                "claude --append-system-prompt-file " (sq (str prompt-file)) " "
+                                "claude --append-system-prompt-file " (sq (str system-file)) " "
                                 (yolo-flag agent row) "-n " (sq (str "SwarmForge " display)) " "
                                 (extra-args-prefix row)
                                 (when initial-prompt? prompt))
                   "codex" (str "codex -C " (sq (str role-worktree)) " "
                                (no-alt-screen-flag agent row) (yolo-flag agent row)
+                               (when system
+                                 (str "-c developer_instructions=\"$(cat " (sq (str (:toml-file system))) ")\" "))
                                (extra-args-prefix row)
                                (when initial-prompt? prompt))
                   "copilot" (str "copilot -C " (sq (str role-worktree)) " "
@@ -127,7 +156,7 @@
                                  (when initial-prompt? (str "-i " prompt)))
                   "grok" (str "grok --cwd " (sq (str role-worktree)) " "
                               (grok-permission-prefix row) (extra-args-prefix row)
-                              "--minimal --rules " prompt
+                              "--minimal --rules \"$(cat " (sq (str system-file)) ")\""
                               (when initial-prompt? (str " --verbatim " prompt)))))
       (= index 0)
       (str "; exit_code=$?; SWARMFORGE_TERMINAL_BACKEND=" (sq (:terminal-backend ctx))

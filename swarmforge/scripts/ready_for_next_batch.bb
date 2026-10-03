@@ -94,6 +94,10 @@
     (when task-id
       (println "TASK_ID:" task-id))
     (ready-for-next-guard/print-card-briefing! file)
+    (when (= "true" (header-field file "non-forwarding"))
+      (println "MERGE_ONLY: true"))
+    (when (= "true" (header-field file "return"))
+      (println "RETURNED: true"))
     (println "PAYLOAD:")
     (print (body file))))
 
@@ -289,9 +293,12 @@
         (recur (inc suffix))
         dir))))
 
-(defn reverse-mail? [file]
+(defn reverse-mail?
+  "A merge-only copy. A note at priority 00, such as a retry, is forward work
+  and must not share a batch with merge-only copies."
+  [file]
   (or (= "true" (header-field file "non-forwarding"))
-      (= "00" (header-value file "priority" "50"))))
+      (ready-for-next-guard/reverse-git-file? file)))
 
 (defn batch-card-type [file]
   (or (not-empty (header-field file "card_type")) ""))
@@ -307,6 +314,7 @@
       (filterv #(= key (batch-key %)) new-files))))
 
 (defn -main []
+  (ready-for-next-guard/exit-if-paused!)
   (let [inbox (inbox-dir)
         new-dir (fs/path inbox "new")
         in-process-dir (fs/path inbox "in_process")
@@ -326,10 +334,11 @@
       (if (= 1 (count in-process-batches))
         (let [batch-dir (first in-process-batches)]
           (process-batch! batch-dir (ensure-batch-manifest! batch-dir)))
-        (let [new-files (handoff-files new-dir)]
-          (when-let [active (seq (ready-for-next-guard/active-outbound-git-files
-                                  (ready-for-next-guard/current-role)))]
-            (apply fail! 2 (ready-for-next-guard/wait-message active)))
+        (let [role (ready-for-next-guard/current-role)
+              queued (handoff-files new-dir)
+              _ (when-let [active (ready-for-next-guard/blocking-files role queued)]
+                  (apply fail! 2 (ready-for-next-guard/wait-message active)))
+              new-files (ready-for-next-guard/startable-files role queued)]
           (if (empty? new-files)
             (println "NO_TASK")
             (let [selected-files (select-batch-files new-files)

@@ -377,8 +377,18 @@
     (with-redefs [run-teardown! (fn [_] (throw (ex-info "boom" {})))]
       (schedule-teardown! (require-root! root)))))
 
+(defn test-post! [root uri body]
+  (let [resp (handle-request (require-root! root)
+                             {:method "POST" :uri uri :body (or body "{}")})]
+    (println (json/generate-string {:status (:status resp)
+                                    :body (try (json/parse-string (str (:body resp)) true)
+                                               (catch Exception _ (str (:body resp))))}))))
+
 (defn test-cli! [& args]
   (case (first args)
+    "--test-post" (test-post! (second args) (nth args 2 nil) (nth args 3 nil))
+    "--test-notify-scan" (binding [*sync-notify?* true]
+                           (notify-new-attention! (require-root! (second args))))
     "--test-state" (test-state! (second args))
     "--test-html" (test-html!)
     "--test-post-task" (test-post-task! (second args) (nth args 2 nil) (nth args 3 nil)

@@ -54,23 +54,46 @@
          (some #(str/starts-with? % "qa/") added))
     (conj "This card type must not add QA procedures.")))
 
-(defn commit-named-files [sha diff-filter]
-  (if-let [base (not-empty (current-task-base))]
-    (named-files (command (git-cwd) "git" "diff" "--name-only"
-                          (str "--diff-filter=" diff-filter) base sha))
-    (let [against-parent (command (git-cwd) "git" "diff" "--name-only"
-                                  (str "--diff-filter=" diff-filter) (str sha "^") sha)]
-      (if (zero? (:exit against-parent))
-        (named-files against-parent)
-        (named-files (command (git-cwd) "git" "diff-tree" "--root"
-                              "--no-commit-id" "--name-only"
-                              (str "--diff-filter=" diff-filter) "-r" sha))))))
+(defn changed-files [base sha diff-filter]
+  (named-files (command (git-cwd) "git" "diff" "--name-only"
+                        (str "--diff-filter=" diff-filter) base sha)))
 
-(defn commit-artifacts [sha]
-  (commit-named-files sha "ACMRT"))
+(defn own-commit-files [sha diff-filter]
+  (let [against-parent (command (git-cwd) "git" "diff" "--name-only"
+                                (str "--diff-filter=" diff-filter) (str sha "^") sha)]
+    (if (zero? (:exit against-parent))
+      (named-files against-parent)
+      (named-files (command (git-cwd) "git" "diff-tree" "--root"
+                            "--no-commit-id" "--name-only"
+                            (str "--diff-filter=" diff-filter) "-r" sha)))))
 
-(defn commit-added [sha]
-  (commit-named-files sha "A"))
+(defn earlier-work-files
+  "Card work committed before the current base (for example while the role
+  merged a merge-only copy or read a note): diff against the base of a
+  recently completed mail."
+  [sha diff-filter card-ids]
+  (some (fn [base]
+          (when (and (not= base sha) (commit-descends-from? base sha))
+            (not-empty (changed-files base sha diff-filter))))
+        (recent-completed-bases card-ids)))
+
+(defn commit-named-files
+  ([sha diff-filter] (commit-named-files sha diff-filter []))
+  ([sha diff-filter card-ids]
+   (let [base (not-empty (current-task-base))]
+     (or (not-empty (if base
+                      (changed-files base sha diff-filter)
+                      (own-commit-files sha diff-filter)))
+         (earlier-work-files sha diff-filter card-ids)
+         []))))
+
+(defn commit-artifacts
+  ([sha] (commit-artifacts sha []))
+  ([sha card-ids] (commit-named-files sha "ACMRT" card-ids)))
+
+(defn commit-added
+  ([sha] (commit-added sha []))
+  ([sha card-ids] (commit-named-files sha "A" card-ids)))
 
 (defn state-dir []
   (fs/path (project-root) ".swarmforge" "handoffs"))
@@ -191,13 +214,16 @@
                       task-id in-process-id))
         (and (board-present?) (nil? in-process-id) (not task))
         (conj (format "Handoff task_id '%s' is not a current board task." task-id))
-        (and task (= "done" (:lane task)))
+        (and task (= "done" (:lane task)) (not (return-handoff? headers)))
         (conj (format "Task '%s' is done and cannot accept new handoffs." (:name task)))
+        (and (some? (get headers "return")) (not (return-handoff? headers)))
+        (conj (format "Header 'return' must be 'true'; got '%s'." (get headers "return")))
         (rejected-task? task)
         (conj (format "Task '%s' is rejected and must be retried before handoff." (:name task)))))))
 
 (def active-states
-  [["pending approvals" (fn [] [(fs/path (state-dir) "pending_approval")])]
+  [["outbox" (fn [] [(fs/path (state-dir) "outbox")])]
+   ["pending approvals" (fn [] [(fs/path (state-dir) "pending_approval")])]
    ["sent" (fn []
              (concat [(fs/path (state-dir) "sent")]
                      (for [line (str/split-lines (slurp (str (roles-file))))

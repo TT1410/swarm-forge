@@ -77,9 +77,14 @@
     (doseq [path (task-handoffs root task-id name)]
       (copy-into dir path))))
 
-(defn drop-task-handoffs! [root task-id & aliases]
-  (doseq [path (apply task-handoffs root task-id aliases)]
-    (fs/delete-if-exists path)))
+(defn drop-task-handoffs!
+  "Drop the handoffs that carry only this card. A batch that carries the card
+  next to other cards belongs to the batch and stays."
+  [root task-id & aliases]
+  (let [wanted (set (remove str/blank? (cons task-id aliases)))]
+    (doseq [path (apply task-handoffs root task-id aliases)
+            :when (every? wanted (handoff-task-ids path))]
+      (fs/delete-if-exists path))))
 
 (defn audit-task-id [path]
   (try
@@ -147,10 +152,21 @@
       (catch Exception e
         (http-error (or (:http-status (ex-data e)) 400) (.getMessage e))))))
 
+(def max-task-name-length 80)
+
+(defn bad-request! [message]
+  (throw (ex-info message {:http-status 400})))
+
+(defn require-task-name! [name]
+  (cond
+    (str/blank? name) (bad-request! "Missing task name")
+    (> (count name) max-task-name-length)
+    (bad-request! (str "Task name must be no longer than " max-task-name-length
+                       " characters (got " (count name) ")."))
+    :else (safe-paths/require-task-name! name)))
+
 (defn create-task! [root name text card-type]
-  (when (str/blank? name)
-    (throw (ex-info "Missing task name" {:http-status 400})))
-  (safe-paths/require-task-name! name)
+  (require-task-name! name)
   (let [card-type (if (str/blank? card-type) (card-type/default-type root) card-type)]
     (when-not (card-type/known? root card-type)
       (throw (ex-info (str "Unknown type: " card-type) {:http-status 400})))
@@ -194,3 +210,155 @@
       (json-ok)
       (catch Exception e
         (http-error (or (:http-status (ex-data e)) 400) (.getMessage e))))))
+
+(defn normalize-priority [priority]
+  (let [text (str/trim (str (or priority "")))]
+    (cond
+      (str/blank? text) nil
+      (re-matches #"[0-9]{1,2}" text) (format "%02d" (Long/parseLong text))
+      :else (bad-request! (str "Priority must be a number from 00 to 99; got '" text "'.")))))
+
+(defn project-dest [root project]
+  (if (forge/forge? root)
+    (if (str/blank? project)
+      (bad-request! "Missing project")
+      (str (forge/project-dir root project)))
+    root))
+
+(defn json-action [f]
+  (try
+    (f)
+    (json-ok)
+    (catch Exception e
+      (http-error (or (:http-status (ex-data e)) 400) (.getMessage e)))))
+
+(defn rename-task! [root name to]
+  (when (str/blank? name)
+    (bad-request! "Missing task name"))
+  (require-task-name! (some-> to str/trim))
+  (when-not (task-by-name root name)
+    (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+  (pack-board root "rename" "--name" name "--to" (str/trim to)))
+
+(defn post-rename-task [root body]
+  (let [{:keys [name to project]} (json/parse-string (or body "{}") true)]
+    (json-action #(rename-task! (project-dest root project) name to))))
+
+(defn handoff-state [path]
+  (let [p (str/replace (str path) "\\" "/")]
+    (cond
+      (str/includes? p "/inbox/in_process/") :in-process
+      (str/includes? p "/pending_approval/") :pending
+      (str/includes? p "/inbox/new/") :queued
+      (= "outbox" (str (fs/file-name (fs/parent path)))) :queued
+      :else :history)))
+
+(defn handoff-recipient [path]
+  (let [headers (:headers (parse-message path))]
+    (or (get headers "recipient") (get headers "to"))))
+
+(defn conflict! [message]
+  (throw (ex-info message {:http-status 409})))
+
+(defn queued-card-handoffs
+  "The card's handoffs still waiting in an inbox/new or outbox.
+  Refuses with 409 when any handoff of the card is in process or waits for approval."
+  [root name]
+  (when (str/blank? name)
+    (bad-request! "Missing task name"))
+  (let [task (or (task-by-name root name)
+                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+        task-id (:id task)
+        by-state (group-by handoff-state (task-handoffs root task-id name))]
+    (when (= "done" (:lane task))
+      (conflict! (str "Card is done: " name)))
+    (when-let [busy (first (:in-process by-state))]
+      (conflict! (str "Card is in progress at " (handoff-recipient busy) "; it can no longer be changed in the queue: " name)))
+    (when (seq (:pending by-state))
+      (conflict! (str "Card is waiting for approval; use Attention: " name)))
+    (when (some #(> (count (handoff-task-ids %)) 1) (:queued by-state))
+      (conflict! (str "Card travels in a batch that carries other cards too: " name)))
+    (when (some #(= "outbox" (str (fs/file-name (fs/parent %)))) (:queued by-state))
+      (conflict! (str "Card is being delivered; try again in a moment: " name)))
+    {:task task :queued (vec (:queued by-state))}))
+
+(defn move-or-conflict! [from to name]
+  (try
+    (fs/move from to {:atomic-move true})
+    (catch java.nio.file.NoSuchFileException _
+      (conflict! (str "Card was just picked up by its role: " name)))))
+
+(defn dequeue-task!
+  "Remove a card that waits in a queue: its queued handoffs are moved to
+  .swarmforge/removed-tasks/<task-id>/ with its body, then the card leaves the board."
+  [root name]
+  (let [{:keys [task queued]} (queued-card-handoffs root name)
+        task-id (:id task)
+        dir (safe-paths/state-key-path! (fs/path root ".swarmforge" "removed-tasks") task-id "")
+        moved (atom [])]
+    (fs/create-dirs dir)
+    (try
+      (doseq [[i path] (map-indexed vector queued)
+              :let [dest (fs/path dir (str i "_" (fs/file-name path)))]]
+        (move-or-conflict! path dest name)
+        (swap! moved conj [dest path]))
+      (catch Exception e
+        (doseq [[dest path] @moved]
+          (fs/move dest path))
+        (throw e)))
+    (copy-into dir (safe-paths/task-path! (fs/path root ".swarmforge" "board") name ".txt"))
+    (pack-board root "delete" "--name" name)
+    (fs/delete-if-exists (reject-notify root name))))
+
+(defn with-priority-header [content priority]
+  (let [[header body] (str/split content #"\n\n" 2)
+        lines (str/split-lines header)
+        lines (if (some #(str/starts-with? % "priority: ") lines)
+                (mapv #(if (str/starts-with? % "priority: ") (str "priority: " priority) %) lines)
+                (conj (vec lines) (str "priority: " priority)))]
+    (str (str/join "\n" lines) "\n\n" body)))
+
+(defn prioritized-name [filename priority]
+  (if (re-find #"^[0-9]{2}_" filename)
+    (str priority (subs filename 2))
+    (str priority "_" filename)))
+
+(defn claim-handoff!
+  "Take a queued handoff away from its role before rewriting it: an atomic
+  rename to a hidden, non-.handoff name in the same inbox. 409 when the role
+  picked it up first."
+  [path name]
+  (let [claim (fs/path (fs/parent path) (str ".claim_" (fs/file-name path) ".part"))]
+    (move-or-conflict! path claim name)
+    claim))
+
+(defn reprioritize-handoff! [path priority name]
+  (let [dest (fs/path (fs/parent path) (prioritized-name (str (fs/file-name path)) priority))]
+    (when (and (not= (str dest) (str path)) (fs/exists? dest))
+      (conflict! (str "A queued handoff named " (fs/file-name dest) " already exists.")))
+    (let [claim (claim-handoff! path name)]
+      (spit (str claim) (with-priority-header (slurp (str claim)) priority))
+      (try
+        (fs/move claim dest {:atomic-move true})
+        (catch java.nio.file.FileAlreadyExistsException _
+          (fs/move claim path {:atomic-move true})
+          (conflict! (str "A queued handoff named " (fs/file-name dest) " already exists.")))))))
+
+(defn reprioritize-task!
+  "Change the priority of a queued card: the priority header and the
+  NN_ filename prefix that orders inbox/new."
+  [root name priority]
+  (let [priority (or (normalize-priority priority) (bad-request! "Missing priority"))
+        {:keys [queued]} (queued-card-handoffs root name)]
+    (when (empty? queued)
+      (conflict! (str "Card has no queued handoff to reorder: " name)))
+    (doseq [path queued]
+      (reprioritize-handoff! path priority name))))
+
+(defn post-dequeue-task [root body]
+  (let [{:keys [name project]} (json/parse-string (or body "{}") true)]
+    (json-action #(dequeue-task! (project-dest root project) name))))
+
+(defn post-task-priority [root body]
+  (let [{:keys [name priority project]} (json/parse-string (or body "{}") true)]
+    (json-action #(reprioritize-task! (project-dest root project) name priority))))

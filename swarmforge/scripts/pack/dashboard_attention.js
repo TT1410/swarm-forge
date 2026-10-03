@@ -382,7 +382,8 @@ function openClarification(item) {
   };
   win.document.getElementById("clar-ok").onclick = async () => {
     syncDraft();
-    await postClarification(item.id, box.value);
+    const row = document.querySelector("#attention-clarifications [data-clar-id=\"" + item.id + "\"]");
+    await postClarification(item.id, box.value, alsoRoles(row && row.closest(".att-row")));
     win.close();
   };
   win.document.getElementById("clar-dismiss").onclick = () => {
@@ -427,19 +428,63 @@ function clarificationRow(item) {
   send.textContent = "Submit";
   row.addEventListener("submit", (event) => {
     event.preventDefault();
-    postClarification(item.id, input.value);
+    postClarification(item.id, input.value, alsoRoles(row));
   });
-  row.append(pill, pair, summary, open, input, send);
+  row.append(pill, pair, summary, open, input, alsoPicker(item), send);
   return row;
 }
 
-async function postClarification(id, text) {
+const clarAlso = {};
+
+function lanesFor(project) {
+  const data = lastState || {};
+  if (!project) return data.lanes || [];
+  const proj = (data.projects || []).find((p) => p.name === project);
+  return (proj && proj.lanes) || [];
+}
+
+function alsoPicker(item) {
+  const box = document.createElement("span");
+  box.className = "clar-also";
+  box.title = "Also send the answer to these roles";
+  const others = lanesFor(item.project)
+    .filter((lane) => lane !== item.role && lane !== "waiting" && lane !== "done");
+  if (!others.length) return box;
+  box.append("Also:");
+  others.forEach((lane) => {
+    const label = document.createElement("label");
+    const check = document.createElement("input");
+    check.type = "checkbox";
+    check.value = lane;
+    check.dataset.alsoRole = lane;
+    const key = item.id + "\n" + lane;
+    check.checked = !!clarAlso[key];
+    check.addEventListener("change", () => { clarAlso[key] = check.checked; });
+    label.append(check, " " + displayName(lane));
+    box.appendChild(label);
+  });
+  return box;
+}
+
+function alsoRoles(row) {
+  if (!row) return [];
+  return [...row.querySelectorAll("[data-also-role]:checked")].map((el) => el.value);
+}
+
+async function postClarification(id, text, also) {
   if (!text || !text.trim()) return;
-  await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
+  const payload = {text};
+  if (also && also.length) payload.also = also;
+  const res = await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
-    body: JSON.stringify({text})
+    body: JSON.stringify(payload)
   });
+  if (!res.ok) {
+    let msg = "Could not send the answer";
+    try { msg = (await res.json()).error || msg; } catch (_) {}
+    alert(msg);
+  }
   loadState();
 }
 

@@ -3,7 +3,13 @@
 (ns swarmforge
   (:require [babashka.fs :as fs]
             [babashka.process :as process]
+            [cheshire.core :as json]
             [clojure.string :as str]))
+
+(try
+  (require 'ready-for-next-guard)
+  (catch Exception _
+    (load-file (str (fs/path (fs/parent *file*) "ready_for_next_guard.bb")))))
 
 (def session-prefix "swarmforge")
 (def agent-window "swarm")
@@ -254,6 +260,12 @@
       (println (str yellow "Existing SwarmForge session found: " (:session row) ". Killing it..." reset))
       (sh "tmux" "-S" (:tmux-socket ctx) "kill-session" "-t" (:session row)))))
 
+(defn warn-if-paused! [ctx]
+  (when (ready-for-next-guard/paused-at? (:working-dir ctx))
+    (println (str yellow bold "Warning: Swarm is drained; run ./swarm resume" reset
+                  yellow " (roles take no new mail while " (ready-for-next-guard/pause-file (:working-dir ctx))
+                  " exists)." reset))))
+
 (defn announce-ready! [ctx]
   (println)
   (println (str green bold "SwarmForge is ready." reset))
@@ -264,6 +276,7 @@
   (println)
   (println (str green "Tip: Write a handoff draft and run swarm_handoff.sh while the swarm is running." reset))
   (println (str green "Tip: Reattach manually with 'tmux -S " (:tmux-socket ctx) " attach-session -t <session-name>' if needed." reset))
+  (warn-if-paused! ctx)
   (println))
 
 (defn launch-roles! [ctx]
@@ -467,8 +480,74 @@
     (println (str (boolean (fs/exists? (dashboard-url-file ctx))) " "
                   (boolean (fs/exists? (pack-web-pid-file ctx)))))))
 
+(defn test-dashboard-port! [root]
+  (println (or (dashboard-port (context root)) "")))
+
+(defn require-swarm-root! [root]
+  (when-not (fs/regular-file? (fs/path root ".swarmforge" "roles.tsv"))
+    (fail! (str red "Error:" reset " No swarm at " root
+                ": .swarmforge/roles.tsv is missing. Run this from the project folder (or pass it) after ./swarm has started there."))))
+
+(defn print-drain-status! [root]
+  (let [state (ready-for-next-guard/drain-state root)]
+    (println (str "PAUSED: " (if (:paused state) "yes" "no")))
+    (println (str "DRAINED: " (if (:drained state) "yes" "no")))
+    (doseq [{:keys [role in_process outbox]} (:busy state)]
+      (println (str "BUSY: " role " in_process=" in_process " outbox=" outbox)))
+    (when (pos? (:project_outbox state))
+      (println (str "BUSY: project outbox=" (:project_outbox state))))))
+
+(defn run-drain! [root]
+  (let [file (ready-for-next-guard/pause-file root)]
+    (fs/create-dirs (fs/parent file))
+    (spit (str file) (str (java.time.Instant/now) "\n"))
+    (println "Draining: roles finish in-process work and take no new mail.")
+    (print-drain-status! root)))
+
+(def wake-message
+  "You have new handoff mail. If idle, run ready_for_next.sh.")
+
+(defn wake-role-with-mail! [socket cols]
+  (let [session (nth cols 3 "")
+        worktree (nth cols 2 "")
+        new-dir (fs/path worktree ".swarmforge" "handoffs" "inbox" "new")]
+    (when (and (not (str/blank? session))
+               (seq (ready-for-next-guard/dir-entries new-dir ready-for-next-guard/handoff-file?))
+               (sh-ok? "tmux" "-S" socket "has-session" "-t" session))
+      (process/sh {:continue true} "tmux" "-S" socket "send-keys" "-t" session "-l" wake-message)
+      (Thread/sleep 150)
+      (process/sh {:continue true} "tmux" "-S" socket "send-keys" "-t" session "C-m")
+      (println (str "Woke " (first cols) ".")))))
+
+(defn run-resume! [root]
+  (let [ctx (context root)
+        socket (when (fs/regular-file? (:tmux-socket-file ctx))
+                 (not-empty (str/trim (slurp (str (:tmux-socket-file ctx))))))]
+    (fs/delete-if-exists (ready-for-next-guard/pause-file (:working-dir ctx)))
+    (println "Resumed: roles take new mail again.")
+    (when socket
+      (doseq [cols (ready-for-next-guard/role-rows-at (:working-dir ctx))]
+        (wake-role-with-mail! socket cols)))))
+
+(defn test-sync-worktree-roles! [root worktree-path]
+  (sync-worktree-roles! (context root) (fs/absolutize worktree-path)))
+
+(defn swarm-root-arg [args]
+  (str (fs/absolutize (or (second args) (System/getProperty "user.dir")))))
+
 (defn -main [& args]
   (case (first args)
+    "drain" (let [root (swarm-root-arg args)]
+              (require-swarm-root! root)
+              (run-drain! root))
+    "resume" (let [root (swarm-root-arg args)]
+               (require-swarm-root! root)
+               (run-resume! root))
+    "status" (let [root (swarm-root-arg args)]
+               (require-swarm-root! root)
+               (print-drain-status! root))
+    "--test-sync-worktree-roles" (test-sync-worktree-roles! (second args) (nth args 2))
+    "--test-dashboard-port" (test-dashboard-port! (second args))
     "--test-parse" (test-parse! (or (second args) (System/getProperty "user.dir")))
     "--test-required-helpers" (test-required-helpers!)
     "--test-launch-plan" (test-launch-plan! (or (second args) (System/getProperty "user.dir")))

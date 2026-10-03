@@ -20,7 +20,8 @@
        "type: git_handoff\n"
        "to: <role>[,<role>...]\n"
        "priority: NN\n"
-       "task: <short-stable-task-name>\n\n"
+       "task: <short-stable-task-name>\n"
+       "return: true    (optional: send the card back for more work; reopens a done card)\n\n"
        "The helper fills priority 50, commit, artifacts, and task_id from current work or the board card.\n"
        "Do not type a SHA or a hidden task_id. Extra headers (coverage, CRAP) are invalid.\n"
        "Extra lines after the headers are ignored.\n\n"
@@ -31,8 +32,9 @@
 
 (def reserved-fields #{"id" "from" "role" "recipient" "created_at" "enqueued_at"
                        "dequeued_at" "completed_at" "task_base_commit" "non-forwarding"
-                       "delivery_kind" "card_type" "batch_id" "batch_task_ids"})
-(def allowed-fields #{"type" "to" "priority" "task_id" "task" "commit" "message"})
+                       "delivery_kind" "card_type" "batch_id" "batch_task_ids"
+                       "handed_task_ids"})
+(def allowed-fields #{"type" "to" "priority" "task_id" "task" "commit" "message" "return"})
 (def allowed-types #{"git_handoff" "note"})
 (def script-dir (fs/parent *file*))
 (try
@@ -149,6 +151,8 @@
                 (conj (str "card_type: " (get headers "card_type")))
                 (and (= "git_handoff" type) (not (str/blank? delivery-kind)))
                 (conj (str "delivery_kind: " delivery-kind))
+                (and (= "git_handoff" type) (return-handoff? headers) (not reverse?))
+                (conj "return: true")
                 (and (= "git_handoff" type) (not (str/blank? (current-task-base))))
                 (conj (str "task_base_commit: " (current-task-base)))
                 non-forwarding?
@@ -169,7 +173,7 @@
   (let [git? (= "git_handoff" (get-in ctx [:headers "type"]))
         terminal? (= "terminal" (get-in ctx [:headers "delivery_kind"]))
         forward (write-handoff! (assoc ctx :reverse? false))
-        reverse (when (and git? (not terminal?))
+        reverse (when (and git? (not terminal?) (not (return-handoff? (:headers ctx))))
                   (mapv (fn [role]
                           (write-handoff! (assoc ctx
                                                  :recipients [role]
@@ -177,7 +181,8 @@
                                                  :non-forwarding true
                                                  :delivery-kind "reverse"
                                                  :reverse? true)))
-                        (reverse-roles (:sender ctx) (get-in ctx [:headers "task"]))))]
+                        (remove (set (:recipients ctx))
+                                (reverse-roles (:sender ctx) (get-in ctx [:headers "task"])))))]
     (into [forward] reverse)))
 
 (defn error-report [draft errors]
@@ -237,10 +242,11 @@
           (when (seq all-errors)
             (error-report draft all-errors)
             (System/exit 2))
-          (let [files (when (= "git_handoff" (get headers "type"))
-                        (commit-artifacts sha))
+          (let [card-ids (handoff-card-ids headers)
+                files (when (= "git_handoff" (get headers "type"))
+                        (commit-artifacts sha card-ids))
                 added (when (= "git_handoff" (get headers "type"))
-                        (commit-added sha))
+                        (commit-added sha card-ids))
                 path-errors (banned-path-errors (get headers "card_type") files added)]
             (when (seq path-errors)
               (error-report draft path-errors)
@@ -264,7 +270,7 @@
                 (fs/delete draft)
                 (doseq [outbox-file outbox-files]
                   (println "HANDOFF QUEUED:" (str outbox-file)))
-                (complete-current-after-git-handoff! headers)))))))))
+                (complete-current-after-git-handoff! headers sender)))))))))
 
 (when (= (str *file*) (System/getProperty "babashka.file"))
   (apply -main *command-line-args*))

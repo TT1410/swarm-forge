@@ -29,13 +29,14 @@
        "  pack_board.sh allow --name <name> --act <move|done|increment-audit|stop|create> [--root <dir>]\n"
        "  pack_board.sh delete --name <name> [--root <dir>]\n"
        "  pack_board.sh delete <name>\n"
-       "  pack_board.sh stop --name <name> [--root <dir>]"))
+       "  pack_board.sh stop --name <name> [--root <dir>]\n"
+       "  pack_board.sh rename --name <old> --to <new> [--root <dir>]"))
 
 (def flags {"--root" :root "--name" :name "--lane" :lane "--text" :text
             "--role" :role "--task-id" :task-id "--type" :type
             "--task-ids" :task-ids
             "--caller" :caller "--archive" :archive "--act" :act
-            "--merge-from" :merge-from "--waiting" :waiting})
+            "--merge-from" :merge-from "--waiting" :waiting "--to" :to})
 (def bool-flags #{"--waiting"})
 (def script-dir (fs/parent *file*))
 (try
@@ -152,7 +153,8 @@
    "increment-audit" increment-audit!
    "request-allow" request-allow!
    "allow" allow!
-   "delete" delete!})
+   "delete" delete!
+   "rename" rename!})
 
 (defn -main [& args]
   (let [opts (parse-args args)

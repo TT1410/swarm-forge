@@ -4,7 +4,34 @@
   (fail! (str red "Error:" reset " " message)))
 
 (defn skip-config-line? [line]
-  (or (str/blank? line) (str/starts-with? line "#")))
+  (or (str/blank? line)
+      (str/starts-with? line "#")
+      (re-matches #"merge-check(\s.*)?" line)))
+
+(def setting-directives
+  "Optional single-line settings in swarmforge.conf (not role windows):
+  dashboard-port <port>   keep the dashboard on this localhost port
+  notify-cmd <command>    run on a new clarification or pending approval (read by pack_web)"
+  #{"dashboard-port" "notify-cmd"})
+
+(defn setting-line [line]
+  (let [[directive value] (str/split (str/trim line) #"\s+" 2)]
+    (when (setting-directives directive)
+      [directive (str/trim (or value ""))])))
+
+(defn valid-port? [value]
+  (boolean (and (re-matches #"[0-9]{1,5}" (or value ""))
+                (<= 1 (Long/parseLong value) 65535))))
+
+(defn config-setting [ctx directive]
+  (let [file (:config-file ctx)]
+    (when (fs/regular-file? file)
+      (some (fn [raw]
+              (let [line (str/trim raw)]
+                (when-not (skip-config-line? line)
+                  (when-let [[found value] (setting-line line)]
+                    (when (= directive found) (not-empty value))))))
+            (str/split-lines (slurp (str file)))))))
 
 (defn special-worktree? [worktree]
   (#{"none" "master"} worktree))
@@ -120,6 +147,15 @@
         (reject-if (not= indices (vec (sort indices)))
                    (str "Card route '" type "' does not follow configured window order"))))))
 
+(defn validate-setting! [line-no [directive value]]
+  (case directive
+    "dashboard-port"
+    (reject-if (not (valid-port? value))
+               (str "Invalid dashboard-port on line " line-no ": expected a port from 1 to 65535"))
+    "notify-cmd"
+    (reject-if (str/blank? value)
+               (str "Missing command for notify-cmd on line " line-no))))
+
 (defn parse-config [ctx]
   (when-not (fs/exists? (:config-file ctx))
     (config-fail! (str "Config not found at " (:config-file ctx))))
@@ -133,8 +169,15 @@
     (if-let [[line-index raw-line] (first lines)]
       (let [line-no (inc line-index)
             line (str/trim raw-line)]
-        (if (skip-config-line? line)
+        (cond
+          (skip-config-line? line)
           (recur (next lines) rows routes roles worktrees)
+
+          (setting-line line)
+          (do (validate-setting! line-no (setting-line line))
+              (recur (next lines) rows routes roles worktrees))
+
+          :else
           (if (str/starts-with? line "card ")
             (recur (next lines) rows (conj routes (parse-card-line ctx line-no line)) roles worktrees)
             (let [row (parse-window-line ctx line-no line roles worktrees)
@@ -303,6 +346,62 @@
     (fs/create-dirs (fs/parent dest))
     (fs/copy-tree src dest)))
 
+(def synced-role-paths
+  ["swarmforge/roles" "swarmforge/constitution" "swarmforge/constitution.prompt"])
+
+(defn git-in [dir & args]
+  (apply process/sh {:continue true :dir (str dir)} "git" args))
+
+(defn master-tracked-role-files [ctx]
+  (let [result (apply git-in (:working-dir ctx) "ls-files" "--" synced-role-paths)]
+    (if (zero? (:exit result))
+      (vec (remove str/blank? (str/split-lines (:out result))))
+      [])))
+
+(defn mid-merge? [worktree-path]
+  (zero? (:exit (git-in worktree-path "rev-parse" "-q" "--verify" "MERGE_HEAD"))))
+
+(defn master-dirty-role-files
+  "Synced paths whose master copy differs from master's HEAD. Committing such a
+  copy into a role branch makes master's later merge of that branch abort with
+  \"local changes would be overwritten\"."
+  [ctx]
+  (let [result (apply git-in (:working-dir ctx) "diff" "--name-only" "HEAD" "--" synced-role-paths)]
+    (if (zero? (:exit result))
+      (set (remove str/blank? (str/split-lines (:out result))))
+      #{})))
+
+(defn use-master-head-for-dirty! [ctx worktree-path dirty]
+  (when (seq dirty)
+    (println (str yellow "Warning: uncommitted edits in the project checkout are not synced to "
+                  worktree-path "; it gets master's committed version of: "
+                  (str/join ", " (sort dirty))
+                  ". Commit them on master and restart to sync them." reset))
+    (if (mid-merge? worktree-path)
+      dirty
+      (let [head (str/trim (:out (git-in (:working-dir ctx) "rev-parse" "HEAD")))]
+        (set (remove #(zero? (:exit (git-in worktree-path "checkout" head "--" %))) dirty))))))
+
+(defn commit-synced-roles!
+  "Commit the synced prompts so a role's later merge of master is clean. Paths
+  with uncommitted master edits get master's HEAD version; one not in HEAD yet
+  is left out of the commit."
+  [ctx worktree-path]
+  (let [unsynced (or (use-master-head-for-dirty! ctx worktree-path (master-dirty-role-files ctx)) #{})
+        files (filterv #(and (fs/exists? (fs/path worktree-path %)) (not (unsynced %)))
+                       (master-tracked-role-files ctx))]
+    (when (seq files)
+      (apply git-in worktree-path "add" "--" files)
+      (when-not (zero? (:exit (apply git-in worktree-path "diff" "--cached" "--quiet" "--" files)))
+        (if (mid-merge? worktree-path)
+          (println (str yellow "Warning: " worktree-path " is mid-merge; synced role prompts left uncommitted." reset))
+          (let [result (apply git-in worktree-path "commit" "-q" "--no-verify"
+                              "-m" "Sync SwarmForge roles and constitution from the project checkout"
+                              "--" files)]
+            (when-not (zero? (:exit result))
+              (println (str yellow "Warning: could not commit synced role prompts in " worktree-path ": "
+                            (str/trim (str (:err result) (:out result))) reset)))))))))
+
 (defn sync-worktree-roles! [ctx worktree-path]
   (mirror-tree! (:roles-dir ctx) (fs/path worktree-path "swarmforge" "roles"))
   (mirror-tree! (fs/path (:swarm-forge-dir ctx) "constitution")
@@ -311,7 +410,8 @@
     (fs/create-dirs (fs/path worktree-path "swarmforge"))
     (fs/copy (:constitution-file ctx)
              (fs/path worktree-path "swarmforge" "constitution.prompt")
-             {:replace-existing true})))
+             {:replace-existing true}))
+  (commit-synced-roles! ctx worktree-path))
 
 (defn sync-worktree-scripts! [ctx]
   (doseq [row (:roles ctx)

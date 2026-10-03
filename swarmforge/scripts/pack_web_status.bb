@@ -716,15 +716,50 @@
 (defn pane-status-for [root role]
   (or (last (pane-status-lines-for root role)) ""))
 
-(defn active-card-names [root role]
-  (let [row (role-row root role)
-        names (when row (in-process-task-names root (in-process-for-row row)))
-        cards (filter #(= role (:lane %)) (board-tasks root))]
-    (if (seq names)
-      (set names)
-      (if (= 1 (count cards))
-        #{(:name (first cards))}
-        #{}))))
+(defn inbox-new-dir [worktree]
+  (fs/path worktree ".swarmforge" "handoffs" "inbox" "new"))
+
+(defn queued-entry [role path]
+  (let [headers (:headers (parse-message path))]
+    {:role role
+     :priority (or (not-empty (get headers "priority"))
+                   (second (re-find #"^([0-9]{2})_" (str (fs/file-name path)))))
+     :keys (remove str/blank? (concat [(get headers "task_id") (get headers "task")]
+                                      (header-batch-task-ids headers)))}))
+
+(defn queued-index
+  "Task id and task name -> {:role :priority} for mail waiting in a role's inbox/new."
+  [root]
+  (reduce (fn [idx row]
+            (let [wt (nth row 2 nil)]
+              (if (str/blank? wt)
+                idx
+                (reduce (fn [idx path]
+                          (let [entry (queued-entry (first row) path)]
+                            (reduce #(update %1 %2 (fn [old] (or old (dissoc entry :keys))))
+                                    idx
+                                    (:keys entry))))
+                        idx
+                        (handoff-files (inbox-new-dir wt))))))
+          {}
+          (role-rows root)))
+
+(defn queued-in [queued task]
+  (or (get queued (:id task)) (get queued (:name task))))
+
+(defn active-card-names
+  ([root role] (active-card-names root role {}))
+  ([root role queued]
+   (let [row (role-row root role)
+         names (when row (in-process-task-names root (in-process-for-row row)))
+         cards (filter #(= role (:lane %)) (board-tasks root))
+         card (first cards)]
+     (if (seq names)
+       (set names)
+       (if (and (= 1 (count cards))
+                (not= role (:role (queued-in queued card))))
+         #{(:name card)}
+         #{})))))
 
 (defn rejected-task? [root name]
   (and (safe-paths/task-name? name)
@@ -743,27 +778,33 @@
        (remove str/blank?)
        set))
 
-(defn task-with-status [root task]
-  (let [role (:lane task)
-        name (:name task)
-        task-id (:id task)
-        rejected? (rejected-task? root name)
-        approval? (or (contains? (pending-approval-ids root) task-id)
-                      (contains? (pending-approval-names root) name))
-        active? (contains? (active-card-names root role) name)
-        socket (tmux-socket root)
-        row (role-row root role)
-        session-down? (and active? socket row
-                           (not (session-alive? socket (session-name row))))
-        [phase status] (cond
-                         (= "done" role) ["done" ""]
-                         rejected? ["rejected" "REJECTED"]
-                         approval? ["awaiting approval" "Waiting for approval"]
-                         (= "waiting" role) ["waiting" "Waiting to start"]
-                         active? [(if session-down? "no session" "working")
-                                  (pane-status-for root role)]
-                         :else ["queued" "waiting in queue"])]
-    (assoc task :status status :status_phase phase)))
+(defn task-with-status
+  ([root task] (task-with-status root task {}))
+  ([root task queued]
+   (let [role (:lane task)
+         name (:name task)
+         task-id (:id task)
+         waiting (queued-in queued task)
+         rejected? (rejected-task? root name)
+         approval? (or (contains? (pending-approval-ids root) task-id)
+                       (contains? (pending-approval-names root) name))
+         active? (contains? (active-card-names root role queued) name)
+         socket (tmux-socket root)
+         row (role-row root role)
+         session-down? (and active? socket row
+                            (not (session-alive? socket (session-name row))))
+         [phase status] (cond
+                          (= "done" role) ["done" ""]
+                          rejected? ["rejected" "REJECTED"]
+                          approval? ["awaiting approval" "Waiting for approval"]
+                          (= "waiting" role) ["waiting" "Waiting to start"]
+                          active? [(if session-down? "no session" "working")
+                                   (pane-status-for root role)]
+                          :else ["queued" "waiting in queue"])]
+     (cond-> (assoc task :status status :status_phase phase)
+       (= "queued" phase) (assoc :queued true)
+       (and (= "queued" phase) waiting) (assoc :queue_role (:role waiting)
+                                               :queue_priority (:priority waiting))))))
 
 (defn batch-task-names [root dir]
   (in-process-task-names root (handoff-files dir)))
@@ -827,10 +868,11 @@
 
 (defn tasks [root]
   (let [idx (batch-index root)
+        queued (queued-index root)
         board (mapv (fn [task]
                       (if-let [batch (get idx (:name task))]
-                        (assoc (task-with-status root task) :batch batch)
-                        (task-with-status root task)))
+                        (assoc (task-with-status root task queued) :batch batch)
+                        (task-with-status root task queued)))
                     (board-tasks root))]
     (into (merging-cards root) board)))
 

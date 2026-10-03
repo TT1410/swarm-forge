@@ -1,5 +1,6 @@
 (ns swarmforge.swarmforge-script-test
   (:require [babashka.fs :as fs]
+            [cheshire.core :as json]
             [clojure.string :as str]
             [clojure.test :refer [deftest is testing]]
             [swarmforge.script-test-support :refer :all]))
@@ -12,6 +13,7 @@
       (write-file (fs/path root "swarmforge/swarmforge.conf")
                   (str "# comment\n"
                        "window coder codex master\n"
+                       "merge-check docker compose config -q\n"
                        "window cleaner codex cleaner batch\n"))
       (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
       (write-file (fs/path root "swarmforge/roles/cleaner.prompt") "cleaner\n")
@@ -590,4 +592,150 @@
         (is (>= limit 2000)))
       (finally
         (run {:dir root :ok? false} "tmux" "-S" sock "kill-server")
+        (fs/delete-tree root)))))
+
+(deftest synced-role-prompts-do-not-block-a-later-merge
+  ;; Given a role worktree whose branch lacks the master commit that changed a role prompt
+  ;; When the launcher syncs roles into the worktree and the role later merges that commit
+  ;; Then the worktree is clean and the merge succeeds
+  (let [root (tmp-dir)
+        worktree (fs/path root ".worktrees" "coder")]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "v1\n")
+      (write-file (fs/path root "swarmforge/constitution.prompt") "c1\n")
+      (write-file (fs/path root "swarmforge/constitution/articles/a.prompt") "a1\n")
+      (run {:dir root} "git" "add" "swarmforge")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add prompts")
+      (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-coder" (str worktree) "HEAD")
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "v2\n")
+      (write-file (fs/path root "swarmforge/constitution/articles/a.prompt") "a2\n")
+      (run {:dir root} "git" "commit" "-q" "-am" "Change prompts")
+      (run {:dir root} (script "swarmforge.bb") "--test-sync-worktree-roles" (str root) (str worktree))
+      (is (= "v2\n" (slurp (str (fs/path worktree "swarmforge/roles/coder.prompt")))))
+      (is (str/blank? (:out (run {:dir worktree} "git" "status" "--porcelain"))))
+      (let [merge (run {:dir worktree :ok? false} "git" "merge" "--no-edit" "master")]
+        (is (zero? (:exit merge)) (str (:err merge) (:out merge))))
+      (testing "a second sync with identical content makes no new commit"
+        (let [head (:out (run {:dir worktree} "git" "rev-parse" "HEAD"))]
+          (run {:dir root} (script "swarmforge.bb") "--test-sync-worktree-roles" (str root) (str worktree))
+          (is (= head (:out (run {:dir worktree} "git" "rev-parse" "HEAD"))))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest uncommitted-master-prompt-edits-do-not-block-merging-a-role-branch
+  ;; Given master has an uncommitted edit to a role prompt
+  ;; When the launcher syncs roles into a role worktree and master later merges that branch
+  ;; Then the role branch carries master's committed prompt and the merge succeeds
+  (let [root (tmp-dir)
+        worktree (fs/path root ".worktrees" "coder")]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "v1\n")
+      (write-file (fs/path root "swarmforge/constitution.prompt") "c1\n")
+      (run {:dir root} "git" "add" "swarmforge")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add prompts")
+      (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-coder" (str worktree) "HEAD")
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "v2 draft\n")
+      (let [out (:out (run {:dir root} (script "swarmforge.bb") "--test-sync-worktree-roles" (str root) (str worktree)))]
+        (is (str/includes? out "swarmforge/roles/coder.prompt")))
+      (is (= "v1\n" (slurp (str (fs/path worktree "swarmforge/roles/coder.prompt")))))
+      (is (str/blank? (:out (run {:dir worktree} "git" "status" "--porcelain"))))
+      (write-file (fs/path worktree "work.txt") "work\n")
+      (run {:dir worktree} "git" "add" "work.txt")
+      (run {:dir worktree} "git" "commit" "-q" "-m" "Role work")
+      (let [merge (run {:dir root :ok? false} "git" "merge" "--no-edit" "swarmforge-coder")]
+        (is (zero? (:exit merge)) (str (:err merge) (:out merge))))
+      (is (= "v2 draft\n" (slurp (str (fs/path root "swarmforge/roles/coder.prompt")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(defn shell-arg-file [command flag]
+  (second (re-find (re-pattern (str flag "\\S*?\\$\\(cat '([^']+)'\\)")) command)))
+
+(deftest launch-command-passes-role-and-constitution-as-system-instructions
+  ;; Given role and constitution files in the project
+  ;; When SwarmForge builds the claude and codex launch commands
+  ;; Then each points its system-level channel at a file carrying their full text
+  (let [root (tmp-dir)
+        fixtures {"swarmforge/constitution.prompt" "fixture-constitution\n"
+                  "swarmforge/constitution/articles/a.prompt" "fixture-article \"quoted\" \\ end\n"
+                  "swarmforge/roles/coder.prompt" "fixture-role\n"}]
+    (try
+      (doseq [[path text] fixtures]
+        (write-file (fs/path root path) text))
+      (let [claude (:out (run {:dir root} (script "swarmforge.bb") "--test-launch-command" (str root) "claude"))
+            system-file (second (re-find #"--append-system-prompt-file '([^']+)'" claude))
+            system-text (slurp system-file)]
+        (doseq [text (vals fixtures)]
+          (is (str/includes? system-text text)))
+        (is (str/includes? system-text (slurp (str (fs/path root ".swarmforge/prompts/coder.md"))))))
+      (let [codex (:out (run {:dir root} (script "swarmforge.bb") "--test-launch-command" (str root) "codex"))
+            toml-file (shell-arg-file codex "-c developer_instructions=")
+            text (json/parse-string (slurp toml-file))]
+        (is (some? toml-file) codex)
+        (doseq [fixture (vals fixtures)]
+          (is (str/includes? text fixture))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest grok-launch-command-passes-the-system-instructions-as-rules
+  ;; Given role and constitution files in the project
+  ;; When SwarmForge builds a grok launch command
+  ;; Then --rules carries the full system instruction file
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root "swarmforge/constitution.prompt") "fixture-constitution\n")
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "fixture-role\n")
+      (let [command (:out (run {:dir root} (script "swarmforge.bb") "--test-launch-command" (str root) "grok"))
+            rules-file (shell-arg-file command "--rules ")
+            text (slurp rules-file)]
+        (is (str/includes? text "fixture-constitution"))
+        (is (str/includes? text "fixture-role")))
+      (finally
+        (fs/delete-tree root)))))
+
+(defn free-port []
+  (with-open [s (java.net.ServerSocket. 0)]
+    (str (.getLocalPort s))))
+
+(defn launcher-root! [conf-extra]
+  (let [root (tmp-dir)]
+    (write-file (fs/path root "swarmforge/constitution.prompt") "Read articles.\n")
+    (write-file (fs/path root "swarmforge/roles/coder.prompt") "coder\n")
+    (write-file (fs/path root "swarmforge/swarmforge.conf")
+                (str "window coder codex master\n" conf-extra))
+    root))
+
+(defn chosen-dashboard-port [root]
+  (str/trim (:out (run {:dir root} (script "swarmforge.bb") "--test-dashboard-port" (str root)))))
+
+(deftest swarmforge-dashboard-port-prefers-config-then-previous-port
+  ;; Given a configured dashboard-port, or a previous run's free port, or a busy previous port
+  ;; When the launcher picks the dashboard port
+  ;; Then it uses the configured port, else the previous one, else none (pack_web picks)
+  (let [configured (launcher-root! "dashboard-port 48123\n")
+        previous (launcher-root! "")
+        busy (launcher-root! "")
+        prev-port (free-port)]
+    (try
+      (write-file (fs/path previous ".swarmforge/dashboard-port") (str prev-port "\n"))
+      (is (= "48123" (chosen-dashboard-port configured)))
+      (is (= prev-port (chosen-dashboard-port previous)))
+      (with-open [s (java.net.ServerSocket. 0 1 (java.net.InetAddress/getByName "127.0.0.1"))]
+        (write-file (fs/path busy ".swarmforge/dashboard-port") (str (.getLocalPort s) "\n"))
+        (is (= "" (chosen-dashboard-port busy))))
+      (is (str/includes? (:out (run {:dir configured} (script "swarmforge.bb") "--test-parse" (str configured)))
+                         "coder Coder"))
+      (finally
+        (doseq [root [configured previous busy]]
+          (fs/delete-tree root))))))
+
+(deftest swarmforge-rejects-an-invalid-dashboard-port
+  (let [root (launcher-root! "dashboard-port 99999\n")]
+    (try
+      (let [result (run {:dir root :ok? false} (script "swarmforge.bb") "--test-parse" (str root))]
+        (is (= 1 (:exit result)))
+        (is (str/includes? (:err result) "Invalid dashboard-port")))
+      (finally
         (fs/delete-tree root)))))

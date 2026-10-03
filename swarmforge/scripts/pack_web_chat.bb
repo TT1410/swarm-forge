@@ -51,6 +51,7 @@
     {:id (get headers "id")
      :status (get headers "status")
      :role (get headers "role")
+     :also (comma-list (get headers "also"))
      :body (or body "")
      :response (str/replace (get headers "response" "") #"\\n" "\n")
      :created_at (get headers "created_at")}))
@@ -98,10 +99,11 @@
 (defn clar-pending-file [root id]
   (safe-paths/id-path! (clar-pending-dir root) id ".request"))
 
-(defn render-clarification [{:keys [id status role body response created_at]}]
+(defn render-clarification [{:keys [id status role also body response created_at]}]
   (str "id: " id "\n"
        "status: " status "\n"
        (when-not (str/blank? role) (str "role: " role "\n"))
+       (when (seq also) (str "also: " (str/join "," also) "\n"))
        "created_at: " created_at "\n"
        (when-not (str/blank? response)
          (str "response: " (str/replace response #"\n" (constantly "\\n")) "\n"))
@@ -109,20 +111,38 @@
        (or body "")
        (when-not (str/ends-with? (or body "") "\n") "\n")))
 
-(defn answer-clarification! [root id text]
-  (safe-paths/require-internal-id! id)
-  (let [src (clar-pending-file root id)]
-    (when-not (fs/regular-file? src)
-      (throw (ex-info (str "Unknown clarification: " id) {:http-status 404})))
-    (let [entry (parse-clarification src)
-          dest (safe-paths/id-path! (clar-done-dir root) id ".request")
-          role (:role entry)]
-      (fs/create-dirs (fs/parent dest))
-      (spit (str dest) (render-clarification (assoc entry
-                                                   :status "done"
-                                                   :response text)))
-      (fs/delete-if-exists src)
-      (inject-role! root role (clar-wake id role (:body entry) text)))))
+(defn also-roles [value]
+  (cond
+    (sequential? value) (->> value (map #(str/trim (str %))) (remove str/blank?) vec)
+    (string? value) (comma-list value)
+    :else []))
+
+(defn require-also-roles! [root asker roles]
+  (doseq [role roles]
+    (when-not (role-row root role)
+      (throw (ex-info (str "Unknown role: " role) {:http-status 400}))))
+  (vec (distinct (remove #{asker} roles))))
+
+(defn answer-clarification!
+  ([root id text] (answer-clarification! root id text []))
+  ([root id text also]
+   (safe-paths/require-internal-id! id)
+   (let [src (clar-pending-file root id)]
+     (when-not (fs/regular-file? src)
+       (throw (ex-info (str "Unknown clarification: " id) {:http-status 404})))
+     (let [entry (parse-clarification src)
+           dest (safe-paths/id-path! (clar-done-dir root) id ".request")
+           role (:role entry)
+           also (require-also-roles! root role (also-roles also))]
+       (fs/create-dirs (fs/parent dest))
+       (spit (str dest) (render-clarification (assoc entry
+                                                    :status "done"
+                                                    :also also
+                                                    :response text)))
+       (fs/delete-if-exists src)
+       (inject-role! root role (clar-wake id role (:body entry) text))
+       (doseq [other also]
+         (inject-role! root other (clar-wake id role (:body entry) text)))))))
 
 (defn clarification-route [uri]
   (let [path (first (str/split (or uri "") #"\?"))]
@@ -132,7 +152,7 @@
 
 (defn post-clarification [root uri body]
   (if-let [id (clarification-route uri)]
-    (let [text (or (:text (json/parse-string (or body "{}") true)) "")]
-      (answer-clarification! root id text)
+    (let [{:keys [text also]} (json/parse-string (or body "{}") true)]
+      (answer-clarification! root id (or text "") also)
       (json-ok))
     {:status 404 :body "Not found"}))
