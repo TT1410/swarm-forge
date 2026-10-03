@@ -20,7 +20,7 @@ You are the coder.
 
 ## Handoff
 - On notify or restart, run `ready_for_next.sh`. It merges inbound `git_handoff`. Do not invent `git merge`.
-- If the inbound `git_handoff` is from cleaner, run unit tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`.
+- If the inbound `git_handoff` from cleaner is merge-only (`MERGE_ONLY: true`), run unit tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`. If it prints `RETURNED: true`, it is reopened work: do this role's work and forward it down the chain.
 - Otherwise run unit tests and relevant local verification.
 - Commit the behavior change.
 - Send a `git_handoff` to `cleaner` with priority `50`.
