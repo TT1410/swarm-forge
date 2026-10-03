@@ -464,3 +464,28 @@
       (finally
         (reset! handoffd/daemon-mode? false)
         (fs/delete-tree root)))))
+
+(deftest swarm-handoff-audit-ignores-a-priority-taken-from-the-level
+  ;; The level replaced the typed 50, so a level change between the audit
+  ;; and the resubmit must not count as a change the role made
+  (let [root (tmp-dir)]
+    (try
+      (fs/create-dirs (fs/path root ".swarmforge/board/meta"))
+      (with-redefs [swarm-handoff/project-root (constantly (str root))]
+        (let [draft {"type" "git_handoff" "priority" "50" "task_id" "t1"}
+              at (fn [level]
+                   (spit (str (fs/path root ".swarmforge/board/meta/t1.edn")) (pr-str {:level level}))
+                   (swarm-handoff/fill-priority draft))]
+          (is (= "30" (get (at "high") "priority")))
+          (is (= (swarm-handoff/audited-priority (at "high"))
+                 (swarm-handoff/audited-priority (at "critical"))))
+          (let [no-level (do (fs/delete (fs/path root ".swarmforge/board/meta/t1.edn"))
+                             (swarm-handoff/fill-priority draft))]
+            (is (= "50" (get no-level "priority")))
+            (is (= (swarm-handoff/audited-priority no-level)
+                   (swarm-handoff/audited-priority (at "low")))
+                "setting a level after the audit keeps it"))
+          (is (= "00" (swarm-handoff/audited-priority
+                       (swarm-handoff/fill-priority (assoc draft "priority" "00")))))))
+      (finally
+        (fs/delete-tree root)))))
