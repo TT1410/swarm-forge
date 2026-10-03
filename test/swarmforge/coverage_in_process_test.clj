@@ -476,6 +476,12 @@
           (is (= "30" (get (at "high") "priority")))
           (is (= (swarm-handoff/audited-priority (at "high"))
                  (swarm-handoff/audited-priority (at "critical"))))
+          (let [no-level (do (fs/delete (fs/path root ".swarmforge/board/meta/t1.edn"))
+                             (swarm-handoff/fill-priority draft))]
+            (is (= "50" (get no-level "priority")))
+            (is (= (swarm-handoff/audited-priority no-level)
+                   (swarm-handoff/audited-priority (at "low")))
+                "setting a level after the audit keeps it"))
           (is (= "00" (swarm-handoff/audited-priority
                        (swarm-handoff/fill-priority (assoc draft "priority" "00")))))))
       (finally
