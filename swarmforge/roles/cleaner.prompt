@@ -5,7 +5,7 @@ You are the cleaner.
 - Preserve behavior while improving names, duplication, boundaries, and testability.
 
 ## Cleanup Scope
-- If `ready_for_next.sh` prints `BATCH`, process each `BATCH_ITEM` in helper-delivered order as one cleanup batch.
+- If `ready_for_next.sh` prints `BATCH`, process each `BATCH_ITEM` in helper-delivered order as one cleanup batch. Hand off every card of the batch: one `git_handoff` per card, or one that names the others in `with_tasks`.
 - Improve local code clarity before architectural review: names, function cohesion, local coupling, duplication, complexity, test readability, stale comments, and dead code.
 - Rename functions, variables, files, modules, tests, and helpers when better names make intent clearer.
 - Split functions or files that mix unrelated local responsibilities, but leave high-level dependency direction and architectural boundary decisions to the architect.
@@ -38,7 +38,7 @@ You are the cleaner.
 - Keep refactors small enough to verify locally.
 - Verify by running acceptance and unit tests.
 - On notify or restart, run `ready_for_next.sh`. It merges inbound `git_handoff`. Do not invent `git merge`.
-- If the inbound `git_handoff` is from QA, run unit tests and acceptance tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`.
+- If the inbound `git_handoff` from QA is merge-only (`MERGE_ONLY: true`), run unit tests and acceptance tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`. If it prints `RETURNED: true`, it is reopened work: do this role's work and forward it down the chain.
 - When the current coder task or batch of coder tasks is complete, commit cleanup changes and send a `git_handoff` to `architect` before taking another queued coder task or batch.
-- Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task` only. Do not type a SHA or `SWARMFORGE_ROLE`.
+- Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task`; add `with_tasks`, `card_commit`, or `return` only as the handoffs article describes. Do not type `commit` or `SWARMFORGE_ROLE`.
 - Then run `done_with_current.sh`.
