@@ -175,10 +175,10 @@ Examples:
 
 #### Terminal broadcast
 
-The terminal handoff is the last role's `git_handoff` whose `to:` is every
-other role in the pack. That set, not a count of names, marks the card Done.
-Each recipient merges that commit (`merge_and_process.sh`) and stops; they do
-not re-forward. A partial `to:` list is not terminal.
+The terminal handoff is any `git_handoff` from the last role without
+`return: true`; it marks every card it carries Done. By convention its `to:`
+is every other role in the pack. Each recipient merges that commit
+(`merge_and_process.sh`) and stops; they do not re-forward.
 
 Examples:
 

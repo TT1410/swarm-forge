@@ -91,6 +91,10 @@
       (println "TASK_NAME:" task-name))
     (when task-id
       (println "TASK_ID:" task-id))
+    (when (= "true" (header-field file "non-forwarding"))
+      (println "MERGE_ONLY: true"))
+    (when (= "true" (header-field file "return"))
+      (println "RETURNED: true"))
     (println "PAYLOAD:")
     (print (body file))))
 
