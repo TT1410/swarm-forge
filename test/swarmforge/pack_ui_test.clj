@@ -3169,6 +3169,87 @@
                            (str "with_task_ids: " b "\n")))
         (is (not (str/includes? (slurp (str b-done)) "handed_task_ids")))))))
 
+(defn- in-process-entries [root roles role]
+  (let [dir (in-process-dir root roles role)]
+    (if (fs/exists? dir)
+      (sort (map #(str (fs/file-name %)) (fs/list-dir dir)))
+      [])))
+
+(defn- held-pair! [root a b]
+  (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+              (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                   "task_id: " a "\ntask: A\nwith_task_ids: " b "\n\npayload\n")))
+
+(defn- completed-mail! [root name id task completed-at]
+  (write-file (fs/path root ".swarmforge/handoffs/inbox/completed" name)
+              (str "from: (New Task)\nto: specifier\ntype: note\n"
+                   "task_id: " id "\ntask: " task "\nhanded_task_ids: " id
+                   "\ncompleted_at: " completed-at "\n\n" task "\n")))
+
+(deftest pack-web-retry-restores-a-batch-senders-cards-as-one-batch
+  ;; Given a batch-mode specifier whose handoff of A and B is held
+  ;; When the operator retries
+  ;; Then A's and B's mail come back in one batch folder that ready_for_next_batch accepts
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (spit (str (fs/path root ".swarmforge/roles.tsv"))
+          (str/replace-first (slurp (str (fs/path root ".swarmforge/roles.tsv"))) "\ttask\t" "\tbatch\t"))
+    (doseq [n ["A" "B"]] (create-task root n "specifier"))
+    (let [[a b] (map #(:id (task-card root %)) ["A" "B"])]
+      (held-pair! root a b)
+      (completed-mail! root "50_a.handoff" a "A" "2026-10-01T10:00:00Z")
+      (completed-mail! root "50_b.handoff" b "B" "2026-10-01T10:00:00Z")
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [[batch & more] (in-process-entries root roles "specifier")]
+        (is (str/starts-with? batch "batch_"))
+        (is (empty? more))
+        (is (= ["50_a.handoff" "50_b.handoff"]
+               (sort (map #(str (fs/file-name %))
+                          (fs/list-dir (fs/path (in-process-dir root roles "specifier") batch)))))))
+      (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"}}
+                        (script "ready_for_next_batch.sh"))]
+        (is (zero? (:exit result)))
+        (is (str/includes? (:out result) "COUNT: 2"))))))
+
+(deftest pack-web-retry-gives-a-task-sender-one-mail-for-several-cards
+  ;; Given a task-mode specifier whose handoff of A and B is held, with an older round of A
+  ;; When the operator retries
+  ;; Then one retry note carrying both cards is in process and every mail stays completed
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (doseq [n ["A" "B"]] (create-task root n "specifier"))
+    (let [[a b] (map #(:id (task-card root %)) ["A" "B"])]
+      (held-pair! root a b)
+      (completed-mail! root "50_a_old.handoff" a "A" "2026-09-30T10:00:00Z")
+      (completed-mail! root "50_a.handoff" a "A" "2026-10-01T10:00:00Z")
+      (completed-mail! root "50_b.handoff" b "B" "2026-10-01T10:00:00Z")
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [entries (in-process-entries root roles "specifier")]
+        (is (= 1 (count entries)))
+        (is (str/starts-with? (first entries) "50_retry_"))
+        (is (str/includes? (slurp (str (fs/path (in-process-dir root roles "specifier") (first entries))))
+                           (str "with_task_ids: " b "\n"))))
+      (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"}}
+                        (script "ready_for_next.sh"))]
+        (is (zero? (:exit result)))))))
+
+(deftest pack-web-retry-restores-only-the-newest-round-of-a-card
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "specifier")
+    (let [a (:id (task-card root "A"))]
+      (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+                  (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                       "task_id: " a "\ntask: A\n\npayload\n"))
+      (completed-mail! root "50_a_old.handoff" a "A" "2026-09-30T10:00:00Z")
+      (completed-mail! root "50_a_new.handoff" a "A" "2026-10-01T10:00:00Z")
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (is (= ["50_a_new.handoff"] (in-process-entries root roles "specifier")))
+      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/completed/50_a_old.handoff"))))))
+
 (deftest pack-web-dequeue-and-priority-refuse-mail-still-in-the-outbox
   ;; The daemon may be delivering outbox mail, so only inbox mail is changed
   (let [root (tmp-dir)

@@ -735,6 +735,8 @@
                    (str/join ", " (::unknown-extra-tasks headers)) "."))
         (and (some? (get headers "return")) (not (return-handoff? headers)))
         (conj (format "Header 'return' must be 'true'; got '%s'." (get headers "return")))
+        (and (return-handoff? headers) (not= 1 (count (distinct recipients))))
+        (conj "A return goes back to exactly one role; name one recipient in to:.")
         (and (str/blank? task-id) (not (::open-cards headers)))
         (conj "Missing required header 'task_id' for git_handoff.")
         (not (str/blank? task-id))

@@ -1920,6 +1920,17 @@
       (is (nil? (header queued "non-forwarding")))
       (is (= 1 (count (outbox-handoffs root)))))))
 
+(deftest swarm-handoff-refuses-a-return-to-several-roles
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["D40" "done" "d40"]])
+    (commit-work! root)
+    (let [result (submit-draft! root "QA" "type: git_handoff\nto: coder,cleaner\npriority: 50\ntask: D40\nreturn: true\n")]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "exactly one role"))
+      (is (empty? (outbox-handoffs root))))))
+
 (deftest swarm-handoff-refuses-done-card-without-return
   (let [root (tmp-dir)]
     (init-repo! root)
@@ -2110,6 +2121,21 @@
       (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card B\n")]
         (is (not (zero? (:exit result))))
         (is (str/includes? (:err result) "no changed files"))))))
+
+(deftest ready-for-next-marks-returned-and-merge-only-mail
+  ;; Given a returned card and a merge-only copy are waiting
+  ;; When the role takes them as a task and as a batch
+  ;; Then the helper names each kind, so the role knows what to forward
+  (doseq [[mode extra marker] [["task" "return: true" "RETURNED: true"]
+                               ["batch" "non-forwarding: true" "MERGE_ONLY: true"]]]
+    (let [root (tmp-dir)]
+      (init-repo! root)
+      (setup-project! root {"receiver" mode})
+      (write-file (handoff-path root "new" "50_marked.handoff")
+                  (str "id: marked\nfrom: sender\nto: receiver\npriority: 50\ntype: note\n"
+                       "task: Card A\n" extra "\n\nwork\n"))
+      (let [out (:out (run {:dir root :env {"SWARMFORGE_ROLE" "receiver"}} (script "ready_for_next.sh")))]
+        (is (str/includes? out marker) mode)))))
 
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.handoff-test)]

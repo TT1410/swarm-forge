@@ -1511,12 +1511,31 @@
                "\n"
                "Retry audit. Redo this card on top of the current tree.\n"))))
 
-(defn write-retry-in-process! [worktree headers]
+(defn role-batch-mode? [root role]
+  (= "batch" (some-> (some #(when (= role (first %)) %) (role-rows root))
+                     (nth 6 nil)
+                     str/trim)))
+
+(defn retry-target-dir
+  "Where restored mail goes: the in-process folder for a task-mode role, a new
+  batch folder for a batch-mode role, whose helpers refuse loose files."
+  [worktree batch?]
+  (let [dir (fs/path worktree ".swarmforge" "handoffs" "inbox" "in_process")]
+    (if-not batch?
+      dir
+      (let [stamp (.format (java.time.format.DateTimeFormatter/ofPattern "yyyyMMdd'T'HHmmss'Z'")
+                           (.atZone (java.time.Instant/now) java.time.ZoneOffset/UTC))]
+        (loop [n 1]
+          (let [candidate (fs/path dir (format "batch_%s_%06d" stamp n))]
+            (if (fs/exists? candidate) (recur (inc n)) candidate)))))))
+
+(defn write-retry-in-process! [worktree headers batch?]
   (let [task-id (or (not-empty (get headers "task_id")) (get headers "task"))
         task (or (get headers "task") task-id)
+        extra (not-empty (get headers "with_task_ids"))
         base (not-empty (get headers "task_base_commit"))
         from (or (get headers "from") "")
-        dir (fs/path worktree ".swarmforge" "handoffs" "inbox" "in_process")
+        dir (retry-target-dir worktree batch?)
         file (fs/path dir (str "50_retry_" (str/replace (or task-id "task") #"[^A-Za-z0-9]+" "_") ".handoff"))]
     (when-not (str/blank? task-id)
       (fs/create-dirs dir)
@@ -1527,32 +1546,43 @@
                  "type: note\n"
                  "task_id: " task-id "\n"
                  "task: " task "\n"
+                 (when extra (str "with_task_ids: " extra "\n"))
                  (when base (str "task_base_commit: " base "\n"))
                  "\n"
                  "Retry audit.\n")))))
 
+(defn newest-completed-mail
+  "The card's latest completed mail; earlier rounds stay completed."
+  [worktree id]
+  (->> (task-inbox-files worktree "completed" id nil)
+       (sort-by (fn [file]
+                  [(or (get-in (parse-message file) [:headers "completed_at"]) "")
+                   (str (fs/file-name file))]))
+       last))
+
 (defn restore-task-base!
   "Put the mail of every card the held handoff carried back in process, so
-  the sender redoes them."
+  the sender redoes them. A task-mode role holds one mail at a time, so cards
+  spread over several mails come back as one retry note."
   [root headers]
   (let [task-id (or (not-empty (get headers "task_id")) (get headers "task"))
         task (get headers "task")
         ids (header-card-ids headers)
-        wt (worktree-for root (get headers "from"))
+        sender (get headers "from")
+        wt (worktree-for root sender)
+        batch? (role-batch-mode? root sender)
         in-proc (task-inbox-files wt "in_process" task-id task)
-        done (->> ids
-                  (mapcat #(task-inbox-files wt "completed" % nil))
-                  distinct)]
+        done (->> ids (keep #(newest-completed-mail wt %)) distinct vec)]
     (cond
       (seq in-proc) nil
-      (seq done)
-      (let [dest-dir (fs/path wt ".swarmforge" "handoffs" "inbox" "in_process")]
+      (and (seq done) (or batch? (= 1 (count done))))
+      (let [dest-dir (retry-target-dir wt batch?)]
         (fs/create-dirs dest-dir)
         (doseq [src done
                 :let [dest (fs/path dest-dir (fs/file-name src))]]
           (fs/move src dest {:replace-existing true})
           (strip-header! dest "handed_task_ids")))
-      :else (write-retry-in-process! wt headers))))
+      :else (write-retry-in-process! wt headers batch?))))
 
 (defn approval-doc-paths [headers reviews]
   (vec (distinct (concat (comma-list (get headers "artifacts"))

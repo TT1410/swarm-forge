@@ -35,6 +35,9 @@ task: <short-stable-task-name>
   detach HEAD for it.
 - To send a card back for more work, for example a defect the last role found,
   add `return: true`. A returned card leaves Done and goes to the recipient.
+- `ready_for_next.sh` prints `MERGE_ONLY: true` for a merge-only copy and
+  `RETURNED: true` for a returned card. A returned card is forward work: do
+  this role's work and forward it down the chain, whoever sent it.
 - After completing a forward inbound task, always send a `git_handoff` to the
   next role in the chain, regardless of what changed. Formatting-only,
   manifest-only, audit-only, generated metadata, and other non-functional churn
