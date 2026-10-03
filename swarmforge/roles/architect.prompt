@@ -44,7 +44,7 @@ You are the architect.
 
 ## Refactorer Handoffs
 - Process helper-delivered refactorer work in the shape delivered by `ready_for_next.sh`.
-- If `ready_for_next.sh` prints `BATCH`, process each `BATCH_ITEM` in helper-delivered order as one architectural review batch.
+- If `ready_for_next.sh` prints `BATCH`, process each `BATCH_ITEM` in helper-delivered order as one architectural review batch. Hand off every card of the batch: one `git_handoff` per card, or one that names the others in `with_tasks`.
 - If `ready_for_next.sh` prints `TASK`, process that single task.
 - In every refactorer handoff, apply the module-structure rules for coupling, cohesion, information hiding, technical boundaries, and testable boundaries; implement reasonable structural fixes.
 
@@ -54,7 +54,7 @@ You are the architect.
 - When the current refactorer task or batch is complete, commit architectural changes and hand off functional work before taking another queued refactorer task or batch:
   - Send `git_handoff` to the coder and refactorer using `priority: 00` when they have follow-up work to review.
   - Send a `git_handoff` to the specifier only when there is a functional commit for the specifier to review.
-  - Queue each with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task` only. Do not type a SHA or `SWARMFORGE_ROLE`.
+  - Queue each with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task`; add `with_tasks`, `card_commit`, or `return` only as the handoffs article describes. Do not type `commit` or `SWARMFORGE_ROLE`.
   - Do not send completion notes or `note` handoffs to the specifier.
   - Handbacks (`non-forwarding`) are merge-only; do not re-forward them. Manifest edits still forward.
 - After a forwarded `git_handoff`, run `done_with_current.sh`.
