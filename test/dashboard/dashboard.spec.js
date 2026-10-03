@@ -139,6 +139,9 @@ test.describe("pack dashboard", () => {
     const chat = page.locator(".ts");
     const split = page.locator(".rail-splitter");
     await expect(split).toBeVisible();
+    // Measure after the first state render: questions in the attention bar
+    // push the rail down once they appear.
+    await expect(page.locator("#attention-clarifications .att-row").first()).toBeVisible();
     const beforeWork = await work.boundingBox();
     const beforeChat = await chat.boundingBox();
     const box = await split.boundingBox();
@@ -158,7 +161,7 @@ test.describe("pack dashboard", () => {
     await expect(page.locator("#nt-name")).toBeFocused();
   });
 
-  test("New Task sends the chosen role and priority", async ({ page }) => {
+  test("New Task sends the chosen role and level", async ({ page }) => {
     let posted = null;
     await page.route("**/api/tasks", async (route) => {
       posted = JSON.parse(route.request().postData() || "{}");
@@ -170,10 +173,42 @@ test.describe("pack dashboard", () => {
     await expect(page.locator("#nt-role option")).toHaveText(["Master (default)", "Specifier", "Coder"]);
     await page.locator("#nt-name").fill("D02");
     await page.locator("#nt-role").selectOption("coder");
-    await page.locator("#nt-priority").fill("10");
+    await page.locator("#nt-level").selectOption("critical");
     await page.locator("#nt-ok").click();
     await expect.poll(() => posted).not.toBeNull();
-    expect(posted).toMatchObject({ name: "D02", project: "htw", role: "coder", priority: "10" });
+    expect(posted).toMatchObject({ name: "D02", project: "htw", role: "coder", level: "critical" });
+    expect(posted.todo).toBeUndefined();
+  });
+
+  test("a TODO card shows its level and blocker, and starts from its menu", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      await page.goto(local.url);
+      await page.locator(".project-header button", { hasText: "New Task" }).click();
+      await page.locator("#nt-name").fill("Later");
+      await page.locator("#nt-level").selectOption("high");
+      await page.locator("#nt-blockers").selectOption("HTW");
+      await page.locator("#nt-ok").click();
+      const card = page.locator(".col[data-lane=\"todo\"] .card[data-task-name=\"Later\"]");
+      await expect(card).toHaveCount(1);
+      await expect(page.locator(".col[data-lane=\"todo\"] h3")).toHaveText("TODO");
+      await expect(card.locator("[data-level=\"high\"]")).toHaveText("High");
+      await expect(card.locator("[data-blockers]")).toContainText("Blocked by: HTW");
+      await expect(page.locator(".card[data-task-name=\"HTW\"] [data-blocks]")).toHaveText("Blocks: Later");
+      await card.locator(".card-menu-btn").click();
+      await card.locator(".card-menu .menu-list button", { hasText: "Start" }).click();
+      await expect(page.locator("#start-layer")).toBeVisible();
+      await expect(page.locator("#st-note")).toContainText("Blocked by HTW");
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.locator("#st-ok").click();
+      await expect(page.locator(".col[data-lane=\"todo\"] .card[data-task-name=\"Later\"]")).toHaveCount(1);
+      await page.locator("#st-force").check();
+      await page.locator("#st-ok").click();
+      await expect(page.locator(".col[data-lane=\"specifier\"] .card[data-task-name=\"Later\"]")).toHaveCount(1);
+      await expect(page.locator("#start-layer")).toBeHidden();
+    } finally {
+      await stopDashboard(local);
+    }
   });
 
   test("queued card shows Queued and its menu reorders, renames, and removes it", async ({ page }) => {
@@ -221,7 +256,7 @@ test.describe("pack dashboard", () => {
     const row = page.locator("#attention-clarifications .att-row");
     await expect(row.locator("[data-also-role]")).toHaveCount(1);
     await row.locator("[data-also-role=\"coder\"]").check();
-    await row.locator("input[type=text]").fill("Yes, all 20.");
+    await row.locator("textarea.clar-answer").fill("Yes, all 20.");
     await row.locator("button", { hasText: "Submit" }).click();
     await expect.poll(() => posted).not.toBeNull();
     expect(posted).toEqual({ text: "Yes, all 20.", also: ["coder"] });
@@ -396,18 +431,97 @@ test.describe("pack dashboard", () => {
     }
   });
 
-  test("Clarification Open posts the answer", async ({ page, context }) => {
+  test("Clarification Open posts the answer from an in-page dialog", async ({ page }) => {
     const local = await startDashboard();
     try {
       await page.goto(local.url);
-      const popupPromise = context.waitForEvent("page");
       await page.locator("#attention-clarifications button", { hasText: "Open" }).click();
-      const clar = await popupPromise;
-      await clar.waitForLoadState("domcontentloaded");
-      await expect(clar.locator("#clar-request")).toContainText("Does the bat drop to any of 20 rooms?");
-      await clar.locator("#clar-response").fill("Yes, any of the 20 rooms.");
-      await clar.locator("#clar-ok").click();
+      await expect(page.locator("#clar-layer")).toBeVisible();
+      await expect(page.locator("#clar-request")).toContainText("Does the bat drop to any of 20 rooms?");
+      await page.locator("#clar-response").fill("Yes, any of the 20 rooms.");
+      await expect(page.locator("#attention-clarifications textarea.clar-answer"))
+        .toHaveValue("Yes, any of the 20 rooms.");
+      await page.locator("#clar-ok").click();
       await expect(page.locator("#attention-clarifications .att-row")).toHaveCount(0);
+      await expect(page.locator("#clar-layer")).toBeHidden();
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("Clarification keeps the question's line breaks and takes a multi-line answer", async ({ page }) => {
+    const local = await startDashboard();
+    let posted = null;
+    try {
+      writeFile(
+        path.join(local.root, "projects/htw/.swarmforge/dashboard/clarifications/pending/clar-1.request"),
+        "id: clar-1\nstatus: pending\nrole: specifier\ncreated_at: 2026-01-01T00:00:00Z\n\n" +
+          "Two questions:\n1. Does the bat drop to any of 20 rooms?\n2. Can it drop into a pit?\n"
+      );
+      await page.route("**/api/clarifications/**", async (route) => {
+        posted = JSON.parse(route.request().postData() || "{}");
+        await route.fulfill({ status: 200, contentType: "application/json", body: "{\"ok\":true}" });
+      });
+      await page.goto(local.url);
+      const body = page.locator("#attention-clarifications .clar-body");
+      await expect(body).toHaveCSS("white-space", "pre-wrap");
+      expect(await body.evaluate((el) => el.textContent)).toContain("questions:\n1. Does");
+      const answer = page.locator("#attention-clarifications textarea.clar-answer");
+      await answer.fill("Yes.");
+      await answer.press("Enter");
+      await answer.type("No pits.");
+      expect(posted).toBeNull();
+      await answer.press("Control+Enter");
+      await expect.poll(() => posted).not.toBeNull();
+      expect(posted).toEqual({ text: "Yes.\nNo pits." });
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("a stuck card is red and a returned card shows who returned it", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      const project = path.join(local.root, "projects/htw");
+      writeFile(
+        path.join(project, ".swarmforge/board/tasks.tsv"),
+        "HTW\tspecifier\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-htw\t0\n" +
+          "Orphan\tcoder\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000001Z-orphan\t0\n" +
+          "Rework\tcoder\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000002Z-rework\t0\n"
+      );
+      writeFile(
+        path.join(project, ".worktrees/coder/.swarmforge/handoffs/inbox/completed/50_orphan.handoff"),
+        "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\ntask_id: 20260101T000001Z-orphan\ntask: Orphan\n\npayload\n"
+      );
+      writeFile(
+        path.join(project, ".worktrees/coder/.swarmforge/handoffs/inbox/new/50_rework.handoff"),
+        "id: 20260101T000005000000Z_1_from_specifier\nfrom: specifier\nto: coder\npriority: 50\n" +
+          "type: git_handoff\ntask_id: 20260101T000002Z-rework\ntask: Rework\nreturn: true\n\npayload\n"
+      );
+      await page.goto(local.url);
+      const orphan = page.locator(".card[data-task-name=\"Orphan\"]");
+      await expect(orphan).toHaveAttribute("data-stuck", "no_mail");
+      await expect(orphan).toContainText("No mail");
+      const rework = page.locator(".card[data-task-name=\"Rework\"]");
+      await expect(rework.locator(".pill-returned")).toHaveText("\u21a9 Returned by Specifier");
+      await expect(rework.locator(".return-count")).toHaveText("\u21a91");
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("a paused project shows a banner and a Resume button", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      writeFile(path.join(local.root, "projects/htw/.swarmforge/paused"), "now\n");
+      await page.goto(local.url);
+      const banner = page.locator(".project-band [data-banner=\"paused\"]");
+      await expect(banner).toContainText("PAUSED");
+      await expect(banner).toContainText("No task moves until Resume.");
+      await expect(page.locator(".project-header [data-pause-toggle=\"resume\"]")).toHaveText("Resume");
+      fs.rmSync(path.join(local.root, "projects/htw/.swarmforge/paused"));
+      await expect(banner).toHaveCount(0);
+      await expect(page.locator(".project-header [data-pause-toggle=\"pause\"]")).toHaveText("Pause");
     } finally {
       await stopDashboard(local);
     }

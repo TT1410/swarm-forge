@@ -551,12 +551,20 @@
     (fs/delete-if-exists path))
   (remove-empty-sender-audit-dir! sender))
 
+(declare card-level-priority)
+
+(defn audited-priority
+  "A priority that comes from the card's level is not the role's choice, so
+  a level change on the dashboard between audit and resubmit keeps the audit."
+  [headers]
+  (if (card-level-priority headers) "level" (get headers "priority")))
+
 (defn invocation-fingerprint [draft sender headers]
   {:sender sender
    :task-id (audit-task-id headers)
    :type (get headers "type")
    :recipients (vec (str/split (or (get headers "to") "") #"," -1))
-   :priority (get headers "priority")
+   :priority (audited-priority headers)
    :task (get headers "task")
    :with-task-ids (get headers "with_task_ids")
    :return (return-handoff? headers)
@@ -580,7 +588,7 @@
    :task-id (audit-task-id headers)
    :type (get headers "type")
    :recipients (vec recipients)
-   :priority (get headers "priority")
+   :priority (audited-priority headers)
    :task (get headers "task")
    :with-task-ids (get headers "with_task_ids")
    :return (return-handoff? headers)
@@ -653,10 +661,35 @@
                                 (worktree-head))))
     headers))
 
+(defn card-level-priority
+  "The priority a forward git handoff takes from its cards' levels, the most
+  urgent card first, when the draft leaves the default 50 or no priority.
+  Merge-only copies, a priority the role chose, and cards without a level
+  keep the draft's priority."
+  [headers]
+  (when (and (= "git_handoff" (get headers "type"))
+             (not= "true" (get headers "non-forwarding"))
+             ;; Agents type 50 by habit, so 50 or no priority means "the
+             ;; card decides". Any other number is the role's deliberate
+             ;; choice (an architect's 00 follow-up, QA's urgent 10) and wins.
+             (let [typed (some-> (get headers "priority") str/trim)]
+               (or (contains? #{nil "" "50"} typed) (not (valid-priority? typed)))))
+    (let [root (project-root)
+          ids (->> (cons (get headers "task_id")
+                         (str/split (or (get headers "with_task_ids") "") #","))
+                   (map #(some-> % str/trim))
+                   (remove str/blank?)
+                   distinct)]
+      (first (sort (keep #(handoff-lib/level-priority
+                           (:level (handoff-lib/read-card-meta root %)))
+                         ids))))))
+
 (defn fill-priority [headers]
-  (if (valid-priority? (get headers "priority"))
-    headers
-    (assoc headers "priority" "50")))
+  (if-let [level-priority (card-level-priority headers)]
+    (assoc headers "priority" level-priority)
+    (if (valid-priority? (get headers "priority"))
+      headers
+      (assoc headers "priority" "50"))))
 
 (defn prepare-headers [headers sender]
   (-> headers

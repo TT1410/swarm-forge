@@ -175,6 +175,8 @@
 (defn validate-window! [ctx line-no role agent worktree receive-mode roles worktrees]
   (reject-if (str/includes? role "_")
              (str "Invalid role '" role "' on line " line-no ": role names may not contain underscores"))
+  (reject-if (#{"todo" "done"} (str/lower-case role))
+             (str "Invalid role '" role "' on line " line-no ": todo and done are board columns, not roles"))
   (reject-if (contains? roles role)
              (str "Duplicate role '" role "' in " (:config-file ctx)))
   (reject-if (and (not (special-worktree? worktree)) (contains? worktrees worktree))
@@ -1250,14 +1252,16 @@
     (println (str "DRAINED: " (if (:drained state) "yes" "no")))
     (doseq [{:keys [role in_process outbox]} (:busy state)]
       (println (str "BUSY: " role " in_process=" in_process " outbox=" outbox)))
-    (when (pos? (:project_outbox state))
-      (println (str "BUSY: project outbox=" (:project_outbox state))))))
+    (when (pos? (:held state))
+      (println (str (if (:paused state) "HELD: " "QUEUED: ")
+                    (:held state) " outbox handoff(s)"
+                    (when (:paused state) " wait for resume"))))))
 
 (defn run-drain! [root]
   (let [file (ready-for-next-guard/pause-file root)]
     (fs/create-dirs (fs/parent file))
     (spit (str file) (str (java.time.Instant/now) "\n"))
-    (println "Draining: roles finish in-process work and take no new mail.")
+    (println "Draining: roles finish in-process work, take no new mail, and handoffs wait in outboxes until resume.")
     (print-drain-status! root)))
 
 (def wake-message
@@ -1274,6 +1278,13 @@
       (Thread/sleep 150)
       (process/sh {:continue true} "tmux" "-S" socket "send-keys" "-t" session "C-m")
       (println (str "Woke " (first cols) ".")))))
+
+(defn run-restart-daemon!
+  "Restart only the handoff daemon, for a swarm whose daemon stopped."
+  [root]
+  (let [ctx (context root)]
+    (stop-handoff-daemon! ctx)
+    (start-handoff-daemon! ctx)))
 
 (defn run-resume! [root]
   (let [ctx (context root)
@@ -1297,6 +1308,9 @@
               (require-swarm-root! root)
               (run-drain! root))
     "resume" (run-resume! (or (second args) (System/getProperty "user.dir")))
+    "daemon" (let [root (str (fs/absolutize (or (second args) (System/getProperty "user.dir"))))]
+               (require-swarm-root! root)
+               (run-restart-daemon! root))
     "status" (let [root (str (fs/absolutize (or (second args) (System/getProperty "user.dir"))))]
                (require-swarm-root! root)
                (print-drain-status! root))
