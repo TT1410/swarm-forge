@@ -119,6 +119,7 @@
             (fail! 1 (str/trim (str (:err result) "\n" (:out result))))))))))
 
 (defn -main []
+  (ready-for-next-guard/exit-if-paused!)
   (let [inbox (inbox-dir)
         new-dir (fs/path inbox "new")
         in-process-dir (fs/path inbox "in_process")
@@ -140,10 +141,11 @@
           (merge-git-handoff! file)
           (ready-for-next-guard/ensure-task-document-committed! file)
           (print-task file))
-        (let [new-files (handoff-files new-dir)]
-          (when-let [active (seq (ready-for-next-guard/active-outbound-git-files
-                                  (ready-for-next-guard/current-role)))]
-            (apply fail! 2 (ready-for-next-guard/wait-message active)))
+        (let [role (ready-for-next-guard/current-role)
+              queued (handoff-files new-dir)
+              _ (when-let [active (ready-for-next-guard/blocking-files role queued)]
+                  (apply fail! 2 (ready-for-next-guard/wait-message active)))
+              new-files (ready-for-next-guard/startable-files role queued)]
           (if (empty? new-files)
             (println "NO_TASK")
             (let [source-file (first new-files)

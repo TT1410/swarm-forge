@@ -1,6 +1,7 @@
 ;; Board rows, task docs, create, increment-audit, and delete. Loaded into pack-board.
 
-(declare require-caller! consume-allow! require-create-when-stuck!)
+(declare require-caller! consume-allow! require-create-when-stuck!
+         lt-allow-file lt-pending-file allow-acts)
 
 (defn board-dir [root]
   (fs/path root ".swarmforge" "board"))
@@ -154,6 +155,13 @@
   (when (str/blank? value)
     (exit! 1 (str "Missing " label))))
 
+(def max-task-name-length 80)
+
+(defn require-task-name-length! [name]
+  (when (> (count (or name "")) max-task-name-length)
+    (exit! 1 (str "Task name must be no longer than " max-task-name-length
+                  " characters (got " (count name) "): " name))))
+
 (defn pack-role-names [root]
   (mapv first (role-rows root)))
 
@@ -197,6 +205,7 @@
         merge-from (:merge-from opts)]
     (require-value! name "task name")
     (safe-paths/require-task-name! name)
+    (require-task-name-length! name)
     (require-value! card-type "type")
     (when-not (card-type/known? root card-type)
       (exit! 1 (str "Unknown type: " card-type)))
@@ -297,3 +306,98 @@
                                     rows))
           (fs/delete-if-exists (task-body-file root name))
           (write-recut! root name))))))
+
+(defn rename-row [root line new-name]
+  (card-type/format-row (assoc (card-type/parse-row root line)
+                               :name new-name
+                               :updated (timestamp))))
+
+(defn live-handoff-dirs [root]
+  (let [worktrees (->> (role-rows root)
+                       (map #(nth % 2 nil))
+                       (remove str/blank?)
+                       (cons (str root))
+                       distinct)]
+    (cons (fs/path root ".swarmforge" "handoffs" "pending_approval")
+          (for [wt worktrees
+                state [["outbox"] ["inbox" "new"] ["inbox" "in_process"]]]
+            (apply fs/path wt ".swarmforge" "handoffs" state)))))
+
+(defn live-handoff-files [root]
+  (->> (live-handoff-dirs root)
+       (filter fs/directory?)
+       (mapcat #(concat (fs/glob % "*.handoff") (fs/glob % "batch_*/*.handoff")))
+       (filter fs/regular-file?)
+       distinct))
+
+(defn handoff-names-card? [file task-id old-name]
+  (let [task (handoff-lib/header-field file "task")
+        file-task-id (handoff-lib/header-field file "task_id")]
+    (and (some? task)
+         (if (str/blank? file-task-id)
+           (= (str/lower-case task) (str/lower-case old-name))
+           (= task-id file-task-id)))))
+
+(defn rename-handoff-tasks! [root task-id old-name new-name]
+  (doseq [file (live-handoff-files root)
+          :when (handoff-names-card? file task-id old-name)]
+    (handoff-lib/set-header! file "task" new-name)))
+
+(defn tracked-file? [root file]
+  (zero? (:exit (command root "git" "ls-files" "--error-unmatch" "--" (str file)))))
+
+(defn retitle-doc [text old-name new-name]
+  (let [old-title (str "# " old-name "\n")]
+    (if (str/starts-with? text old-title)
+      (str "# " new-name "\n" (subs text (count old-title)))
+      text)))
+
+(defn rename-task-doc! [root old-name new-name]
+  (let [old-file (task-doc-file root old-name)
+        new-file (task-doc-file root new-name)]
+    (when (and (fs/regular-file? old-file) (not (fs/exists? new-file)))
+      (if (tracked-file? root old-file)
+        (command root "git" "mv" "--" (str old-file) (str new-file))
+        (fs/move old-file new-file))
+      (when (fs/regular-file? new-file)
+        (spit (str new-file) (retitle-doc (slurp (str new-file)) old-name new-name))))))
+
+(defn move-if-exists! [from to]
+  (when (and (fs/exists? from) (not= (str from) (str to)))
+    (fs/create-dirs (fs/parent to))
+    (fs/move from to {:replace-existing true})))
+
+(defn rename-allow-files! [root old-name new-name]
+  (doseq [act allow-acts
+          f [lt-allow-file lt-pending-file]]
+    (move-if-exists! (f root old-name act) (f root new-name act))))
+
+(defn rename! [opts]
+  (let [wanted (task-name opts)
+        new-name (some-> (:to opts) str/trim)
+        root (resolve-root opts)
+        file (tasks-file root)]
+    (require-value! wanted "task name")
+    (require-value! new-name "new task name")
+    (safe-paths/require-task-name! new-name)
+    (require-task-name-length! new-name)
+    (with-board-lock
+      root
+      (fn []
+        (let [rows (read-rows file)
+              row (find-task rows wanted)
+              clash (find-task rows new-name)]
+          (when-not row
+            (exit! 1 (str "Unknown task name: " wanted)))
+          (when (and clash (not= clash row))
+            (exit! 1 (str "Duplicate task name: " new-name)))
+          (let [old-name (row-name row)
+                task-id (:id (card-type/parse-row root row))
+                notify-dir (fs/path root ".swarmforge" "notify")]
+            (write-rows file (mapv #(if (= % row) (rename-row root % new-name) %) rows))
+            (move-if-exists! (task-body-file root old-name) (task-body-file root new-name))
+            (move-if-exists! (safe-paths/task-path! notify-dir (str "reject-" old-name) "")
+                             (safe-paths/task-path! notify-dir (str "reject-" new-name) ""))
+            (rename-allow-files! root old-name new-name)
+            (rename-task-doc! root old-name new-name)
+            (rename-handoff-tasks! root task-id old-name new-name)))))))

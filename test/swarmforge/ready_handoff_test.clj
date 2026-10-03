@@ -122,10 +122,10 @@
                         (script "ready_for_next.sh"))]
         (is (str/includes? (:out result) "task-alpha"))
         (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/40_20260615T000002Z_000002_from_sender_to_receiver.handoff")))))))
-(deftest ready-for-next-waits-while-outbound-approval-is-active
-  ;; Given sender has an outbound git_handoff pending approval
+(deftest ready-for-next-starts-other-cards-while-an-approval-is-pending
+  ;; SF-02: Given sender's handoff for task-one waits for approval
   ;; When sender asks for another task
-  ;; Then no new task is dequeued from the inbox
+  ;; Then task-two starts
   (let [root (tmp-dir)]
     (init-repo! root)
     (setup-project! root)
@@ -146,10 +146,29 @@
                    :body "next task"})
     (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false}
                       (script "ready_for_next.sh"))]
+      (is (zero? (:exit result)) (:err result))
+      (is (str/includes? (:out result) "TASK_NAME: task-two"))
+      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/in_process/50_next.handoff"))))))
+(deftest ready-for-next-holds-mail-for-the-card-awaiting-approval
+  ;; Given sender's handoff for task-one waits for approval
+  ;; When the only queued mail is for task-one
+  ;; Then sender waits for the approval
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (write-file (fs/path root ".swarmforge/roles.tsv")
+                (format "sender\tmaster\t%s\tsession\tSender\tcodex\ttask\nreceiver\treceiver\t%s\tsession\tReceiver\tcodex\ttask\n"
+                        root (fs/path root ".worktrees/receiver")))
+    (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_pending.handoff")
+                "from: sender\nto: receiver\npriority: 50\ntype: git_handoff\ntask_id: task-one\ntask: task-one\ncommit: 1234567890\n\npayload\n")
+    (put-handoff! root "new" "50_again.handoff"
+                  {:id "again" :from "receiver" :to "sender" :recipient "sender" :priority "50"
+                   :type "git_handoff" :task-id "task-one" :task "task-one" :commit "1234567890"})
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false}
+                      (script "ready_for_next.sh"))]
       (is (= 2 (:exit result)))
       (is (str/includes? (:err result) "WAITING_FOR_APPROVAL"))
-      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_next.handoff")))
-      (is (empty? (fs/glob (fs/path root ".swarmforge/handoffs/inbox/in_process") "*.handoff"))))))
+      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_again.handoff"))))))
 (deftest ready-for-next-waits-while-outbound-handoff-is-in-outbox
   ;; Given sender has queued a git_handoff that handoffd has not processed yet
   ;; When sender asks for another task
@@ -254,10 +273,10 @@
       (is (seq (submitted-texts (read-argv tmux-log) "sender-session")))
       (is (str/includes? (read-file (fs/path root ".swarmforge/daemon/handoffd.log"))
                          "notified-unblocked-sender sender")))))
-(deftest ready-for-next-batch-waits-while-outbound-approval-is-active
+(deftest ready-for-next-batch-starts-other-cards-while-an-approval-is-pending
   ;; Given a batch-mode sender has an outbound git_handoff pending approval
   ;; When sender asks for the next batch
-  ;; Then no batch is created from queued inbox work
+  ;; Then a batch starts with the other card (SF-02)
   (let [root (tmp-dir)]
     (init-repo! root)
     (setup-project! root {"sender" "batch" "receiver" "task"})
@@ -278,10 +297,10 @@
                    :body "next task"})
     (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false}
                       (script "ready_for_next.sh"))]
-      (is (= 2 (:exit result)))
-      (is (str/includes? (:err result) "WAITING_FOR_APPROVAL"))
-      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/new/50_next.handoff")))
-      (is (empty? (fs/glob (fs/path root ".swarmforge/handoffs/inbox/in_process") "batch_*"))))))
+      (is (zero? (:exit result)) (:err result))
+      (is (str/includes? (:out result) "TASK_NAME: task-two"))
+      (is (some #(str/starts-with? (fs/file-name %) "batch_")
+                (fs/list-dir (fs/path root ".swarmforge/handoffs/inbox/in_process")))))))
 (deftest ready-for-next-batch-groups-equal-priority-handoffs
   (let [root (tmp-dir)]
     (init-repo! root)
@@ -895,3 +914,75 @@
         (is (str/includes? (:err ready) "TASK_IN_PROCESS_IS_BATCH"))
         (is (= 2 (:exit done)))
         (is (str/includes? (:err done) "CURRENT_WORK_IS_BATCH"))))))
+
+(defn- board! [root rows]
+  (write-file (fs/path root ".swarmforge/board/tasks.tsv")
+              (apply str (for [[name lane id] rows]
+                           (str name "\t" lane "\tcreated\tupdated\t" id "\n")))))
+
+(deftest done-with-current-task-refuses-an-unforwarded-card
+  ;; SF-26: a forwarded card cannot be closed as merge-only without a handoff or --drop
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root {"sender" "task" "receiver" "task"})
+    (board! root [["UI card" "receiver" "ui-card"]])
+    (put-handoff! root "in_process" "50_ui.handoff"
+                  {:id "ui" :from "sender" :to "receiver" :recipient "receiver" :priority "50"
+                   :type "git_handoff" :task-id "ui-card" :task "UI card" :commit (head-sha root)})
+    (let [refused (run {:dir root :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                       (script "done_with_current.sh"))]
+      (is (= 3 (:exit refused)))
+      (is (str/includes? (:err refused) "OPEN_CARDS"))
+      (is (str/includes? (:err refused) "UI card (ui-card)"))
+      (is (fs/exists? (handoff-path root "in_process" "50_ui.handoff"))))
+    (let [dropped (run {:dir root :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                       (script "done_with_current.sh") "--drop")]
+      (is (zero? (:exit dropped)) (:err dropped))
+      (is (str/includes? (:out dropped) "DROPPED: UI card (ui-card)"))
+      (is (not (fs/exists? (handoff-path root "in_process" "50_ui.handoff")))))))
+
+(deftest done-with-current-names-an-unhanded-card-without-a-board
+  ;; Without a board there is no lane to strand the card in: finish and name it
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root {"sender" "task" "receiver" "task"})
+    (put-handoff! root "in_process" "50_ui.handoff"
+                  {:id "ui" :from "sender" :to "receiver" :recipient "receiver" :priority "50"
+                   :type "git_handoff" :task-id "ui-card" :task "UI card" :commit (head-sha root)})
+    (let [done (run {:dir root :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                    (script "done_with_current.sh"))]
+      (is (zero? (:exit done)) (:err done))
+      (is (str/includes? (:out done) "NOT_HANDED_OFF: ui-card")))))
+
+(deftest done-with-current-does-not-count-merge-only-copies-as-open-cards
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root {"sender" "task" "receiver" "task"})
+    (board! root [["UI card" "receiver" "ui-card"]])
+    (put-handoff! root "in_process" "00_ui.handoff"
+                  {:id "ui" :from "sender" :to "receiver" :recipient "receiver" :priority "00"
+                   :type "git_handoff" :task-id "ui-card" :task "UI card" :commit (head-sha root)
+                   :non-forwarding true :delivery-kind "reverse"})
+    (let [done (run {:dir root :env {"SWARMFORGE_ROLE" "receiver"} :ok? false}
+                    (script "done_with_current.sh"))]
+      (is (zero? (:exit done)) (:err done))
+      (is (not (str/includes? (str (:out done) (:err done)) "OPEN_CARDS"))))))
+
+(deftest ready-for-next-prints-paused-while-the-swarm-drains
+  ;; SF-09: Given the operator drained the swarm
+  ;; When an idle role asks for work
+  ;; Then it takes no new mail, but sees notes from other roles
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (write-file (fs/path root ".swarmforge/paused") "now\n")
+    (make-queued-handoff! root "50_work.handoff" {:to "sender" :recipient "sender"})
+    (put-handoff! root "new" "50_note.handoff"
+                  {:id "n" :from "receiver" :to "sender" :recipient "sender" :priority "50"
+                   :type "note" :body "heads up"})
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "sender"}}
+                      (script "ready_for_next.sh"))]
+      (is (str/includes? (:out result) "PAUSED"))
+      (is (str/includes? (:out result) "NOTE: 50_note.handoff"))
+      (is (fs/exists? (handoff-path root "new" "50_work.handoff")))
+      (is (fs/exists? (handoff-path root "completed" "50_note.handoff"))))))

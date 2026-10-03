@@ -49,6 +49,14 @@
       (let [next (card-type/next-role (project-root) card-type sender)
             last? (card-type/last-on-card? (project-root) card-type sender)]
         (cond
+          (return-handoff? headers)
+          (let [earlier (set (card-type/earlier-roles (project-root) card-type sender))]
+            (cond-> []
+              (some #(not (earlier %)) recipients)
+              (conj (format "A return goes back to a role before %s on this card (%s); got %s."
+                            sender (str/join "," (card-type/earlier-roles (project-root) card-type sender))
+                            (str/join "," recipients)))))
+
           last?
           (let [want (set (card-type/terminal-upstream (project-root) (pack-role-names) card-type))
                 got (set recipients)
@@ -107,7 +115,7 @@
           [nil (format "Header 'commit' must resolve to a commit; '%s' resolves to '%s'." commit object-type)])))))
 
 (def allowed-fields-by-type
-  {"git_handoff" #{"type" "to" "priority" "task_id" "task" "commit"}
+  {"git_handoff" #{"type" "to" "priority" "task_id" "task" "commit" "return"}
    "note" #{"type" "to" "priority" "message"}})
 
 (defn field-allowed? [type field]

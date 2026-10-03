@@ -19,7 +19,8 @@
      :board_allows (board-allows root)
      :work_in_flight (work-in-flight root heats)
      :chat (list-chat root)
-     :clarifications (list-clarifications root)}))
+     :clarifications (list-clarifications root)
+     :drain (ready-for-next-guard/drain-state root)}))
 
 (defn tagged [project items]
   (mapv #(assoc % :project project) items))
@@ -39,6 +40,7 @@
          :lanes (display-lanes root)
          :tasks (tagged name (tasks root))
          :role_heats heats
+         :drain (ready-for-next-guard/drain-state root)
          :work_in_flight (tagged name (work-in-flight root heats))})
       (catch Exception _
         {:name name

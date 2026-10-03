@@ -1211,3 +1211,151 @@
                       (script "swarm_handoff.sh") (str coder-only))]
       (is (= 2 (:exit result)))
       (is (str/includes? (:err result) "upstream")))))
+
+(defn board! [root rows]
+  (write-file (fs/path root ".swarmforge/board/tasks.tsv")
+              (apply str (for [[name lane id card-type] rows]
+                           (str name "\t" lane "\tcreated\tupdated\t" id "\t0\t" (or card-type "") "\n")))))
+
+(defn submit-draft! [root role text]
+  (let [draft (fs/path root "tmp" (str (System/nanoTime) ".handoff"))]
+    (write-file draft text)
+    (audit-and-submit-git-handoff {:dir root :env {"SWARMFORGE_ROLE" role} :ok? false} draft)))
+
+(defn commit-file! [root file text]
+  (write-file (fs/path root file) text)
+  (run {:dir root} "git" "add" file)
+  (run {:dir root} "git" "commit" "-q" "-m" (str "Add " file))
+  (head-sha root))
+
+(deftest swarm-handoff-return-from-last-role-reopens-a-done-card
+  ;; SF-35: the last role can send a done card back for more work
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["D40" "done" "d40" "QA"]])
+    (commit-work! root)
+    (let [result (submit-draft! root "QA" "type: git_handoff\nto: coder\npriority: 50\ntask: D40\nreturn: true\n")
+          queued (queued-path (:out result))]
+      (is (zero? (:exit result)) (:err result))
+      (is (= "true" (header queued "return")))
+      (is (= "forward" (header queued "delivery_kind")))
+      (is (nil? (header queued "non-forwarding")))
+      (is (= 1 (count (outbox-handoffs root)))))))
+
+(deftest swarm-handoff-refuses-done-card-without-return
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["D40" "done" "d40" "QA"]])
+    (commit-work! root)
+    (let [result (submit-draft! root "QA" "type: git_handoff\nto: coder\npriority: 50\ntask: D40\n")]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "is done and cannot accept new handoffs"))
+      (is (empty? (outbox-handoffs root))))))
+
+(deftest swarm-handoff-return-goes-back-along-the-card-route
+  ;; A return names a role before the sender on the card's route
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["U1" "coder" "u1" "utility"]])
+    (commit-work! root)
+    (let [result (submit-draft! root "coder" "type: git_handoff\nto: cleaner\npriority: 50\ntask: U1\nreturn: true\n")]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "A return goes back to a role before coder"))
+      (is (empty? (outbox-handoffs root))))))
+
+(deftest swarm-handoff-from-a-plain-note-keeps-the-drafted-task
+  ;; A role note without task_id in process does not block a git_handoff (no board)
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (put-handoff! root "in_process" "50_note.handoff"
+                  {:id "note" :from "receiver" :to "sender" :recipient "sender" :priority "50"
+                   :type "note" :body "please do x"})
+    (commit-work! root)
+    (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: do-x\n")]
+      (is (zero? (:exit result)) (:err result))
+      (is (= "do-x" (header (queued-path (:out result)) "task_id")))
+      (is (not (fs/exists? (handoff-path root "in_process" "50_note.handoff")))))))
+
+(deftest swarm-handoff-counts-card-work-committed-under-a-merge-only-copy
+  ;; SF-28, SF-37: Given the role committed card work while a merge-only copy was current
+  ;; And the card's mail then took that HEAD as its base
+  ;; When the card is handed off
+  ;; Then artifacts list that work instead of refusing an empty diff
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (board! root [["Card A" "sender" "card-a"]])
+    (let [copy-base (head-sha root)]
+      (write-file (handoff-path root "completed" "00_copy.handoff")
+                  (str "id: copy\nfrom: receiver\nto: sender\npriority: 00\ntype: git_handoff\n"
+                       "task: other\ncommit: " copy-base "\ntask_base_commit: " copy-base "\n"
+                       "non-forwarding: true\ncompleted_at: 2026-10-03T00:00:00Z\n\nmerge\n"))
+      (commit-file! root "fix.md" "fix\n")
+      (put-handoff! root "in_process" "50_a.handoff"
+                    {:id "a" :from "(New Task)" :to "sender" :priority "50" :type "note"
+                     :task-id "card-a" :task "Card A" :task-base-commit (head-sha root) :body "A"})
+      (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card A\n")
+            queued (queued-path (:out result))]
+        (is (zero? (:exit result)) (:err result))
+        (is (= "fix.md" (header queued "artifacts")))))))
+
+(deftest swarm-handoff-ignores-the-base-of-a-note-without-a-card
+  ;; Given card work is committed and then a plain note became current work
+  ;; When the card is handed off
+  ;; Then the note's base does not hide that work
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (board! root [["Card C" "sender" "card-c"]])
+    (commit-file! root "c.md" "card c\n")
+    (put-handoff! root "in_process" "50_note.handoff"
+                  {:id "note" :from "receiver" :to "sender" :priority "50" :type "note"
+                   :task-base-commit (head-sha root) :body "fyi"})
+    (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card C\n")
+          queued (queued-path (:out result))]
+      (is (zero? (:exit result)) (:err result))
+      (is (= "c.md" (header queued "artifacts")))
+      (is (nil? (header queued "task_base_commit"))))))
+
+(deftest swarm-handoff-keeps-refusing-an-unchanged-card-after-another-card
+  ;; Given card A was finished earlier and card B changed nothing
+  ;; When card B is handed off
+  ;; Then A's files are not listed for B and the empty handoff is refused
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (board! root [["Card A" "sender" "card-a"] ["Card B" "sender" "card-b"]])
+    (let [a-base (head-sha root)]
+      (commit-file! root "a.md" "card a\n")
+      (put-handoff! root "completed" "50_a.handoff"
+                    {:id "a" :from "(New Task)" :to "sender" :priority "50" :type "note"
+                     :task-id "card-a" :task "Card A" :task-base-commit a-base
+                     :completed-at "2026-10-03T00:00:00Z" :body "A"})
+      (put-handoff! root "in_process" "50_b.handoff"
+                    {:id "b" :from "(New Task)" :to "sender" :priority "50" :type "note"
+                     :task-id "card-b" :task "Card B" :task-base-commit (head-sha root) :body "B"})
+      (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card B\n")]
+        (is (not (zero? (:exit result))))
+        (is (str/includes? (:err result) "no changed files"))))))
+
+(deftest swarm-handoff-records-handed-cards-before-completing-current-work
+  ;; Given a forwarded card in process
+  ;; When its git_handoff is queued
+  ;; Then the completed mail records the card as handed off
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (board! root [["Card A" "sender" "card-a"]])
+    (put-handoff! root "in_process" "50_a.handoff"
+                  {:id "a" :from "receiver" :to "sender" :recipient "sender" :priority "50"
+                   :type "git_handoff" :task-id "card-a" :task "Card A" :commit (head-sha root)
+                   :task-base-commit (head-sha root)})
+    (commit-work! root)
+    (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card A\n")]
+      (is (zero? (:exit result)) (:err result))
+      (is (not (str/includes? (str (:out result) (:err result)) "OPEN_CARDS")))
+      (is (= "card-a" (header (handoff-path root "completed" "50_a.handoff") "handed_task_ids"))))))

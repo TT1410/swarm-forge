@@ -863,3 +863,94 @@
         (is (not (zero? (:exit unknown))))
         (is (str/includes? (str (:err unknown) (:out unknown))
                            "Unknown pending request"))))))
+
+(deftest approval-skips-a-fix-for-a-card-that-already-moved-on
+  ;; SF-15: a specifier fix for a card already in coder is delivered without approval
+  (let [root (tmp-dir)
+        sock (do (setup-pack! root six-pack-roles)
+                 (create-task root "C14" "specifier")
+                 (pack-board root true "move" "--root" (str root) "--name" "C14"
+                             "--lane" "coder" "--caller" "handoffd")
+                 (queue-handoff! root {:from "specifier" :to "coder" :task "C14"})
+                 (start-tmux! root six-pack-roles))]
+    (try
+      (handoffd-once root)
+      (is (= [] (pending-names root)))
+      (is (seq (inbox-names root six-pack-roles "coder")))
+      (is (= "coder" (task-lane root "C14")))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest last-role-return-moves-a-done-card-back
+  ;; SF-35: QA's return handoff takes the card out of done into the recipient lane
+  (let [root (tmp-dir)
+        sock (do (setup-pack! root six-pack-roles)
+                 (create-task root "D40" "QA")
+                 (pack-board root true "move" "--root" (str root) "--name" "D40"
+                             "--lane" "done" "--caller" "handoffd")
+                 (write-file (fs/path root ".swarmforge/handoffs/outbox/50_from_QA_to_coder.handoff")
+                             "id: r1\nfrom: QA\nto: coder\npriority: 50\ntype: git_handoff\ntask: D40\nreturn: true\n\npayload\n")
+                 (start-tmux! root six-pack-roles))]
+    (try
+      (handoffd-once root)
+      (is (= "coder" (task-lane root "D40")))
+      (is (seq (inbox-names root six-pack-roles "coder")))
+      (finally
+        (stop-tmux! sock)))))
+
+(defn git-init! [root]
+  (run {:dir root} "git" "init" "-q")
+  (run {:dir root} "git" "config" "user.email" "t@example.com")
+  (run {:dir root} "git" "config" "user.name" "T"))
+
+(defn git-commit! [root text]
+  (write-file (fs/path root "work.txt") text)
+  (run {:dir root} "git" "add" "work.txt")
+  (run {:dir root} "git" "commit" "-q" "-m" text)
+  (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD"))))
+
+(defn merge-only-copy [id task commit]
+  (str "id: " id "\nfrom: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask: " task
+       "\ncommit: " commit "\ndelivery_kind: reverse\nnon-forwarding: true\n\nmerge\n"))
+
+(deftest newer-merge-only-copy-supersedes-an-unread-older-one
+  ;; SF-16: the recipient keeps one merge-only copy per sender instead of one per commit
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner" "QA"]
+        _ (setup-pack! root roles)
+        _ (git-init! root)
+        older (git-commit! root "one")
+        newer (git-commit! root "two")
+        coder-new (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/new")
+        coder-done (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/completed")
+        _ (write-file (fs/path coder-new "00_old_from_QA_to_coder.handoff")
+                      (merge-only-copy "old" "A" older))
+        _ (write-file (fs/path root ".swarmforge/handoffs/outbox/00_new_from_QA_to_coder.handoff")
+                      (merge-only-copy "new" "B" newer))
+        sock (start-tmux! root roles)]
+    (try
+      (handoffd-once root)
+      (is (= ["00_new_from_QA_to_coder.handoff"] (inbox-names root roles "coder")))
+      (is (str/includes? (slurp (str (fs/path coder-done "00_old_from_QA_to_coder.handoff")))
+                         "superseded_by: new"))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest same-commit-merge-only-copy-replaces-the-unread-one
+  ;; Handoffs of one commit send one merge-only copy per role, not one per handoff
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner" "QA"]
+        _ (setup-pack! root roles)
+        _ (git-init! root)
+        sha (git-commit! root "one")
+        coder-new (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/new")
+        _ (write-file (fs/path coder-new "00_a_from_QA_to_coder.handoff")
+                      (merge-only-copy "a" "A" sha))
+        _ (write-file (fs/path root ".swarmforge/handoffs/outbox/00_b_from_QA_to_coder.handoff")
+                      (merge-only-copy "b" "B" sha))
+        sock (start-tmux! root roles)]
+    (try
+      (handoffd-once root)
+      (is (= ["00_b_from_QA_to_coder.handoff"] (inbox-names root roles "coder")))
+      (finally
+        (stop-tmux! sock)))))

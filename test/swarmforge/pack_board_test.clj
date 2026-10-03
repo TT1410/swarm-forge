@@ -496,3 +496,66 @@
       (is (= "specifier" (task-lane root "next")))
       (is (= 1 (count (handoff-names
                        (fs/path root ".swarmforge/handoffs/outbox"))))))))
+
+(def long-name (apply str (repeat 81 "x")))
+
+(deftest pack-board-rejects-a-task-name-over-eighty-characters
+  ;; Given a pack
+  ;; When pack_board create gets an 81-character name
+  ;; Then it fails with the limit and no card is written
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        result (create-task root long-name "specifier" false)
+        ok (create-task root (apply str (repeat 80 "y")) "specifier")]
+    (is (not (zero? (:exit result))))
+    (is (str/includes? (:err result) "no longer than 80 characters"))
+    (is (nil? (task-lane root long-name)))
+    (is (zero? (:exit ok)))))
+
+(deftest pack-board-rename-keeps-the-task-id-and-moves-card-files
+  ;; Given card HTW with body, task doc, and an in-process handoff naming it by task_id
+  ;; When pack_board rename --name HTW --to Hunt
+  ;; Then the row, body, doc, and live handoff use Hunt and the task_id is unchanged
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (create-task root "HTW" "coder")
+        task-id (:id (task-card root "HTW"))
+        _ (write-file (fs/path root "tasks/HTW.md") "# HTW\n\nIntegrate HTW stories\n")
+        live (fs/path (in-process-dir root roles "coder") "50_from_specifier_to_coder.handoff")
+        sent (fs/path root ".swarmforge/handoffs/sent/50_from_specifier_to_coder.handoff")
+        handoff (str "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\n"
+                     "task_id: " task-id "\ntask: HTW\n\npayload\n")
+        _ (write-file live handoff)
+        _ (write-file sent handoff)
+        result (pack-board root true "rename" "--root" (str root) "--name" "HTW" "--to" "Hunt")]
+    (is (zero? (:exit result)))
+    (is (nil? (task-lane root "HTW")))
+    (is (= "coder" (task-lane root "Hunt")))
+    (is (= task-id (:id (task-card root "Hunt"))))
+    (is (= "Integrate HTW stories" (slurp (str (fs/path root ".swarmforge/board/Hunt.txt")))))
+    (is (not (fs/exists? (fs/path root ".swarmforge/board/HTW.txt"))))
+    (is (str/starts-with? (slurp (str (fs/path root "tasks/Hunt.md"))) "# Hunt\n"))
+    (is (not (fs/exists? (fs/path root "tasks/HTW.md"))))
+    (is (str/includes? (slurp (str live)) "task: Hunt\n"))
+    (is (str/includes? (slurp (str live)) (str "task_id: " task-id "\n")))
+    (is (str/includes? (slurp (str sent)) "task: HTW\n"))))
+
+(deftest pack-board-rename-rejects-duplicates-and-long-names
+  ;; Given cards HTW and Grenade
+  ;; When renaming HTW to Grenade or to an 81-character name
+  ;; Then both fail and HTW keeps its name
+  (let [root (tmp-dir)
+        _ (setup-pack! root)
+        _ (create-task root "HTW" "specifier")
+        _ (create-task root "Grenade" "specifier")
+        dup (pack-board root false "rename" "--root" (str root) "--name" "HTW" "--to" "Grenade")
+        long (pack-board root false "rename" "--root" (str root) "--name" "HTW" "--to" long-name)
+        missing (pack-board root false "rename" "--root" (str root) "--name" "Nope" "--to" "Yes")]
+    (is (not (zero? (:exit dup))))
+    (is (str/includes? (:err dup) "Duplicate task name"))
+    (is (not (zero? (:exit long))))
+    (is (str/includes? (:err long) "no longer than 80 characters"))
+    (is (not (zero? (:exit missing))))
+    (is (str/includes? (:err missing) "Unknown task name"))
+    (is (= "specifier" (task-lane root "HTW")))))

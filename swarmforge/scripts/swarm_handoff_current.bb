@@ -148,9 +148,33 @@
   (when-let [file (first (in-process-task-files))]
     (header-field file "task")))
 
-(defn current-task-base []
-  (when-let [file (first (in-process-task-files))]
+(defn current-task-base
+  "Base of the current card work. A note without a card or a merge-only copy
+  gives no base: no card work started under it."
+  []
+  (when-let [file (first (filter handoff-lib/card-mail? (in-process-task-files)))]
     (header-field file "task_base_commit")))
+
+(defn completed-dir []
+  (fs/path (System/getProperty "user.dir") ".swarmforge" "handoffs" "inbox" "completed"))
+
+(defn recent-completed-bases
+  "task_base_commit of the latest completed mails that may hold work for the
+  cards: merge-only copies, notes without a card, and mail of the cards
+  themselves. Newest first."
+  [card-ids]
+  (->> (concat (handoff-files (completed-dir))
+               (mapcat handoff-files (batch-dirs (completed-dir))))
+       (filter (fn [file]
+                 (or (not (handoff-lib/card-mail? file))
+                     (some (set card-ids) (handoff-lib/mail-card-ids file)))))
+       (keep (fn [file]
+               (when-let [base (not-empty (header-field file "task_base_commit"))]
+                 [(or (header-field file "completed_at") "") base])))
+       (sort-by first #(compare %2 %1))
+       (map second)
+       distinct
+       (take 5)))
 
 (defn current-work-present? []
   (seq (in-process-task-files)))
@@ -181,9 +205,33 @@
         (conj (str "Invalid batch manifest: "
                    (fs/path (first invalid-manifests) batch-manifest-filename) "."))))))
 
-(defn complete-current-after-git-handoff! [headers]
+(defn return-handoff? [headers]
+  (= "true" (get headers "return")))
+
+(defn handoff-card-ids
+  "Every card the handoff carries: its task plus the batch membership."
+  [headers]
+  (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
+             (or (parsed-task-id-list (get headers "batch_task_ids")) []))
+       (remove str/blank?)
+       distinct
+       vec))
+
+(defn mark-handed!
+  "Record on the current card mails which of their cards this handoff carried,
+  so done_with_current does not report them as still open."
+  [ids]
+  (doseq [file (in-process-task-files)
+          :when (handoff-lib/card-mail? file)
+          :let [hit (filter (set (handoff-lib/mail-card-ids file)) ids)]
+          :when (seq hit)]
+    (handoff-lib/set-header! file "handed_task_ids"
+                             (str/join "," (distinct (concat (sort (handoff-lib/handed-card-ids file)) hit))))))
+
+(defn complete-current-after-git-handoff! [headers _sender]
   (when (and (= "git_handoff" (get headers "type"))
              (current-work-present?))
+    (mark-handed! (handoff-card-ids headers))
     (let [result (sh (str (fs/path script-dir "done_with_current.sh")))]
       (print (:out result))
       (binding [*out* *err*]
@@ -268,19 +316,25 @@
 
 (defn with-delivery-kind [headers sender]
   (if (= "git_handoff" (get headers "type"))
-    (assoc headers "delivery_kind" (if (terminal-sender? headers sender)
+    (assoc headers "delivery_kind" (if (and (terminal-sender? headers sender)
+                                            (not (return-handoff? headers)))
                                       "terminal"
                                       "forward"))
     headers))
 
 (defn with-non-forwarding [headers sender]
-  (if (terminal-sender? headers sender)
+  (if (and (terminal-sender? headers sender)
+           (not (return-handoff? headers)))
     (assoc headers "non-forwarding" "true")
     headers))
 
 (defn inbound-handoffs []
   (in-process-task-files))
 
-(defn inbound-non-forwarding? []
-  (boolean (some #(= "true" (header-field % "non-forwarding"))
-                 (inbound-handoffs))))
+(defn inbound-non-forwarding?
+  "True when every mail of the current work is a merge-only copy, so the
+  role has nothing to forward."
+  []
+  (let [files (inbound-handoffs)]
+    (boolean (and (seq files)
+                  (every? #(= "true" (header-field % "non-forwarding")) files)))))

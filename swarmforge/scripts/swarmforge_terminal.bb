@@ -135,11 +135,47 @@
   (when (and (open-browser?) (command-exists? "open"))
     (process/sh {:continue true} "open" url)))
 
+(defn dashboard-port-file [ctx]
+  (fs/path (:state-dir ctx) "dashboard-port"))
+
+(defn previous-dashboard-port [ctx]
+  (let [file (dashboard-port-file ctx)]
+    (when (fs/regular-file? file)
+      (let [value (str/trim (slurp (str file)))]
+        (when (valid-port? value) value)))))
+
+(defn port-free? [port]
+  (try
+    (with-open [_ (java.net.ServerSocket. (Integer/parseInt port) 1
+                                          (java.net.InetAddress/getByName "127.0.0.1"))]
+      true)
+    (catch Exception _ false)))
+
+(defn wait-port-free [port timeout-ms]
+  (let [deadline (+ (System/currentTimeMillis) timeout-ms)]
+    (loop []
+      (cond
+        (port-free? port) true
+        (> (System/currentTimeMillis) deadline) false
+        :else (do (Thread/sleep 100) (recur))))))
+
+(defn dashboard-port
+  "The configured dashboard-port, else the port of the previous run when it
+  is free again, else nil (pack_web then picks a free port)."
+  [ctx]
+  (let [configured (config-setting ctx "dashboard-port")
+        previous (previous-dashboard-port ctx)]
+    (cond
+      (valid-port? configured) (do (wait-port-free configured 3000) configured)
+      (and previous (wait-port-free previous 3000)) previous
+      :else nil)))
+
 (defn start-pack-web! [ctx]
   (stop-existing-pack-web! ctx)
   (let [script (str (fs/path (:script-dir ctx) "pack_web.sh"))
-        log (fs/path (:state-dir ctx) "dashboard.log")]
-    (process/process [script "--serve" (str (:working-dir ctx))]
+        log (fs/path (:state-dir ctx) "dashboard.log")
+        port (dashboard-port ctx)]
+    (process/process (cond-> [script "--serve" (str (:working-dir ctx))] port (conj port))
                      {:out (str log) :err :out})
     (when-not (wait-for-file (dashboard-url-file ctx) 5000)
       (fail! (str red "Error:" reset " Dashboard did not start.")))

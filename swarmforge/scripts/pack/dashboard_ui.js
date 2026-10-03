@@ -7,6 +7,7 @@ async function loadState() {
     const res = await fetch("/api/state", {cache: "no-store"});
     if (!res.ok) throw new Error("offline");
     const data = await res.json();
+    lastState = data;
     $("error").textContent = "";
     renderChrome(data);
     renderBoard(data);
@@ -232,6 +233,10 @@ async function submitNewTask() {
   const name = $("nt-name").value.trim();
   const text = $("nt-text").value;
   if (!name) return;
+  if (!taskNameFits(name)) {
+    $("nt-name").focus();
+    return;
+  }
   const payload = {name, text, type: selectedType()};
   if (taskProject) payload.project = taskProject;
   const res = await fetch("/api/tasks", {
@@ -507,6 +512,7 @@ document.addEventListener("click", (event) => {
     document.querySelectorAll(".menu.open").forEach((el) => {
       el.classList.remove("open");
       if (el.dataset.docId) openDocMenus.delete(el.dataset.docId);
+      if (el.dataset.cardMenu) openCardMenus.delete(el.dataset.cardMenu);
     });
   }
   const btn = event.target.closest("[data-open-agent]");

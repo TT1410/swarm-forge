@@ -130,3 +130,9 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
   .rail{flex:0 0 580px;min-height:580px;border-top:1px solid var(--line)}
   .rail section.ts{flex:1 1 auto}
 }
+.card-queued{border-style:dashed;background:#f6f7f2}
+.pill-queued{align-self:flex-start;background:#e3e8f2;color:#33476b}
+.card-menu-btn{flex:0 0 auto;border:0;background:none;padding:0 2px;margin-left:4px;font:inherit;font-size:12px;line-height:1;color:var(--muted);cursor:pointer}
+.card-menu-btn:hover{color:var(--ink)}
+.clar-also{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;color:var(--muted);font-size:11px}
+.clar-also label{display:inline-flex;gap:2px;align-items:center;color:var(--ink)}

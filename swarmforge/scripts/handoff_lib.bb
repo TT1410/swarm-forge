@@ -3,6 +3,7 @@
 (ns handoff-lib
   (:require [babashka.fs :as fs]
             [babashka.process]
+            [clojure.edn :as edn]
             [clojure.string :as str]))
 
 (defn same-path? [a b]
@@ -146,6 +147,132 @@
          vec)
     []))
 
+(defn split-list [value]
+  (->> (str/split (or value "") #",")
+       (map str/trim)
+       (remove str/blank?)
+       vec))
+
+(defn batch-dirs [dir]
+  (if (fs/exists? dir)
+    (->> (fs/list-dir dir)
+         (filter #(and (fs/directory? %) (str/starts-with? (fs/file-name %) "batch_")))
+         (sort-by #(fs/file-name %))
+         vec)
+    []))
+
+(defn in-process-files []
+  (let [dir (fs/path (inbox-dir) "in_process")]
+    (into (handoff-files dir)
+          (mapcat handoff-files (batch-dirs dir)))))
+
+(defn mail-task-id [file]
+  (or (not-empty (header-field file "task_id"))
+      (not-empty (header-field file "task"))))
+
+(declare board-cards find-card)
+
+(defn batch-task-id-list
+  "The batch_task_ids header: an EDN vector of task ids, or [] when absent or malformed."
+  [value]
+  (if (str/blank? value)
+    []
+    (try
+      (let [parsed (edn/read-string value)]
+        (if (and (vector? parsed) (every? string? parsed)) parsed []))
+      (catch Exception _ []))))
+
+(defn mail-card-ids
+  "Cards a mail carries (its task plus any batch_task_ids), as board task ids
+  when the board knows the card."
+  [file]
+  (let [cards (board-cards)]
+    (->> (cons (mail-task-id file) (batch-task-id-list (header-field file "batch_task_ids")))
+         (remove str/blank?)
+         (map #(or (:id (find-card cards %)) %))
+         distinct
+         vec)))
+
+(defn handed-card-ids [file]
+  (set (split-list (header-field file "handed_task_ids"))))
+
+(defn card-mail?
+  "Mail that carries a card the receiving role must hand off: forwarding
+  git handoffs and notes that name a board task (new or retried cards)."
+  [file]
+  (boolean (and (not= "true" (header-field file "non-forwarding"))
+                (not (#{"reverse" "terminal"} (header-field file "delivery_kind")))
+                (or (= "git_handoff" (header-field file "type"))
+                    (not-empty (header-field file "task_id")))
+                (seq (mail-card-ids file)))))
+
+(defn board-file []
+  (fs/path (project-root) ".swarmforge" "board" "tasks.tsv"))
+
+(defn board-present? []
+  (fs/exists? (board-file)))
+
+(defn board-cards []
+  (if (board-present?)
+    (->> (str/split-lines (slurp (str (board-file))))
+         (remove str/blank?)
+         (mapv #(let [[name lane _created _updated task-id] (str/split % #"\t" -1)]
+                  {:name name :lane lane :id (or (not-empty task-id) name)})))
+    []))
+
+(defn find-card [cards key]
+  (or (some #(when (= key (:id %)) %) cards)
+      (some #(when (= key (:name %)) %) cards)))
+
+(defn recursive-handoff-files [dir]
+  (if (fs/directory? dir)
+    (->> (fs/glob dir "**.handoff")
+         (filter fs/regular-file?)
+         vec)
+    []))
+
+(defn outbound-card-ids
+  "Cards named by git handoffs from role-name that wait for approval or delivery."
+  [role-name]
+  (let [root (project-root)
+        dirs (cons (fs/path root ".swarmforge" "handoffs" "pending_approval")
+                   (cons (fs/path root ".swarmforge" "handoffs" "outbox")
+                         (for [cols (role-rows)
+                               :let [wt (nth cols 2 nil)]
+                               :when (not (str/blank? wt))]
+                           (fs/path wt ".swarmforge" "handoffs" "outbox"))))]
+    (->> dirs
+         (mapcat recursive-handoff-files)
+         (filter #(and (= "git_handoff" (header-field % "type"))
+                       (= role-name (header-field % "from"))))
+         (mapcat mail-card-ids)
+         set)))
+
+(defn open-card-ids
+  "Cards in current work that still need an outgoing handoff from role-name.
+  With a board, only cards still in the role's lane count."
+  ([role-name] (open-card-ids role-name (in-process-files)))
+  ([role-name files]
+   (let [board? (board-present?)
+         cards (board-cards)
+         outbound (outbound-card-ids role-name)]
+     (->> files
+          (filter card-mail?)
+          (mapcat (fn [file] (remove (handed-card-ids file) (mail-card-ids file))))
+          distinct
+          (remove outbound)
+          (filter (fn [id]
+                    (if board?
+                      (= role-name (:lane (find-card cards id)))
+                      true)))
+          vec))))
+
+(defn card-label [id]
+  (let [card (find-card (board-cards) id)]
+    (if (and card (not= id (:name card)))
+      (str (:name card) " (" id ")")
+      id)))
+
 (defn print-batch [batch-dir]
   (let [files (handoff-files batch-dir)]
     (when (empty? files)
@@ -233,6 +360,7 @@
    "print-task" (fn [args] (print-task (second args)))
    "print-batch" (fn [args] (print-batch (second args)))
    "next-sequence" (fn [_] (println (next-sequence)))
+   "open-cards" (fn [_] (doseq [id (open-card-ids (role))] (println (card-label id))))
    "finish-done" (fn [_] (finish-done!))})
 
 (defn -main [& args]

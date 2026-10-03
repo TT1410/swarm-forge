@@ -434,8 +434,31 @@ Responsibilities:
 - Run inside one agent worktree.
 - Read the current role from `SWARMFORGE_ROLE`.
 - Read that role's receive mode from `.swarmforge/roles.tsv`.
+- When a board exists, refuse with `OPEN_CARDS` (exit 3) while current work
+  holds a forwarded card that is still in this role's lane and has no outgoing
+  `git_handoff` (handed off, pending approval, or in an outbox). Without a
+  board, finish and print `NOT_HANDED_OFF:` for each such card. Merge-only
+  (`non-forwarding`) copies and role notes carry no card. `--drop` finishes
+  anyway and prints `DROPPED:` for each card left in the lane.
 - Dispatch to `done_with_current_task.sh` for `task` mode.
 - Dispatch to `done_with_current_batch.sh` for `batch` mode.
+
+### Cards in a handoff
+
+A `git_handoff` carries the card named by `task_id`/`task`, or every card of
+an atomic batch listed in `batch_task_ids`. After the handoff,
+`swarm_handoff.sh` records those cards in the current mail's
+`handed_task_ids`, which `done_with_current.sh` reads for `OPEN_CARDS`.
+`return: true` sends a card back instead: the recipient must be an earlier role
+on the card's route, the handoff is not merge-only, it reopens a Done card, and
+it sends no reverse copies.
+
+`artifacts` lists the files changed since the `task_base_commit` of the mail
+that carries the card or batch. Notes without a card and merge-only copies give no
+base; without one, artifacts come from the commit itself. When that diff is
+empty (card work committed under a merge-only copy or a note, or a no-change
+merge on top), artifacts come from the base of a recently completed mail.
+`swarm_handoff.sh` refuses only when none of these shows a change.
 
 ### `ready_for_next_task.sh`
 
@@ -446,7 +469,9 @@ Responsibilities:
 - If an in-process file exists, report that it must be resumed or completed
   before accepting new work.
 - If no in-process file exists, select the first file in `inbox/new/` by sorted
-  filename order.
+  filename order. Mail for a card whose `git_handoff` from this role waits in
+  `pending_approval` is held back; other cards start. An undelivered outbound
+  `git_handoff` in an outbox still blocks all new work.
 - Atomically move that file to `inbox/in_process/`.
 - Add or update `dequeued_at`.
 - Copy the current `tasks/<task-name>.md` from the project root into the role
@@ -581,7 +606,11 @@ Prompts should instruct agents to follow this loop:
 On restart, an agent should run `ready_for_next.sh` and follow its output.
 
 Tmux wake-ups are intentionally lossy. They only prompt an idle agent to check
-its durable inbox. A busy agent can ignore them. After `done_with_current.sh`
+its durable inbox. A busy agent can ignore them. The daemon repeats the wake-up
+every two minutes for a role that has startable mail in `inbox/new/`, nothing
+in `inbox/in_process/`, and no undelivered outbound handoff. A newer merge-only
+copy from the same sender replaces unread older copies whose commits it
+contains. After `done_with_current.sh`
 prints `MAIL_WAITING`, the agent runs `ready_for_next.sh` to accept the next
 item.
 

@@ -32,6 +32,9 @@ priority: NN
 task: <short-stable-task-name>
 ```
 
+- To send a card back for more work, for example a defect the last role found,
+  add `return: true` and send it to an earlier role on the card's route. A
+  returned card leaves Done and goes to the recipient.
 - After completing a forward inbound task, always send a `git_handoff` to the
   next role in **this card's** chain (`CARD_TYPE` from `ready_for_next`).
   If you are last on that chain, send the terminal handoff. Formatting-only,
@@ -79,6 +82,8 @@ message: <one line, max 80 chars>
   resolution. Do not invent a new `git merge`. Parallel cards on one tree
   will conflict; that is expected.
 - If it prints `NO_TASK`, stop waiting for work.
+- If it prints `PAUSED`, the operator is draining the swarm. Read any printed
+  `NOTE`, then stop waiting for work until a new wake-up arrives.
 - If it prints `TASK: <path>`, treat the printed `PAYLOAD` as the task.
 - If it prints `TASK_NAME: <name>`, use that as the stable task name for any
   work you forward from that task.
@@ -94,6 +99,11 @@ message: <one line, max 80 chars>
 - When the task or batch is fully complete, run `done_with_current.sh`. After a
   reverse (`non-forwarding`) merge, that is the completion; do not queue a
   `git_handoff` for that inbound.
+- `done_with_current.sh` refuses with `OPEN_CARDS` while a forwarded card has
+  no outgoing `git_handoff`. Hand those cards off. Use
+  `done_with_current.sh --drop` only when a card must stay in this lane.
+  Without a board it finishes and prints `NOT_HANDED_OFF:` for those cards;
+  hand them off in the next turn.
 - `note` handoffs are tasks too; after reading or acting on a note, run
   `done_with_current.sh` before accepting any other handoff.
 - If `done_with_current.sh` prints `MAIL_WAITING`, run `ready_for_next.sh` as a

@@ -34,6 +34,7 @@ function cardEl(task, opts) {
   auditValue.textContent = String(task.audit_count || 0);
   audit.append(auditIcon, auditValue);
   meta.appendChild(audit);
+  if (!task.merging && task.lane !== "done") meta.appendChild(cardMenu(task));
   const title = document.createElement("div");
   title.className = "title";
   const name = document.createElement("span");
@@ -41,7 +42,16 @@ function cardEl(task, opts) {
   name.textContent = task.name;
   title.appendChild(name);
   card.append(meta, title);
-  if (!thin) {
+  if (task.queued) {
+    card.classList.add("card-queued");
+    card.setAttribute("data-queued", "true");
+    const pill = document.createElement("span");
+    pill.className = "pill pill-queued";
+    pill.textContent = "Queued" + (task.queue_priority ? " · P" + task.queue_priority : "");
+    pill.title = "Waiting in " + (task.queue_role || task.lane || "the") + "'s queue; not started yet";
+    card.appendChild(pill);
+  }
+  if (!thin && !task.queued) {
     const status = document.createElement("div");
     status.className = "status";
     if (task.status_phase === "working" || task.status_phase === "no session") {
@@ -61,6 +71,117 @@ function cardEl(task, opts) {
     openGrowable("/task?" + qs, "task-" + (task.name || ""));
   };
   return card;
+}
+
+const openCardMenus = new Set();
+
+function cardMenuKey(task) {
+  return (task.project || "") + "\n" + (task.name || "");
+}
+
+function cardMenuItem(label, action) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.textContent = label;
+  btn.onclick = (event) => {
+    event.stopPropagation();
+    document.querySelectorAll(".card-menu.open").forEach((el) => el.classList.remove("open"));
+    openCardMenus.clear();
+    action();
+  };
+  return btn;
+}
+
+function cardMenu(task) {
+  const key = cardMenuKey(task);
+  const wrap = document.createElement("span");
+  wrap.className = "menu card-menu";
+  wrap.dataset.cardMenu = key;
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "card-menu-btn";
+  btn.title = "Card actions";
+  btn.setAttribute("aria-label", "Card actions");
+  btn.textContent = "\u22ef";
+  const list = document.createElement("div");
+  list.className = "menu-list";
+  list.appendChild(cardMenuItem("Rename\u2026", () => renameTask(task)));
+  if (task.queued) {
+    list.appendChild(cardMenuItem("Change priority\u2026", () => reprioritizeTask(task)));
+    list.appendChild(cardMenuItem("Remove from queue", () => dequeueTask(task)));
+  }
+  const place = () => {
+    const box = btn.getBoundingClientRect();
+    list.style.top = box.bottom + "px";
+    list.style.left = box.left + "px";
+  };
+  btn.onclick = (event) => {
+    event.stopPropagation();
+    wrap.classList.toggle("open");
+    if (wrap.classList.contains("open")) {
+      openCardMenus.add(key);
+      place();
+    } else {
+      openCardMenus.delete(key);
+    }
+  };
+  wrap.onclick = (event) => event.stopPropagation();
+  wrap.append(btn, list);
+  if (openCardMenus.has(key)) {
+    wrap.classList.add("open");
+    requestAnimationFrame(place);
+  }
+  return wrap;
+}
+
+async function postTaskAction(path, payload) {
+  const res = await fetch(path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    let msg = "Request failed";
+    try { msg = (await res.json()).error || msg; } catch (_) {}
+    alert(msg);
+  }
+  loadState();
+  return res.ok;
+}
+
+function taskPayload(task, extra) {
+  const payload = Object.assign({name: task.name}, extra || {});
+  if (task.project) payload.project = task.project;
+  return payload;
+}
+
+async function renameTask(task) {
+  const to = prompt("New name for " + task.name + " (max " + maxTaskNameLength + " characters)", task.name);
+  if (to === null) return;
+  const name = to.trim();
+  if (!name || name === task.name) return;
+  if (!taskNameFits(name)) return;
+  await postTaskAction("/api/tasks/rename", taskPayload(task, {to: name}));
+}
+
+async function reprioritizeTask(task) {
+  const value = prompt("Priority for " + task.name + " (00\u201399, lower runs first; 00 = front, 99 = back)",
+    task.queue_priority || "50");
+  if (value === null || !value.trim()) return;
+  await postTaskAction("/api/tasks/priority", taskPayload(task, {priority: value.trim()}));
+}
+
+async function dequeueTask(task) {
+  if (!confirm("Remove " + task.name + " from the queue? Its queued mail is moved to .swarmforge/removed-tasks and the card leaves the board.")) return;
+  await postTaskAction("/api/tasks/dequeue", taskPayload(task));
+}
+
+const maxTaskNameLength = 80;
+
+function taskNameFits(name) {
+  if (name.length <= maxTaskNameLength) return true;
+  alert("Task name must be no longer than " + maxTaskNameLength + " characters (got " + name.length + ").");
+  return false;
 }
 
 const heatPassMs = [0, 2400, 1900, 1500, 1100, 800, 550];
@@ -257,6 +378,7 @@ let projectStates = [];
 let cardTypesByProject = {};
 let standaloneCardTypes = [];
 let taskProject = "";
+let lastState = null;
 
 function fillOpenMenu() {
   const list = $("open-project-list");
@@ -308,7 +430,8 @@ function renderChrome(data) {
   const dot = document.createElement("span");
   dot.className = "dot";
   dot.textContent = "●";
-  $("pack-meta").append(dot, " live · master = " + master);
+  const drain = data.drain && data.drain.paused ? (data.drain.drained ? " · drained (paused)" : " · draining") : "";
+  $("pack-meta").append(dot, " live · master = " + master + drain);
   $("master-title").textContent = master;
   if (masterRole) {
     $("master-title").setAttribute("data-open-agent", masterRole);

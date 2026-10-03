@@ -318,3 +318,82 @@
 
 (deftest swarm-tool-usage
   (is (fn? swarm-tool/-main)))
+
+(deftest handoffd-renotifies-idle-roles-with-waiting-mail
+  ;; SF-03, SF-17: an idle role with mail is reminded; a busy role is not
+  (let [root (tmp-dir)
+        idle (fs/path root "idle")
+        busy (fs/path root "busy")
+        notified (atom [])]
+    (try
+      (doseq [wt [idle busy]]
+        (fs/create-dirs (fs/path wt ".swarmforge/handoffs/inbox/new"))
+        (spit (str (fs/path wt ".swarmforge/handoffs/inbox/new/50_x.handoff")) "from: a\n\nbody\n"))
+      (fs/create-dirs (fs/path busy ".swarmforge/handoffs/inbox/in_process"))
+      (spit (str (fs/path busy ".swarmforge/handoffs/inbox/in_process/50_y.handoff")) "from: a\n\nbody\n")
+      (handoffd/configure! [(str root)])
+      (reset! handoffd/last-notified {})
+      (reset! handoffd/renotify-counts {})
+      (reset! handoffd/started-at-ms (- (System/currentTimeMillis) (* 10 handoffd/renotify-ms)))
+      (with-redefs [handoffd/notify! (fn [_ session] (swap! notified conj session))
+                    handoffd/log! (fn [& _])]
+        (let [roles {"idle" {:role "idle" :worktree-path (str idle) :session "idle-s"}
+                     "busy" {:role "busy" :worktree-path (str busy) :session "busy-s"}}]
+          (handoffd/renotify-idle-roles! roles "sock")
+          (is (= ["idle-s"] @notified))
+          (handoffd/renotify-idle-roles! roles "sock")
+          (is (= ["idle-s"] @notified) "waits for the interval before reminding again")
+          (swap! handoffd/last-notified assoc "idle" (- (System/currentTimeMillis) (inc handoffd/renotify-ms)))
+          (handoffd/renotify-idle-roles! roles "sock")
+          (is (= ["idle-s"] @notified) "backs off after a reminder that changed nothing")
+          (swap! handoffd/last-notified assoc "idle" (- (System/currentTimeMillis) (inc (* 2 handoffd/renotify-ms))))
+          (handoffd/renotify-idle-roles! roles "sock")
+          (is (= ["idle-s" "idle-s"] @notified))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest pack-web-notify-keeps-seen-keys-of-a-project-that-failed-to-read
+  ;; A project that cannot be read this poll keeps its notified keys, so its
+  ;; items are not announced again on the next poll
+  (let [root (tmp-dir)
+        notified (fs/path root ".swarmforge/dashboard/notified")]
+    (try
+      (fs/create-dirs (fs/parent notified))
+      (spit (str notified) "p1/approval/x\np2/approval/y\n")
+      (with-redefs [pack-web/conf-setting (fn [_ _] "true")
+                    pack-web/attention-scan (fn [_] {:events [] :failed #{"p1"}})]
+        (pack-web/notify-new-attention! (str root)))
+      (is (= "p1/approval/x\n" (slurp (str notified))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest handoffd-delivery-restarts-the-senders-idle-clock
+  ;; Right after its mail goes out the sender may still be in its turn, so it
+  ;; is not reminded at once
+  (let [root (tmp-dir)
+        coder (fs/path root "coder")
+        cleaner (fs/path root "cleaner")
+        notified (atom [])]
+    (try
+      (doseq [wt [coder cleaner]]
+        (fs/create-dirs (fs/path wt ".swarmforge/handoffs/inbox/new"))
+        (fs/create-dirs (fs/path wt ".swarmforge/handoffs/outbox")))
+      (spit (str (fs/path coder ".swarmforge/handoffs/inbox/new/50_x.handoff")) "from: a\n\nbody\n")
+      (spit (str (fs/path coder ".swarmforge/handoffs/outbox/50_n.handoff"))
+            "id: n1\nfrom: coder\nto: cleaner\npriority: 50\ntype: note\n\nhi\n")
+      (handoffd/configure! [(str root)])
+      (reset! handoffd/last-notified {})
+      (reset! handoffd/renotify-counts {"coder" 3})
+      (reset! handoffd/started-at-ms (- (System/currentTimeMillis) (* 10 handoffd/renotify-ms)))
+      (with-redefs [handoffd/notify! (fn [_ session] (swap! notified conj session))
+                    handoffd/pack-board! (fn [& _])
+                    handoffd/log! (fn [& _])]
+        (let [roles {"coder" {:role "coder" :worktree-path (str coder) :session "coder-s"}
+                     "cleaner" {:role "cleaner" :worktree-path (str cleaner) :session "cleaner-s"}}]
+          (handoffd/deliver! roles "sock" "coder" (fs/path coder ".swarmforge/handoffs/outbox/50_n.handoff"))
+          (is (= ["cleaner-s"] @notified))
+          (is (nil? (get @handoffd/renotify-counts "coder")))
+          (handoffd/renotify-idle-roles! roles "sock")
+          (is (= ["cleaner-s"] @notified))))
+      (finally
+        (fs/delete-tree root)))))

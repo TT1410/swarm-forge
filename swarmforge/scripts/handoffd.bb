@@ -8,6 +8,8 @@
             [clojure.string :as str]))
 
 (def poll-ms 1000)
+(def renotify-ms 120000)
+(def renotify-max-ms (* 16 60 1000))
 (def wake-message
   "You have new handoff mail. If idle, run ready_for_next.sh.")
 
@@ -40,6 +42,9 @@
 (def stop-file nil)
 (def log-file nil)
 (def stopping-flag (atom false))
+(def last-notified (atom {}))
+(def renotify-counts (atom {}))
+(def started-at-ms (atom (System/currentTimeMillis)))
 
 (defn configure!
   ([] (configure! *command-line-args*))
@@ -144,6 +149,13 @@
     (when-not (zero? (:exit send-line-feed))
       (throw (ex-info "tmux send line feed failed" send-line-feed)))))
 
+(defn note-notified! [role]
+  (when-not (str/blank? role)
+    (swap! last-notified assoc role (System/currentTimeMillis))))
+
+(defn reset-renotify-backoff! [role]
+  (swap! renotify-counts dissoc role))
+
 (defn move-with-collision [source target-dir]
   (fs/create-dirs target-dir)
   (let [base (fs/file-name source)
@@ -199,6 +211,9 @@
 
 (defn from-master? [roles headers]
   (= (get headers "from") (master-role-name roles)))
+
+(defn return-handoff? [headers]
+  (= "true" (get headers "return")))
 
 (defn non-forwarding? [headers]
   (boolean
@@ -407,12 +422,24 @@
 (defn already-approved? [headers]
   (not (str/blank? (get headers "approved"))))
 
+(defn new-card-from-master?
+  "Approval guards cards leaving the master lane for the first time. A fix for
+  cards that already moved on (they sit in another lane) is not held."
+  [roles headers]
+  (boolean
+   (some (fn [key]
+           (let [lane (:lane (board-row-for-key key))]
+             (or (nil? lane)
+                 (= lane (master-role-name roles)))))
+         (batch-task-keys headers))))
+
 (defn should-hold? [roles headers]
   (and (= "git_handoff" (get headers "type"))
        (specifier-pack? roles)
        (from-master? roles headers)
        (single-recipient? headers)
-       (not (already-approved? headers))))
+       (not (already-approved? headers))
+       (new-card-from-master? roles headers)))
 
 (defn pending-dir []
   (fs/path state-dir "handoffs" "pending_approval"))
@@ -464,6 +491,7 @@
              (not (contains? (set (recipient-list headers)) sender-role)))
     (try
       (notify! socket (get-in roles [sender-role :session]))
+      (note-notified! sender-role)
       (safe-log! "notified-unblocked-sender" sender-role)
       (catch Exception e
         (try
@@ -623,7 +651,7 @@
           (throw (permanent-error "reverse delivery must be non-forwarding")))
 
         "forward"
-        (when expected-terminal
+        (when (and expected-terminal (not (return-handoff? headers)))
           (throw (permanent-error
                   (str "last role must send one terminal handoff to "
                        (str/join "," expected-terminal)))))
@@ -716,6 +744,8 @@
 (defn notify-or-queue! [roles socket headers recipient]
   (try
     (notify! socket (get-in roles [recipient :session]))
+    (note-notified! recipient)
+    (reset-renotify-backoff! recipient)
     (catch Exception e
       (try
         (queue-wakeup! headers recipient (.getMessage e))
@@ -744,11 +774,49 @@
                                                :next-at (+ (epoch-ms) (retry-delay-ms attempt))
                                                :error (.getMessage e)))))))))))
 
+(defn commit-contains? [newer older]
+  (zero? (:exit (sh "git" "-C" (str project-root) "merge-base" "--is-ancestor" older newer))))
+
+(defn superseded-copy? [headers path]
+  (let [old (:headers (parse-message path))]
+    (and (= "git_handoff" (get old "type"))
+         (non-forwarding? old)
+         (= (get headers "from") (get old "from"))
+         (not (str/blank? (get old "commit")))
+         (or (= (get old "commit") (get headers "commit"))
+             (commit-contains? (get headers "commit") (get old "commit"))))))
+
+(defn supersede-merge-copies!
+  "A newer merge-only copy from the same sender contains the older unread
+  ones, so the recipient merges once instead of once per copy."
+  [role-info headers]
+  (let [inbox (fs/path (:worktree-path role-info) ".swarmforge" "handoffs" "inbox")
+        completed-dir (fs/path inbox "completed")]
+    (doseq [path (listed-handoffs (fs/path inbox "new"))
+            :when (superseded-copy? headers path)]
+      (let [target (fs/path completed-dir (fs/file-name path))]
+        (fs/create-dirs completed-dir)
+        (when (try
+                (fs/move path target {:atomic-move true})
+                true
+                (catch java.nio.file.NoSuchFileException _
+                  false))
+          (let [message (parse-message target)
+                superseded (assoc (:headers message)
+                                  "superseded_by" (get headers "id")
+                                  "completed_at" (now))]
+            (spit (str target) (render-message superseded (:body message)))
+            (safe-log! "superseded" (str path) "by" (get headers "id"))))))))
+
 (defn deliver! [roles socket sender-role path]
   (let [filename (fs/file-name path)
         message (parse-message path)
         headers (:headers message)
         recipients (preflight! roles sender-role path message)]
+    (when (and (= "git_handoff" (get headers "type"))
+               (non-forwarding? headers))
+      (doseq [recipient recipients]
+        (supersede-merge-copies! (get roles recipient) headers)))
     (doseq [recipient recipients]
       (store-recipient! message (get roles recipient) recipient filename))
     (update-board! roles headers)
@@ -762,6 +830,11 @@
         (safe-log! "retry-cleanup-failed" (str path) (.getMessage e))))
     (doseq [recipient recipients]
       (notify-or-queue! roles socket headers recipient))
+    (when (contains? roles sender-role)
+      ;; The sender just handed off and may still be finishing its turn:
+      ;; start its idle clock now so a reminder does not land mid-turn.
+      (note-notified! sender-role)
+      (reset-renotify-backoff! sender-role))
     (try
       (maybe-notify-unblocked-sender! roles socket headers sender-role)
       (catch Exception e
@@ -800,6 +873,55 @@
              (catch Exception e (log! "lieutenant-event-failed" (.getMessage e)))))
       (deliver! roles socket (or from "") (fs/path path)))))
 
+(defn pause-file []
+  (fs/path state-dir "paused"))
+
+(defn renotify-interval [role]
+  (min renotify-max-ms
+       (* renotify-ms (bit-shift-left 1 (min 4 (get @renotify-counts role 0))))))
+
+(defn renotify-due? [role now-ms]
+  (and (>= (- now-ms @started-at-ms) renotify-ms)
+       (>= (- now-ms (get @last-notified role @started-at-ms)) (renotify-interval role))))
+
+(defn mail-card-keys [path]
+  (batch-task-keys (:headers (parse-message path))))
+
+(defn startable-mail? [role-info]
+  (let [held (->> (listed-handoffs (pending-dir))
+                  (filter #(outbound-git-from-role? (:role role-info) %))
+                  (mapcat mail-card-keys)
+                  set)]
+    (boolean (some #(not-any? held (mail-card-keys %))
+                   (inbox-handoffs role-info "new")))))
+
+(defn idle-with-mail? [roles role-info]
+  (and (startable-mail? role-info)
+       (not (role-has-inbox-state? role-info "in_process"))
+       (empty? (or (outbox-files role-info) []))
+       (not-any? #(outbound-git-from-role? (:role role-info) %)
+                 (concat (mapcat #(or (outbox-files %) []) (vals roles))
+                         (or (outbox-files {:worktree-path project-root}) [])))))
+
+(defn renotify-idle-roles!
+  "Agents that ended their turn miss the one-shot wake message; remind idle
+  roles that still have mail, backing off while they stay idle."
+  [roles socket]
+  (when-not (fs/exists? (pause-file))
+    (let [now-ms (System/currentTimeMillis)]
+      (doseq [role-info (vals roles)
+              :let [idle? (idle-with-mail? roles role-info)]
+              :when (do (when-not idle? (reset-renotify-backoff! (:role role-info)))
+                        (and idle? (renotify-due? (:role role-info) now-ms)))]
+        (try
+          (notify! socket (:session role-info))
+          (note-notified! (:role role-info))
+          (swap! renotify-counts update (:role role-info) (fnil inc 0))
+          (safe-log! "renotified" (:role role-info))
+          (catch Exception e
+            (note-notified! (:role role-info))
+            (safe-log! "renotify-failed" (:role role-info) (.getMessage e))))))))
+
 (defn poll-once! []
   (when-not (should-stop?)
     (let [roles (load-roles)
@@ -829,7 +951,12 @@
       (try
         (reconcile-reverse-cycle!)
         (catch Exception e
-          (safe-log! "reverse-cycle-failed" (.getMessage e)))))))
+          (safe-log! "reverse-cycle-failed" (.getMessage e))))
+      (when-not once?
+        (try
+          (renotify-idle-roles! roles socket)
+          (catch Exception e
+            (safe-log! "renotify-scan-failed" (.getMessage e))))))))
 
 (defn shutdown! []
   (reset! stopping-flag true)
@@ -842,6 +969,7 @@
   (fs/create-dirs daemon-dir)
   (fs/delete-if-exists stop-file)
   (spit (str pid-file) (str (.pid (java.lang.ProcessHandle/current)) "\n"))
+  (reset! started-at-ms (System/currentTimeMillis))
   (.addShutdownHook (Runtime/getRuntime) (Thread. shutdown!))
   (log! "started")
   (try
