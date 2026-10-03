@@ -147,8 +147,10 @@
 (defn fail! [path reason]
   (let [failed-dir (fs/path (fs/parent (fs/parent path)) "failed")]
     (log! "failed" (str path) reason)
-    (spit (str path ".error") (str reason "\n"))
-    (move-with-collision path failed-dir)))
+    ;; The reason sits next to the failed file, where the dashboard reads it.
+    (let [moved (move-with-collision path failed-dir)]
+      (spit (str moved ".error") (str reason "\n"))
+      moved)))
 
 (defn recipient-list [headers]
   (some->> (get headers "to")
@@ -571,6 +573,8 @@
     (log! "stopped")
     (catch Exception _ nil)))
 
+(def last-poll-error (atom nil))
+
 (defn run-daemon! []
   (fs/create-dirs daemon-dir)
   (fs/delete-if-exists stop-file)
@@ -582,10 +586,16 @@
     (while (not (should-stop?))
       ;; One bad poll (a file that moved mid-read, a missing socket file)
       ;; must not end the daemon: every queued handoff would wait forever.
+      ;; The same error every second (a swarm that is not running) is
+      ;; logged once until it changes or a poll succeeds.
       (try
         (poll-once!)
+        (reset! last-poll-error nil)
         (catch Exception e
-          (log! "poll-error" (.getMessage e))))
+          (let [msg (.getMessage e)]
+            (when (not= msg @last-poll-error)
+              (reset! last-poll-error msg)
+              (log! "poll-error" msg)))))
       (sleep-poll! poll-ms))
     (finally
       (fs/delete-if-exists pid-file)

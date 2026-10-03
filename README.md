@@ -225,19 +225,24 @@ git handoff in its outbox, so no card changes lane. Handoffs that need approval
 still go to approval. Retry is refused while paused. The dashboard shows a
 PAUSED banner with what is still finishing and how many handoffs are held.
 `./swarm status` reports `DRAINED: yes` once no role has in-process work. Press
-Resume or run `./swarm resume` to deliver the held handoffs in priority order
-and wake roles that have mail. To restart a running pack safely, drain it first,
+Resume or run `./swarm resume` to deliver the held handoffs (each inbox takes
+them in priority order) and wake roles that have mail. While paused, a held
+card can still change level or priority, or leave the queue. To restart a running pack safely, drain it first,
 restart with `./swarm`, then resume.
 
 If the handoff daemon stops, no handoff is delivered and the dashboard shows a
 HANDOFFS STOPPED banner. Its Restart button, or `./swarm daemon`, starts it
-again.
+again. After updating SwarmForge scripts in a running swarm, run
+`./swarm daemon` so the daemon that holds handoffs during a pause is the new
+one.
 
 The board has a TODO column. New Task can keep a card there instead of sending
-it to the swarm; Start (in the card menu) sends it to a role later. Every card
-has a level: Critical, High, Normal or Low. The level sets the priority of the
-card's handoffs at every role (10, 30, 50, 70; lower runs first), whatever the
-agent typed in its draft. Merge-only copies keep priority 00. Because batch
+it to the swarm; Start (in the card menu) sends it to a role later. A card gets
+a level when it is created on the dashboard: Critical, High, Normal or Low. The
+level sets the priority of the card's handoffs at every role (10, 30, 50, 70;
+lower runs first), whatever the agent typed in its draft. Cards without a level
+keep the priority the agent typed. A Retry note keeps its own priority; the
+next handoff takes the level again. Merge-only copies keep priority 00. Because batch
 roles take only mail of one priority per batch, cards of different levels are
 batched separately, and Low cards wait while higher-level work keeps arriving.
 A card can be blocked by other cards and related to them (card menu, Links…).

@@ -407,9 +407,10 @@
         :let [state (mail-state path)
               headers (when state (cached-headers path))]
         :when (and state headers (not= "true" (get headers "non-forwarding")))
+        ;; By card id; by name only for old mail without one, so an archived
+        ;; or renamed card's mail never lands on a new card of the same name.
         key (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
-                       (cons (get headers "task")
-                             (str/split (or (get headers "with_task_ids") "") #",")))
+                       (str/split (or (get headers "with_task_ids") "") #","))
                  (map #(some-> % str/trim))
                  (remove str/blank?)
                  distinct)]
@@ -425,7 +426,11 @@
                       (update idx key (fnil conj []) entry))
                     {}
                     (card-mail-entries root))]
-    (swap! header-cache #(select-keys % @seen))
+    ;; Forget this project's vanished mail; other projects keep theirs.
+    (let [dirs (map str (handoff-dirs root))
+          mine? (fn [k] (some #(str/starts-with? k %) dirs))]
+      (swap! header-cache
+             (fn [cache] (into {} (remove (fn [[k _]] (and (mine? k) (not (@seen k))))) cache))))
     idx))
 
 (defn card-mail [mail task]
@@ -956,8 +961,13 @@
       (throw (ex-info (str/trim (str "Could not " what ": " (:err result) (:out result)))
                       {:http-status 500})))))
 
+(def restart-lock (Object.))
+
 (defn restart-daemon! [root]
-  (swarm-command! root "daemon" "restart the handoff daemon"))
+  ;; Two overlapping restarts could stop, stop, start, start and leave two
+  ;; daemons delivering the same outboxes.
+  (locking restart-lock
+    (swarm-command! root "daemon" "restart the handoff daemon")))
 
 (defn dashboard-state [root]
   (let [master (master-role root)]
@@ -1356,7 +1366,7 @@
                  (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
         task-id (:id task)
         meta (handoff-lib/read-card-meta root task-id)
-        role (or (not-empty role) (:start_role meta))
+        role (if (some? role) role (:start_role meta))
         lane (if (str/blank? role) (master-role root) (require-lane! root role))
         level (or (normalize-level level) (:level meta))
         priority (card-priority level (or (not-empty (str priority)) (:priority meta)))
@@ -1437,6 +1447,17 @@
 (defn conflict! [message]
   (throw (ex-info message {:http-status 409})))
 
+(defn outbox-mail? [path]
+  (= "outbox" (str (fs/file-name (fs/parent path)))))
+
+(defn held-handoff?
+  "A git handoff the paused daemon keeps in its outbox. It stays there until
+  Resume, so it can be changed like mail in an inbox."
+  [root path]
+  (and (outbox-mail? path)
+       (ready-for-next-guard/paused-at? root)
+       (= "git_handoff" (get-in (parse-message path) [:headers "type"]))))
+
 (defn queued-card-handoffs
   "The card's handoffs still waiting in an inbox/new or outbox.
   Refuses with 409 when any handoff of the card is in process or waits for approval."
@@ -1455,7 +1476,7 @@
       (conflict! (str "Card is waiting for approval; use Attention: " name)))
     (when (some #(> (count (handoff-card-ids %)) 1) (:queued by-state))
       (conflict! (str "Card travels in a handoff that carries other cards too: " name)))
-    (when (some #(= "outbox" (str (fs/file-name (fs/parent %)))) (:queued by-state))
+    (when (some #(and (outbox-mail? %) (not (held-handoff? root %))) (:queued by-state))
       (conflict! (str "Card is being delivered; try again in a moment: " name)))
     {:task task :queued (vec (:queued by-state))}))
 
@@ -1548,7 +1569,7 @@
     (doseq [path (task-handoffs root (:id task) name)
             :let [headers (:headers (parse-message path))]
             :when (and (= :queued (handoff-state path))
-                       (not= "outbox" (str (fs/file-name (fs/parent path))))
+                       (or (not (outbox-mail? path)) (held-handoff? root path))
                        (not= "true" (get headers "non-forwarding"))
                        (= 1 (count (handoff-card-ids path))))]
       (reprioritize-handoff! path priority name))))

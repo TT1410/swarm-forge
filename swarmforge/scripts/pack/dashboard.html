@@ -26,7 +26,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed;transform:none}
 .btn:disabled:hover,.btn[disabled]:hover{background:#fff;border-color:#9aa59e;color:var(--ink)}
 .btn-approve:disabled:hover,.btn-approve[disabled]:hover{background:#2f6b3a;border-color:#2f6b3a;color:#fff}
-.attention{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:40vh;min-height:2.5rem;overflow:auto;resize:vertical;position:relative;z-index:30}
+.attention{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:30vh;min-height:2.5rem;overflow:auto;resize:vertical;position:relative;z-index:30}
 .attention .tag{font-weight:700;text-transform:uppercase;font-size:10px;color:#8a5a0a;padding-top:4px}
 .att-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(255,255,255,.65);border:1px solid #efd7a8;border-radius:6px;padding:4px 8px;margin:0 0 4px}
 .att-work{text-decoration:underline}
@@ -350,7 +350,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
       <div class="nt-flags">
         <label><input type="checkbox" id="nt-todo"> Keep in TODO (start later)</label>
       </div>
-      <label for="nt-blockers">Blocked by (starts from TODO once these are done)</label>
+      <label for="nt-blockers">Blocked by (with an unfinished blocker the card waits in TODO until you start it)</label>
       <select id="nt-blockers" class="link-picker" multiple></select>
       <label for="nt-text">Task</label>
       <textarea id="nt-text" placeholder="What the master agent should do…"></textarea>
@@ -527,7 +527,7 @@ function cardMenu(task) {
     list.appendChild(cardMenuItem("Change priority…", () => reprioritizeTask(task)));
     list.appendChild(cardMenuItem("Remove from queue", () => dequeueTask(task)));
   }
-  if (task.todo) list.appendChild(cardMenuItem("Remove from TODO", () => dequeueTask(task)));
+  if (task.todo) list.appendChild(cardMenuItem("Remove from TODO", () => removeTodoTask(task)));
   const place = () => {
     const box = btn.getBoundingClientRect();
     list.style.top = box.bottom + "px";
@@ -657,7 +657,9 @@ function openStartTask(task) {
 async function submitStartTask() {
   if (!startTask) return;
   const payload = taskPayload(startTask, {level: $("st-level").value});
-  if ($("st-role").value) payload.role = $("st-role").value;
+  // Always send the role: an empty one means master and overrides the
+  // card's saved start role.
+  payload.role = $("st-role").value;
   if ($("st-force").checked) payload.force = true;
   const ok = await postTaskAction("/api/tasks/start", payload);
   if (ok) closeStartTask();
@@ -688,6 +690,11 @@ async function submitLinks() {
 function closeLinks() {
   linksTask = null;
   $("links-layer").classList.remove("open");
+}
+
+async function removeTodoTask(task) {
+  if (!confirm("Remove " + task.name + " from TODO? The card leaves the board.")) return;
+  await postTaskAction("/api/tasks/dequeue", taskPayload(task));
 }
 
 async function dequeueTask(task) {
@@ -758,17 +765,28 @@ function projectBand(proj) {
   return band;
 }
 
+const swarmInFlight = new Set();
+
 async function postSwarm(path, project, failure) {
-  const payload = project ? {project} : {};
-  const res = await fetch(path, {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(payload)
-  });
-  if (!res.ok) {
-    let msg = failure;
-    try { msg = (await res.json()).error || msg; } catch (_) {}
-    alert(msg);
+  const key = path + "|" + (project || "");
+  if (swarmInFlight.has(key)) return;
+  swarmInFlight.add(key);
+  try {
+    const payload = project ? {project} : {};
+    const res = await fetch(path, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      let msg = failure;
+      try { msg = (await res.json()).error || msg; } catch (_) {}
+      alert(msg);
+    }
+  } catch (_) {
+    alert(failure);
+  } finally {
+    swarmInFlight.delete(key);
   }
   loadState();
 }
@@ -782,9 +800,9 @@ function resumeSwarm(project) {
   postSwarm("/api/resume", project, "Could not resume the swarm");
 }
 
-function pauseButton(state, project) {
+function pauseButton(state, project, btn) {
   const paused = !!(state.drain && state.drain.paused);
-  const btn = document.createElement("button");
+  btn = btn || document.createElement("button");
   btn.type = "button";
   btn.className = paused ? "btn btn-primary btn-sm" : "btn btn-sm";
   btn.textContent = paused ? "Resume" : "Pause";
@@ -843,11 +861,17 @@ function renderBanners(data) {
     $("btn-pause").style.display = "none";
     return;
   }
-  box.replaceChildren(...swarmBanners(data, ""));
-  const toggle = pauseButton(data, "");
-  toggle.id = "btn-pause";
+  // Rebuild banners only when they change, and update the Pause button in
+  // place, so a click or keyboard focus survives the poll.
+  const banners = swarmBanners(data, "");
+  const sig = banners.map((el) => el.textContent).join("|");
+  if (box.dataset.sig !== sig) {
+    box.replaceChildren(...banners);
+    box.dataset.sig = sig;
+  }
+  const toggle = pauseButton(data, "", $("btn-pause"));
+  toggle.style.display = "";
   toggle.className = toggle.className.replace(" btn-sm", "");
-  $("btn-pause").replaceWith(toggle);
 }
 
 function renderBoard(data) {
@@ -1534,8 +1558,12 @@ function alsoRoles(row) {
   return [...row.querySelectorAll("[data-also-role]:checked")].map((el) => el.value);
 }
 
+const clarInFlight = new Set();
+
 async function postClarification(id, text, also) {
   if (!text || !text.trim()) return false;
+  if (clarInFlight.has(id)) return false;
+  clarInFlight.add(id);
   const payload = {text};
   if (also && also.length) payload.also = also;
   let ok = false;
@@ -1555,6 +1583,7 @@ async function postClarification(id, text, also) {
     alert("Could not send the answer");
   }
   if (ok) delete clarDrafts[id];
+  clarInFlight.delete(id);
   loadState();
   return ok;
 }
@@ -1794,7 +1823,9 @@ async function submitNewTask() {
   payload.level = $("nt-level").value;
   const blockers = pickedNames($("nt-blockers"));
   if (blockers.length) payload.blocked_by = blockers;
-  if ($("nt-todo").checked || blockers.length) payload.todo = true;
+  const doneNames = new Set(tasksFor(taskProject).filter((t) => t.lane === "done").map((t) => t.name));
+  const openBlockers = blockers.filter((name) => !doneNames.has(name));
+  if ($("nt-todo").checked || openBlockers.length) payload.todo = true;
   const res = await fetch("/api/tasks", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -2066,6 +2097,20 @@ async function teardownSwarm() {
     }
   }
 }
+
+const layerClosers = {
+  "start-layer": closeStartTask,
+  "links-layer": closeLinks,
+  "clar-layer": closeClarification,
+  "new-task-layer": closeNewTask,
+  "new-project-layer": closeNewProject,
+  "reject-layer": closeRejectDialog
+};
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const layer = document.querySelector(".float-layer.open");
+  if (layer && layerClosers[layer.id]) layerClosers[layer.id]();
+});
 
 $("btn-new-task").onclick = () => openNewTask("");
 $("btn-new-project").onclick = openNewProject;

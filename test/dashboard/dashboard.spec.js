@@ -139,6 +139,9 @@ test.describe("pack dashboard", () => {
     const chat = page.locator(".ts");
     const split = page.locator(".rail-splitter");
     await expect(split).toBeVisible();
+    // Measure after the first state render: questions in the attention bar
+    // push the rail down once they appear.
+    await expect(page.locator("#attention-clarifications .att-row").first()).toBeVisible();
     const beforeWork = await work.boundingBox();
     const beforeChat = await chat.boundingBox();
     const box = await split.boundingBox();

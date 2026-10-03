@@ -365,10 +365,16 @@
         (spit (str tmp) (str (pr-str meta) "\n"))
         (fs/move tmp file {:replace-existing true :atomic-move true})))))
 
+(def card-meta-lock
+  "The dashboard changes level, links and start role on separate request
+  threads; one lock keeps a read-modify-write from losing another's edit."
+  (Object.))
+
 (defn update-card-meta! [root task-id f & args]
-  (let [meta (apply f (read-card-meta root task-id) args)]
-    (write-card-meta! root task-id meta)
-    meta))
+  (locking card-meta-lock
+    (let [meta (apply f (read-card-meta root task-id) args)]
+      (write-card-meta! root task-id meta)
+      meta)))
 
 (defn delete-card-meta! [root task-id]
   (when-not (str/blank? (str task-id))
