@@ -394,3 +394,70 @@
           (is (= ["cleaner-s"] @notified))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest handoffd-renotify-survives-a-role-that-cannot-be-read
+  ;; A role whose inbox changes mid-read is skipped this poll; the daemon keeps
+  ;; running and still reminds the other roles
+  (let [root (tmp-dir)
+        idle (fs/path root "idle")
+        notified (atom [])]
+    (try
+      (fs/create-dirs (fs/path idle ".swarmforge/handoffs/inbox/new"))
+      (spit (str (fs/path idle ".swarmforge/handoffs/inbox/new/50_x.handoff")) "from: a\n\nbody\n")
+      (handoffd/configure! [(str root)])
+      (reset! handoffd/last-notified {})
+      (reset! handoffd/renotify-counts {})
+      (reset! handoffd/started-at-ms (- (System/currentTimeMillis) (* 10 handoffd/renotify-ms)))
+      (let [real handoffd/idle-with-mail?]
+        (with-redefs [handoffd/notify! (fn [_ session] (swap! notified conj session))
+                      handoffd/log! (fn [& _])
+                      handoffd/idle-with-mail? (fn [roles role-info]
+                                                 (if (= "broken" (:role role-info))
+                                                   (throw (java.nio.file.NoSuchFileException. "gone"))
+                                                   (real roles role-info)))]
+          (handoffd/renotify-idle-roles! {"broken" {:role "broken" :worktree-path (str idle) :session "b-s"}
+                                          "idle" {:role "idle" :worktree-path (str idle) :session "idle-s"}}
+                                         "sock")
+          (is (= ["idle-s"] @notified))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest handoffd-mail-card-keys-tolerates-vanished-mail
+  (is (= [] (handoffd/mail-card-keys "/nonexistent/swarmforge/50_x.handoff"))))
+
+(deftest handoffd-poll-survives-a-failing-reminder
+  ;; An error while reminding idle roles is logged, not thrown, so the daemon
+  ;; loop keeps delivering handoffs
+  (let [root (tmp-dir)
+        logged (atom [])]
+    (try
+      (fs/create-dirs (fs/path root ".swarmforge"))
+      (spit (str (fs/path root ".swarmforge/tmux-socket")) "sock\n")
+      (spit (str (fs/path root ".swarmforge/roles.tsv")) "")
+      (handoffd/configure! [(str root)])
+      (with-redefs [handoffd/renotify-idle-roles! (fn [& _] (throw (java.nio.file.NoSuchFileException. "gone")))
+                    handoffd/log! (fn [& parts] (swap! logged conj (first parts)))]
+        (handoffd/poll-once!)
+        (is (= ["renotify-error"] @logged)))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest handoffd-stops-when-its-pid-file-is-gone-or-taken
+  ;; A deleted project or a newer daemon must end this one, so two daemons
+  ;; never deliver the same outboxes
+  (let [root (tmp-dir)]
+    (try
+      (fs/create-dirs (fs/path root ".swarmforge/daemon"))
+      (handoffd/configure! [(str root)])
+      (reset! handoffd/daemon-mode? true)
+      (spit (str handoffd/pid-file) (str handoffd/own-pid "\n"))
+      (is (false? (handoffd/should-stop?)))
+      (spit (str handoffd/pid-file) "1\n")
+      (is (true? (handoffd/should-stop?)))
+      (handoffd/delete-own-pid-file!)
+      (is (fs/exists? handoffd/pid-file) "another daemon's pid file is left alone")
+      (fs/delete handoffd/pid-file)
+      (is (true? (handoffd/should-stop?)))
+      (finally
+        (reset! handoffd/daemon-mode? false)
+        (fs/delete-tree root)))))
