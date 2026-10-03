@@ -218,11 +218,36 @@ get-swarm-forge lieutenant
 ./swarm
 ```
 
-To restart a running pack safely, drain it first. `./swarm drain` lets roles
-finish their in-process work while `ready_for_next.sh` prints `PAUSED` instead
-of taking new mail (notes between roles still arrive). `./swarm status` reports
-`DRAINED: yes` once no role has in-process work or queued outbox mail. Restart
-with `./swarm`, then `./swarm resume` wakes roles that have mail waiting.
+To pause a swarm, press Pause on the dashboard or run `./swarm drain`. Roles
+finish their current turn, `ready_for_next.sh` prints `PAUSED` instead of taking
+new mail (notes between roles still arrive), and the handoff daemon keeps every
+git handoff in its outbox, so no card changes lane. Handoffs that need approval
+still go to approval. Retry is refused while paused. The dashboard shows a
+PAUSED banner with what is still finishing and how many handoffs are held.
+`./swarm status` reports `DRAINED: yes` once no role has in-process work. Press
+Resume or run `./swarm resume` to deliver the held handoffs in priority order
+and wake roles that have mail. To restart a running pack safely, drain it first,
+restart with `./swarm`, then resume.
+
+If the handoff daemon stops, no handoff is delivered and the dashboard shows a
+HANDOFFS STOPPED banner. Its Restart button, or `./swarm daemon`, starts it
+again.
+
+The board has a TODO column. New Task can keep a card there instead of sending
+it to the swarm; Start (in the card menu) sends it to a role later. Every card
+has a level: Critical, High, Normal or Low. The level sets the priority of the
+card's handoffs at every role (10, 30, 50, 70; lower runs first), whatever the
+agent typed in its draft. Merge-only copies keep priority 00. Because batch
+roles take only mail of one priority per batch, cards of different levels are
+batched separately, and Low cards wait while higher-level work keeps arriving.
+A card can be blocked by other cards and related to them (card menu, Links…).
+A blocked TODO card does not start until its blockers are done, unless you
+start it anyway; blockers never hold mail that is already in the pipeline.
+
+Cards also show why they are not moving: Handing off, Handoff held until
+Resume, Delivery failed (with the error from `handoffs/failed/`), or No mail
+when nothing will pick the card up. A card a later role sent back with
+`return: true` shows who returned it and how many times it was returned.
 
 The selected product's README describes its routes, roles, worktrees, project
 lifecycle, and dashboard behavior. The branch configuration—not this README—is
