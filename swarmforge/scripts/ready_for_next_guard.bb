@@ -194,16 +194,26 @@
      :outbox (count (queued-outbox-files worktree))}))
 
 (defn drain-state
-  "Drained means no role has in-process work and no outbox holds queued mail."
+  "Drained means no role has in-process work. While paused the handoff daemon
+  holds outbox mail, so held mail does not keep the swarm from draining; it is
+  counted in :held and delivered on resume."
   [root]
   (let [rows (->> (role-rows-at root)
                   (remove #(str/blank? (nth % 2 "")))
                   (mapv role-drain-row))
         project-outbox (count (queued-outbox-files root))
-        busy (filterv #(pos? (+ (:in_process %) (:outbox %))) rows)]
+        root-path (str (fs/normalize (fs/absolutize root)))
+        role-outbox (->> (role-rows-at root)
+                         (remove #(str/blank? (nth % 2 "")))
+                         ;; the master worktree's outbox is the project outbox
+                         (remove #(= root-path (str (fs/normalize (fs/absolutize (nth % 2))))))
+                         (map #(count (queued-outbox-files (nth % 2))))
+                         (reduce + 0))
+        busy (filterv #(pos? (:in_process %)) rows)]
     {:paused (paused-at? root)
-     :drained (and (empty? busy) (zero? project-outbox))
+     :drained (empty? busy)
      :busy busy
+     :held (+ project-outbox role-outbox)
      :project_outbox project-outbox}))
 
 (defn role-note? [file]

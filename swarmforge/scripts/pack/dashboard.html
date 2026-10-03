@@ -26,7 +26,7 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .btn:disabled,.btn[disabled]{opacity:.45;cursor:not-allowed;transform:none}
 .btn:disabled:hover,.btn[disabled]:hover{background:#fff;border-color:#9aa59e;color:var(--ink)}
 .btn-approve:disabled:hover,.btn-approve[disabled]:hover{background:#2f6b3a;border-color:#2f6b3a;color:#fff}
-.attention{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:120px;overflow:auto;position:relative;z-index:30}
+.attention{display:grid;grid-template-columns:auto 1fr;gap:8px 12px;padding:8px 14px;background:var(--amber-bg);border-bottom:1px solid #efd7a8;font-size:12px;max-height:30vh;min-height:2.5rem;overflow:auto;resize:vertical;position:relative;z-index:30}
 .attention .tag{font-weight:700;text-transform:uppercase;font-size:10px;color:#8a5a0a;padding-top:4px}
 .att-row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:rgba(255,255,255,.65);border:1px solid #efd7a8;border-radius:6px;padding:4px 8px;margin:0 0 4px}
 .att-work{text-decoration:underline}
@@ -76,6 +76,22 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .card .foot{display:flex;justify-content:flex-end;gap:8px;color:var(--muted);font-size:10px;margin-top:auto}
 .card-thin{min-height:0;padding:4px 8px;gap:0}
 .card-queued{border-style:dashed;background:#f6f7f2}
+.card-stuck{border:2px solid var(--red);background:#fff4f4}
+.card-stuck .status{color:var(--red);font-weight:600}
+.pill-level{align-self:flex-start;font-weight:700}
+.level-critical{background:#f6d0d0;color:#8b1a1a}
+.level-high{background:#fde2c4;color:#8a4a0a}
+.level-low{background:#e6e8e4;color:#59615b}
+.card-links{font-size:10px;color:var(--muted);display:flex;flex-direction:column;gap:1px}
+.card-links .blocked{color:var(--red);font-weight:600}
+.card-links .cleared{text-decoration:line-through}
+.card-todo{border-style:dotted;background:#f8f8f3}
+.col[data-lane="todo"] .col-body{background:rgba(225,231,240,.45)}
+.nt-flags{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:10px;font-size:12px}
+.nt-flags label{display:inline-flex;gap:4px;align-items:center;text-transform:none;font-weight:400;color:var(--ink);font-size:12px;margin:0}
+.link-picker{width:100%;min-height:5.5em;border:1px solid #c6cbc5;border-radius:6px;font:inherit;font-size:12px;margin-bottom:10px}
+.pill-returned{align-self:flex-start;background:#fde8d0;color:#8a4a0a}
+.return-count{display:inline-flex;align-items:center;gap:1px;flex:0 0 auto;color:#8a4a0a;font-size:10px;font-weight:700}
 .pill-queued{align-self:flex-start;background:#e3e8f2;color:#33476b}
 .card-menu-btn{flex:0 0 auto;border:0;background:none;padding:0 2px;font:inherit;font-size:12px;line-height:1;color:var(--muted);cursor:pointer}
 .card-menu-btn:hover{color:var(--ink)}
@@ -106,6 +122,17 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .wif-therm[data-heat="6"] .bar:nth-child(-n+6){background:var(--green)}
 .ts-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}.ts-head h2{margin:0;flex:1}
 .history{flex:1;min-height:0;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px;overflow:auto;display:flex;flex-direction:column;gap:8px;font-size:11px}
+.clar-row{flex-direction:column;align-items:stretch;gap:6px;padding:6px 8px}
+.clar-head{display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.clar-head .spacer{flex:1}
+.clar-body{white-space:pre-wrap;overflow-wrap:anywhere;font-size:13px;line-height:1.45;color:var(--ink);background:#fffef9;border:1px solid #efd7a8;border-radius:6px;padding:6px 8px;max-height:none}
+.clar-body.clamped{display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}
+.clar-answer{width:100%;min-height:3.2em;border:1px solid #c6cbc5;border-radius:6px;padding:6px 8px;font:inherit;font-size:12px;line-height:1.4;resize:vertical}
+.clar-foot{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:flex-end}
+.clar-hint{color:var(--muted);font-size:10px;margin-right:auto}
+#clar-layer .float{width:min(820px,94vw);min-width:min(560px,94vw)}
+#clar-request{margin:0 0 10px;padding:10px;max-height:45vh;overflow:auto;white-space:pre-wrap;overflow-wrap:anywhere;background:#fff;border:1px solid var(--line);border-radius:6px;font:13px/1.45 ui-sans-serif,system-ui,sans-serif}
+#clar-response{min-height:160px}
 .clar-also{display:inline-flex;flex-wrap:wrap;gap:6px;align-items:center;color:var(--muted);font-size:11px}
 .clar-also label{display:inline-flex;gap:2px;align-items:center;color:var(--ink)}
 .att-row input[type=text]{flex:1;min-width:8rem;border:1px solid #c6cbc5;border-radius:6px;padding:4px 6px;font:inherit;font-size:11px}
@@ -124,6 +151,13 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .float textarea{min-height:140px;resize:vertical}
 .float .actions{display:flex;gap:8px;justify-content:flex-end}
 .note{font-size:11px;color:var(--muted);margin:-4px 0 10px}
+.swarm-banner{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 14px;font-size:13px;border-bottom:1px solid var(--line)}
+.swarm-banner strong{font-size:14px;letter-spacing:.04em}
+.swarm-banner .detail{flex:1;min-width:12rem}
+.banner-paused{background:#e3e8f2;color:#22324f;border-bottom-color:#9fb0cf}
+.banner-daemon{background:#fbe4e4;color:var(--red);border-bottom-color:#e0a6a6}
+.project-band .swarm-banner{border:1px solid var(--line);border-radius:8px;margin:0 0 8px}
+.paused-board .card{opacity:.6}
 .nt-route{display:flex;gap:12px;margin-bottom:10px}
 .nt-route select,.nt-route input{border:1px solid #c6cbc5;border-radius:6px;padding:6px 8px;font:inherit;font-size:12px}
 .nt-route input{width:5rem}
@@ -154,10 +188,12 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
         <button class="btn" type="button" id="btn-open-project">Open Project</button>
         <div class="menu-list" id="open-project-list"></div>
       </div>
+      <button class="btn" type="button" id="btn-pause">Pause</button>
       <button class="btn btn-primary" type="button" id="btn-new-task">New Task</button>
     </div>
   </header>
   <p id="error" class="error"></p>
+  <div id="swarm-banners"></div>
 
   <div class="attention" id="attention">
     <div class="tag">Attention</div>
@@ -237,17 +273,85 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
   </div>
 </div>
 
+<div class="float-layer" id="start-layer">
+  <div class="float" role="dialog" aria-labelledby="st-title">
+    <div class="titlebar" id="st-title">Start task</div>
+    <div class="body-pad">
+      <p class="note" id="st-note"></p>
+      <div class="nt-route">
+        <div><label for="st-role">Role</label><select id="st-role"></select></div>
+        <div><label for="st-level">Level</label><select id="st-level">
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="normal">Normal</option>
+          <option value="low">Low</option>
+        </select></div>
+      </div>
+      <div class="nt-flags" id="st-force-row">
+        <label><input type="checkbox" id="st-force"> Start anyway, although it is blocked</label>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn" id="st-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="st-ok">Start</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="float-layer" id="links-layer">
+  <div class="float" role="dialog" aria-labelledby="ln-title">
+    <div class="titlebar" id="ln-title">Links</div>
+    <div class="body-pad">
+      <label for="ln-blockers">Blocked by</label>
+      <select id="ln-blockers" class="link-picker" multiple></select>
+      <label for="ln-related">Related</label>
+      <select id="ln-related" class="link-picker" multiple></select>
+      <div class="actions">
+        <button type="button" class="btn" id="ln-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="ln-ok">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="float-layer" id="clar-layer">
+  <div class="float" role="dialog" aria-labelledby="clar-title">
+    <div class="titlebar" id="clar-title">Clarification</div>
+    <div class="body-pad">
+      <label>Question</label>
+      <pre id="clar-request"></pre>
+      <label for="clar-response">Answer</label>
+      <textarea id="clar-response" placeholder="Answer… (Ctrl+Enter sends)"></textarea>
+      <div class="actions">
+        <span id="clar-also-box"></span>
+        <button type="button" class="btn" id="clar-cancel">Close</button>
+        <button type="button" class="btn btn-primary" id="clar-ok">Send</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="float-layer" id="new-task-layer">
   <div class="float" role="dialog" aria-labelledby="nt-title">
     <div class="titlebar" id="nt-title">New Task</div>
     <div class="body-pad">
-      <p class="note">Creates a card in the chosen role's lane (master by default) and sends name + text to that agent.</p>
+      <p class="note">Creates a card in the chosen role's lane (master by default) and sends name + text to that agent, or keeps it in TODO. The level sets its priority: Critical runs first, Low last.</p>
       <label for="nt-name">Name</label>
       <input id="nt-name" type="text" placeholder="task-name" maxlength="80">
       <div class="nt-route">
         <div><label for="nt-role">Role</label><select id="nt-role"></select></div>
-        <div><label for="nt-priority">Priority</label><input id="nt-priority" type="number" min="0" max="99" value="50" title="00–99; lower runs first"></div>
+        <div><label for="nt-level">Level</label><select id="nt-level">
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="normal" selected>Normal</option>
+          <option value="low">Low</option>
+        </select></div>
       </div>
+      <div class="nt-flags">
+        <label><input type="checkbox" id="nt-todo"> Keep in TODO (start later)</label>
+      </div>
+      <label for="nt-blockers">Blocked by (with an unfinished blocker the card waits in TODO until you start it)</label>
+      <select id="nt-blockers" class="link-picker" multiple></select>
       <label for="nt-text">Task</label>
       <textarea id="nt-text" placeholder="What the master agent should do…"></textarea>
       <div class="actions">
@@ -263,6 +367,7 @@ const $ = (id) => document.getElementById(id);
 
 function displayName(role) {
   if (!role) return "";
+  if (role === "todo") return "TODO";
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
@@ -293,8 +398,37 @@ function cardEl(task, opts) {
   auditValue.textContent = String(task.audit_count || 0);
   audit.append(auditIcon, auditValue);
   title.appendChild(audit);
+  if (task.return_count) {
+    const returns = document.createElement("span");
+    returns.className = "return-count";
+    returns.title = "Returned for rework " + task.return_count + " time(s)";
+    returns.textContent = "\u21a9" + task.return_count;
+    title.appendChild(returns);
+  }
   if (!task.merging && task.lane !== "done") title.appendChild(cardMenu(task));
   card.appendChild(title);
+  if (task.todo) card.classList.add("card-todo");
+  if (task.level && task.level !== "normal") {
+    const level = document.createElement("span");
+    level.className = "pill pill-level level-" + task.level;
+    level.dataset.level = task.level;
+    level.textContent = task.level.charAt(0).toUpperCase() + task.level.slice(1);
+    card.appendChild(level);
+  }
+  const links = cardLinks(task);
+  if (links) card.appendChild(links);
+  if (task.stuck) {
+    card.classList.add("card-stuck");
+    card.dataset.stuck = task.stuck;
+  }
+  if (task.returned_from) {
+    const back = document.createElement("span");
+    back.className = "pill pill-returned";
+    back.dataset.returnedFrom = task.returned_from;
+    back.textContent = "\u21a9 Returned by " + displayName(task.returned_from);
+    back.title = displayName(task.returned_from) + " sent this card back for rework";
+    card.appendChild(back);
+  }
   if (task.queued) {
     card.classList.add("card-queued");
     card.setAttribute("data-queued", "true");
@@ -304,7 +438,7 @@ function cardEl(task, opts) {
     pill.title = "Waiting in " + (task.queue_role || task.lane || "the") + "'s queue; not started yet";
     card.appendChild(pill);
   }
-  if (!thin && task.status && !task.queued) {
+  if ((!thin || task.stuck) && task.status && !task.queued) {
     const status = document.createElement("div");
     status.className = "status";
     status.textContent = task.status;
@@ -316,6 +450,41 @@ function cardEl(task, opts) {
     openGrowable("/task?" + qs, "task-" + (task.name || ""));
   };
   return card;
+}
+
+function cardLinks(task) {
+  const lines = [];
+  if ((task.blockers || []).length) {
+    const line = document.createElement("div");
+    line.className = task.blocked ? "blocked" : "";
+    line.dataset.blockers = "true";
+    line.append(task.blocked ? "\u26d4 Blocked by: " : "Blocked by: ");
+    task.blockers.forEach((b, i) => {
+      const name = document.createElement("span");
+      if (b.done) name.className = "cleared";
+      name.textContent = b.name;
+      if (i) line.append(", ");
+      line.appendChild(name);
+    });
+    lines.push(line);
+  }
+  if ((task.blocks || []).length) {
+    const line = document.createElement("div");
+    line.dataset.blocks = "true";
+    line.textContent = "Blocks: " + task.blocks.join(", ");
+    lines.push(line);
+  }
+  if ((task.related || []).length) {
+    const line = document.createElement("div");
+    line.dataset.related = "true";
+    line.textContent = "Related: " + task.related.join(", ");
+    lines.push(line);
+  }
+  if (!lines.length) return null;
+  const box = document.createElement("div");
+  box.className = "card-links";
+  box.append(...lines);
+  return box;
 }
 
 const openCardMenus = new Set();
@@ -350,11 +519,15 @@ function cardMenu(task) {
   btn.textContent = "⋯";
   const list = document.createElement("div");
   list.className = "menu-list";
+  if (task.todo) list.appendChild(cardMenuItem("Start…", () => openStartTask(task)));
   list.appendChild(cardMenuItem("Rename…", () => renameTask(task)));
+  list.appendChild(cardMenuItem("Change level…", () => changeLevel(task)));
+  list.appendChild(cardMenuItem("Links…", () => openLinks(task)));
   if (task.queued) {
     list.appendChild(cardMenuItem("Change priority…", () => reprioritizeTask(task)));
     list.appendChild(cardMenuItem("Remove from queue", () => dequeueTask(task)));
   }
+  if (task.todo) list.appendChild(cardMenuItem("Remove from TODO", () => removeTodoTask(task)));
   const place = () => {
     const box = btn.getBoundingClientRect();
     list.style.top = box.bottom + "px";
@@ -419,6 +592,111 @@ async function reprioritizeTask(task) {
   await postTaskAction("/api/tasks/priority", taskPayload(task, {priority: value.trim()}));
 }
 
+const LEVELS = ["critical", "high", "normal", "low"];
+
+async function changeLevel(task) {
+  const value = prompt("Level for " + task.name + ": critical, high, normal or low", task.level || "normal");
+  if (value === null || !value.trim()) return;
+  await postTaskAction("/api/tasks/priority", taskPayload(task, {level: value.trim().toLowerCase()}));
+}
+
+let startTask = null;
+let linksTask = null;
+
+function tasksFor(project) {
+  const data = lastState || {};
+  if (!project) return data.tasks || [];
+  const proj = (data.projects || []).find((p) => p.name === project);
+  return (proj && proj.tasks) || [];
+}
+
+function fillCardPicker(select, project, except, chosen) {
+  select.replaceChildren();
+  const seen = new Set();
+  tasksFor(project).forEach((t) => {
+    if (t.merging || t.name === except || seen.has(t.name)) return;
+    seen.add(t.name);
+    const opt = document.createElement("option");
+    opt.value = t.name;
+    opt.textContent = t.name + (t.lane === "done" ? " (done)" : " · " + displayName(t.lane));
+    opt.selected = (chosen || []).indexOf(t.name) >= 0;
+    select.appendChild(opt);
+  });
+}
+
+function pickedNames(select) {
+  return [...select.selectedOptions].map((opt) => opt.value);
+}
+
+function openStartTask(task) {
+  startTask = task;
+  const select = $("st-role");
+  select.replaceChildren();
+  const master = document.createElement("option");
+  master.value = "";
+  master.textContent = "Master (default)";
+  select.appendChild(master);
+  lanesFor(task.project).forEach((lane) => {
+    const opt = document.createElement("option");
+    opt.value = lane;
+    opt.textContent = displayName(lane);
+    select.appendChild(opt);
+  });
+  select.value = task.start_role || "";
+  $("st-level").value = task.level || "normal";
+  $("st-title").textContent = "Start " + task.name;
+  const open = (task.blockers || []).filter((b) => !b.done).map((b) => b.name);
+  $("st-note").textContent = open.length
+    ? "Blocked by " + open.join(", ") + ". It should wait until they are done."
+    : "Sends the task to the role now.";
+  $("st-force").checked = false;
+  $("st-force-row").style.display = open.length ? "" : "none";
+  $("start-layer").classList.add("open");
+}
+
+async function submitStartTask() {
+  if (!startTask) return;
+  const payload = taskPayload(startTask, {level: $("st-level").value});
+  // Always send the role: an empty one means master and overrides the
+  // card's saved start role.
+  payload.role = $("st-role").value;
+  if ($("st-force").checked) payload.force = true;
+  const ok = await postTaskAction("/api/tasks/start", payload);
+  if (ok) closeStartTask();
+}
+
+function closeStartTask() {
+  startTask = null;
+  $("start-layer").classList.remove("open");
+}
+
+function openLinks(task) {
+  linksTask = task;
+  $("ln-title").textContent = "Links of " + task.name;
+  fillCardPicker($("ln-blockers"), task.project, task.name, (task.blockers || []).map((b) => b.name));
+  fillCardPicker($("ln-related"), task.project, task.name, task.related || []);
+  $("links-layer").classList.add("open");
+}
+
+async function submitLinks() {
+  if (!linksTask) return;
+  const ok = await postTaskAction("/api/tasks/links", taskPayload(linksTask, {
+    blocked_by: pickedNames($("ln-blockers")),
+    related: pickedNames($("ln-related"))
+  }));
+  if (ok) closeLinks();
+}
+
+function closeLinks() {
+  linksTask = null;
+  $("links-layer").classList.remove("open");
+}
+
+async function removeTodoTask(task) {
+  if (!confirm("Remove " + task.name + " from TODO? The card leaves the board.")) return;
+  await postTaskAction("/api/tasks/dequeue", taskPayload(task));
+}
+
 async function dequeueTask(task) {
   if (!confirm("Remove " + task.name + " from the queue? Its queued mail is moved to .swarmforge/removed-tasks and the card leaves the board.")) return;
   await postTaskAction("/api/tasks/dequeue", taskPayload(task));
@@ -477,17 +755,128 @@ function projectBand(proj) {
   cl.className = "btn btn-sm";
   cl.textContent = "Close";
   cl.onclick = () => closeProject(proj.name);
-  header.append(title, nt, cl);
+  header.append(title, pauseButton(proj, proj.name), nt, cl);
   const cols = document.createElement("div");
   cols.className = "columns";
-  const lanes = (proj.lanes || []).concat(["done"]);
+  if (proj.drain && proj.drain.paused) cols.classList.add("paused-board");
+  const lanes = ["todo"].concat(proj.lanes || [], ["done"]);
   lanes.forEach((lane) => cols.appendChild(columnEl(lane, proj.tasks || [], proj.name)));
-  band.append(header, cols);
+  band.append(header, ...swarmBanners(proj, proj.name), cols);
   return band;
+}
+
+const swarmInFlight = new Set();
+
+async function postSwarm(path, project, failure) {
+  const key = path + "|" + (project || "");
+  if (swarmInFlight.has(key)) return;
+  swarmInFlight.add(key);
+  try {
+    const payload = project ? {project} : {};
+    const res = await fetch(path, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      let msg = failure;
+      try { msg = (await res.json()).error || msg; } catch (_) {}
+      alert(msg);
+    }
+  } catch (_) {
+    alert(failure);
+  } finally {
+    swarmInFlight.delete(key);
+  }
+  loadState();
+}
+
+function pauseSwarm(project) {
+  if (!confirm("Pause the swarm? Roles finish their current turn, then no task moves until Resume.")) return;
+  postSwarm("/api/pause", project, "Could not pause the swarm");
+}
+
+function resumeSwarm(project) {
+  postSwarm("/api/resume", project, "Could not resume the swarm");
+}
+
+function pauseButton(state, project, btn) {
+  const paused = !!(state.drain && state.drain.paused);
+  btn = btn || document.createElement("button");
+  btn.type = "button";
+  btn.className = paused ? "btn btn-primary btn-sm" : "btn btn-sm";
+  btn.textContent = paused ? "Resume" : "Pause";
+  btn.dataset.pauseToggle = paused ? "resume" : "pause";
+  btn.onclick = () => (paused ? resumeSwarm(project) : pauseSwarm(project));
+  return btn;
+}
+
+function bannerEl(kind, title, detail, action) {
+  const box = document.createElement("div");
+  box.className = "swarm-banner banner-" + kind;
+  box.dataset.banner = kind;
+  const head = document.createElement("strong");
+  head.textContent = title;
+  const text = document.createElement("span");
+  text.className = "detail";
+  text.textContent = detail;
+  box.append(head, text);
+  if (action) box.appendChild(action);
+  return box;
+}
+
+function swarmBanners(state, project) {
+  const out = [];
+  const live = (state.work_in_flight || []).some((row) => row.state !== "no_session");
+  if (state.daemon && !state.daemon.running && live) {
+    const restart = document.createElement("button");
+    restart.type = "button";
+    restart.className = "btn btn-sm btn-danger";
+    restart.textContent = "Restart daemon";
+    restart.onclick = () => postSwarm("/api/daemon/restart", project, "Could not restart the handoff daemon");
+    out.push(bannerEl("daemon", "HANDOFFS STOPPED",
+      "The handoff daemon is not running, so no handoff is delivered and no task moves.", restart));
+  }
+  const drain = state.drain || {};
+  if (drain.paused) {
+    const busy = (drain.busy || []).map((row) => displayName(row.role));
+    const parts = [busy.length ? "Still finishing the current turn: " + busy.join(", ") + "."
+                               : "Nothing is in progress."];
+    if (drain.held) parts.push(drain.held + " handoff(s) held until Resume.");
+    parts.push("No task moves until Resume.");
+    const resume = document.createElement("button");
+    resume.type = "button";
+    resume.className = "btn btn-sm btn-primary";
+    resume.textContent = "Resume";
+    resume.onclick = () => resumeSwarm(project);
+    out.push(bannerEl("paused", "⏸ PAUSED", parts.join(" "), resume));
+  }
+  return out;
+}
+
+function renderBanners(data) {
+  const box = $("swarm-banners");
+  if (data.forge) {
+    box.replaceChildren();
+    $("btn-pause").style.display = "none";
+    return;
+  }
+  // Rebuild banners only when they change, and update the Pause button in
+  // place, so a click or keyboard focus survives the poll.
+  const banners = swarmBanners(data, "");
+  const sig = banners.map((el) => el.textContent).join("|");
+  if (box.dataset.sig !== sig) {
+    box.replaceChildren(...banners);
+    box.dataset.sig = sig;
+  }
+  const toggle = pauseButton(data, "", $("btn-pause"));
+  toggle.style.display = "";
+  toggle.className = toggle.className.replace(" btn-sm", "");
 }
 
 function renderBoard(data) {
   const board = document.querySelector(".board");
+  board.classList.toggle("paused-board", !data.forge && !!(data.drain && data.drain.paused));
   if (data.forge) {
     board.replaceChildren();
     (data.projects || []).forEach((proj) => board.appendChild(projectBand(proj)));
@@ -501,7 +890,7 @@ function renderBoard(data) {
     board.replaceChildren(columns);
   }
   columns.replaceChildren();
-  const lanes = (data.lanes || []).concat(["done"]);
+  const lanes = ["todo"].concat(data.lanes || [], ["done"]);
   const tasks = data.tasks || [];
   lanes.forEach((lane) => columns.appendChild(columnEl(lane, tasks)));
 }
@@ -1012,69 +1401,94 @@ function attentionRow(item) {
   return row;
 }
 
-function fillClarWindow(win, item) {
-  const request = item.body || "";
-  const draft = clarDrafts[item.id] || "";
-  win.document.open();
-  win.document.write(
-    "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\"><title>Clarification</title>" +
-    "<style>html,body{height:100%;margin:0;display:flex;flex-direction:column;background:#f8f8f5;color:#1e221f;font-family:ui-sans-serif,system-ui,sans-serif}" +
-    "header{flex:0 0 auto;padding:8px 10px;background:linear-gradient(180deg,#eceee8,#e0e3dc);border-bottom:1px solid #d5d9d2;font-weight:600;font-size:13px}" +
-    "#clar-request{flex:1 1 50%;min-height:4rem;margin:0;padding:12px;overflow:auto;white-space:pre-wrap;background:#fffef9;font:13px/1.45 ui-sans-serif,system-ui,sans-serif}" +
-    ".doc-split{flex:0 0 6px;cursor:row-resize;background:#d5d9d2}" +
-    ".doc-split:hover{background:#b8bfb6}" +
-    "#clar-response-pane{flex:1 1 50%;min-height:4rem;display:flex;flex-direction:column;padding:10px 12px;background:#fff;gap:6px}" +
-    "label{font-size:10px;text-transform:uppercase;font-weight:700;color:#68726c}" +
-    "textarea{flex:1;min-height:4rem;width:100%;border:1px solid #c6cbc5;border-radius:6px;padding:8px;font:13px/1.45 ui-sans-serif,system-ui,sans-serif;resize:none}" +
-    ".actions{display:flex;justify-content:flex-end}" +
-    "button{border:1px solid #9aa59e;background:#3d5a45;border-color:#3d5a45;color:#fff;padding:5px 12px;border-radius:7px;font-size:12px;cursor:pointer}" +
-    "</style></head><body>" +
-    "<header>Clarification requested from: " + escapeHtml(item.role || "agent") + "</header>" +
-    "<pre id=\"clar-request\">" + escapeHtml(request) + "</pre>" +
-    "<div class=\"doc-split\" id=\"clar-split\" title=\"Drag to resize\"></div>" +
-    "<div id=\"clar-response-pane\"><label for=\"clar-response\">Response</label>" +
-    "<textarea id=\"clar-response\">" + escapeHtml(draft) + "</textarea>" +
-    "<div class=\"actions\"><button type=\"button\" id=\"clar-ok\">OK</button></div></div>" +
-    "</body></html>"
-  );
-  win.document.close();
-  bindVSplit(win, win.document.getElementById("clar-split"),
-    win.document.getElementById("clar-request"),
-    win.document.getElementById("clar-response-pane"));
+let clarOpenId = null;
+const clarExpanded = {};
+
+function clarItemById(id) {
+  const data = lastState || {};
+  return (data.clarifications || []).find((item) => item.id === id && item.status === "pending") || null;
+}
+
+function syncClarDraft(id, text, except) {
+  clarDrafts[id] = text;
+  const rowBox = document.querySelector("#attention-clarifications textarea[data-clar-id=\"" + id + "\"]");
+  if (rowBox && rowBox !== except) rowBox.value = text;
+  const modalBox = $("clar-response");
+  if (clarOpenId === id && modalBox !== except) modalBox.value = text;
+}
+
+function sendOnCtrlEnter(box, send) {
+  box.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      send();
+    }
+  });
+}
+
+function closeClarification() {
+  clarOpenId = null;
+  $("clar-layer").classList.remove("open");
 }
 
 function openClarification(item) {
-  const win = window.open("about:blank", "clar-" + encodeURIComponent(item.id || "") + "-" + Date.now(),
-    "resizable=yes,scrollbars=yes,width=720,height=520");
-  if (!win) return;
-  fillClarWindow(win, item);
-  const box = win.document.getElementById("clar-response");
-  win.document.getElementById("clar-ok").onclick = async () => {
-    const text = box.value;
-    clarDrafts[item.id] = text;
-    const row = document.querySelector("#attention-clarifications [data-clar-id=\"" + item.id + "\"]");
-    await postClarification(item.id, text, alsoRoles(row && row.closest(".att-row")));
-    win.close();
-  };
+  clarOpenId = item.id;
+  $("clar-title").textContent = "Clarification requested from: " + (item.role || "agent") +
+    (item.task ? " · " + (item.project ? item.project + "/" : "") + item.task : "");
+  $("clar-request").textContent = item.body || "";
+  $("clar-response").value = clarDrafts[item.id] || "";
+  $("clar-also-box").replaceChildren(alsoPicker(item));
+  $("clar-layer").classList.add("open");
+  $("clar-response").focus();
+}
+
+async function sendOpenClarification() {
+  const id = clarOpenId;
+  if (!id) return;
+  const ok = await postClarification(id, $("clar-response").value, alsoRoles($("clar-also-box")));
+  if (ok && clarOpenId === id) closeClarification();
+}
+
+function setupClarificationDialog() {
+  $("clar-response").addEventListener("input", () => {
+    if (clarOpenId) syncClarDraft(clarOpenId, $("clar-response").value, $("clar-response"));
+  });
+  sendOnCtrlEnter($("clar-response"), sendOpenClarification);
+  $("clar-ok").onclick = sendOpenClarification;
+  $("clar-cancel").onclick = closeClarification;
+  $("clar-layer").addEventListener("click", (event) => {
+    if (event.target === $("clar-layer")) closeClarification();
+  });
 }
 
 function clarificationRow(item) {
   const row = document.createElement("form");
-  row.className = "att-row";
+  row.className = "att-row clar-row";
+  const head = document.createElement("div");
+  head.className = "clar-head";
   const pill = document.createElement("span");
   pill.className = "pill pill-warn";
   pill.textContent = "Clarification requested from: " + (item.role || "agent");
   const pair = attentionWorkPair(item.project, item.task);
-  const summary = document.createElement("span");
-  summary.textContent = item.body || "";
-  const input = document.createElement("input");
-  input.type = "text";
-  input.placeholder = "Answer…";
-  input.dataset.clarId = item.id || "";
-  input.value = clarDrafts[item.id] || "";
-  input.addEventListener("input", () => {
-    clarDrafts[item.id] = input.value;
-  });
+  const spacer = document.createElement("span");
+  spacer.className = "spacer";
+  const body = document.createElement("div");
+  body.className = "clar-body";
+  body.textContent = item.body || "";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "btn btn-sm";
+  const applyExpanded = () => {
+    const open = !!clarExpanded[item.id];
+    body.classList.toggle("clamped", !open);
+    toggle.textContent = open ? "Collapse" : "Expand";
+  };
+  toggle.onclick = (event) => {
+    event.preventDefault();
+    clarExpanded[item.id] = !clarExpanded[item.id];
+    applyExpanded();
+  };
+  applyExpanded();
   const open = document.createElement("button");
   open.type = "button";
   open.className = "btn btn-sm";
@@ -1083,15 +1497,31 @@ function clarificationRow(item) {
     event.preventDefault();
     openClarification(item);
   };
+  head.append(pill, pair, spacer, toggle, open);
+  const input = document.createElement("textarea");
+  input.className = "clar-answer";
+  input.rows = 2;
+  input.placeholder = "Answer… (Ctrl+Enter sends)";
+  input.dataset.clarId = item.id || "";
+  input.value = clarDrafts[item.id] || "";
+  input.addEventListener("input", () => syncClarDraft(item.id, input.value, input));
+  const submit = () => postClarification(item.id, input.value, alsoRoles(row));
+  sendOnCtrlEnter(input, submit);
+  const foot = document.createElement("div");
+  foot.className = "clar-foot";
+  const hint = document.createElement("span");
+  hint.className = "clar-hint";
+  hint.textContent = "Enter adds a line · Ctrl+Enter sends";
   const send = document.createElement("button");
   send.type = "submit";
   send.className = "btn btn-sm btn-primary";
   send.textContent = "Submit";
   row.addEventListener("submit", (event) => {
     event.preventDefault();
-    postClarification(item.id, input.value, alsoRoles(row));
+    submit();
   });
-  row.append(pill, pair, summary, input, alsoPicker(item), open, send);
+  foot.append(hint, alsoPicker(item), send);
+  row.append(head, body, input, foot);
   return row;
 }
 
@@ -1110,7 +1540,13 @@ function alsoPicker(item) {
     check.dataset.alsoRole = lane;
     const key = item.id + "\n" + lane;
     check.checked = !!clarAlso[key];
-    check.addEventListener("change", () => { clarAlso[key] = check.checked; });
+    check.dataset.alsoKey = key;
+    check.addEventListener("change", () => {
+      clarAlso[key] = check.checked;
+      document.querySelectorAll("[data-also-key]").forEach((other) => {
+        if (other.dataset.alsoKey === key) other.checked = check.checked;
+      });
+    });
     label.append(check, " " + displayName(lane));
     box.appendChild(label);
   });
@@ -1122,21 +1558,34 @@ function alsoRoles(row) {
   return [...row.querySelectorAll("[data-also-role]:checked")].map((el) => el.value);
 }
 
+const clarInFlight = new Set();
+
 async function postClarification(id, text, also) {
-  if (!text || !text.trim()) return;
+  if (!text || !text.trim()) return false;
+  if (clarInFlight.has(id)) return false;
+  clarInFlight.add(id);
   const payload = {text};
   if (also && also.length) payload.also = also;
-  const res = await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
-    method: "POST",
-    headers: {"Content-Type": "application/json"},
-    body: JSON.stringify(payload)
-  });
-  if (!res.ok) {
-    let msg = "Could not send the answer";
-    try { msg = (await res.json()).error || msg; } catch (_) {}
-    alert(msg);
+  let ok = false;
+  try {
+    const res = await fetch("/api/clarifications/" + encodeURIComponent(id) + "/answer", {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    ok = res.ok;
+    if (!res.ok) {
+      let msg = "Could not send the answer";
+      try { msg = (await res.json()).error || msg; } catch (_) {}
+      alert(msg);
+    }
+  } catch (_) {
+    alert("Could not send the answer");
   }
+  if (ok) delete clarDrafts[id];
+  clarInFlight.delete(id);
   loadState();
+  return ok;
 }
 
 function renderApprovals(items) {
@@ -1155,6 +1604,7 @@ function renderClarifications(items) {
   [...box.querySelectorAll("[data-clar-id]")].forEach((input) => {
     if (!live[input.dataset.clarId]) input.closest(".att-row").remove();
   });
+  if (clarOpenId && !live[clarOpenId]) closeClarification();
   pending.forEach((item) => {
     if (!box.querySelector("[data-clar-id=\"" + item.id + "\"]")) {
       box.appendChild(clarificationRow(item));
@@ -1168,7 +1618,27 @@ function renderAttention(data) {
   renderClarifications(data.clarifications);
 }
 
-async function loadState() {
+let stateLoading = null;
+let stateAgain = false;
+
+// One /api/state request at a time: on a slow server, polls and actions
+// queue a single follow-up instead of piling requests up.
+function loadState() {
+  if (stateLoading) {
+    stateAgain = true;
+    return stateLoading;
+  }
+  stateLoading = loadStateOnce().finally(() => {
+    stateLoading = null;
+    if (stateAgain) {
+      stateAgain = false;
+      loadState();
+    }
+  });
+  return stateLoading;
+}
+
+async function loadStateOnce() {
   try {
     const res = await fetch("/api/state", {cache: "no-store"});
     if (!res.ok) throw new Error("offline");
@@ -1176,6 +1646,7 @@ async function loadState() {
     lastState = data;
     $("error").textContent = "";
     renderChrome(data);
+    renderBanners(data);
     renderBoard(data);
     renderAttention(data);
     renderWork(data);
@@ -1215,7 +1686,9 @@ function fillRoleSelect(project) {
 function openNewTask(project) {
   taskProject = project || "";
   fillRoleSelect(taskProject);
-  $("nt-priority").value = "50";
+  $("nt-level").value = "normal";
+  $("nt-todo").checked = false;
+  fillCardPicker($("nt-blockers"), taskProject, null, []);
   $("new-task-layer").classList.add("open");
   $("nt-name").focus();
 }
@@ -1366,9 +1839,13 @@ async function submitNewTask() {
   const payload = {name, text};
   if (taskProject) payload.project = taskProject;
   const role = $("nt-role").value;
-  const priority = $("nt-priority").value.trim();
   if (role) payload.role = role;
-  if (priority && priority !== "50") payload.priority = priority;
+  payload.level = $("nt-level").value;
+  const blockers = pickedNames($("nt-blockers"));
+  if (blockers.length) payload.blocked_by = blockers;
+  const doneNames = new Set(tasksFor(taskProject).filter((t) => t.lane === "done").map((t) => t.name));
+  const openBlockers = blockers.filter((name) => !doneNames.has(name));
+  if ($("nt-todo").checked || openBlockers.length) payload.todo = true;
   const res = await fetch("/api/tasks", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -1641,6 +2118,20 @@ async function teardownSwarm() {
   }
 }
 
+const layerClosers = {
+  "start-layer": closeStartTask,
+  "links-layer": closeLinks,
+  "clar-layer": closeClarification,
+  "new-task-layer": closeNewTask,
+  "new-project-layer": closeNewProject,
+  "reject-layer": closeRejectDialog
+};
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const layer = document.querySelector(".float-layer.open");
+  if (layer && layerClosers[layer.id]) layerClosers[layer.id]();
+});
+
 $("btn-new-task").onclick = () => openNewTask("");
 $("btn-new-project").onclick = openNewProject;
 $("np-cancel").onclick = closeNewProject;
@@ -1660,6 +2151,10 @@ $("btn-open-project").onclick = (event) => {
 };
 $("nt-cancel").onclick = closeNewTask;
 $("nt-ok").onclick = submitNewTask;
+$("st-ok").onclick = submitStartTask;
+$("st-cancel").onclick = closeStartTask;
+$("ln-ok").onclick = submitLinks;
+$("ln-cancel").onclick = closeLinks;
 $("rt-delete").onclick = deleteRejected;
 $("rt-retry").onclick = retryRejected;
 $("rt-accept").onclick = acceptRejected;
@@ -1690,6 +2185,7 @@ document.addEventListener("click", (event) => {
                     "agent-" + (project ? project + "-" : "") + role);
   }
 });
+setupClarificationDialog();
 loadState();
 setInterval(loadState, 2000);
 </script>

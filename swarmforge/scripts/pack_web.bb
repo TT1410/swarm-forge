@@ -11,6 +11,10 @@
 (def script-dir (fs/parent *file*))
 (load-file (str (fs/path script-dir "forge.bb")))
 (load-file (str (fs/path script-dir "ready_for_next_guard.bb")))
+(try
+  (require 'handoff-lib)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "handoff_lib.bb")))))
 
 (def usage-text
   (str "Usage:\n"
@@ -66,7 +70,8 @@
          in-process-for-row in-process-task-names approvals
          handoff-files batch-dirs in-process-dir allowed-doc?
          delete-approval! retry-approval! parse-message pane-status-for role-rows
-         recorded-pane)
+         recorded-pane comma-list handoff-dirs glob-handoffs todo-lane with-link-names
+         conflict! handoff-state handoff-card-ids reprioritize-handoff! task-handoffs)
 
 (defn usage []
   (binding [*out* *err*]
@@ -369,22 +374,191 @@
        (remove str/blank?)
        set))
 
+(def header-cache
+  "path -> [mtime headers]. sent/ and completed/ only grow, so each poll
+  rereads only the mail that changed."
+  (atom {}))
+
+(defn cached-headers* [path key cached]
+  (let [mtime (try (.toMillis (fs/last-modified-time path)) (catch Exception _ nil))]
+    (when mtime
+      (let [[seen headers] cached]
+        (if (= seen mtime)
+          headers
+          (when-let [h (try (:headers (parse-message path)) (catch Exception _ nil))]
+            (swap! header-cache assoc key [mtime h])
+            h))))))
+
+(defn archived-mail? [key]
+  (let [p (str/replace key "\\" "/")]
+    (or (str/includes? p "/handoffs/sent/")
+        (str/includes? p "/handoffs/inbox/completed/"))))
+
+(defn cached-headers [path]
+  (let [key (str path)
+        cached (get @header-cache key)]
+    ;; Sent and completed mail is written once, so a big archive costs no
+    ;; file-time reads on later polls.
+    (if (and cached (archived-mail? key))
+      (second cached)
+      (cached-headers* path key cached))))
+
+(defn mail-state [path]
+  (let [p (str/replace (str path) "\\" "/")]
+    (cond
+      (str/includes? p "/handoffs/inbox/new/") :new
+      (str/includes? p "/handoffs/inbox/in_process/") :in_process
+      (str/includes? p "/handoffs/inbox/completed/") :completed
+      (str/includes? p "/handoffs/pending_approval/") :pending
+      (str/includes? p "/handoffs/outbox/") :outbox
+      (str/includes? p "/handoffs/sent/") :sent
+      (str/includes? p "/handoffs/failed/") :failed)))
+
+(defn mail-files
+  "Every .handoff under dir, at any depth, in one directory walk."
+  [dir]
+  (if (fs/directory? dir) (fs/glob dir "**.handoff") []))
+
+(def mail-folders
+  [["inbox/new" :new] ["inbox/in_process" :in_process] ["inbox/completed" :completed]
+   ["pending_approval" :pending] ["outbox" :outbox] ["sent" :sent] ["failed" :failed]])
+
+(def archive-states #{:completed :sent})
+
+(defn mail-keys [headers]
+  ;; By card id; by name only for old mail without one, so an archived
+  ;; or renamed card's mail never lands on a new card of the same name.
+  (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
+             (str/split (or (get headers "with_task_ids") "") #","))
+       (map #(some-> % str/trim))
+       (remove str/blank?)
+       distinct))
+
+(defn folder-entries [folder state]
+  (vec (for [path (mail-files folder)
+             :let [headers (cached-headers path)]
+             :when (and headers (not= "true" (get headers "non-forwarding")))
+             key (mail-keys headers)]
+         [key {:state state :path path :headers headers}])))
+
+(def folder-cache
+  "Archive folder -> [mtime entries]. sent/ and completed/ only gain files,
+  so an unchanged folder is not walked again."
+  (atom {}))
+
+(defn cached-folder-entries [folder state]
+  (if-not (archive-states state)
+    (folder-entries folder state)
+    (let [key (str folder)
+          mtime (try (.toMillis (fs/last-modified-time folder)) (catch Exception _ nil))
+          [seen entries] (get @folder-cache key)]
+      (cond
+        (nil? mtime) []
+        (= seen mtime) entries
+        :else (let [entries (folder-entries folder state)]
+                (swap! folder-cache assoc key [mtime entries])
+                entries)))))
+
+(defn card-mail-entries [root]
+  ;; The state comes from the folder, so each file costs one cached lookup.
+  (for [dir (handoff-dirs root)
+        [sub state] mail-folders
+        entry (cached-folder-entries (fs/path dir sub) state)]
+    entry))
+
+(def last-header-sweep (atom 0))
+
+(defn mail-index
+  "Card id and card name -> the forwarding mail that carries the card, by
+  state. Merge-only copies never move a card, so they are left out."
+  [root]
+  (let [idx (reduce (fn [idx [key entry]] (update idx key (fnil conj []) entry))
+                    {}
+                    (card-mail-entries root))
+        now (System/currentTimeMillis)]
+    ;; Now and then forget headers of mail that is gone.
+    (when (> (- now @last-header-sweep) 300000)
+      (reset! last-header-sweep now)
+      (swap! header-cache (fn [cache] (into {} (filter (fn [[k _]] (fs/exists? k))) cache))))
+    idx))
+
+(defn card-mail [mail task]
+  (->> (concat (get mail (:id task)) (get mail (:name task)))
+       (distinct)
+       vec))
+
+(defn mail-id [entry]
+  (or (not-empty (get-in entry [:headers "id"])) (str (fs/file-name (:path entry)))))
+
+(defn returns-of
+  "Returns for rework: distinct git handoffs with return: true. The badge
+  shows while the newest forward handoff of the card is that return."
+  [task entries]
+  (let [git (filter #(= "git_handoff" (get-in % [:headers "type"])) entries)
+        returns (->> git
+                     (filter #(= "true" (get-in % [:headers "return"])))
+                     (map mail-id)
+                     distinct
+                     count)
+        latest (last (sort-by mail-id git))
+        to (first (comma-list (get-in latest [:headers "to"])))]
+    (cond-> {}
+      (pos? returns) (assoc :return_count returns)
+      (and latest
+           (= "true" (get-in latest [:headers "return"]))
+           (= to (:lane task)))
+      (assoc :returned_from (str/trim (or (get-in latest [:headers "from"]) ""))))))
+
+(defn failed-reason [entries]
+  (let [ids (set (map mail-id (remove #(#{:failed} (:state %)) entries)))
+        failed (remove #(contains? ids (mail-id %))
+                       (filter #(= :failed (:state %)) entries))]
+    (when-let [entry (last (sort-by mail-id failed))]
+      (let [error (fs/path (str (:path entry) ".error"))]
+        (or (when (fs/regular-file? error) (not-empty (str/trim (slurp (str error)))))
+            "see handoffs/failed")))))
+
 (defn task-with-status
   ([root task] (task-with-status root task {}))
-  ([root task queued]
+  ([root task queued] (task-with-status root task queued (mail-index root)))
+  ([root task queued mail]
    (let [role (:lane task)
          name (:name task)
          task-id (:id task)
          waiting (queued-in queued task)
+         entries (card-mail mail task)
+         states (set (map :state entries))
+         live? (some states [:new :in_process :outbox :pending])
+         meta (handoff-lib/read-card-meta root task-id)
          status (cond
                   (= "done" role) ""
+                  (= todo-lane role) "Waiting to start"
                   (rejected-task? root name) "REJECTED"
                   (or (contains? (pending-approval-ids root) task-id)
                       (contains? (pending-approval-names root) name)) "Waiting for approval"
+                  (contains? states :outbox)
+                  (if (ready-for-next-guard/paused-at? root)
+                    "Handoff held until Resume"
+                    "Handing off")
                   (contains? (active-card-names root role queued) name)
-                  (pane-status-for root role)
-                  :else "waiting in queue")]
-     (cond-> (assoc task :status status)
+                  (if (or live? (empty? entries))
+                    (pane-status-for root role)
+                    ::stuck)
+                  (or waiting (contains? states :new)) "waiting in queue"
+                  live? "waiting in queue"
+                  :else ::stuck)
+         failed (when (= ::stuck status) (failed-reason entries))]
+     (cond-> (merge (assoc task :status (cond
+                                          (not= ::stuck status) status
+                                          failed (str "Delivery failed: " failed)
+                                          :else "No mail: nothing will pick this card up"))
+                    (when-not (= "done" role) (returns-of task entries)))
+       (= ::stuck status) (assoc :stuck (if failed "failed" "no_mail"))
+       (= todo-lane role) (assoc :todo true)
+       (:level meta) (assoc :level (:level meta))
+       (and (= todo-lane role) (:start_role meta)) (assoc :start_role (:start_role meta))
+       (seq (:blocked_by meta)) (assoc :blocked_by (:blocked_by meta))
+       (seq (:related meta)) (assoc :related (:related meta))
        (= "waiting in queue" status) (assoc :queued true)
        (and (= "waiting in queue" status) waiting) (assoc :queue_role (:role waiting)
                                                          :queue_priority (:priority waiting))))))
@@ -441,12 +615,32 @@
 (defn tasks [root]
   (let [idx (batch-index root)
         queued (queued-index root)
+        mail (mail-index root)
         board (mapv (fn [task]
                       (if-let [batch (get idx (:name task))]
-                        (assoc (task-with-status root task queued) :batch batch)
-                        (task-with-status root task queued)))
+                        (assoc (task-with-status root task queued mail) :batch batch)
+                        (task-with-status root task queued mail)))
                     (board-tasks root))]
-    (into (merging-cards root) board)))
+    (into (merging-cards root) (with-link-names board))))
+
+(defn with-link-names
+  "Show links by name: blockers with whether they are done, the cards this
+  one blocks, and related cards. Links to deleted cards drop out."
+  [board]
+  (let [by-id (into {} (map (juxt :id identity) board))
+        blocks (reduce (fn [m task]
+                         (reduce #(update %1 %2 (fnil conj []) (:name task)) m (:blocked_by task)))
+                       {}
+                       board)]
+    (mapv (fn [task]
+            (let [blockers (keep #(get by-id %) (:blocked_by task))
+                  open (remove #(= "done" (:lane %)) blockers)]
+              (cond-> (dissoc task :blocked_by :related)
+                (seq blockers) (assoc :blockers (mapv (fn [b] {:name (:name b) :done (= "done" (:lane b))}) blockers))
+                (seq open) (assoc :blocked true)
+                (seq (get blocks (:id task))) (assoc :blocks (get blocks (:id task)))
+                (seq (:related task)) (assoc :related (vec (keep #(:name (get by-id %)) (:related task)))))))
+          board)))
 
 (defn parse-message [path]
   (let [content (slurp (str path))
@@ -494,7 +688,10 @@
 (defn write-reviews! [root id reviews]
   (let [file (reviews-file root id)]
     (fs/create-dirs (fs/parent file))
-    (spit (str file) (json/generate-string reviews))))
+    ;; Write then rename, so a reader never sees a half-written file.
+    (let [tmp (fs/path (fs/parent file) (str "." (fs/file-name file) ".tmp"))]
+      (spit (str tmp) (json/generate-string reviews))
+      (fs/move tmp file {:replace-existing true :atomic-move true}))))
 
 (defn drop-reviews! [root id]
   (fs/delete-if-exists (reviews-file root id)))
@@ -698,10 +895,11 @@
                (role-heat root role (or alive? (some? *pane-text*)) text (backend-name row))
                (or (:updated_at from-file) (:updated_at card) ""))))
 
-(defn work-in-flight [root]
-  (let [socket (tmux-socket root)
-        all-tasks (tasks root)]
-    (mapv #(work-row-for-role root socket % all-tasks) (role-rows root))))
+(defn work-in-flight
+  ([root] (work-in-flight root (tasks root)))
+  ([root all-tasks]
+  (let [socket (tmux-socket root)]
+    (mapv #(work-row-for-role root socket % all-tasks) (role-rows root)))))
 
 (defn chat-pending-dir [root]
   (fs/path root ".swarmforge" "dashboard" "requests" "pending"))
@@ -789,17 +987,55 @@
                (when-not (str/ends-with? text "\n") "\n")))
     id))
 
+(defn daemon-pid-file [root]
+  (fs/path root ".swarmforge" "daemon" "handoffd.pid"))
+
+(defn pid-alive? [pid]
+  (boolean
+   (try
+     (let [handle (java.lang.ProcessHandle/of (Long/parseLong pid))]
+       (and (.isPresent handle) (.isAlive (.get handle))))
+     (catch Exception _ false))))
+
+(defn daemon-state
+  "Whether the handoff daemon runs. Without it no handoff leaves an outbox,
+  so the whole swarm stands still."
+  [root]
+  (let [file (daemon-pid-file root)
+        pid (when (fs/regular-file? file) (str/trim (slurp (str file))))]
+    {:running (and (not (str/blank? pid)) (pid-alive? pid))}))
+
+(defn swarm-command!
+  "Run a swarmforge.bb subcommand (drain, resume, daemon) for root, the same
+  way ./swarm does."
+  [root command what]
+  (let [result (sh "bb" (str (fs/path script-dir "swarmforge.bb")) command (str root))]
+    (when-not (zero? (:exit result))
+      (throw (ex-info (str/trim (str "Could not " what ": " (:err result) (:out result)))
+                      {:http-status 500})))))
+
+(def restart-lock (Object.))
+
+(defn restart-daemon! [root]
+  ;; Two overlapping restarts could stop, stop, start, start and leave two
+  ;; daemons delivering the same outboxes.
+  (locking restart-lock
+    (swarm-command! root "daemon" "restart the handoff daemon")))
+
 (defn dashboard-state [root]
-  (let [master (master-role root)]
+  ;; The card list reads every mail header, so build it once per poll.
+  (let [master (master-role root)
+        all-tasks (tasks root)]
     {:master_role master
      :master_display (display-name-for-role master)
      :lanes (lanes root)
-     :tasks (tasks root)
+     :tasks all-tasks
      :approvals (approvals root)
-     :work_in_flight (work-in-flight root)
+     :work_in_flight (work-in-flight root all-tasks)
      :chat (list-chat root)
      :clarifications (list-clarifications root)
-     :drain (ready-for-next-guard/drain-state root)}))
+     :drain (ready-for-next-guard/drain-state root)
+     :daemon (daemon-state root)}))
 
 (defn tagged [project items]
   (mapv #(assoc % :project project) items))
@@ -810,11 +1046,14 @@
 (defn project-slice [forge name]
   (let [root (open-project-root forge name)]
     (try
+      (let [all-tasks (tasks root)]
       {:name name
        :open true
        :lanes (lanes root)
-       :tasks (tagged name (tasks root))
-       :work_in_flight (tagged name (work-in-flight root))}
+       :tasks (tagged name all-tasks)
+       :work_in_flight (tagged name (work-in-flight root all-tasks))
+       :drain (ready-for-next-guard/drain-state root)
+       :daemon (daemon-state root)})
       (catch Exception _
         {:name name
          :open true
@@ -1064,19 +1303,146 @@
       (re-matches #"[0-9]{1,2}" text) (format "%02d" (Long/parseLong text))
       :else (bad-request! (str "Priority must be a number from 00 to 99; got '" text "'.")))))
 
+(def todo-lane "todo")
+
+(defn normalize-level [level]
+  (let [text (some-> level str str/trim str/lower-case not-empty)]
+    (cond
+      (nil? text) nil
+      (handoff-lib/level-priority text) text
+      :else (bad-request! (str "Level must be critical, high, normal or low; got '" level "'.")))))
+
+(defn card-priority
+  "The level decides the priority; an explicit priority is kept for callers
+  that set no level."
+  [level priority]
+  (or (handoff-lib/level-priority level) (normalize-priority priority) default-priority))
+
+(defn board-by-id [root]
+  (into {} (map (juxt :id identity) (board-tasks root))))
+
+(defn resolve-card-ids
+  "Card names or ids -> task ids of cards on the board."
+  [root refs]
+  (let [board (board-tasks root)]
+    (->> refs
+         (map #(some-> % str str/trim))
+         (remove str/blank?)
+         (mapv (fn [ref]
+                 (or (some #(when (or (= ref (:id %)) (= ref (:name %))) (:id %)) board)
+                     (bad-request! (str "Unknown card: " ref)))))
+         distinct
+         vec)))
+
+(defn blocker-graph [root]
+  (into {}
+        (for [task (board-tasks root)]
+          [(:id task) (vec (:blocked_by (handoff-lib/read-card-meta root (:id task))))])))
+
+(defn reaches? [graph from to]
+  (loop [todo [from] seen #{}]
+    (when-let [id (first todo)]
+      (cond
+        (= id to) true
+        (contains? seen id) (recur (rest todo) seen)
+        :else (recur (concat (rest todo) (get graph id)) (conj seen id))))))
+
+(defn check-blockers! [root task-id blockers]
+  (when (some #{task-id} blockers)
+    (bad-request! "A card cannot block itself."))
+  (let [graph (assoc (blocker-graph root) task-id blockers)
+        names (into {} (map (juxt :id :name) (board-tasks root)))]
+    (doseq [b blockers]
+      (when (reaches? graph b task-id)
+        (bad-request! (str "That would make a cycle: " (get names b b)
+                           " already waits for " (get names task-id task-id) "."))))))
+
+(defn set-card-links! [root task-id {:keys [blocked_by related]}]
+  (let [blockers (resolve-card-ids root blocked_by)
+        related (vec (remove #{task-id} (resolve-card-ids root related)))]
+    (check-blockers! root task-id blockers)
+    (handoff-lib/update-card-meta!
+     root task-id
+     (fn [meta]
+       (cond-> (dissoc meta :blocked_by :related)
+         (seq blockers) (assoc :blocked_by blockers)
+         (seq related) (assoc :related related))))))
+
+(defn open-blockers
+  "Blockers that still hold a card back: any not done yet. A deleted blocker
+  no longer holds it."
+  [root task-id]
+  (let [by-id (board-by-id root)]
+    (->> (:blocked_by (handoff-lib/read-card-meta root task-id))
+         (keep #(get by-id %))
+         (remove #(= "done" (:lane %)))
+         vec)))
+
 (defn create-task!
   ([root name text] (create-task! root name text {}))
-  ([root name text {:keys [role priority]}]
+  ([root name text {:keys [role priority level todo blocked_by related]}]
    (require-task-name! name)
-   (let [lane (if (str/blank? role) (master-role root) (require-lane! root role))
-         priority (or (normalize-priority priority) default-priority)
-         task-id (new-task-id name)]
+   (let [role (when-not (str/blank? role) (require-lane! root role))
+         lane (if todo todo-lane (or role (master-role root)))
+         level (normalize-level level)
+         priority (card-priority level priority)
+         task-id (new-task-id name)
+         blockers (resolve-card-ids root blocked_by)
+         related (resolve-card-ids root related)]
+     (when (and (seq blockers) (not todo))
+       (when-let [open (seq (keep #(get (board-by-id root) %) blockers))]
+         (when (some #(not= "done" (:lane %)) open)
+           (bad-request! "A card with open blockers must wait in TODO."))))
      (pack-board root "create"
                  "--name" name
                  "--lane" lane
                  "--task-id" task-id
                  "--text" (or text ""))
-     (queue-new-task-note! root task-id name (or text "") {:role lane :priority priority}))))
+     (handoff-lib/write-card-meta!
+      root task-id
+      (cond-> {}
+        level (assoc :level level)
+        (and todo role) (assoc :start_role role)
+        (and todo (not level) (normalize-priority priority)) (assoc :priority priority)
+        (seq blockers) (assoc :blocked_by blockers)
+        (seq related) (assoc :related related)))
+     (when-not todo
+       (queue-new-task-note! root task-id name (or text "") {:role lane :priority priority})))))
+
+(defn slurp-if-exists [path]
+  (if (fs/regular-file? path) (slurp (str path)) ""))
+
+(defn start-task!
+  "Start a TODO card: move it to the role's lane under the board lock, then
+  send the New Task note. A card still waiting for blockers needs force."
+  [root name {:keys [role level priority force]}]
+  (when (str/blank? name)
+    (bad-request! "Missing task name"))
+  (let [task (or (task-by-name root name)
+                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+        task-id (:id task)
+        meta (handoff-lib/read-card-meta root task-id)
+        role (if (some? role) role (:start_role meta))
+        lane (if (str/blank? role) (master-role root) (require-lane! root role))
+        level (or (normalize-level level) (:level meta))
+        priority (card-priority level (or (not-empty (str priority)) (:priority meta)))
+        open (open-blockers root task-id)]
+    (when-not (= todo-lane (:lane task))
+      (conflict! (str "Card is not in TODO: " name)))
+    (when (and (seq open) (not force))
+      (conflict! (str "Blocked by " (str/join ", " (map :name open))
+                      ". Wait until they are done, or start anyway.")))
+    (pack-board root "start" "--name" name "--lane" lane)
+    (handoff-lib/update-card-meta! root task-id
+                                   #(cond-> (dissoc % :start_role :priority)
+                                      level (assoc :level level)))
+    (try
+      (queue-new-task-note! root task-id name
+                            (slurp-if-exists (fs/path root ".swarmforge" "board" (str name ".txt")))
+                            {:role lane :priority priority})
+      (catch Exception e
+        (pack-board root "move" "--name" name "--lane" todo-lane)
+        (throw e)))))
 
 (defn project-dest [root project]
   (if (forge/forge? root)
@@ -1093,9 +1459,21 @@
       (http-error (or (:http-status (ex-data e)) 400) (.getMessage e)))))
 
 (defn post-tasks [root body]
-  (let [{:keys [name text project role priority]} (json/parse-string (or body "{}") true)]
+  (let [{:keys [name text project] :as opts} (json/parse-string (or body "{}") true)]
     (json-action #(create-task! (project-dest root project) name text
-                                {:role role :priority priority}))))
+                                (select-keys opts [:role :priority :level :todo :blocked_by :related])))))
+
+(defn post-start-task [root body]
+  (let [{:keys [name project] :as opts} (json/parse-string (or body "{}") true)]
+    (json-action #(start-task! (project-dest root project) name
+                               (select-keys opts [:role :level :priority :force])))))
+
+(defn post-task-links [root body]
+  (let [{:keys [name project] :as opts} (json/parse-string (or body "{}") true)
+        dest (project-dest root project)]
+    (json-action #(let [task (or (task-by-name dest name)
+                                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))]
+                    (set-card-links! dest (:id task) opts)))))
 
 (defn rename-task! [root name to]
   (when (str/blank? name)
@@ -1125,6 +1503,17 @@
 (defn conflict! [message]
   (throw (ex-info message {:http-status 409})))
 
+(defn outbox-mail? [path]
+  (= "outbox" (str (fs/file-name (fs/parent path)))))
+
+(defn held-handoff?
+  "A git handoff the paused daemon keeps in its outbox. It stays there until
+  Resume, so it can be changed like mail in an inbox."
+  [root path]
+  (and (outbox-mail? path)
+       (ready-for-next-guard/paused-at? root)
+       (= "git_handoff" (get-in (parse-message path) [:headers "type"]))))
+
 (defn queued-card-handoffs
   "The card's handoffs still waiting in an inbox/new or outbox.
   Refuses with 409 when any handoff of the card is in process or waits for approval."
@@ -1143,7 +1532,7 @@
       (conflict! (str "Card is waiting for approval; use Attention: " name)))
     (when (some #(> (count (handoff-card-ids %)) 1) (:queued by-state))
       (conflict! (str "Card travels in a handoff that carries other cards too: " name)))
-    (when (some #(= "outbox" (str (fs/file-name (fs/parent %)))) (:queued by-state))
+    (when (some #(and (outbox-mail? %) (not (held-handoff? root %))) (:queued by-state))
       (conflict! (str "Card is being delivered; try again in a moment: " name)))
     {:task task :queued (vec (:queued by-state))}))
 
@@ -1217,16 +1606,51 @@
         {:keys [queued]} (queued-card-handoffs root name)]
     (when (empty? queued)
       (conflict! (str "Card has no queued handoff to reorder: " name)))
-    (doseq [path queued]
+    (doseq [path queued
+            ;; merge-only copies keep 00 so every role merges before new work
+            :when (not= "true" (get-in (parse-message path) [:headers "non-forwarding"]))]
       (reprioritize-handoff! path priority name))))
+
+(defn set-task-level!
+  "Set a card's level. Its forward mail still waiting in an inbox is
+  reordered now; a card in progress gets the level from its next handoff."
+  [root name level]
+  (let [level (or (normalize-level level) (bad-request! "Missing level"))
+        task (or (task-by-name root name)
+                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+        priority (handoff-lib/level-priority level)]
+    (when (= "done" (:lane task))
+      (conflict! (str "Card is done: " name)))
+    (handoff-lib/update-card-meta! root (:id task) #(-> % (assoc :level level) (dissoc :priority)))
+    (doseq [path (task-handoffs root (:id task) name)
+            :let [headers (:headers (parse-message path))]
+            :when (and (= :queued (handoff-state path))
+                       (or (not (outbox-mail? path)) (held-handoff? root path))
+                       (not= "true" (get headers "non-forwarding"))
+                       (= 1 (count (handoff-card-ids path))))]
+      (reprioritize-handoff! path priority name))))
+
+(defn post-restart-daemon [root body]
+  (let [{:keys [project]} (json/parse-string (or body "{}") true)]
+    (json-action #(restart-daemon! (project-dest root project)))))
+
+(defn post-pause [root body]
+  (let [{:keys [project]} (json/parse-string (or body "{}") true)]
+    (json-action #(swarm-command! (project-dest root project) "drain" "pause the swarm"))))
+
+(defn post-resume [root body]
+  (let [{:keys [project]} (json/parse-string (or body "{}") true)]
+    (json-action #(swarm-command! (project-dest root project) "resume" "resume the swarm"))))
 
 (defn post-dequeue-task [root body]
   (let [{:keys [name project]} (json/parse-string (or body "{}") true)]
     (json-action #(dequeue-task! (project-dest root project) name))))
 
 (defn post-task-priority [root body]
-  (let [{:keys [name priority project]} (json/parse-string (or body "{}") true)]
-    (json-action #(reprioritize-task! (project-dest root project) name priority))))
+  (let [{:keys [name priority level project]} (json/parse-string (or body "{}") true)]
+    (json-action #(if (str/blank? level)
+                    (reprioritize-task! (project-dest root project) name priority)
+                    (set-task-level! (project-dest root project) name level)))))
 
 (defn post-chat [root body]
   (let [{:keys [text]} (json/parse-string (or body "{}") true)
@@ -1589,6 +2013,8 @@
                          (keys reviews)))))
 
 (defn retry-approval! [root id comments]
+  (when (ready-for-next-guard/paused-at? root)
+    (conflict! "The swarm is paused. Resume it before Retry: Retry restarts the work at once."))
   (let [src (require-pending! root id)
         headers (:headers (parse-message src))
         task (get headers "task")
@@ -2113,6 +2539,8 @@
     (= "/api/projects/close" uri) (post-close-project root body)
     (= "/api/tasks" uri) (post-tasks root body)
     (= "/api/tasks/rename" uri) (post-rename-task root body)
+    (= "/api/tasks/start" uri) (post-start-task root body)
+    (= "/api/tasks/links" uri) (post-task-links root body)
     (= "/api/tasks/dequeue" uri) (post-dequeue-task root body)
     (= "/api/tasks/priority" uri) (post-task-priority root body)
     (= "/api/tasks/delete" uri)
@@ -2121,6 +2549,9 @@
     (post-retry-task (scoped-approval-root root uri body) body)
     (= "/api/chat" uri) (post-chat root body)
     (= "/api/teardown" uri) (teardown-response root body)
+    (= "/api/daemon/restart" uri) (post-restart-daemon root body)
+    (= "/api/pause" uri) (post-pause root body)
+    (= "/api/resume" uri) (post-resume root body)
     (str/starts-with? (or uri "") "/api/approvals/")
     (post-approval (scoped-approval-root root uri body) uri body)
     (str/starts-with? (or uri "") "/api/clarifications/")

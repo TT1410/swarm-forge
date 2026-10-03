@@ -24,7 +24,8 @@
        "  pack_board.sh increment-audit --task-id <task-id> [--root <dir>]\n"
        "  pack_board.sh delete --name <name> [--root <dir>]\n"
        "  pack_board.sh delete <name>\n"
-       "  pack_board.sh rename --name <old> --to <new> [--root <dir>]"))
+       "  pack_board.sh rename --name <old> --to <new> [--root <dir>]\n"
+       "  pack_board.sh start --name <name> --lane <role> [--root <dir>]"))
 
 (def flags {"--root" :root "--name" :name "--lane" :lane "--text" :text "--role" :role "--task-id" :task-id
             "--to" :to})
@@ -234,6 +235,32 @@
 (defn done! [opts]
   (set-lane! opts "done"))
 
+(def todo-lane "todo")
+
+(defn start!
+  "Move a card out of TODO into a role's lane. Only a TODO card can start,
+  and the move happens under the board lock, so two Starts cannot both
+  succeed and the card is in the role's lane before its first mail exists."
+  [opts]
+  (let [name (task-name opts)
+        lane (task-lane opts)
+        root (resolve-root opts)
+        file (tasks-file root)]
+    (require-value! name "task name")
+    (require-value! lane "lane")
+    (when (#{todo-lane "done"} lane)
+      (exit! 1 (str "A card cannot start into " lane)))
+    (with-board-lock
+      root
+      (fn []
+        (let [rows (read-rows file)
+              row (find-task rows name)]
+          (when-not row
+            (exit! 1 (str "Unknown task name: " name)))
+          (when-not (= todo-lane (second (str/split row #"\t" -1)))
+            (exit! 1 (str "Card is not in TODO: " name)))
+          (write-rows file (mapv #(rewrite-lane % name lane) rows)))))))
+
 (defn list! [opts]
   (let [file (tasks-file (resolve-root opts))]
     (when (fs/exists? file)
@@ -355,6 +382,7 @@
           (write-rows file (filterv #(not= (str/lower-case name)
                                            (str/lower-case (or (row-name %) "")))
                                     rows))
+          (handoff-lib/delete-card-meta! root (nth (str/split (find-task rows name) #"\t" -1) 4 nil))
           (fs/delete-if-exists (task-body-file root name)))))))
 
 (defn row-cols [line]
@@ -459,7 +487,8 @@
    "archive-all" archive-all!
    "increment-audit" increment-audit!
    "delete" delete!
-   "rename" rename!})
+   "rename" rename!
+   "start" start!})
 
 (defn -main [& args]
   (let [opts (parse-args args)

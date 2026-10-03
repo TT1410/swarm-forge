@@ -126,12 +126,34 @@ normally opens it in a browser.
 Set `SWARMFORGE_OPEN_BROWSER=0` to leave the browser closed. Set
 `SWARMFORGE_PREVENT_SLEEP=0` to disable the host sleep inhibitor.
 
+Each project band on the dashboard has a Pause button. While a project is
+paused, its roles finish their current turn and take no new mail, and the
+handoff daemon keeps every git handoff in its outbox, so no card changes lane.
+Handoffs that need approval still go to approval; Retry is refused. A PAUSED
+banner shows what is still finishing and how many handoffs are held; Resume
+delivers them. If a project's handoff daemon stops, its band shows a HANDOFFS
+STOPPED banner with a Restart button.
+
+The board has a TODO column. New Task can keep a card there; Start (card menu)
+sends it to a role later. A card gets a level when it is created on the
+dashboard: Critical, High, Normal or Low. The level sets the priority of the
+card's handoffs at every role (10, 30, 50, 70; lower runs first) when the agent
+leaves the default 50 or no priority. A priority the role chose on purpose,
+such as an architect's 00 follow-up, still wins; merge-only copies keep 00.
+Cards can be blocked by other cards and related to them (card menu, Links…); a
+blocked TODO card starts only when forced. Cards also show why they are not
+moving (Handing off, Handoff held until Resume, Delivery failed, No mail) and
+who returned them for rework, with a return count.
+
 Other runtime controls:
 
-- `./swarm drain [dir]` stops roles from taking new mail once in-process work
-  finishes; `./swarm status [dir]` reports drain state and busy roles, and
-  `./swarm resume [dir]` lifts it. `dir` is a swarm root (the forge root or a
+- `./swarm drain [dir]` pauses the swarm as the Pause button does;
+  `./swarm status [dir]` reports `DRAINED: yes` once no role has in-process
+  work and how many handoffs are held, and `./swarm resume [dir]` delivers
+  them and wakes roles. `dir` is a swarm root (the forge root or a
   project folder) and defaults to the current directory.
+- `./swarm daemon [dir]` restarts the handoff daemon. Run it after updating
+  SwarmForge scripts in a running swarm.
 - `SWARMFORGE_MERGE_CHECK_TIMEOUT` bounds each commit-hook merge check, in
   seconds (default 300).
 - In `swarmforge.conf`, `dashboard-port <port>` keeps the dashboard on a fixed
