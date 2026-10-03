@@ -39,44 +39,76 @@
 (defn pack-role-names []
   (mapv first (handoff-lib/role-rows)))
 
-(defn chain-recipient-errors [headers recipients]
-  (let [card-type (get headers "card_type")
-        sender (sender-role)]
-    (if (or (not= "git_handoff" (get headers "type"))
-            (str/blank? card-type)
-            (not (card-type/on-chain? (project-root) card-type sender)))
-      []
-      (let [next (card-type/next-role (project-root) card-type sender)
-            last? (card-type/last-on-card? (project-root) card-type sender)]
-        (cond
-          (return-handoff? headers)
-          (let [earlier (set (card-type/earlier-roles (project-root) card-type sender))]
-            (cond-> []
-              (some #(not (earlier %)) recipients)
-              (conj (format "A return goes back to a role before %s on this card (%s); got %s."
-                            sender (str/join "," (card-type/earlier-roles (project-root) card-type sender))
-                            (str/join "," recipients)))))
+(defn route-applies? [card-type sender]
+  (and (not (str/blank? card-type))
+       (card-type/on-chain? (project-root) card-type sender)))
 
-          last?
-          (let [want (set (card-type/terminal-upstream (project-root) (pack-role-names) card-type))
-                got (set recipients)
-                extra (set/difference got want)
-                missing (set/difference want got)]
-            (cond-> []
-              (seq extra)
-              (conj (format "Recipient '%s' is not upstream of last on this card."
-                            (str/join "," (sort extra))))
-              (seq missing)
-              (conj (format "Terminal to: must include all upstream roles (%s)."
-                            (str/join "," (card-type/terminal-upstream
-                                           (project-root) (pack-role-names) card-type))))))
-          :else
-          (cond-> []
-            (some #(not= % next) recipients)
-            (conj (format "Recipient must be next on this card (%s); got %s."
-                          next (str/join "," recipients)))
-            (some #(not (card-type/on-chain? (project-root) card-type %)) recipients)
-            (conj "Recipient is not on this card's chain.")))))))
+(defn pack-earlier-roles
+  "Roles before sender in the pack order, for a card without a route."
+  [sender]
+  (let [names (pack-role-names)
+        idx (.indexOf names sender)]
+    (if (neg? idx) [] (vec (take idx names)))))
+
+(defn return-recipient-errors
+  "A return goes back to exactly one earlier role: earlier on the card's
+  route, or earlier in the pack order when the card has no route."
+  [headers recipients]
+  (let [card-type (get headers "card_type")
+        sender (sender-role)
+        earlier (if (route-applies? card-type sender)
+                  (card-type/earlier-roles (project-root) card-type sender)
+                  (pack-earlier-roles sender))]
+    (cond-> []
+      (not= 1 (count (distinct recipients)))
+      (conj "A return goes back to exactly one role; name one recipient in to:.")
+      (some #(not ((set earlier) %)) recipients)
+      (conj (format "A return goes back to a role before %s on this card (%s); got %s."
+                    sender (str/join "," earlier) (str/join "," recipients))))))
+
+(defn forward-recipient-errors
+  "A forward goes to the next role on the card's route; the last role's
+  terminal goes to every pack role upstream of it."
+  [card-type sender recipients]
+  (let [next (card-type/next-role (project-root) card-type sender)
+        last? (card-type/last-on-card? (project-root) card-type sender)]
+    (if last?
+      (let [want (set (card-type/terminal-upstream (project-root) (pack-role-names) card-type))
+            got (set recipients)
+            extra (set/difference got want)
+            missing (set/difference want got)]
+        (cond-> []
+          (seq extra)
+          (conj (format "Recipient '%s' is not upstream of last on this card."
+                        (str/join "," (sort extra))))
+          (seq missing)
+          (conj (format "Terminal to: must include all upstream roles (%s)."
+                        (str/join "," (card-type/terminal-upstream
+                                       (project-root) (pack-role-names) card-type))))))
+      (cond-> []
+        (some #(not= % next) recipients)
+        (conj (format "Recipient must be next on this card (%s); got %s."
+                      next (str/join "," recipients)))
+        (some #(not (card-type/on-chain? (project-root) card-type %)) recipients)
+        (conj "Recipient is not on this card's chain.")))))
+
+(defn chain-recipient-errors [headers recipients]
+  (let [card-type (get headers "card_type")]
+    (cond
+      (not= "git_handoff" (get headers "type"))
+      []
+
+      (return-handoff? headers)
+      (return-recipient-errors headers recipients)
+
+      (str/blank? card-type)
+      []
+
+      :else
+      (let [sender (sender-role)]
+        (if (route-applies? card-type sender)
+          (forward-recipient-errors card-type sender recipients)
+          [])))))
 
 (defn validate-recipients [to]
   (if (str/blank? to)

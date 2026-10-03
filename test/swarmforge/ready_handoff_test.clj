@@ -986,3 +986,37 @@
       (is (str/includes? (:out result) "NOTE: 50_note.handoff"))
       (is (fs/exists? (handoff-path root "new" "50_work.handoff")))
       (is (fs/exists? (handoff-path root "completed" "50_note.handoff"))))))
+
+(deftest ready-for-next-marks-returned-and-merge-only-mail
+  ;; Given a returned card and a merge-only copy are waiting
+  ;; When the role takes them as a task and as a batch
+  ;; Then the helper names each kind, so the role knows what to forward
+  (doseq [[mode extra marker] [["task" "return: true" "RETURNED: true"]
+                               ["batch" "non-forwarding: true" "MERGE_ONLY: true"]]]
+    (let [root (tmp-dir)]
+      (init-repo! root)
+      (setup-project! root {"receiver" mode})
+      (write-file (handoff-path root "new" "50_marked.handoff")
+                  (str "id: marked\nfrom: sender\nto: receiver\npriority: 50\ntype: note\n"
+                       "task: Card A\n" extra "\n\nwork\n"))
+      (let [out (:out (run {:dir root :env {"SWARMFORGE_ROLE" "receiver"}} (script "ready_for_next.sh")))]
+        (is (str/includes? out marker) mode)))))
+
+(deftest ready-for-next-batch-keeps-a-retry-note-apart-from-merge-only-copies
+  ;; Given a retry note and a merge-only copy, both at priority 00 for the same card type
+  ;; When a batch-mode role takes the next batch
+  ;; Then the retry is taken first and alone, and the merge-only copy waits
+  (let [root (tmp-dir)
+        head (init-repo! root)]
+    (setup-project! root {"receiver" "batch"})
+    (make-queued-handoff! root "00_20260615T000001Z_000001_from_sender_to_receiver.handoff"
+                          {:priority "00" :task "task-a" :card-type "utility"
+                           :non-forwarding true :delivery-kind "reverse" :commit head})
+    (write-file (handoff-path root "new" "00_00000000T000000Z_000000_retry_task_b.handoff")
+                (str "from: (Retry)\nto: receiver\npriority: 00\ntype: note\n"
+                     "task_id: task-b\ntask: task-b\ncard_type: utility\n\nRetry audit.\n"))
+    (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "receiver"}} (script "ready_for_next.sh"))]
+      (is (zero? (:exit result)) (:err result))
+      (is (str/includes? (:out result) "COUNT: 1"))
+      (is (str/includes? (:out result) "TASK_NAME: task-b"))
+      (is (fs/exists? (handoff-path root "new" "00_20260615T000001Z_000001_from_sender_to_receiver.handoff"))))))

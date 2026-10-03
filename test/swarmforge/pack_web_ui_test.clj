@@ -1367,6 +1367,9 @@
 (defn head-commit [root]
   (str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD"))))
 
+(defn retry-note-name? [name]
+  (boolean (re-find #"^00_.*_retry_" name)))
+
 (deftest pack-web-retry-keeps-later-work-when-the-specifier-moved-on
   ;; Given card A held for approval while the specifier already works on card B
   ;; When the operator retries A
@@ -1389,7 +1392,7 @@
       (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "fix A"))))
       (is (= later (head-commit root)))
       (is (= ["50_b.handoff"] (handoff-names (in-process-dir root roles "specifier"))))
-      (is (some #(str/starts-with? % "00_retry_") (inbox-names root roles "specifier")))
+      (is (some retry-note-name? (inbox-names root roles "specifier")))
       (is (= [] (pending-names root))))))
 
 (deftest pack-web-delete-refuses-when-the-specifier-moved-on
@@ -1456,7 +1459,7 @@
       (is (= later (head-commit root)))
       (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "fix A"))))
       (is (= later (head-commit root)))
-      (is (some #(str/starts-with? % "00_retry_") (inbox-names root roles "specifier"))))))
+      (is (some retry-note-name? (inbox-names root roles "specifier"))))))
 
 (deftest pack-web-retry-requeue-carries-every-card-of-the-batch
   ;; Given batch A+B held while the specifier works on C
@@ -1477,7 +1480,7 @@
       (write-file (fs/path (in-process-dir root roles "specifier") "50_c.handoff")
                   (str "from: (New Task)\nto: specifier\ntype: note\ntask_id: " c "\ntask: C\n\nC\n"))
       (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
-      (let [note (first (filter #(str/starts-with? % "00_retry_") (inbox-names root roles "specifier")))]
+      (let [note (first (filter retry-note-name? (inbox-names root roles "specifier")))]
         (is (str/includes? (slurp (str (inbox-new-path root roles "specifier" note)))
                            (str "batch_task_ids: " (pr-str [a b]) "\n")))
         (is (not (str/includes? (slurp (str b-done)) "handed_task_ids")))))))
@@ -1507,3 +1510,119 @@
       (is (zero? (:exit (pack-web root false "--test-delete-approval" (str root) "50_offer"))))
       (is (nil? (task-lane root "A")))
       (is (fs/exists? b-sent)))))
+
+(defn- in-process-entries [root roles role]
+  (let [dir (in-process-dir root roles role)]
+    (if (fs/exists? dir)
+      (sort (map #(str (fs/file-name %)) (fs/list-dir dir)))
+      [])))
+
+(defn- held-batch! [root a b]
+  (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+              (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                   "task_id: " a "\ntask: A\nbatch_id: b1\n"
+                   "batch_task_ids: " (pr-str [a b]) "\n\npayload\n")))
+
+(defn- completed-mail! [root dir name id task completed-at]
+  (write-file (fs/path root ".swarmforge/handoffs/inbox/completed" dir name)
+              (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                   "task_id: " id "\ntask: " task "\nhanded_task_ids: " id
+                   "\ncompleted_at: " completed-at "\n\n" task "\n")))
+
+(defn- batch-mode! [root]
+  (let [file (fs/path root ".swarmforge/roles.tsv")]
+    (spit (str file) (str/replace-first (slurp (str file)) "\ttask\t" "\tbatch\t"))))
+
+(deftest pack-web-retry-restores-a-batch-senders-cards-as-one-batch
+  ;; Given a batch-mode specifier whose batch of A and B is held
+  ;; When the operator retries
+  ;; Then A's and B's mail come back in one batch folder that ready_for_next accepts
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (batch-mode! root)
+    (doseq [n ["A" "B"]] (create-task root n "specifier"))
+    (let [[a b] (map #(:id (task-card root %)) ["A" "B"])
+          old-batch "batch_20261001T100000Z_000001"]
+      (held-batch! root a b)
+      (completed-mail! root old-batch "50_a.handoff" a "A" "2026-10-01T10:00:00Z")
+      (completed-mail! root old-batch "50_b.handoff" b "B" "2026-10-01T10:00:00Z")
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [[batch & more] (in-process-entries root roles "specifier")
+            batch-dir (fs/path (in-process-dir root roles "specifier") batch)]
+        (is (str/starts-with? batch "batch_"))
+        (is (empty? more))
+        (is (= ["50_a.handoff" "50_b.handoff"] (sort (handoff-names batch-dir))))
+        (is (not-any? #(str/includes? (slurp (str %)) "handed_task_ids")
+                      (fs/glob batch-dir "*.handoff"))))
+      (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"} :ok? false}
+                        (script "ready_for_next.sh"))]
+        (is (zero? (:exit result)) (:err result))
+        (is (str/includes? (:out result) "COUNT: 2"))))))
+
+(deftest pack-web-retry-gives-a-task-sender-one-mail-for-several-cards
+  ;; Given a task-mode specifier whose batch of A and B is held, with an older round of A
+  ;; When the operator retries
+  ;; Then one retry note naming both cards is in process and every mail stays completed
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (doseq [n ["A" "B"]] (create-task root n "specifier"))
+    (let [[a b] (map #(:id (task-card root %)) ["A" "B"])]
+      (held-batch! root a b)
+      (completed-mail! root "" "50_a_old.handoff" a "A" "2026-09-30T10:00:00Z")
+      (completed-mail! root "" "50_a.handoff" a "A" "2026-10-01T10:00:00Z")
+      (completed-mail! root "" "50_b.handoff" b "B" "2026-10-01T10:00:00Z")
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [entries (in-process-entries root roles "specifier")
+            note (slurp (str (fs/path (in-process-dir root roles "specifier") (first entries))))]
+        (is (= 1 (count entries)))
+        (is (str/includes? (first entries) "_retry_"))
+        (is (str/includes? note (str "batch_task_ids: " (pr-str [a b]) "\n")))
+        (is (str/includes? note "card_type: component\n")))
+      (is (= 3 (count (handoff-names (fs/path root ".swarmforge/handoffs/inbox/completed")))))
+      (let [result (run {:dir root :env {"SWARMFORGE_ROLE" "specifier"} :ok? false}
+                        (script "ready_for_next.sh"))]
+        (is (zero? (:exit result)) (:err result))))))
+
+(deftest pack-web-retry-restores-only-the-newest-round-of-a-card
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "specifier")
+    (let [a (:id (task-card root "A"))]
+      (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+                  (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                       "task_id: " a "\ntask: A\n\npayload\n"))
+      (completed-mail! root "" "50_a_old.handoff" a "A" "2026-09-30T10:00:00Z")
+      (completed-mail! root "" "50_a_new.handoff" a "A" "2026-10-01T10:00:00Z")
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (is (= ["50_a_new.handoff"] (in-process-entries root roles "specifier")))
+      (is (fs/exists? (fs/path root ".swarmforge/handoffs/inbox/completed/50_a_old.handoff"))))))
+
+(deftest pack-web-requeued-retry-carries-the-card-type-and-comes-first
+  ;; Given card A held while the specifier works on B, and a merge-only copy waits
+  ;; When the operator retries A
+  ;; Then the queued retry names A's card type and sorts ahead of the merge-only copy
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "specifier")
+    (create-task root "B" "specifier")
+    (let [a (:id (task-card root "A"))
+          b (:id (task-card root "B"))]
+      (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+                  (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                       "task_id: " a "\ntask: A\n\npayload\n"))
+      (write-file (fs/path (in-process-dir root roles "specifier") "50_b.handoff")
+                  (str "from: (New Task)\nto: specifier\npriority: 50\ntype: note\n"
+                       "task_id: " b "\ntask: B\n\nB\n"))
+      (write-file (inbox-new-path root roles "specifier"
+                                  "00_20261001T100000Z_000001_from_coder_to_specifier.handoff")
+                  (str "from: coder\nto: specifier\npriority: 00\ntype: git_handoff\n"
+                       "non-forwarding: true\ntask_id: " b "\ntask: B\n\nmerge\n"))
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [first-name (first (sort (inbox-names root roles "specifier")))]
+        (is (retry-note-name? first-name))
+        (is (str/includes? (slurp (str (inbox-new-path root roles "specifier" first-name)))
+                           "card_type: component\n"))))))

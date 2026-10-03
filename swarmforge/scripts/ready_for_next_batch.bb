@@ -293,9 +293,12 @@
         (recur (inc suffix))
         dir))))
 
-(defn reverse-mail? [file]
+(defn reverse-mail?
+  "A merge-only copy. A note at priority 00, such as a retry, is forward work
+  and must not share a batch with merge-only copies."
+  [file]
   (or (= "true" (header-field file "non-forwarding"))
-      (= "00" (header-value file "priority" "50"))))
+      (ready-for-next-guard/reverse-git-file? file)))
 
 (defn batch-card-type [file]
   (or (not-empty (header-field file "card_type")) ""))

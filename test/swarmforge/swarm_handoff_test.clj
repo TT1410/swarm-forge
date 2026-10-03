@@ -1266,6 +1266,47 @@
       (is (str/includes? (:err result) "A return goes back to a role before coder"))
       (is (empty? (outbox-handoffs root))))))
 
+(deftest swarm-handoff-refuses-a-return-to-several-roles
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["D40" "done" "d40" "QA"]])
+    (commit-work! root)
+    (let [result (submit-draft! root "QA" "type: git_handoff\nto: coder,cleaner\npriority: 50\ntask: D40\nreturn: true\n")]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "exactly one role"))
+      (is (empty? (outbox-handoffs root))))))
+
+(deftest swarm-handoff-return-without-a-route-goes-back-in-pack-order
+  ;; Given a pack without routes.tsv, so the card has no route
+  ;; When a role returns the card
+  ;; Then only a role before it in the pack order may take the return
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (fs/delete (fs/path root ".swarmforge/routes.tsv"))
+    (board! root [["U1" "cleaner" "u1" ""]])
+    (commit-work! root)
+    (let [forward (submit-draft! root "cleaner" "type: git_handoff\nto: architect\npriority: 50\ntask: U1\nreturn: true\n")]
+      (is (= 2 (:exit forward)))
+      (is (str/includes? (:err forward) "A return goes back to a role before cleaner"))
+      (is (empty? (outbox-handoffs root))))
+    (let [back (submit-draft! root "cleaner" "type: git_handoff\nto: coder\npriority: 50\ntask: U1\nreturn: true\n")]
+      (is (zero? (:exit back)) (:err back))
+      (is (= 1 (count (outbox-handoffs root)))))))
+
+(deftest swarm-handoff-return-for-a-card-off-every-route-goes-back-in-pack-order
+  ;; A card whose type has no route still returns only to an earlier role
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["U1" "cleaner" "u1" "legacy"]])
+    (commit-work! root)
+    (let [result (submit-draft! root "cleaner" "type: git_handoff\nto: QA\npriority: 50\ntask: U1\nreturn: true\n")]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "A return goes back to a role before cleaner"))
+      (is (empty? (outbox-handoffs root))))))
+
 (deftest swarm-handoff-from-a-plain-note-keeps-the-drafted-task
   ;; A role note without task_id in process does not block a git_handoff (no board)
   (let [root (tmp-dir)]
