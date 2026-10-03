@@ -187,6 +187,18 @@
         "\n"
         "payload\n")))
 
+(defn put-queued! [root roles role {:keys [from task]}]
+  (write-file
+   (fs/path (pack-worktree root roles role) ".swarmforge/handoffs/inbox/new"
+            (str "50_" (str/replace task #"[^A-Za-z0-9]+" "-") "_from_" from "_to_" role ".handoff"))
+   (str "from: " from "\n"
+        "to: " role "\n"
+        "priority: 50\n"
+        "type: git_handoff\n"
+        "task: " task "\n"
+        "\n"
+        "payload\n")))
+
 (defn web-state [root]
   (json/parse-string (:out (pack-web root true "--test-state" (str root))) true))
 
@@ -1628,6 +1640,8 @@
         _ (setup-pack! root)
         _ (create-task root "HTW" "specifier")
         _ (create-task root "Holy Hand Grenade" "specifier")
+        _ (put-queued! root ["specifier"] "specifier" {:from "(New Task)" :task "HTW"})
+        _ (put-queued! root ["specifier"] "specifier" {:from "(New Task)" :task "Holy Hand Grenade"})
         result (pack-web-env root {} "--test-status-pane" (str root)
                              "I'm specifying HTW.\nesc to interrupt · 1s\n")
         state (json/parse-string (:out result) true)
@@ -1651,6 +1665,7 @@
         _ (create-task root "Holy Hand Grenade" "coder")
         _ (put-in-process! root roles "coder"
                            {:from "specifier" :task "Holy Hand Grenade"})
+        _ (put-queued! root roles "coder" {:from "specifier" :task "HTW"})
         result (pack-web-env root {} "--test-status-pane" (str root)
                              "I'm merging the grenade.\nesc to interrupt · 1s\n")
         state (json/parse-string (:out result) true)
@@ -1674,6 +1689,7 @@
                     "00_from_refactorer_to_coder.handoff")
            (str "from: refactorer\nto: coder\npriority: 00\ntype: git_handoff\n"
                 "task: htw\nnon-forwarding: true\n\nmerge\n"))
+        _ (put-queued! root roles "coder" {:from "specifier" :task "jump"})
         result (pack-web-env root {} "--test-status-pane" (str root)
                              "• The reverse handoff is structurally reconciled.\n")
         state (json/parse-string (:out result) true)
@@ -1706,7 +1722,8 @@
   (let [root (tmp-dir)
         _ (setup-pack! root six-pack-roles)
         _ (create-task root "HTW" "specifier")
-        _ (create-task root "Command Syntax" "specifier")]
+        _ (create-task root "Command Syntax" "specifier")
+        _ (put-queued! root six-pack-roles "specifier" {:from "(New Task)" :task "Command Syntax"})]
     (write-file
      (fs/path root ".swarmforge/handoffs/pending_approval/50_from_specifier_to_coder.handoff")
      "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\ntask: HTW\n\npayload\n")
@@ -3352,3 +3369,93 @@
     (is (= {:running true} (:daemon (web-state root))))
     (write-file (fs/path root ".swarmforge/daemon/handoffd.pid") "999999999\n")
     (is (= {:running false} (:daemon (web-state root))))))
+
+(deftest pack-web-card-without-mail-says-stuck-not-queued
+  ;; Given two cards in coder: one with queued mail, one whose mail is gone
+  ;; When --test-state
+  ;; Then the first is queued and the second says no mail, flagged stuck
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (create-task root "Orphan" "coder")
+    (put-queued! root roles "coder" {:from "specifier" :task "HTW"})
+    (let [by-name (into {} (map (juxt :name identity) (:tasks (web-state root))))]
+      (is (= true (:queued (get by-name "HTW"))))
+      (is (nil? (:stuck (get by-name "HTW"))))
+      (is (= "no_mail" (:stuck (get by-name "Orphan"))))
+      (is (nil? (:queued (get by-name "Orphan"))))
+      (is (str/starts-with? (:status (get by-name "Orphan")) "No mail")))))
+
+(deftest pack-web-lone-card-without-mail-is-not-shown-as-worked-on
+  ;; Given the only card in coder has no mail anywhere but one completed
+  ;; When --test-state
+  ;; Then it is flagged stuck instead of borrowing coder's pane status
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (write-file (fs/path (pack-worktree root roles "coder")
+                         ".swarmforge/handoffs/inbox/completed/50_htw.handoff")
+                "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\ntask: HTW\n\npayload\n")
+    (let [card (first (:tasks (web-state root)))]
+      (is (= "no_mail" (:stuck card))))))
+
+(deftest pack-web-card-whose-delivery-failed-shows-the-error
+  ;; Given HTW's handoff landed in failed/ with an error
+  ;; When --test-state
+  ;; Then the card says delivery failed with that error
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "HTW" "specifier")
+    (write-file (fs/path root ".swarmforge/handoffs/failed/50_htw.handoff")
+                "id: 1_from_specifier\nfrom: specifier\nto: nobody\npriority: 50\ntype: git_handoff\ntask: HTW\n\npayload\n")
+    (write-file (fs/path root ".swarmforge/handoffs/failed/50_htw.handoff.error") "unknown recipient nobody\n")
+    (let [card (first (:tasks (web-state root)))]
+      (is (= "failed" (:stuck card)))
+      (is (= "Delivery failed: unknown recipient nobody" (:status card))))))
+
+(deftest pack-web-card-handing-off-or-held-is-not-stuck
+  ;; Given HTW's handoff waits in the outbox
+  ;; Then the card says Handing off, and Handoff held until Resume while paused
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "HTW" "specifier")
+    (queue-handoff! root {:from "specifier" :to "coder" :task "HTW"})
+    (is (= "Handing off" (:status (first (:tasks (web-state root))))))
+    (write-file (fs/path root ".swarmforge/paused") "now\n")
+    (is (= "Handoff held until Resume" (:status (first (:tasks (web-state root))))))))
+
+(deftest pack-web-marks-a-card-returned-for-rework
+  ;; Given QA returned HTW to coder once before, and now again
+  ;; When --test-state
+  ;; Then the card shows who returned it and how many returns it had;
+  ;; once coder forwards it again the badge goes but the count stays
+  (let [root (tmp-dir)
+        roles ["specifier" "coder" "QA"]
+        coder-wt (pack-worktree root roles "coder")
+        qa-wt (pack-worktree root roles "QA")
+        mail (fn [id from to ret]
+               (str "id: " id "_from_" from "\nfrom: " from "\nto: " to "\npriority: 50\n"
+                    "type: git_handoff\ntask: HTW\n" (when ret "return: true\n") "\npayload\n"))]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (write-file (fs/path coder-wt ".swarmforge/handoffs/inbox/completed/50_a.handoff")
+                (mail "20260101T000001000000Z_1" "QA" "coder" true))
+    (write-file (fs/path qa-wt ".swarmforge/handoffs/sent/50_a.handoff")
+                (mail "20260101T000001000000Z_1" "QA" "coder" true))
+    (write-file (fs/path coder-wt ".swarmforge/handoffs/inbox/new/50_b.handoff")
+                (mail "20260101T000002000000Z_1" "QA" "coder" true))
+    (let [card (first (:tasks (web-state root)))]
+      (is (= "QA" (:returned_from card)))
+      (is (= 2 (:return_count card))))
+    (fs/move (fs/path coder-wt ".swarmforge/handoffs/inbox/new/50_b.handoff")
+             (fs/path coder-wt ".swarmforge/handoffs/inbox/completed/50_b.handoff"))
+    (write-file (fs/path qa-wt ".swarmforge/handoffs/inbox/new/50_c.handoff")
+                (mail "20260101T000003000000Z_1" "coder" "QA" false))
+    (pack-board root true "move" "--root" (str root) "--name" "HTW" "--lane" "QA")
+    (let [card (first (:tasks (web-state root)))]
+      (is (nil? (:returned_from card)))
+      (is (= 2 (:return_count card))))))

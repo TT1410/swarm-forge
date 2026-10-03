@@ -76,6 +76,10 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .card .foot{display:flex;justify-content:flex-end;gap:8px;color:var(--muted);font-size:10px;margin-top:auto}
 .card-thin{min-height:0;padding:4px 8px;gap:0}
 .card-queued{border-style:dashed;background:#f6f7f2}
+.card-stuck{border:2px solid var(--red);background:#fff4f4}
+.card-stuck .status{color:var(--red);font-weight:600}
+.pill-returned{align-self:flex-start;background:#fde8d0;color:#8a4a0a}
+.return-count{display:inline-flex;align-items:center;gap:1px;flex:0 0 auto;color:#8a4a0a;font-size:10px;font-weight:700}
 .pill-queued{align-self:flex-start;background:#e3e8f2;color:#33476b}
 .card-menu-btn{flex:0 0 auto;border:0;background:none;padding:0 2px;font:inherit;font-size:12px;line-height:1;color:var(--muted);cursor:pointer}
 .card-menu-btn:hover{color:var(--ink)}
@@ -330,8 +334,27 @@ function cardEl(task, opts) {
   auditValue.textContent = String(task.audit_count || 0);
   audit.append(auditIcon, auditValue);
   title.appendChild(audit);
+  if (task.return_count) {
+    const returns = document.createElement("span");
+    returns.className = "return-count";
+    returns.title = "Returned for rework " + task.return_count + " time(s)";
+    returns.textContent = "\u21a9" + task.return_count;
+    title.appendChild(returns);
+  }
   if (!task.merging && task.lane !== "done") title.appendChild(cardMenu(task));
   card.appendChild(title);
+  if (task.stuck) {
+    card.classList.add("card-stuck");
+    card.dataset.stuck = task.stuck;
+  }
+  if (task.returned_from) {
+    const back = document.createElement("span");
+    back.className = "pill pill-returned";
+    back.dataset.returnedFrom = task.returned_from;
+    back.textContent = "\u21a9 Returned by " + displayName(task.returned_from);
+    back.title = displayName(task.returned_from) + " sent this card back for rework";
+    card.appendChild(back);
+  }
   if (task.queued) {
     card.classList.add("card-queued");
     card.setAttribute("data-queued", "true");
@@ -341,7 +364,7 @@ function cardEl(task, opts) {
     pill.title = "Waiting in " + (task.queue_role || task.lane || "the") + "'s queue; not started yet";
     card.appendChild(pill);
   }
-  if (!thin && task.status && !task.queued) {
+  if ((!thin || task.stuck) && task.status && !task.queued) {
     const status = document.createElement("div");
     status.className = "status";
     status.textContent = task.status;

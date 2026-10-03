@@ -444,6 +444,37 @@ test.describe("pack dashboard", () => {
     }
   });
 
+  test("a stuck card is red and a returned card shows who returned it", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      const project = path.join(local.root, "projects/htw");
+      writeFile(
+        path.join(project, ".swarmforge/board/tasks.tsv"),
+        "HTW\tspecifier\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-htw\t0\n" +
+          "Orphan\tcoder\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000001Z-orphan\t0\n" +
+          "Rework\tcoder\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000002Z-rework\t0\n"
+      );
+      writeFile(
+        path.join(project, ".worktrees/coder/.swarmforge/handoffs/inbox/completed/50_orphan.handoff"),
+        "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\ntask_id: 20260101T000001Z-orphan\ntask: Orphan\n\npayload\n"
+      );
+      writeFile(
+        path.join(project, ".worktrees/coder/.swarmforge/handoffs/inbox/new/50_rework.handoff"),
+        "id: 20260101T000005000000Z_1_from_specifier\nfrom: specifier\nto: coder\npriority: 50\n" +
+          "type: git_handoff\ntask_id: 20260101T000002Z-rework\ntask: Rework\nreturn: true\n\npayload\n"
+      );
+      await page.goto(local.url);
+      const orphan = page.locator(".card[data-task-name=\"Orphan\"]");
+      await expect(orphan).toHaveAttribute("data-stuck", "no_mail");
+      await expect(orphan).toContainText("No mail");
+      const rework = page.locator(".card[data-task-name=\"Rework\"]");
+      await expect(rework.locator(".pill-returned")).toHaveText("\u21a9 Returned by Specifier");
+      await expect(rework.locator(".return-count")).toHaveText("\u21a91");
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
   test("a paused project shows a banner and a Resume button", async ({ page }) => {
     const local = await startDashboard();
     try {

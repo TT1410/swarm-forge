@@ -66,7 +66,7 @@
          in-process-for-row in-process-task-names approvals
          handoff-files batch-dirs in-process-dir allowed-doc?
          delete-approval! retry-approval! parse-message pane-status-for role-rows
-         recorded-pane)
+         recorded-pane comma-list handoff-dirs glob-handoffs)
 
 (defn usage []
   (binding [*out* *err*]
@@ -369,22 +369,130 @@
        (remove str/blank?)
        set))
 
+(def header-cache
+  "path -> [mtime headers]. sent/ and completed/ only grow, so each poll
+  rereads only the mail that changed."
+  (atom {}))
+
+(defn cached-headers [path]
+  (let [key (str path)
+        mtime (try (.toMillis (fs/last-modified-time path)) (catch Exception _ nil))]
+    (when mtime
+      (let [[seen headers] (get @header-cache key)]
+        (if (= seen mtime)
+          headers
+          (when-let [h (try (:headers (parse-message path)) (catch Exception _ nil))]
+            (swap! header-cache assoc key [mtime h])
+            h))))))
+
+(defn mail-state [path]
+  (let [p (str/replace (str path) "\\" "/")]
+    (cond
+      (str/includes? p "/handoffs/inbox/new/") :new
+      (str/includes? p "/handoffs/inbox/in_process/") :in_process
+      (str/includes? p "/handoffs/inbox/completed/") :completed
+      (str/includes? p "/handoffs/pending_approval/") :pending
+      (str/includes? p "/handoffs/outbox/") :outbox
+      (str/includes? p "/handoffs/sent/") :sent
+      (str/includes? p "/handoffs/failed/") :failed)))
+
+(defn card-mail-entries [root]
+  (for [dir (handoff-dirs root)
+        path (glob-handoffs dir)
+        :let [state (mail-state path)
+              headers (when state (cached-headers path))]
+        :when (and state headers (not= "true" (get headers "non-forwarding")))
+        key (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
+                       (cons (get headers "task")
+                             (str/split (or (get headers "with_task_ids") "") #",")))
+                 (map #(some-> % str/trim))
+                 (remove str/blank?)
+                 distinct)]
+    [key {:state state :path path :headers headers}]))
+
+(defn mail-index
+  "Card id and card name -> the forwarding mail that carries the card, by
+  state. Merge-only copies never move a card, so they are left out."
+  [root]
+  (let [seen (atom #{})
+        idx (reduce (fn [idx [key entry]]
+                      (swap! seen conj (str (:path entry)))
+                      (update idx key (fnil conj []) entry))
+                    {}
+                    (card-mail-entries root))]
+    (swap! header-cache #(select-keys % @seen))
+    idx))
+
+(defn card-mail [mail task]
+  (->> (concat (get mail (:id task)) (get mail (:name task)))
+       (distinct)
+       vec))
+
+(defn mail-id [entry]
+  (or (not-empty (get-in entry [:headers "id"])) (str (fs/file-name (:path entry)))))
+
+(defn returns-of
+  "Returns for rework: distinct git handoffs with return: true. The badge
+  shows while the newest forward handoff of the card is that return."
+  [task entries]
+  (let [git (filter #(= "git_handoff" (get-in % [:headers "type"])) entries)
+        returns (->> git
+                     (filter #(= "true" (get-in % [:headers "return"])))
+                     (map mail-id)
+                     distinct
+                     count)
+        latest (last (sort-by mail-id git))
+        to (first (comma-list (get-in latest [:headers "to"])))]
+    (cond-> {}
+      (pos? returns) (assoc :return_count returns)
+      (and latest
+           (= "true" (get-in latest [:headers "return"]))
+           (= to (:lane task)))
+      (assoc :returned_from (str/trim (or (get-in latest [:headers "from"]) ""))))))
+
+(defn failed-reason [entries]
+  (let [ids (set (map mail-id (remove #(#{:failed} (:state %)) entries)))
+        failed (remove #(contains? ids (mail-id %))
+                       (filter #(= :failed (:state %)) entries))]
+    (when-let [entry (last (sort-by mail-id failed))]
+      (let [error (fs/path (str (:path entry) ".error"))]
+        (or (when (fs/regular-file? error) (not-empty (str/trim (slurp (str error)))))
+            "see handoffs/failed")))))
+
 (defn task-with-status
   ([root task] (task-with-status root task {}))
-  ([root task queued]
+  ([root task queued] (task-with-status root task queued (mail-index root)))
+  ([root task queued mail]
    (let [role (:lane task)
          name (:name task)
          task-id (:id task)
          waiting (queued-in queued task)
+         entries (card-mail mail task)
+         states (set (map :state entries))
+         live? (some states [:new :in_process :outbox :pending])
          status (cond
                   (= "done" role) ""
                   (rejected-task? root name) "REJECTED"
                   (or (contains? (pending-approval-ids root) task-id)
                       (contains? (pending-approval-names root) name)) "Waiting for approval"
+                  (contains? states :outbox)
+                  (if (ready-for-next-guard/paused-at? root)
+                    "Handoff held until Resume"
+                    "Handing off")
                   (contains? (active-card-names root role queued) name)
-                  (pane-status-for root role)
-                  :else "waiting in queue")]
-     (cond-> (assoc task :status status)
+                  (if (or live? (empty? entries))
+                    (pane-status-for root role)
+                    ::stuck)
+                  (or waiting (contains? states :new)) "waiting in queue"
+                  live? "waiting in queue"
+                  :else ::stuck)
+         failed (when (= ::stuck status) (failed-reason entries))]
+     (cond-> (merge (assoc task :status (cond
+                                          (not= ::stuck status) status
+                                          failed (str "Delivery failed: " failed)
+                                          :else "No mail: nothing will pick this card up"))
+                    (when-not (= "done" role) (returns-of task entries)))
+       (= ::stuck status) (assoc :stuck (if failed "failed" "no_mail"))
        (= "waiting in queue" status) (assoc :queued true)
        (and (= "waiting in queue" status) waiting) (assoc :queue_role (:role waiting)
                                                          :queue_priority (:priority waiting))))))
@@ -441,10 +549,11 @@
 (defn tasks [root]
   (let [idx (batch-index root)
         queued (queued-index root)
+        mail (mail-index root)
         board (mapv (fn [task]
                       (if-let [batch (get idx (:name task))]
-                        (assoc (task-with-status root task queued) :batch batch)
-                        (task-with-status root task queued)))
+                        (assoc (task-with-status root task queued mail) :batch batch)
+                        (task-with-status root task queued mail)))
                     (board-tasks root))]
     (into (merging-cards root) board)))
 
