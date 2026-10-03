@@ -25,6 +25,19 @@ priority: NN
 task: <short-stable-task-name>
 ```
 
+- One `git_handoff` moves the cards it names. When current work holds several
+  cards (a batch), hand off every card: name it in `task:`, and when one commit
+  carries several cards, list the others in `with_tasks: <card>[,<card>...]`.
+  The batch stays in process until each card is handed off. If the helper
+  prints `CURRENT_WORK_OPEN`, hand off the cards it lists.
+- If a later card's commit is already on top of the card you hand off, add
+  `card_commit: <sha>` with that card's commit. Do not switch branches or
+  detach HEAD for it.
+- To send a card back for more work, for example a defect the last role found,
+  add `return: true`. A returned card leaves Done and goes to the recipient.
+- `ready_for_next.sh` prints `MERGE_ONLY: true` for a merge-only copy and
+  `RETURNED: true` for a returned card. A returned card is forward work: do
+  this role's work and forward it down the chain, whoever sent it.
 - After completing a forward inbound task, always send a `git_handoff` to the
   next role in the chain, regardless of what changed. Formatting-only,
   manifest-only, audit-only, generated metadata, and other non-functional churn
@@ -67,6 +80,8 @@ message: <one line, max 80 chars>
   resolution. Do not invent a new `git merge`. Parallel cards on one tree
   will conflict; that is expected.
 - If it prints `NO_TASK`, stop waiting for work.
+- If it prints `PAUSED`, the operator is draining the swarm. Read any printed
+  `NOTE`, then stop waiting for work until a new wake-up arrives.
 - If it prints `TASK: <path>`, treat the printed `PAYLOAD` as the task.
 - If it prints `TASK_NAME: <name>`, use that as the stable task name for any
   work you forward from that task.
@@ -77,6 +92,11 @@ message: <one line, max 80 chars>
 - When the task or batch is fully complete, run `done_with_current.sh`. After a
   reverse (`non-forwarding`) merge, that is the completion; do not queue a
   `git_handoff` for that inbound.
+- `done_with_current.sh` refuses with `OPEN_CARDS` while a forwarded card has
+  no outgoing `git_handoff`. Hand those cards off. Use
+  `done_with_current.sh --drop` only when a card must stay in this lane.
+  Without a board it finishes and prints `NOT_HANDED_OFF:` for those cards;
+  hand them off in the next turn.
 - `note` handoffs are tasks too; after reading or acting on a note, run
   `done_with_current.sh` before accepting any other handoff.
 - If `done_with_current.sh` prints `MAIL_WAITING`, run `ready_for_next.sh` as a

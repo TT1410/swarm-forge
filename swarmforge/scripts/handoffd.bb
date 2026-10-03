@@ -7,6 +7,7 @@
             [clojure.string :as str]))
 
 (def poll-ms 1000)
+(def renotify-ms 120000)
 (def wake-message
   "You have new handoff mail. If idle, run ready_for_next.sh.")
 
@@ -26,6 +27,9 @@
 (def stop-file nil)
 (def log-file nil)
 (def stopping-flag (atom false))
+(def last-notified (atom {}))
+(def renotify-counts (atom {}))
+(def started-at-ms (atom (System/currentTimeMillis)))
 
 (defn configure!
   ([] (configure! *command-line-args*))
@@ -123,6 +127,13 @@
     (when-not (zero? (:exit send-line-feed))
       (throw (ex-info "tmux send line feed failed" send-line-feed)))))
 
+(defn notify-role! [socket role-info]
+  (notify! socket (:session role-info))
+  (swap! last-notified assoc (:role role-info) (System/currentTimeMillis)))
+
+(defn reset-renotify-backoff! [role]
+  (swap! renotify-counts dissoc role))
+
 (defn move-with-collision [source target-dir]
   (fs/create-dirs target-dir)
   (let [base (fs/file-name source)
@@ -185,8 +196,12 @@
 (defn last-pack-role? [role]
   (= role (last (pack-role-names))))
 
+(defn return-handoff? [headers]
+  (= "true" (get headers "return")))
+
 (defn terminal-handoff? [_roles headers]
-  (last-pack-role? (get headers "from")))
+  (and (last-pack-role? (get headers "from"))
+       (not (return-handoff? headers))))
 
 (defn listed-handoffs [dir]
   (if (fs/directory? dir)
@@ -217,15 +232,6 @@
   (or (not-empty (get headers "task_id"))
       (get headers "task")))
 
-(defn finished-task-keys [role-info]
-  (if-not role-info
-    #{}
-    (->> (concat (inbox-handoffs role-info "completed")
-                 (inbox-handoffs role-info "in_process"))
-         (map #(task-key (:headers (parse-message %))))
-         (remove str/blank?)
-         set)))
-
 (defn board-row-key [line]
   (let [[name _lane _created _updated task-id] (str/split line #"\t" -1)]
     (or (not-empty task-id) name)))
@@ -233,26 +239,18 @@
 (defn board-row-name [line]
   (first (str/split line #"\t" -1)))
 
-(defn keys-in-lane [lane]
-  (->> (read-lines (board-file))
-       (remove str/blank?)
-       (map #(str/split % #"\t" -1))
-       (filter #(= lane (second %)))
-       (mapcat (fn [cols]
-                 (let [line (str/join "\t" cols)
-                       name (first cols)
-                       key (board-row-key line)]
-                   (distinct [key name]))))))
+(defn split-list [value]
+  (->> (str/split (or value "") #",")
+       (map str/trim)
+       (remove str/blank?)))
 
-(defn terminal-task-keys [roles headers]
-  (let [from (get headers "from")
-        named (task-key headers)
-        finished (finished-task-keys (get roles from))
-        in-lane (set (keys-in-lane from))]
-    (->> (cons named (filter finished in-lane))
-         (remove str/blank?)
-         distinct
-         vec)))
+(defn handoff-task-keys
+  "The cards a handoff carries: its task plus any with_task_ids."
+  [headers]
+  (->> (cons (task-key headers) (split-list (get headers "with_task_ids")))
+       (remove str/blank?)
+       distinct
+       vec))
 
 (defn board-name-for-key [task-key]
   (some (fn [line]
@@ -262,25 +260,38 @@
               name)))
         (read-lines (board-file))))
 
+(defn update-board-card! [main? & args]
+  (if main?
+    (apply pack-board! args)
+    ;; A carried card that left the board meanwhile must not send the whole
+    ;; handoff, and the other cards with it, to failed/.
+    (try
+      (apply pack-board! args)
+      (catch Exception e
+        (log! "board-skip" (str/join " " args) (.getMessage e))))))
+
 (defn update-board! [roles headers]
   (when (and (fs/exists? (board-file))
              (= "git_handoff" (get headers "type"))
              (seq (recipient-list headers)))
-    (cond
-      (terminal-handoff? roles headers)
-      (doseq [key (terminal-task-keys roles headers)
-              :let [name (or (board-name-for-key key) (get headers "task"))]]
-        (when-not (str/blank? name)
-          (pack-board! "done" "--name" name)))
+    (let [main (task-key headers)
+          cards (->> (handoff-task-keys headers)
+                     (keep #(when-let [name (or (board-name-for-key %)
+                                                (when (= % main) (get headers "task")))]
+                              [(= % main) name]))
+                     (remove (comp str/blank? second))
+                     distinct)]
+      (cond
+        (terminal-handoff? roles headers)
+        (doseq [[main? name] cards]
+          (update-board-card! main? "done" "--name" name))
 
-      (non-forwarding? headers)
-      nil
+        (non-forwarding? headers)
+        nil
 
-      :else
-      (let [key (task-key headers)
-            task (or (board-name-for-key key) (get headers "task"))]
-        (when-not (str/blank? task)
-          (pack-board! "move" "--name" task "--lane" (first (recipient-list headers))))))))
+        :else
+        (doseq [[main? name] cards]
+          (update-board-card! main? "move" "--name" name "--lane" (first (recipient-list headers))))))))
 
 (defn single-recipient? [headers]
   (let [recipients (recipient-list headers)]
@@ -289,12 +300,32 @@
 (defn already-approved? [headers]
   (not (str/blank? (get headers "approved"))))
 
+(defn board-lane-for-key [task-key]
+  (some (fn [line]
+          (let [[name lane] (str/split line #"\t" -1)]
+            (when (or (= task-key (board-row-key line))
+                      (= task-key name))
+              lane)))
+        (read-lines (board-file))))
+
+(defn new-card-from-master?
+  "Approval guards cards leaving the master lane for the first time. A fix for
+  cards that already moved on (they sit in another lane) is not held."
+  [roles headers]
+  (boolean
+   (some (fn [key]
+           (let [lane (board-lane-for-key key)]
+             (or (nil? lane)
+                 (= lane (master-role-name roles)))))
+         (handoff-task-keys headers))))
+
 (defn should-hold? [roles headers]
   (and (= "git_handoff" (get headers "type"))
        (specifier-pack? roles)
        (from-master? roles headers)
        (single-recipient? headers)
-       (not (already-approved? headers))))
+       (not (already-approved? headers))
+       (new-card-from-master? roles headers)))
 
 (defn pending-dir []
   (fs/path state-dir "handoffs" "pending_approval"))
@@ -344,8 +375,41 @@
   (when (and (approved-git-handoff? headers)
              (sender-ready-work? roles sender-role)
              (not (contains? (set (recipient-list headers)) sender-role)))
-    (notify! socket (get-in roles [sender-role :session]))
+    (notify-role! socket (get roles sender-role))
     (log! "notified-unblocked-sender" sender-role)))
+
+(defn commit-contains? [newer older]
+  (zero? (:exit (sh "git" "-C" (str project-root) "merge-base" "--is-ancestor" older newer))))
+
+(defn superseded-copy? [headers path]
+  (let [old (:headers (parse-message path))]
+    (and (non-forwarding? old)
+         (= (get headers "from") (get old "from"))
+         (not (str/blank? (get old "commit")))
+         (or (= (get old "commit") (get headers "commit"))
+             (commit-contains? (get headers "commit") (get old "commit"))))))
+
+(defn supersede-merge-copies!
+  "A newer merge-only copy from the same sender contains the older ones, so
+  the recipient merges once instead of once per copy."
+  [role-info headers]
+  (let [new-dir (fs/path (:worktree-path role-info) ".swarmforge" "handoffs" "inbox" "new")
+        completed-dir (fs/path (:worktree-path role-info) ".swarmforge" "handoffs" "inbox" "completed")]
+    (doseq [path (listed-handoffs new-dir)
+            :when (superseded-copy? headers path)]
+      (let [target (fs/path completed-dir (fs/file-name path))]
+        (fs/create-dirs completed-dir)
+        (when (try
+                (fs/move path target {:atomic-move true})
+                true
+                (catch java.nio.file.NoSuchFileException _
+                  false))
+          (let [message (parse-message target)
+                superseded (assoc (:headers message)
+                                  "superseded_by" (get headers "id")
+                                  "completed_at" (now))]
+            (spit (str target) (render-message superseded (:body message)))
+            (log! "superseded" (str path) "by" (get headers "id"))))))))
 
 (defn deliver! [roles socket sender-role path]
   (let [filename (fs/file-name path)
@@ -363,10 +427,18 @@
             (let [target (target-path role-info filename)
                   delivered (add-delivery-headers message recipient)]
               (fs/create-dirs (fs/parent target))
+              (when (non-forwarding? headers)
+                (supersede-merge-copies! role-info headers))
               (when-not (fs/exists? target)
                 (spit (str target) (render-message (:headers delivered) (:body delivered))))
-              (notify! socket (:session role-info)))))
+              (notify-role! socket role-info)
+              (reset-renotify-backoff! recipient))))
         (move-with-collision path (sent-dir roles sender-role))
+        (when (contains? roles sender-role)
+          ;; The sender just handed off and may still be finishing its turn:
+          ;; start its idle clock now so a reminder does not land mid-turn.
+          (swap! last-notified assoc sender-role (System/currentTimeMillis))
+          (reset-renotify-backoff! sender-role))
         (archive-sender! headers)
         (maybe-notify-unblocked-sender! roles socket headers sender-role)
         (log! "delivered" (str path))))))
@@ -396,6 +468,55 @@
       (hold! (fs/path path))
       (deliver! roles socket (or from "") (fs/path path)))))
 
+(defn pause-file []
+  (fs/path state-dir "paused"))
+
+(def renotify-max-ms (* 16 60 1000))
+
+(defn renotify-interval [role]
+  (min renotify-max-ms
+       (* renotify-ms (bit-shift-left 1 (min 4 (get @renotify-counts role 0))))))
+
+(defn renotify-due? [role now-ms]
+  (and (>= (- now-ms @started-at-ms) renotify-ms)
+       (>= (- now-ms (get @last-notified role @started-at-ms)) (renotify-interval role))))
+
+(defn mail-card-keys [path]
+  (handoff-task-keys (:headers (parse-message path))))
+
+(defn startable-mail? [role-info]
+  (let [held (->> (listed-handoffs (pending-dir))
+                  (filter #(outbound-git-from-role? (:role role-info) %))
+                  (mapcat mail-card-keys)
+                  set)]
+    (boolean (some #(not-any? held (mail-card-keys %))
+                   (inbox-handoffs role-info "new")))))
+
+(defn idle-with-mail? [roles role-info]
+  (and (startable-mail? role-info)
+       (not (role-has-inbox-state? role-info "in_process"))
+       (empty? (or (outbox-files role-info) []))
+       (not-any? #(outbound-git-from-role? (:role role-info) %)
+                 (mapcat #(or (outbox-files %) []) (vals roles)))))
+
+(defn renotify-idle-roles!
+  "Agents that ended their turn miss the one-shot wake message; remind idle
+  roles that still have mail."
+  [roles socket]
+  (when-not (fs/exists? (pause-file))
+    (let [now-ms (System/currentTimeMillis)]
+      (doseq [role-info (vals roles)
+              :let [idle? (idle-with-mail? roles role-info)]
+              :when (do (when-not idle? (reset-renotify-backoff! (:role role-info)))
+                        (and idle? (renotify-due? (:role role-info) now-ms)))]
+        (try
+          (notify-role! socket role-info)
+          (swap! renotify-counts update (:role role-info) (fnil inc 0))
+          (log! "renotified" (:role role-info))
+          (catch Exception e
+            (swap! last-notified assoc (:role role-info) now-ms)
+            (log! "renotify-failed" (:role role-info) (.getMessage e))))))))
+
 (defn poll-once! []
   (when-not (should-stop?)
     (let [roles (load-roles)
@@ -413,7 +534,9 @@
             (try
               (fail! (fs/path path) (.getMessage e))
               (catch Exception nested
-                (log! "failed-to-archive" path (.getMessage nested))))))))))
+                (log! "failed-to-archive" path (.getMessage nested)))))))
+      (when-not once?
+        (renotify-idle-roles! roles socket)))))
 
 (defn shutdown! []
   (reset! stopping-flag true)
@@ -426,6 +549,7 @@
   (fs/create-dirs daemon-dir)
   (fs/delete-if-exists stop-file)
   (spit (str pid-file) (str (.pid (java.lang.ProcessHandle/current)) "\n"))
+  (reset! started-at-ms (System/currentTimeMillis))
   (.addShutdownHook (Runtime/getRuntime) (Thread. shutdown!))
   (log! "started")
   (try

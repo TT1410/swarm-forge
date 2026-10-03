@@ -126,6 +126,19 @@ normally opens it in a browser.
 Set `SWARMFORGE_OPEN_BROWSER=0` to leave the browser closed. Set
 `SWARMFORGE_PREVENT_SLEEP=0` to disable the host sleep inhibitor.
 
+Other runtime controls:
+
+- `./swarm drain [dir]` stops roles from taking new mail once in-process work
+  finishes; `./swarm status [dir]` reports drain state and busy roles, and
+  `./swarm resume [dir]` lifts it. `dir` is a swarm root (the forge root or a
+  project folder) and defaults to the current directory.
+- `SWARMFORGE_MERGE_CHECK_TIMEOUT` bounds each commit-hook merge check, in
+  seconds (default 300).
+- In `swarmforge.conf`, `dashboard-port <port>` keeps the dashboard on a fixed
+  localhost port (otherwise the previous run's port is reused when free), and
+  `notify-cmd <command>` runs a command for each new clarification or pending
+  approval.
+
 ## Project lifecycle
 
 ### Create

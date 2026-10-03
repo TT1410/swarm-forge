@@ -23,9 +23,13 @@
        "  pack_board.sh archive-all [--root <dir>]\n"
        "  pack_board.sh increment-audit --task-id <task-id> [--root <dir>]\n"
        "  pack_board.sh delete --name <name> [--root <dir>]\n"
-       "  pack_board.sh delete <name>"))
+       "  pack_board.sh delete <name>\n"
+       "  pack_board.sh rename --name <old> --to <new> [--root <dir>]"))
 
-(def flags {"--root" :root "--name" :name "--lane" :lane "--text" :text "--role" :role "--task-id" :task-id})
+(def flags {"--root" :root "--name" :name "--lane" :lane "--text" :text "--role" :role "--task-id" :task-id
+            "--to" :to})
+
+(def max-task-name-length 80)
 (def script-dir (fs/parent *file*))
 (try
   (require 'handoff-lib)
@@ -174,12 +178,26 @@
   (when (str/blank? value)
     (exit! 1 (str "Missing " label))))
 
+(defn task-name-error [name]
+  (cond
+    (str/blank? name) "Missing task name"
+    (> (count name) max-task-name-length)
+    (str "Task name must be no longer than " max-task-name-length
+         " characters (got " (count name) "): " name)
+    (or (str/includes? name "/") (str/includes? name "\\")
+        (str/includes? name "\t") (str/includes? name "\n"))
+    (str "Task name may not contain '/', '\\', tabs, or newlines: " name)))
+
+(defn require-task-name! [name]
+  (when-let [error (task-name-error name)]
+    (exit! 1 error)))
+
 (defn create! [opts]
   (let [name (task-name opts)
         lane (task-lane opts)
         root (resolve-root opts)
         file (tasks-file root)]
-    (require-value! name "task name")
+    (require-task-name! name)
     (require-value! lane "lane")
     (with-board-lock
       root
@@ -339,6 +357,97 @@
                                     rows))
           (fs/delete-if-exists (task-body-file root name)))))))
 
+(defn row-cols [line]
+  (str/split line #"\t" -1))
+
+(defn rename-row [line new-name]
+  (let [[_name lane created _updated task-id audit-count] (row-cols line)]
+    (str/join "\t" [new-name lane created (timestamp) task-id (or (not-empty audit-count) "0")])))
+
+(defn same-name? [a b]
+  (= (str/lower-case (or a "")) (str/lower-case (or b ""))))
+
+(defn live-handoff-dirs [root]
+  (let [worktrees (->> (role-rows root)
+                       (map #(nth % 2 nil))
+                       (remove str/blank?)
+                       (cons (str root))
+                       distinct)]
+    (cons (fs/path root ".swarmforge" "handoffs" "pending_approval")
+          (for [wt worktrees
+                state [["outbox"] ["inbox" "new"] ["inbox" "in_process"]]]
+            (apply fs/path wt ".swarmforge" "handoffs" state)))))
+
+(defn live-handoff-files [root]
+  (->> (live-handoff-dirs root)
+       (filter fs/directory?)
+       (mapcat #(concat (fs/glob % "*.handoff") (fs/glob % "batch_*/*.handoff")))
+       (filter fs/regular-file?)
+       distinct))
+
+(defn handoff-names-card? [file task-id old-name]
+  (let [task (handoff-lib/header-field file "task")
+        file-task-id (handoff-lib/header-field file "task_id")]
+    (and (some? task)
+         (if (str/blank? file-task-id)
+           (same-name? task old-name)
+           (= task-id file-task-id)))))
+
+(defn rename-handoff-tasks! [root task-id old-name new-name]
+  (doseq [file (live-handoff-files root)
+          :when (handoff-names-card? file task-id old-name)]
+    (handoff-lib/set-header! file "task" new-name)))
+
+(defn tracked-file? [root file]
+  (zero? (:exit (command root "git" "ls-files" "--error-unmatch" "--" (str file)))))
+
+(defn retitle-doc [text old-name new-name]
+  (let [old-title (str "# " old-name "\n")]
+    (if (str/starts-with? text old-title)
+      (str "# " new-name "\n" (subs text (count old-title)))
+      text)))
+
+(defn rename-task-doc! [root old-name new-name]
+  (let [old-file (task-doc-file root old-name)
+        new-file (task-doc-file root new-name)]
+    (when (and (fs/regular-file? old-file) (not (fs/exists? new-file)))
+      (if (tracked-file? root old-file)
+        (command root "git" "mv" "--" (str old-file) (str new-file))
+        (fs/move old-file new-file))
+      (when (fs/regular-file? new-file)
+        (spit (str new-file) (retitle-doc (slurp (str new-file)) old-name new-name))))))
+
+(defn move-if-exists! [from to]
+  (when (and (fs/exists? from) (not= (str from) (str to)))
+    (fs/move from to {:replace-existing true})))
+
+(defn rename! [opts]
+  (let [wanted (task-name opts)
+        new-name (:to opts)
+        root (resolve-root opts)
+        file (tasks-file root)]
+    (require-value! wanted "task name")
+    (require-task-name! new-name)
+    (with-board-lock
+      root
+      (fn []
+        (let [rows (read-rows file)
+              row (find-task rows wanted)
+              clash (find-task rows new-name)]
+          (when-not row
+            (exit! 1 (str "Unknown task name: " wanted)))
+          (when (and clash (not= clash row))
+            (exit! 1 (str "Duplicate task name: " new-name)))
+          (let [old-name (row-name row)
+                task-id (or (not-empty (nth (row-cols row) 4 nil)) old-name)
+                notify-dir (fs/path root ".swarmforge" "notify")]
+            (write-rows file (mapv #(if (= % row) (rename-row % new-name) %) rows))
+            (move-if-exists! (task-body-file root old-name) (task-body-file root new-name))
+            (move-if-exists! (fs/path notify-dir (str "reject-" old-name))
+                             (fs/path notify-dir (str "reject-" new-name)))
+            (rename-task-doc! root old-name new-name)
+            (rename-handoff-tasks! root task-id old-name new-name)))))))
+
 (def commands
   {"create" create!
    "move" move!
@@ -349,7 +458,8 @@
    "archive" archive!
    "archive-all" archive-all!
    "increment-audit" increment-audit!
-   "delete" delete!})
+   "delete" delete!
+   "rename" rename!})
 
 (defn -main [& args]
   (let [opts (parse-args args)
