@@ -500,7 +500,7 @@
   [path]
   (try
     (handoff-task-keys (:headers (parse-message path)))
-    (catch java.nio.file.NoSuchFileException _ [])))
+    (catch java.io.IOException _ [])))
 
 (defn startable-mail? [role-info]
   (let [held (->> (listed-handoffs (pending-dir))

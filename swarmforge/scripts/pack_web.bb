@@ -11,6 +11,10 @@
 (def script-dir (fs/parent *file*))
 (load-file (str (fs/path script-dir "forge.bb")))
 (load-file (str (fs/path script-dir "ready_for_next_guard.bb")))
+(try
+  (require 'handoff-lib)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "handoff_lib.bb")))))
 
 (def usage-text
   (str "Usage:\n"
@@ -66,7 +70,8 @@
          in-process-for-row in-process-task-names approvals
          handoff-files batch-dirs in-process-dir allowed-doc?
          delete-approval! retry-approval! parse-message pane-status-for role-rows
-         recorded-pane comma-list handoff-dirs glob-handoffs)
+         recorded-pane comma-list handoff-dirs glob-handoffs todo-lane with-link-names
+         conflict! handoff-state handoff-card-ids reprioritize-handoff! task-handoffs)
 
 (defn usage []
   (binding [*out* *err*]
@@ -470,8 +475,10 @@
          entries (card-mail mail task)
          states (set (map :state entries))
          live? (some states [:new :in_process :outbox :pending])
+         meta (handoff-lib/read-card-meta root task-id)
          status (cond
                   (= "done" role) ""
+                  (= todo-lane role) "Waiting to start"
                   (rejected-task? root name) "REJECTED"
                   (or (contains? (pending-approval-ids root) task-id)
                       (contains? (pending-approval-names root) name)) "Waiting for approval"
@@ -493,6 +500,11 @@
                                           :else "No mail: nothing will pick this card up"))
                     (when-not (= "done" role) (returns-of task entries)))
        (= ::stuck status) (assoc :stuck (if failed "failed" "no_mail"))
+       (= todo-lane role) (assoc :todo true)
+       (:level meta) (assoc :level (:level meta))
+       (and (= todo-lane role) (:start_role meta)) (assoc :start_role (:start_role meta))
+       (seq (:blocked_by meta)) (assoc :blocked_by (:blocked_by meta))
+       (seq (:related meta)) (assoc :related (:related meta))
        (= "waiting in queue" status) (assoc :queued true)
        (and (= "waiting in queue" status) waiting) (assoc :queue_role (:role waiting)
                                                          :queue_priority (:priority waiting))))))
@@ -555,7 +567,26 @@
                         (assoc (task-with-status root task queued mail) :batch batch)
                         (task-with-status root task queued mail)))
                     (board-tasks root))]
-    (into (merging-cards root) board)))
+    (into (merging-cards root) (with-link-names board))))
+
+(defn with-link-names
+  "Show links by name: blockers with whether they are done, the cards this
+  one blocks, and related cards. Links to deleted cards drop out."
+  [board]
+  (let [by-id (into {} (map (juxt :id identity) board))
+        blocks (reduce (fn [m task]
+                         (reduce #(update %1 %2 (fnil conj []) (:name task)) m (:blocked_by task)))
+                       {}
+                       board)]
+    (mapv (fn [task]
+            (let [blockers (keep #(get by-id %) (:blocked_by task))
+                  open (remove #(= "done" (:lane %)) blockers)]
+              (cond-> (dissoc task :blocked_by :related)
+                (seq blockers) (assoc :blockers (mapv (fn [b] {:name (:name b) :done (= "done" (:lane b))}) blockers))
+                (seq open) (assoc :blocked true)
+                (seq (get blocks (:id task))) (assoc :blocks (get blocks (:id task)))
+                (seq (:related task)) (assoc :related (vec (keep #(:name (get by-id %)) (:related task)))))))
+          board)))
 
 (defn parse-message [path]
   (let [content (slurp (str path))
@@ -1206,19 +1237,146 @@
       (re-matches #"[0-9]{1,2}" text) (format "%02d" (Long/parseLong text))
       :else (bad-request! (str "Priority must be a number from 00 to 99; got '" text "'.")))))
 
+(def todo-lane "todo")
+
+(defn normalize-level [level]
+  (let [text (some-> level str str/trim str/lower-case not-empty)]
+    (cond
+      (nil? text) nil
+      (handoff-lib/level-priority text) text
+      :else (bad-request! (str "Level must be critical, high, normal or low; got '" level "'.")))))
+
+(defn card-priority
+  "The level decides the priority; an explicit priority is kept for callers
+  that set no level."
+  [level priority]
+  (or (handoff-lib/level-priority level) (normalize-priority priority) default-priority))
+
+(defn board-by-id [root]
+  (into {} (map (juxt :id identity) (board-tasks root))))
+
+(defn resolve-card-ids
+  "Card names or ids -> task ids of cards on the board."
+  [root refs]
+  (let [board (board-tasks root)]
+    (->> refs
+         (map #(some-> % str str/trim))
+         (remove str/blank?)
+         (mapv (fn [ref]
+                 (or (some #(when (or (= ref (:id %)) (= ref (:name %))) (:id %)) board)
+                     (bad-request! (str "Unknown card: " ref)))))
+         distinct
+         vec)))
+
+(defn blocker-graph [root]
+  (into {}
+        (for [task (board-tasks root)]
+          [(:id task) (vec (:blocked_by (handoff-lib/read-card-meta root (:id task))))])))
+
+(defn reaches? [graph from to]
+  (loop [todo [from] seen #{}]
+    (when-let [id (first todo)]
+      (cond
+        (= id to) true
+        (contains? seen id) (recur (rest todo) seen)
+        :else (recur (concat (rest todo) (get graph id)) (conj seen id))))))
+
+(defn check-blockers! [root task-id blockers]
+  (when (some #{task-id} blockers)
+    (bad-request! "A card cannot block itself."))
+  (let [graph (assoc (blocker-graph root) task-id blockers)
+        names (into {} (map (juxt :id :name) (board-tasks root)))]
+    (doseq [b blockers]
+      (when (reaches? graph b task-id)
+        (bad-request! (str "That would make a cycle: " (get names b b)
+                           " already waits for " (get names task-id task-id) "."))))))
+
+(defn set-card-links! [root task-id {:keys [blocked_by related]}]
+  (let [blockers (resolve-card-ids root blocked_by)
+        related (vec (remove #{task-id} (resolve-card-ids root related)))]
+    (check-blockers! root task-id blockers)
+    (handoff-lib/update-card-meta!
+     root task-id
+     (fn [meta]
+       (cond-> (dissoc meta :blocked_by :related)
+         (seq blockers) (assoc :blocked_by blockers)
+         (seq related) (assoc :related related))))))
+
+(defn open-blockers
+  "Blockers that still hold a card back: any not done yet. A deleted blocker
+  no longer holds it."
+  [root task-id]
+  (let [by-id (board-by-id root)]
+    (->> (:blocked_by (handoff-lib/read-card-meta root task-id))
+         (keep #(get by-id %))
+         (remove #(= "done" (:lane %)))
+         vec)))
+
 (defn create-task!
   ([root name text] (create-task! root name text {}))
-  ([root name text {:keys [role priority]}]
+  ([root name text {:keys [role priority level todo blocked_by related]}]
    (require-task-name! name)
-   (let [lane (if (str/blank? role) (master-role root) (require-lane! root role))
-         priority (or (normalize-priority priority) default-priority)
-         task-id (new-task-id name)]
+   (let [role (when-not (str/blank? role) (require-lane! root role))
+         lane (if todo todo-lane (or role (master-role root)))
+         level (normalize-level level)
+         priority (card-priority level priority)
+         task-id (new-task-id name)
+         blockers (resolve-card-ids root blocked_by)
+         related (resolve-card-ids root related)]
+     (when (and (seq blockers) (not todo))
+       (when-let [open (seq (keep #(get (board-by-id root) %) blockers))]
+         (when (some #(not= "done" (:lane %)) open)
+           (bad-request! "A card with open blockers must wait in TODO."))))
      (pack-board root "create"
                  "--name" name
                  "--lane" lane
                  "--task-id" task-id
                  "--text" (or text ""))
-     (queue-new-task-note! root task-id name (or text "") {:role lane :priority priority}))))
+     (handoff-lib/write-card-meta!
+      root task-id
+      (cond-> {}
+        level (assoc :level level)
+        (and todo role) (assoc :start_role role)
+        (and todo (not level) (normalize-priority priority)) (assoc :priority priority)
+        (seq blockers) (assoc :blocked_by blockers)
+        (seq related) (assoc :related related)))
+     (when-not todo
+       (queue-new-task-note! root task-id name (or text "") {:role lane :priority priority})))))
+
+(defn slurp-if-exists [path]
+  (if (fs/regular-file? path) (slurp (str path)) ""))
+
+(defn start-task!
+  "Start a TODO card: move it to the role's lane under the board lock, then
+  send the New Task note. A card still waiting for blockers needs force."
+  [root name {:keys [role level priority force]}]
+  (when (str/blank? name)
+    (bad-request! "Missing task name"))
+  (let [task (or (task-by-name root name)
+                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+        task-id (:id task)
+        meta (handoff-lib/read-card-meta root task-id)
+        role (or (not-empty role) (:start_role meta))
+        lane (if (str/blank? role) (master-role root) (require-lane! root role))
+        level (or (normalize-level level) (:level meta))
+        priority (card-priority level (or (not-empty (str priority)) (:priority meta)))
+        open (open-blockers root task-id)]
+    (when-not (= todo-lane (:lane task))
+      (conflict! (str "Card is not in TODO: " name)))
+    (when (and (seq open) (not force))
+      (conflict! (str "Blocked by " (str/join ", " (map :name open))
+                      ". Wait until they are done, or start anyway.")))
+    (pack-board root "start" "--name" name "--lane" lane)
+    (handoff-lib/update-card-meta! root task-id
+                                   #(cond-> (dissoc % :start_role :priority)
+                                      level (assoc :level level)))
+    (try
+      (queue-new-task-note! root task-id name
+                            (slurp-if-exists (fs/path root ".swarmforge" "board" (str name ".txt")))
+                            {:role lane :priority priority})
+      (catch Exception e
+        (pack-board root "move" "--name" name "--lane" todo-lane)
+        (throw e)))))
 
 (defn project-dest [root project]
   (if (forge/forge? root)
@@ -1235,9 +1393,21 @@
       (http-error (or (:http-status (ex-data e)) 400) (.getMessage e)))))
 
 (defn post-tasks [root body]
-  (let [{:keys [name text project role priority]} (json/parse-string (or body "{}") true)]
+  (let [{:keys [name text project] :as opts} (json/parse-string (or body "{}") true)]
     (json-action #(create-task! (project-dest root project) name text
-                                {:role role :priority priority}))))
+                                (select-keys opts [:role :priority :level :todo :blocked_by :related])))))
+
+(defn post-start-task [root body]
+  (let [{:keys [name project] :as opts} (json/parse-string (or body "{}") true)]
+    (json-action #(start-task! (project-dest root project) name
+                               (select-keys opts [:role :level :priority :force])))))
+
+(defn post-task-links [root body]
+  (let [{:keys [name project] :as opts} (json/parse-string (or body "{}") true)
+        dest (project-dest root project)]
+    (json-action #(let [task (or (task-by-name dest name)
+                                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))]
+                    (set-card-links! dest (:id task) opts)))))
 
 (defn rename-task! [root name to]
   (when (str/blank? name)
@@ -1359,7 +1529,28 @@
         {:keys [queued]} (queued-card-handoffs root name)]
     (when (empty? queued)
       (conflict! (str "Card has no queued handoff to reorder: " name)))
-    (doseq [path queued]
+    (doseq [path queued
+            ;; merge-only copies keep 00 so every role merges before new work
+            :when (not= "true" (get-in (parse-message path) [:headers "non-forwarding"]))]
+      (reprioritize-handoff! path priority name))))
+
+(defn set-task-level!
+  "Set a card's level. Its forward mail still waiting in an inbox is
+  reordered now; a card in progress gets the level from its next handoff."
+  [root name level]
+  (let [level (or (normalize-level level) (bad-request! "Missing level"))
+        task (or (task-by-name root name)
+                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+        priority (handoff-lib/level-priority level)]
+    (when (= "done" (:lane task))
+      (conflict! (str "Card is done: " name)))
+    (handoff-lib/update-card-meta! root (:id task) #(-> % (assoc :level level) (dissoc :priority)))
+    (doseq [path (task-handoffs root (:id task) name)
+            :let [headers (:headers (parse-message path))]
+            :when (and (= :queued (handoff-state path))
+                       (not= "outbox" (str (fs/file-name (fs/parent path))))
+                       (not= "true" (get headers "non-forwarding"))
+                       (= 1 (count (handoff-card-ids path))))]
       (reprioritize-handoff! path priority name))))
 
 (defn post-restart-daemon [root body]
@@ -1379,8 +1570,10 @@
     (json-action #(dequeue-task! (project-dest root project) name))))
 
 (defn post-task-priority [root body]
-  (let [{:keys [name priority project]} (json/parse-string (or body "{}") true)]
-    (json-action #(reprioritize-task! (project-dest root project) name priority))))
+  (let [{:keys [name priority level project]} (json/parse-string (or body "{}") true)]
+    (json-action #(if (str/blank? level)
+                    (reprioritize-task! (project-dest root project) name priority)
+                    (set-task-level! (project-dest root project) name level)))))
 
 (defn post-chat [root body]
   (let [{:keys [text]} (json/parse-string (or body "{}") true)
@@ -2269,6 +2462,8 @@
     (= "/api/projects/close" uri) (post-close-project root body)
     (= "/api/tasks" uri) (post-tasks root body)
     (= "/api/tasks/rename" uri) (post-rename-task root body)
+    (= "/api/tasks/start" uri) (post-start-task root body)
+    (= "/api/tasks/links" uri) (post-task-links root body)
     (= "/api/tasks/dequeue" uri) (post-dequeue-task root body)
     (= "/api/tasks/priority" uri) (post-task-priority root body)
     (= "/api/tasks/delete" uri)

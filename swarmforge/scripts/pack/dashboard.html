@@ -78,6 +78,18 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .card-queued{border-style:dashed;background:#f6f7f2}
 .card-stuck{border:2px solid var(--red);background:#fff4f4}
 .card-stuck .status{color:var(--red);font-weight:600}
+.pill-level{align-self:flex-start;font-weight:700}
+.level-critical{background:#f6d0d0;color:#8b1a1a}
+.level-high{background:#fde2c4;color:#8a4a0a}
+.level-low{background:#e6e8e4;color:#59615b}
+.card-links{font-size:10px;color:var(--muted);display:flex;flex-direction:column;gap:1px}
+.card-links .blocked{color:var(--red);font-weight:600}
+.card-links .cleared{text-decoration:line-through}
+.card-todo{border-style:dotted;background:#f8f8f3}
+.col[data-lane="todo"] .col-body{background:rgba(225,231,240,.45)}
+.nt-flags{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:10px;font-size:12px}
+.nt-flags label{display:inline-flex;gap:4px;align-items:center;text-transform:none;font-weight:400;color:var(--ink);font-size:12px;margin:0}
+.link-picker{width:100%;min-height:5.5em;border:1px solid #c6cbc5;border-radius:6px;font:inherit;font-size:12px;margin-bottom:10px}
 .pill-returned{align-self:flex-start;background:#fde8d0;color:#8a4a0a}
 .return-count{display:inline-flex;align-items:center;gap:1px;flex:0 0 auto;color:#8a4a0a;font-size:10px;font-weight:700}
 .pill-queued{align-self:flex-start;background:#e3e8f2;color:#33476b}
@@ -261,6 +273,47 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
   </div>
 </div>
 
+<div class="float-layer" id="start-layer">
+  <div class="float" role="dialog" aria-labelledby="st-title">
+    <div class="titlebar" id="st-title">Start task</div>
+    <div class="body-pad">
+      <p class="note" id="st-note"></p>
+      <div class="nt-route">
+        <div><label for="st-role">Role</label><select id="st-role"></select></div>
+        <div><label for="st-level">Level</label><select id="st-level">
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="normal">Normal</option>
+          <option value="low">Low</option>
+        </select></div>
+      </div>
+      <div class="nt-flags" id="st-force-row">
+        <label><input type="checkbox" id="st-force"> Start anyway, although it is blocked</label>
+      </div>
+      <div class="actions">
+        <button type="button" class="btn" id="st-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="st-ok">Start</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="float-layer" id="links-layer">
+  <div class="float" role="dialog" aria-labelledby="ln-title">
+    <div class="titlebar" id="ln-title">Links</div>
+    <div class="body-pad">
+      <label for="ln-blockers">Blocked by</label>
+      <select id="ln-blockers" class="link-picker" multiple></select>
+      <label for="ln-related">Related</label>
+      <select id="ln-related" class="link-picker" multiple></select>
+      <div class="actions">
+        <button type="button" class="btn" id="ln-cancel">Cancel</button>
+        <button type="button" class="btn btn-primary" id="ln-ok">Save</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <div class="float-layer" id="clar-layer">
   <div class="float" role="dialog" aria-labelledby="clar-title">
     <div class="titlebar" id="clar-title">Clarification</div>
@@ -282,13 +335,23 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
   <div class="float" role="dialog" aria-labelledby="nt-title">
     <div class="titlebar" id="nt-title">New Task</div>
     <div class="body-pad">
-      <p class="note">Creates a card in the chosen role's lane (master by default) and sends name + text to that agent.</p>
+      <p class="note">Creates a card in the chosen role's lane (master by default) and sends name + text to that agent, or keeps it in TODO. The level sets its priority: Critical runs first, Low last.</p>
       <label for="nt-name">Name</label>
       <input id="nt-name" type="text" placeholder="task-name" maxlength="80">
       <div class="nt-route">
         <div><label for="nt-role">Role</label><select id="nt-role"></select></div>
-        <div><label for="nt-priority">Priority</label><input id="nt-priority" type="number" min="0" max="99" value="50" title="00–99; lower runs first"></div>
+        <div><label for="nt-level">Level</label><select id="nt-level">
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="normal" selected>Normal</option>
+          <option value="low">Low</option>
+        </select></div>
       </div>
+      <div class="nt-flags">
+        <label><input type="checkbox" id="nt-todo"> Keep in TODO (start later)</label>
+      </div>
+      <label for="nt-blockers">Blocked by (starts from TODO once these are done)</label>
+      <select id="nt-blockers" class="link-picker" multiple></select>
       <label for="nt-text">Task</label>
       <textarea id="nt-text" placeholder="What the master agent should do…"></textarea>
       <div class="actions">
@@ -304,6 +367,7 @@ const $ = (id) => document.getElementById(id);
 
 function displayName(role) {
   if (!role) return "";
+  if (role === "todo") return "TODO";
   return role.charAt(0).toUpperCase() + role.slice(1);
 }
 
@@ -343,6 +407,16 @@ function cardEl(task, opts) {
   }
   if (!task.merging && task.lane !== "done") title.appendChild(cardMenu(task));
   card.appendChild(title);
+  if (task.todo) card.classList.add("card-todo");
+  if (task.level && task.level !== "normal") {
+    const level = document.createElement("span");
+    level.className = "pill pill-level level-" + task.level;
+    level.dataset.level = task.level;
+    level.textContent = task.level.charAt(0).toUpperCase() + task.level.slice(1);
+    card.appendChild(level);
+  }
+  const links = cardLinks(task);
+  if (links) card.appendChild(links);
   if (task.stuck) {
     card.classList.add("card-stuck");
     card.dataset.stuck = task.stuck;
@@ -378,6 +452,41 @@ function cardEl(task, opts) {
   return card;
 }
 
+function cardLinks(task) {
+  const lines = [];
+  if ((task.blockers || []).length) {
+    const line = document.createElement("div");
+    line.className = task.blocked ? "blocked" : "";
+    line.dataset.blockers = "true";
+    line.append(task.blocked ? "\u26d4 Blocked by: " : "Blocked by: ");
+    task.blockers.forEach((b, i) => {
+      const name = document.createElement("span");
+      if (b.done) name.className = "cleared";
+      name.textContent = b.name;
+      if (i) line.append(", ");
+      line.appendChild(name);
+    });
+    lines.push(line);
+  }
+  if ((task.blocks || []).length) {
+    const line = document.createElement("div");
+    line.dataset.blocks = "true";
+    line.textContent = "Blocks: " + task.blocks.join(", ");
+    lines.push(line);
+  }
+  if ((task.related || []).length) {
+    const line = document.createElement("div");
+    line.dataset.related = "true";
+    line.textContent = "Related: " + task.related.join(", ");
+    lines.push(line);
+  }
+  if (!lines.length) return null;
+  const box = document.createElement("div");
+  box.className = "card-links";
+  box.append(...lines);
+  return box;
+}
+
 const openCardMenus = new Set();
 
 function cardMenuKey(task) {
@@ -410,11 +519,15 @@ function cardMenu(task) {
   btn.textContent = "⋯";
   const list = document.createElement("div");
   list.className = "menu-list";
+  if (task.todo) list.appendChild(cardMenuItem("Start…", () => openStartTask(task)));
   list.appendChild(cardMenuItem("Rename…", () => renameTask(task)));
+  list.appendChild(cardMenuItem("Change level…", () => changeLevel(task)));
+  list.appendChild(cardMenuItem("Links…", () => openLinks(task)));
   if (task.queued) {
     list.appendChild(cardMenuItem("Change priority…", () => reprioritizeTask(task)));
     list.appendChild(cardMenuItem("Remove from queue", () => dequeueTask(task)));
   }
+  if (task.todo) list.appendChild(cardMenuItem("Remove from TODO", () => dequeueTask(task)));
   const place = () => {
     const box = btn.getBoundingClientRect();
     list.style.top = box.bottom + "px";
@@ -479,6 +592,104 @@ async function reprioritizeTask(task) {
   await postTaskAction("/api/tasks/priority", taskPayload(task, {priority: value.trim()}));
 }
 
+const LEVELS = ["critical", "high", "normal", "low"];
+
+async function changeLevel(task) {
+  const value = prompt("Level for " + task.name + ": critical, high, normal or low", task.level || "normal");
+  if (value === null || !value.trim()) return;
+  await postTaskAction("/api/tasks/priority", taskPayload(task, {level: value.trim().toLowerCase()}));
+}
+
+let startTask = null;
+let linksTask = null;
+
+function tasksFor(project) {
+  const data = lastState || {};
+  if (!project) return data.tasks || [];
+  const proj = (data.projects || []).find((p) => p.name === project);
+  return (proj && proj.tasks) || [];
+}
+
+function fillCardPicker(select, project, except, chosen) {
+  select.replaceChildren();
+  const seen = new Set();
+  tasksFor(project).forEach((t) => {
+    if (t.merging || t.name === except || seen.has(t.name)) return;
+    seen.add(t.name);
+    const opt = document.createElement("option");
+    opt.value = t.name;
+    opt.textContent = t.name + (t.lane === "done" ? " (done)" : " · " + displayName(t.lane));
+    opt.selected = (chosen || []).indexOf(t.name) >= 0;
+    select.appendChild(opt);
+  });
+}
+
+function pickedNames(select) {
+  return [...select.selectedOptions].map((opt) => opt.value);
+}
+
+function openStartTask(task) {
+  startTask = task;
+  const select = $("st-role");
+  select.replaceChildren();
+  const master = document.createElement("option");
+  master.value = "";
+  master.textContent = "Master (default)";
+  select.appendChild(master);
+  lanesFor(task.project).forEach((lane) => {
+    const opt = document.createElement("option");
+    opt.value = lane;
+    opt.textContent = displayName(lane);
+    select.appendChild(opt);
+  });
+  select.value = task.start_role || "";
+  $("st-level").value = task.level || "normal";
+  $("st-title").textContent = "Start " + task.name;
+  const open = (task.blockers || []).filter((b) => !b.done).map((b) => b.name);
+  $("st-note").textContent = open.length
+    ? "Blocked by " + open.join(", ") + ". It should wait until they are done."
+    : "Sends the task to the role now.";
+  $("st-force").checked = false;
+  $("st-force-row").style.display = open.length ? "" : "none";
+  $("start-layer").classList.add("open");
+}
+
+async function submitStartTask() {
+  if (!startTask) return;
+  const payload = taskPayload(startTask, {level: $("st-level").value});
+  if ($("st-role").value) payload.role = $("st-role").value;
+  if ($("st-force").checked) payload.force = true;
+  const ok = await postTaskAction("/api/tasks/start", payload);
+  if (ok) closeStartTask();
+}
+
+function closeStartTask() {
+  startTask = null;
+  $("start-layer").classList.remove("open");
+}
+
+function openLinks(task) {
+  linksTask = task;
+  $("ln-title").textContent = "Links of " + task.name;
+  fillCardPicker($("ln-blockers"), task.project, task.name, (task.blockers || []).map((b) => b.name));
+  fillCardPicker($("ln-related"), task.project, task.name, task.related || []);
+  $("links-layer").classList.add("open");
+}
+
+async function submitLinks() {
+  if (!linksTask) return;
+  const ok = await postTaskAction("/api/tasks/links", taskPayload(linksTask, {
+    blocked_by: pickedNames($("ln-blockers")),
+    related: pickedNames($("ln-related"))
+  }));
+  if (ok) closeLinks();
+}
+
+function closeLinks() {
+  linksTask = null;
+  $("links-layer").classList.remove("open");
+}
+
 async function dequeueTask(task) {
   if (!confirm("Remove " + task.name + " from the queue? Its queued mail is moved to .swarmforge/removed-tasks and the card leaves the board.")) return;
   await postTaskAction("/api/tasks/dequeue", taskPayload(task));
@@ -541,7 +752,7 @@ function projectBand(proj) {
   const cols = document.createElement("div");
   cols.className = "columns";
   if (proj.drain && proj.drain.paused) cols.classList.add("paused-board");
-  const lanes = (proj.lanes || []).concat(["done"]);
+  const lanes = ["todo"].concat(proj.lanes || [], ["done"]);
   lanes.forEach((lane) => cols.appendChild(columnEl(lane, proj.tasks || [], proj.name)));
   band.append(header, ...swarmBanners(proj, proj.name), cols);
   return band;
@@ -655,7 +866,7 @@ function renderBoard(data) {
     board.replaceChildren(columns);
   }
   columns.replaceChildren();
-  const lanes = (data.lanes || []).concat(["done"]);
+  const lanes = ["todo"].concat(data.lanes || [], ["done"]);
   const tasks = data.tasks || [];
   lanes.forEach((lane) => columns.appendChild(columnEl(lane, tasks)));
 }
@@ -1426,7 +1637,9 @@ function fillRoleSelect(project) {
 function openNewTask(project) {
   taskProject = project || "";
   fillRoleSelect(taskProject);
-  $("nt-priority").value = "50";
+  $("nt-level").value = "normal";
+  $("nt-todo").checked = false;
+  fillCardPicker($("nt-blockers"), taskProject, null, []);
   $("new-task-layer").classList.add("open");
   $("nt-name").focus();
 }
@@ -1577,9 +1790,11 @@ async function submitNewTask() {
   const payload = {name, text};
   if (taskProject) payload.project = taskProject;
   const role = $("nt-role").value;
-  const priority = $("nt-priority").value.trim();
   if (role) payload.role = role;
-  if (priority && priority !== "50") payload.priority = priority;
+  payload.level = $("nt-level").value;
+  const blockers = pickedNames($("nt-blockers"));
+  if (blockers.length) payload.blocked_by = blockers;
+  if ($("nt-todo").checked || blockers.length) payload.todo = true;
   const res = await fetch("/api/tasks", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -1871,6 +2086,10 @@ $("btn-open-project").onclick = (event) => {
 };
 $("nt-cancel").onclick = closeNewTask;
 $("nt-ok").onclick = submitNewTask;
+$("st-ok").onclick = submitStartTask;
+$("st-cancel").onclick = closeStartTask;
+$("ln-ok").onclick = submitLinks;
+$("ln-cancel").onclick = closeLinks;
 $("rt-delete").onclick = deleteRejected;
 $("rt-retry").onclick = retryRejected;
 $("rt-accept").onclick = acceptRejected;

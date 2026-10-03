@@ -158,7 +158,7 @@ test.describe("pack dashboard", () => {
     await expect(page.locator("#nt-name")).toBeFocused();
   });
 
-  test("New Task sends the chosen role and priority", async ({ page }) => {
+  test("New Task sends the chosen role and level", async ({ page }) => {
     let posted = null;
     await page.route("**/api/tasks", async (route) => {
       posted = JSON.parse(route.request().postData() || "{}");
@@ -170,10 +170,42 @@ test.describe("pack dashboard", () => {
     await expect(page.locator("#nt-role option")).toHaveText(["Master (default)", "Specifier", "Coder"]);
     await page.locator("#nt-name").fill("D02");
     await page.locator("#nt-role").selectOption("coder");
-    await page.locator("#nt-priority").fill("10");
+    await page.locator("#nt-level").selectOption("critical");
     await page.locator("#nt-ok").click();
     await expect.poll(() => posted).not.toBeNull();
-    expect(posted).toMatchObject({ name: "D02", project: "htw", role: "coder", priority: "10" });
+    expect(posted).toMatchObject({ name: "D02", project: "htw", role: "coder", level: "critical" });
+    expect(posted.todo).toBeUndefined();
+  });
+
+  test("a TODO card shows its level and blocker, and starts from its menu", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      await page.goto(local.url);
+      await page.locator(".project-header button", { hasText: "New Task" }).click();
+      await page.locator("#nt-name").fill("Later");
+      await page.locator("#nt-level").selectOption("high");
+      await page.locator("#nt-blockers").selectOption("HTW");
+      await page.locator("#nt-ok").click();
+      const card = page.locator(".col[data-lane=\"todo\"] .card[data-task-name=\"Later\"]");
+      await expect(card).toHaveCount(1);
+      await expect(page.locator(".col[data-lane=\"todo\"] h3")).toHaveText("TODO");
+      await expect(card.locator("[data-level=\"high\"]")).toHaveText("High");
+      await expect(card.locator("[data-blockers]")).toContainText("Blocked by: HTW");
+      await expect(page.locator(".card[data-task-name=\"HTW\"] [data-blocks]")).toHaveText("Blocks: Later");
+      await card.locator(".card-menu-btn").click();
+      await card.locator(".card-menu .menu-list button", { hasText: "Start" }).click();
+      await expect(page.locator("#start-layer")).toBeVisible();
+      await expect(page.locator("#st-note")).toContainText("Blocked by HTW");
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.locator("#st-ok").click();
+      await expect(page.locator(".col[data-lane=\"todo\"] .card[data-task-name=\"Later\"]")).toHaveCount(1);
+      await page.locator("#st-force").check();
+      await page.locator("#st-ok").click();
+      await expect(page.locator(".col[data-lane=\"specifier\"] .card[data-task-name=\"Later\"]")).toHaveCount(1);
+      await expect(page.locator("#start-layer")).toBeHidden();
+    } finally {
+      await stopDashboard(local);
+    }
   });
 
   test("queued card shows Queued and its menu reorders, renames, and removes it", async ({ page }) => {

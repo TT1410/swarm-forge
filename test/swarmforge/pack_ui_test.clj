@@ -4,7 +4,7 @@
             [clojure.edn :as edn]
             [clojure.java.shell :as sh]
             [clojure.string :as str]
-            [clojure.test :refer [deftest is run-tests use-fixtures]]))
+            [clojure.test :refer [deftest is run-tests testing use-fixtures]]))
 
 (def six-pack-roles ["specifier" "coder" "cleaner" "architect" "hardender" "QA"])
 
@@ -3459,3 +3459,121 @@
     (let [card (first (:tasks (web-state root)))]
       (is (nil? (:returned_from card)))
       (is (= 2 (:return_count card))))))
+
+(defn card-meta [root name]
+  (let [id (:id (task-card root name))
+        file (fs/path root ".swarmforge/board/meta" (str id ".edn"))]
+    (when (fs/exists? file) (edn/read-string (slurp (str file))))))
+
+(deftest new-task-can-wait-in-todo-and-start-later
+  ;; Given New Task with todo
+  ;; Then the card waits in TODO with no mail anywhere
+  ;; When it is started to coder with level high
+  ;; Then it moves to coder and its note goes out with priority 30
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (is (= 200 (:status (api-post root "/api/tasks" {:name "HTW" :text "Hunt" :todo true :role "coder"}))))
+    (let [card (task-card root "HTW")]
+      (is (= "todo" (:lane card)))
+      (is (= true (:todo card)))
+      (is (= "Waiting to start" (:status card)))
+      (is (= "coder" (:start_role card)))
+      (is (nil? (:stuck card))))
+    (is (= [] (outbox-handoffs root)))
+    (is (= 200 (:status (api-post root "/api/tasks/start" {:name "HTW" :level "high"}))))
+    (is (= "coder" (task-lane root "HTW")))
+    (let [[file] (outbox-handoffs root)]
+      (is (str/starts-with? (str (fs/file-name file)) "30_"))
+      (is (str/includes? (slurp (str file)) "to: coder"))
+      (is (str/includes? (slurp (str file)) "Hunt")))
+    (is (= {:level "high"} (card-meta root "HTW")))
+    (testing "a card that already started cannot start again"
+      (is (= 409 (:status (api-post root "/api/tasks/start" {:name "HTW"}))))
+      (is (= 1 (count (outbox-handoffs root)))))))
+
+(deftest pack-board-start-refuses-a-card-outside-todo
+  (let [root (tmp-dir)]
+    (setup-pack! root ["specifier" "coder"])
+    (create-task root "HTW" "specifier")
+    (let [result (pack-board root false "start" "--root" (str root) "--name" "HTW" "--lane" "coder")]
+      (is (not (zero? (:exit result))))
+      (is (str/includes? (:err result) "not in TODO")))
+    (is (= "specifier" (task-lane root "HTW")))))
+
+(deftest todo-and-done-are-not-role-names
+  (let [root (tmp-dir)]
+    (write-file (fs/path root "swarmforge/swarmforge.conf") "window todo codex master\n")
+    (write-file (fs/path root "swarmforge/roles/todo.prompt") "x\n")
+    (write-file (fs/path root "swarmforge/constitution.prompt") "x\n")
+    (let [result (run {:dir root :ok? false} (script "swarmforge.bb") "--test-parse" (str root))]
+      (is (not (zero? (:exit result))))
+      (is (str/includes? (str (:out result) (:err result)) "board columns")))))
+
+(deftest task-level-sets-priority-and-change-skips-merge-copies
+  ;; Given a queued coder card at level normal and a 00 merge-only copy of it
+  ;; When its level becomes critical
+  ;; Then its forward mail moves to 10 and the merge copy stays 00
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        new-dir (fs/path (pack-worktree root roles "coder") ".swarmforge/handoffs/inbox/new")]
+    (setup-pack! root roles)
+    (create-task root "HTW" "coder")
+    (put-queued! root roles "coder" {:from "specifier" :task "HTW"})
+    (write-file (fs/path new-dir "00_merge_from_QA_to_coder.handoff")
+                "from: QA\nto: coder\npriority: 00\ntype: git_handoff\ntask: HTW\nnon-forwarding: true\n\nmerge\n")
+    (is (= 200 (:status (api-post root "/api/tasks/priority" {:name "HTW" :level "critical"}))))
+    (let [names (set (handoff-names new-dir))]
+      (is (contains? names "00_merge_from_QA_to_coder.handoff"))
+      (is (= 2 (count names)))
+      (is (some #(str/starts-with? % "10_") names)))
+    (is (= "critical" (:level (task-card root "HTW"))))))
+
+(deftest blockers-hold-a-todo-card-until-they-are-done
+  ;; Given A in coder and B in TODO blocked by A
+  ;; Then B shows its blocker, A shows it blocks B, and B cannot start;
+  ;; force starts it anyway; a cycle or self-block is refused
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "coder")
+    (is (= 200 (:status (api-post root "/api/tasks" {:name "B" :todo true :blocked_by ["A"] :related ["A"]}))))
+    (let [b (task-card root "B")
+          a (task-card root "A")]
+      (is (= [{:name "A" :done false}] (:blockers b)))
+      (is (= true (:blocked b)))
+      (is (= ["A"] (:related b)))
+      (is (= ["B"] (:blocks a))))
+    (let [resp (api-post root "/api/tasks/start" {:name "B"})]
+      (is (= 409 (:status resp)))
+      (is (str/includes? (get-in resp [:body :error]) "Blocked by A")))
+    (is (= "todo" (task-lane root "B")))
+    (testing "cycles and self links are refused"
+      (is (= 400 (:status (api-post root "/api/tasks/links" {:name "A" :blocked_by ["B"]}))))
+      (is (= 400 (:status (api-post root "/api/tasks/links" {:name "B" :blocked_by ["B"]})))))
+    (testing "a non-TODO card with an open blocker is refused"
+      (is (= 400 (:status (api-post root "/api/tasks" {:name "C" :blocked_by ["A"]})))))
+    (testing "once the blocker is done the card starts"
+      (pack-board root true "done" "--root" (str root) "--name" "A")
+      (is (nil? (:blocked (task-card root "B"))))
+      (is (= 200 (:status (api-post root "/api/tasks/start" {:name "B"}))))
+      (is (= "specifier" (task-lane root "B"))))))
+
+(deftest a-deleted-blocker-no-longer-holds-a-card
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "coder")
+    (api-post root "/api/tasks" {:name "B" :todo true :blocked_by ["A"]})
+    (pack-board root true "delete" "--root" (str root) "--name" "A")
+    (is (nil? (:blocked (task-card root "B"))))
+    (is (= 200 (:status (api-post root "/api/tasks/start" {:name "B" :force false}))))))
+
+(deftest a-forced-start-ignores-open-blockers
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "coder")
+    (api-post root "/api/tasks" {:name "B" :todo true :blocked_by ["A"]})
+    (is (= 200 (:status (api-post root "/api/tasks/start" {:name "B" :force true}))))
+    (is (= "specifier" (task-lane root "B")))))

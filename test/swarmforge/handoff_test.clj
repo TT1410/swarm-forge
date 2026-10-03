@@ -2140,3 +2140,23 @@
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.handoff-test)]
     (System/exit (+ fail error))))
+
+(deftest swarm-handoff-takes-priority-from-the-card-level
+  ;; Given Card B has level high and Card C has level critical
+  ;; When the sender hands off Card B with priority: 50 typed in the draft
+  ;; Then the handoff carries priority 30 from the level, and a handoff that
+  ;; also carries Card C takes the more urgent 10
+  (let [root (tmp-dir)
+        _ (batch-board-project! root)
+        _ (write-file (fs/path root ".swarmforge/board/meta/card-b.edn") "{:level \"high\"}\n")
+        _ (write-file (fs/path root ".swarmforge/board/meta/card-c.edn") "{:level \"critical\"}\n")
+        result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card B\n")
+        queued (queued-path (:out result))]
+    (is (zero? (:exit result)) (:err result))
+    (is (= "30" (header queued "priority")))
+    (is (str/starts-with? (str (fs/file-name queued)) "30_"))
+    (let [both (submit-draft! root "sender"
+                              "type: git_handoff\nto: receiver\npriority: 50\ntask: Card A\nwith_tasks: Card C\n")
+          queued (queued-path (:out both))]
+      (is (zero? (:exit both)) (:err both))
+      (is (= "10" (header queued "priority"))))))

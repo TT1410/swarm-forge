@@ -653,10 +653,29 @@
                                 (worktree-head))))
     headers))
 
+(defn card-level-priority
+  "The priority a forward git handoff takes from its cards' levels, the most
+  urgent card first. Merge-only copies keep their own priority, and cards
+  without a level leave the priority to the draft."
+  [headers]
+  (when (and (= "git_handoff" (get headers "type"))
+             (not= "true" (get headers "non-forwarding")))
+    (let [root (project-root)
+          ids (->> (cons (get headers "task_id")
+                         (str/split (or (get headers "with_task_ids") "") #","))
+                   (map #(some-> % str/trim))
+                   (remove str/blank?)
+                   distinct)]
+      (first (sort (keep #(handoff-lib/level-priority
+                           (:level (handoff-lib/read-card-meta root %)))
+                         ids))))))
+
 (defn fill-priority [headers]
-  (if (valid-priority? (get headers "priority"))
-    headers
-    (assoc headers "priority" "50")))
+  (if-let [level-priority (card-level-priority headers)]
+    (assoc headers "priority" level-priority)
+    (if (valid-priority? (get headers "priority"))
+      headers
+      (assoc headers "priority" "50"))))
 
 (defn prepare-headers [headers sender]
   (-> headers

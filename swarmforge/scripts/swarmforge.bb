@@ -175,6 +175,8 @@
 (defn validate-window! [ctx line-no role agent worktree receive-mode roles worktrees]
   (reject-if (str/includes? role "_")
              (str "Invalid role '" role "' on line " line-no ": role names may not contain underscores"))
+  (reject-if (#{"todo" "done"} (str/lower-case role))
+             (str "Invalid role '" role "' on line " line-no ": todo and done are board columns, not roles"))
   (reject-if (contains? roles role)
              (str "Duplicate role '" role "' in " (:config-file ctx)))
   (reject-if (and (not (special-worktree? worktree)) (contains? worktrees worktree))
