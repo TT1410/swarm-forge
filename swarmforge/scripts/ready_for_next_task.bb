@@ -92,6 +92,10 @@
     (when task-id
       (println "TASK_ID:" task-id))
     (ready-for-next-guard/print-card-briefing! file)
+    (when (= "true" (header-field file "non-forwarding"))
+      (println "MERGE_ONLY: true"))
+    (when (= "true" (header-field file "return"))
+      (println "RETURNED: true"))
     (println "PAYLOAD:")
     (print (body file))))
 
