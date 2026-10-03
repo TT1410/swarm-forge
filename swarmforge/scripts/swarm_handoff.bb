@@ -551,13 +551,11 @@
     (fs/delete-if-exists path))
   (remove-empty-sender-audit-dir! sender))
 
-(declare card-level-priority)
-
 (defn audited-priority
   "A priority that comes from the card's level is not the role's choice, so
   a level change on the dashboard between audit and resubmit keeps the audit."
   [headers]
-  (if (card-level-priority headers) "level" (get headers "priority")))
+  (if (::from-level headers) "level" (get headers "priority")))
 
 (defn invocation-fingerprint [draft sender headers]
   {:sender sender
@@ -686,7 +684,7 @@
 
 (defn fill-priority [headers]
   (if-let [level-priority (card-level-priority headers)]
-    (assoc headers "priority" level-priority)
+    (assoc headers "priority" level-priority ::from-level true)
     (if (valid-priority? (get headers "priority"))
       headers
       (assoc headers "priority" "50"))))
