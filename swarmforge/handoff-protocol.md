@@ -383,7 +383,8 @@ Responsibilities:
 - Read that role's receive mode from `.swarmforge/roles.tsv`.
 - When a board exists, refuse with `OPEN_CARDS` (exit 3) while current work
   holds a forwarded card that is still in this role's lane and has no outgoing
-  `git_handoff` (handed off, pending approval, or in an outbox). Merge-only
+  `git_handoff` (handed off, pending approval, or in an outbox). Without a
+  board, finish and print `NOT_HANDED_OFF:` for each such card. Merge-only
   (`non-forwarding`) copies and role notes carry no card. `--drop` finishes
   anyway and prints `DROPPED:` for each card left in the lane.
 - Dispatch to `done_with_current_task.sh` for `task` mode.

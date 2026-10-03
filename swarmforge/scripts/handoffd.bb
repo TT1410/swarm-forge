@@ -260,26 +260,38 @@
               name)))
         (read-lines (board-file))))
 
+(defn update-board-card! [main? & args]
+  (if main?
+    (apply pack-board! args)
+    ;; A carried card that left the board meanwhile must not send the whole
+    ;; handoff, and the other cards with it, to failed/.
+    (try
+      (apply pack-board! args)
+      (catch Exception e
+        (log! "board-skip" (str/join " " args) (.getMessage e))))))
+
 (defn update-board! [roles headers]
   (when (and (fs/exists? (board-file))
              (= "git_handoff" (get headers "type"))
              (seq (recipient-list headers)))
-    (let [names (->> (handoff-task-keys headers)
-                     (map #(or (board-name-for-key %)
-                               (when (= % (task-key headers)) (get headers "task"))))
-                     (remove str/blank?)
+    (let [main (task-key headers)
+          cards (->> (handoff-task-keys headers)
+                     (keep #(when-let [name (or (board-name-for-key %)
+                                                (when (= % main) (get headers "task")))]
+                              [(= % main) name]))
+                     (remove (comp str/blank? second))
                      distinct)]
       (cond
         (terminal-handoff? roles headers)
-        (doseq [name names]
-          (pack-board! "done" "--name" name))
+        (doseq [[main? name] cards]
+          (update-board-card! main? "done" "--name" name))
 
         (non-forwarding? headers)
         nil
 
         :else
-        (doseq [name names]
-          (pack-board! "move" "--name" name "--lane" (first (recipient-list headers))))))))
+        (doseq [[main? name] cards]
+          (update-board-card! main? "move" "--name" name "--lane" (first (recipient-list headers))))))))
 
 (defn single-recipient? [headers]
   (let [recipients (recipient-list headers)]
@@ -422,6 +434,11 @@
               (notify-role! socket role-info)
               (reset-renotify-backoff! recipient))))
         (move-with-collision path (sent-dir roles sender-role))
+        (when (contains? roles sender-role)
+          ;; The sender just handed off and may still be finishing its turn:
+          ;; start its idle clock now so a reminder does not land mid-turn.
+          (swap! last-notified assoc sender-role (System/currentTimeMillis))
+          (reset-renotify-backoff! sender-role))
         (archive-sender! headers)
         (maybe-notify-unblocked-sender! roles socket headers sender-role)
         (log! "delivered" (str path))))))

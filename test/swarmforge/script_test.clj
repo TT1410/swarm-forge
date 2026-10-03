@@ -1597,3 +1597,148 @@
           (is (str/includes? text fixture))))
       (finally
         (fs/delete-tree root)))))
+
+(deftest merge-commit-accepts-config-files-no-parent-could-parse
+  ;; Given a JSONC tsconfig.json and an alias-heavy YAML file already on master
+  ;; When a merge commits edits to both that still parse as well as their parents did
+  ;; Then the merge is not refused
+  (let [root (tmp-dir)
+        aliases (fn [n] (apply str "base: &b {x: 1}\n" (for [i (range n)] (str "k" i ": *b\n"))))]
+    (try
+      (hooked-repo! root)
+      (write-file (fs/path root "tsconfig.json") "{\n  // comment\n  \"a\": 1,\n}\n")
+      (write-file (fs/path root "anchors.yaml") (aliases 10))
+      (run {:dir root} "git" "add" "tsconfig.json" "anchors.yaml")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add configs")
+      (conflicting-compose-merge! root)
+      (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"migrate\", \"up\"]\n")
+      (write-file (fs/path root "tsconfig.json") "{\n  // comment\n  \"a\": 2,\n}\n")
+      (write-file (fs/path root "anchors.yaml") (aliases 60))
+      (run {:dir root} "git" "add" "compose.yaml" "tsconfig.json" "anchors.yaml")
+      (let [result (run {:dir root :ok? false} "git" "commit" "-q" "--no-edit")]
+        (is (zero? (:exit result)) (:err result)))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest merge-check-that-hangs-is-refused-after-the-timeout
+  ;; Given a merge-check command that never finishes
+  ;; When a merge is committed with a short timeout
+  ;; Then the merge is refused instead of hanging
+  (let [root (tmp-dir)]
+    (try
+      (hooked-repo! root)
+      (write-file (fs/path root "swarmforge/swarmforge.conf")
+                  "window specifier codex master\nmerge-check sleep 30\n")
+      (conflicting-compose-merge! root)
+      (write-file (fs/path root "compose.yaml") "services:\n  db:\n    command: [\"migrate\", \"up\"]\n")
+      (run {:dir root} "git" "add" "compose.yaml")
+      (let [started (System/currentTimeMillis)
+            refused (run {:dir root :ok? false :env {"SWARMFORGE_MERGE_CHECK_TIMEOUT" "1"}}
+                         "git" "commit" "--no-edit")]
+        (is (not (zero? (:exit refused))))
+        (is (str/includes? (:err refused) "timed out"))
+        (is (< (- (System/currentTimeMillis) started) 20000)))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest uncommitted-master-prompt-edits-do-not-block-merging-a-role-branch
+  ;; Given master has an uncommitted edit to a role prompt
+  ;; When the launcher syncs roles into a role worktree and master later merges that branch
+  ;; Then the role branch carries master's committed prompt and the merge succeeds
+  (let [root (tmp-dir)
+        worktree (fs/path root ".worktrees" "coder")]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "v1\n")
+      (write-file (fs/path root "swarmforge/constitution.prompt") "c1\n")
+      (run {:dir root} "git" "add" "swarmforge")
+      (run {:dir root} "git" "commit" "-q" "-m" "Add prompts")
+      (run {:dir root} "git" "worktree" "add" "-q" "-b" "swarmforge-coder" (str worktree) "HEAD")
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "v2 draft\n")
+      (let [out (:out (run {:dir root} (script "swarmforge.bb") "--test-sync-worktree-roles" (str root) (str worktree)))]
+        (is (str/includes? out "swarmforge/roles/coder.prompt")))
+      (is (= "v1\n" (slurp (str (fs/path worktree "swarmforge/roles/coder.prompt")))))
+      (is (str/blank? (:out (run {:dir worktree} "git" "status" "--porcelain"))))
+      (write-file (fs/path worktree "work.txt") "work\n")
+      (run {:dir worktree} "git" "add" "work.txt")
+      (run {:dir worktree} "git" "commit" "-q" "-m" "Role work")
+      (let [merge (run {:dir root :ok? false} "git" "merge" "--no-edit" "swarmforge-coder")]
+        (is (zero? (:exit merge)) (str (:err merge) (:out merge))))
+      (is (= "v2 draft\n" (slurp (str (fs/path root "swarmforge/roles/coder.prompt")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest launch-installs-shared-articles-from-the-pack-wrapper
+  ;; Given a pack whose swarm wrapper put main's articles in scripts/shared-articles
+  ;; When SwarmForge launches
+  ;; Then the shared articles replace the pack's copies and its own articles stay
+  (let [root (tmp-dir)
+        articles (fs/path root "swarmforge/constitution/articles")
+        shared (fs/path root "swarmforge/scripts/shared-articles")]
+    (try
+      (write-file (fs/path articles "engineering.prompt") "PACK-STALE\n")
+      (write-file (fs/path articles "project.prompt") "PACK-PROJECT\n")
+      (write-file (fs/path articles "local-workflow.prompt") "PACK-LOCAL\n")
+      (doseq [name ["engineering.prompt" "workflow.prompt" "handoffs.prompt"]]
+        (write-file (fs/path shared name) (str "MAIN-" name "\n")))
+      (write-file (fs/path shared "project.prompt") "MAIN-PROJECT\n")
+      (run {:dir root} (script "swarmforge.bb") "--test-install-shared-articles" (str root))
+      (doseq [name ["engineering.prompt" "workflow.prompt" "handoffs.prompt"]]
+        (is (= (str "MAIN-" name "\n") (slurp (str (fs/path articles name))))))
+      (is (= "PACK-PROJECT\n" (slurp (str (fs/path articles "project.prompt")))))
+      (is (= "PACK-LOCAL\n" (slurp (str (fs/path articles "local-workflow.prompt")))))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest grok-launch-command-passes-the-system-instructions-as-rules
+  ;; Given role and constitution files in the project
+  ;; When SwarmForge builds a grok launch command
+  ;; Then --rules carries the full system instruction file
+  (let [root (tmp-dir)]
+    (try
+      (write-file (fs/path root "swarmforge/constitution.prompt") "fixture-constitution\n")
+      (write-file (fs/path root "swarmforge/roles/coder.prompt") "fixture-role\n")
+      (let [command (:out (run {:dir root} (script "swarmforge.bb") "--test-launch-command" (str root) "grok"))
+            rules-file (shell-arg-file command "--rules ")
+            text (slurp rules-file)]
+        (is (str/includes? text "fixture-constitution"))
+        (is (str/includes? text "fixture-role")))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest paused-guard-sees-in-process-work-from-a-subdirectory
+  ;; Given a drained swarm and coder with in-process work
+  ;; When coder runs ready_for_next from a subdirectory of its worktree
+  ;; Then it is not told PAUSED
+  (let [root (tmp-dir)
+        inbox (fs/path root ".swarmforge/handoffs/inbox")
+        subdir (fs/path root "src")]
+    (try
+      (init-repo! root)
+      (write-file (fs/path root ".swarmforge/roles.tsv")
+                  (format "coder\tmaster\t%s\tswarmforge-coder\tCoder\tcodex\ttask\n" root))
+      (doseq [dir ["new" "in_process" "completed"]]
+        (fs/create-dirs (fs/path inbox dir)))
+      (fs/create-dirs subdir)
+      (write-file (fs/path inbox "in_process/50_b.handoff") (handoff-text "specifier" "note" "card-b"))
+      (run {:dir root} (script "swarmforge.sh") "drain" (str root))
+      (let [out (:out (run {:dir subdir :env {"SWARMFORGE_ROLE" "coder"} :ok? false}
+                           (script "ready_for_next.sh")))]
+        (is (not (str/includes? out "PAUSED")) out))
+      (finally
+        (fs/delete-tree root)))))
+
+(deftest drain-and-status-refuse-a-folder-without-a-swarm
+  ;; Given a folder with no .swarmforge/roles.tsv
+  ;; When the operator runs drain or status there
+  ;; Then each fails naming the missing roles.tsv and no pause file is written
+  (let [root (tmp-dir)]
+    (try
+      (doseq [command ["drain" "status"]]
+        (let [result (run {:dir root :ok? false} (script "swarmforge.sh") command (str root))]
+          (is (not (zero? (:exit result))) command)
+          (is (str/includes? (:err result) "roles.tsv") command)
+          (is (not (str/includes? (:out result) "DRAINED: yes")) command)))
+      (is (not (fs/exists? (fs/path root ".swarmforge/paused"))))
+      (finally
+        (fs/delete-tree root)))))

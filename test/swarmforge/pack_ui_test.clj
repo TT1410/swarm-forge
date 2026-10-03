@@ -3119,3 +3119,97 @@
       (is (= ["00_b_from_QA_to_coder.handoff"] (inbox-names root roles "coder")))
       (finally
         (stop-tmux! sock)))))
+
+(deftest pack-web-retry-and-delete-keep-a-later-card-already-delivered
+  ;; Given card A held while the specifier already delivered card B on top of it and went idle
+  ;; When the operator retries or deletes A
+  ;; Then Delete refuses, Retry keeps HEAD and queues A again
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (git-init! root)
+    (setup-pack! root roles)
+    (commit-file! root "base")
+    (create-task root "A" "specifier")
+    (create-task root "B" "specifier")
+    (let [a-id (:id (task-card root "A"))
+          b-id (:id (task-card root "B"))
+          offer (commit-file! root "offer A")
+          _ (held-handoff! root a-id "A" offer)
+          later (commit-file! root "offer B")
+          head #(str/trim (:out (run {:dir root} "git" "rev-parse" "--short=10" "HEAD")))]
+      (write-file (fs/path root ".swarmforge/handoffs/sent/50_b.handoff")
+                  (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                       "task_id: " b-id "\ntask: B\ncommit: " later "\n\npayload\n"))
+      (is (not (zero? (:exit (pack-web root false "--test-delete-approval" (str root) "50_offer")))))
+      (is (= later (head)))
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "fix A"))))
+      (is (= later (head)))
+      (is (some #(str/starts-with? % "00_retry_") (inbox-names root roles "specifier"))))))
+
+(deftest pack-web-retry-requeue-carries-every-card
+  ;; Given A held together with B while the specifier works on C
+  ;; When the operator retries
+  ;; Then the retry note carries B too and B's mail forgets it was handed
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (doseq [n ["A" "B" "C"]] (create-task root n "specifier"))
+    (let [[a b c] (map #(:id (task-card root %)) ["A" "B" "C"])
+          b-done (fs/path root ".swarmforge/handoffs/inbox/completed/50_b.handoff")]
+      (write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+                  (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                       "task_id: " a "\ntask: A\nwith_task_ids: " b "\n\npayload\n"))
+      (write-file b-done (str "from: (New Task)\nto: specifier\ntype: note\n"
+                              "task_id: " b "\ntask: B\nhanded_task_ids: " b "\n\nB\n"))
+      (write-file (fs/path (in-process-dir root roles "specifier") "50_c.handoff")
+                  (str "from: (New Task)\nto: specifier\ntype: note\ntask_id: " c "\ntask: C\n\nC\n"))
+      (is (zero? (:exit (pack-web root false "--test-retry-task" (str root) "50_offer" "again"))))
+      (let [note (first (filter #(str/starts-with? % "00_retry_") (inbox-names root roles "specifier")))]
+        (is (str/includes? (slurp (str (inbox-new-path root roles "specifier" note)))
+                           (str "with_task_ids: " b "\n")))
+        (is (not (str/includes? (slurp (str b-done)) "handed_task_ids")))))))
+
+(deftest pack-web-dequeue-and-priority-refuse-mail-still-in-the-outbox
+  ;; The daemon may be delivering outbox mail, so only inbox mail is changed
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]
+        _ (setup-pack! root roles)
+        _ (api-post root "/api/tasks" {:name "C50" :text "x"})
+        dq (api-post root "/api/tasks/dequeue" {:name "C50"})
+        pr (api-post root "/api/tasks/priority" {:name "C50" :priority "10"})]
+    (is (= 409 (:status dq)))
+    (is (= 409 (:status pr)))
+    (is (= "specifier" (task-lane root "C50")))
+    (is (= 1 (count (outbox-handoffs root))))
+    (fs/move (first (outbox-handoffs root))
+             (inbox-new-path root roles "specifier" "50_c50.handoff"))
+    (is (= 200 (:status (api-post root "/api/tasks/priority" {:name "C50" :priority "10"}))))
+    (is (= ["10_c50.handoff"]
+           (mapv #(str (fs/file-name %))
+                 (fs/list-dir (fs/path (pack-worktree root roles "specifier") ".swarmforge/handoffs/inbox/new")))))))
+
+(deftest pack-web-delete-approval-keeps-other-cards-mail
+  ;; Deleting A drops A's own mail, keeps B's mail that also names A,
+  ;; and refuses while live mail carries A together with B
+  (let [root (tmp-dir)
+        roles ["specifier" "coder"]]
+    (setup-pack! root roles)
+    (create-task root "A" "specifier")
+    (create-task root "B" "specifier")
+    (let [a (:id (task-card root "A"))
+          b (:id (task-card root "B"))
+          b-sent (fs/path root ".swarmforge/handoffs/sent/50_b.handoff")
+          b-live (inbox-new-path root roles "coder" "50_b.handoff")
+          b-mail (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                      "task_id: " b "\ntask: B\nwith_task_ids: " a "\n\npayload\n")
+          held #(write-file (fs/path root ".swarmforge/handoffs/pending_approval/50_offer.handoff")
+                            (str "from: specifier\nto: coder\ntype: git_handoff\n"
+                                 "task_id: " a "\ntask: A\n\npayload\n"))]
+      (held)
+      (write-file b-live b-mail)
+      (is (not (zero? (:exit (pack-web root false "--test-delete-approval" (str root) "50_offer")))))
+      (is (= "specifier" (task-lane root "A")))
+      (fs/move b-live b-sent)
+      (is (zero? (:exit (pack-web root false "--test-delete-approval" (str root) "50_offer"))))
+      (is (nil? (task-lane root "A")))
+      (is (fs/exists? b-sent)))))

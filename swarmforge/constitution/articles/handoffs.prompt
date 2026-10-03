@@ -92,6 +92,8 @@ message: <one line, max 80 chars>
 - `done_with_current.sh` refuses with `OPEN_CARDS` while a forwarded card has
   no outgoing `git_handoff`. Hand those cards off. Use
   `done_with_current.sh --drop` only when a card must stay in this lane.
+  Without a board it finishes and prints `NOT_HANDED_OFF:` for those cards;
+  hand them off in the next turn.
 - `note` handoffs are tasks too; after reading or acting on a note, run
   `done_with_current.sh` before accepting any other handoff.
 - If `done_with_current.sh` prints `MAIL_WAITING`, run `ready_for_next.sh` as a

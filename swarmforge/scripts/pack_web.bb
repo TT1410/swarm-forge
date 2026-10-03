@@ -968,9 +968,14 @@
     (doseq [path (task-handoffs root task-id name)]
       (copy-into dir path))))
 
-(defn drop-task-handoffs! [root task-id & aliases]
-  (doseq [path (apply task-handoffs root task-id aliases)]
-    (fs/delete-if-exists path)))
+(defn drop-task-handoffs!
+  "Drop the handoffs whose own task is the card. Mail that only carries the
+  card next to another task belongs to that task and stays."
+  [root task-id & aliases]
+  (let [wanted (set (remove str/blank? (cons task-id aliases)))]
+    (doseq [path (apply task-handoffs root task-id aliases)
+            :when (contains? wanted (handoff-task-id path))]
+      (fs/delete-if-exists path))))
 
 (defn audit-task-id [path]
   (try
@@ -1138,6 +1143,8 @@
       (conflict! (str "Card is waiting for approval; use Attention: " name)))
     (when (some #(> (count (handoff-card-ids %)) 1) (:queued by-state))
       (conflict! (str "Card travels in a handoff that carries other cards too: " name)))
+    (when (some #(= "outbox" (str (fs/file-name (fs/parent %)))) (:queued by-state))
+      (conflict! (str "Card is being delivered; try again in a moment: " name)))
     {:task task :queued (vec (:queued by-state))}))
 
 (defn move-or-conflict! [from to name]
@@ -1181,15 +1188,26 @@
     (str priority (subs filename 2))
     (str priority "_" filename)))
 
+(defn claim-handoff!
+  "Take a queued handoff away from its role before rewriting it: an atomic
+  rename to a hidden, non-.handoff name in the same inbox. 409 when the role
+  picked it up first."
+  [path name]
+  (let [claim (fs/path (fs/parent path) (str ".claim_" (fs/file-name path) ".part"))]
+    (move-or-conflict! path claim name)
+    claim))
+
 (defn reprioritize-handoff! [path priority name]
   (let [dest (fs/path (fs/parent path) (prioritized-name (str (fs/file-name path)) priority))]
-    (when-not (= (str dest) (str path))
-      (when (fs/exists? dest)
-        (conflict! (str "A queued handoff named " (fs/file-name dest) " already exists.")))
-      (move-or-conflict! path dest name))
-    (let [tmp (fs/create-temp-file {:dir (fs/parent dest) :prefix ".priority."})]
-      (spit (str tmp) (with-priority-header (slurp (str dest)) priority))
-      (fs/move tmp dest {:replace-existing true :atomic-move true}))))
+    (when (and (not= (str dest) (str path)) (fs/exists? dest))
+      (conflict! (str "A queued handoff named " (fs/file-name dest) " already exists.")))
+    (let [claim (claim-handoff! path name)]
+      (spit (str claim) (with-priority-header (slurp (str claim)) priority))
+      (try
+        (fs/move claim dest {:atomic-move true})
+        (catch java.nio.file.FileAlreadyExistsException _
+          (fs/move claim path {:atomic-move true})
+          (conflict! (str "A queued handoff named " (fs/file-name dest) " already exists.")))))))
 
 (defn reprioritize-task!
   "Change the priority of a queued card: the priority header and the
@@ -1408,40 +1426,78 @@
         kept (remove #(str/starts-with? % prefix) (str/split-lines head))]
     (spit (str path) (str (str/join "\n" kept) "\n\n" body))))
 
+(defn later-git-handoff-in?
+  "Another git handoff from the sender, for other cards, among paths whose
+  commit contains the held commit."
+  [wt sender commit wanted paths]
+  (some (fn [path]
+          (let [headers (:headers (parse-message path))
+                other (get headers "commit")]
+            (and (= "git_handoff" (get headers "type"))
+                 (= sender (get headers "from"))
+                 (not-any? wanted (handoff-card-ids path))
+                 (not (str/blank? other))
+                 (git-ok? wt "merge-base" "--is-ancestor" commit other))))
+        paths))
+
 (defn later-handoff-on-top?
   "Another git handoff from the sender, still held or queued, whose commit
   contains the held commit."
   [root wt sender commit wanted]
   (boolean
    (and commit (git-repo? wt)
-        (some (fn [path]
-                (let [headers (:headers (parse-message path))
-                      other (get headers "commit")]
-                  (and (= "git_handoff" (get headers "type"))
-                       (= sender (get headers "from"))
-                       (not-any? wanted (handoff-card-ids path))
-                       (not (str/blank? other))
-                       (git-ok? wt "merge-base" "--is-ancestor" commit other))))
-              (concat (glob-handoffs (fs/path root ".swarmforge" "handoffs" "pending_approval"))
-                      (glob-handoffs (fs/path wt ".swarmforge" "handoffs" "outbox"))
-                      (glob-handoffs (fs/path root ".swarmforge" "handoffs" "outbox")))))))
+        (later-git-handoff-in?
+         wt sender commit wanted
+         (concat (glob-handoffs (fs/path root ".swarmforge" "handoffs" "pending_approval"))
+                 (glob-handoffs (fs/path wt ".swarmforge" "handoffs" "outbox"))
+                 (glob-handoffs (fs/path root ".swarmforge" "handoffs" "outbox")))))))
+
+(defn head-built-on?
+  "The worktree HEAD is a later commit that contains the held commit."
+  [wt commit]
+  (boolean
+   (and commit (git-repo? wt)
+        (git-ok? wt "rev-parse" "--verify" commit)
+        (not= (git! wt "rev-parse" "HEAD") (git! wt "rev-parse" commit))
+        (git-ok? wt "merge-base" "--is-ancestor" commit "HEAD"))))
+
+(defn later-delivery-on-top?
+  "HEAD moved past the held commit and the sender already delivered a git
+  handoff built on it: that later card is out, so HEAD must stay."
+  [wt sender commit wanted]
+  (boolean
+   (and (head-built-on? wt commit)
+        (later-git-handoff-in? wt sender commit wanted
+                               (glob-handoffs (fs/path wt ".swarmforge" "handoffs" "sent"))))))
 
 (defn sender-moved-on?
   "True when the sender went on to another card after the held handoff: it
-  holds in-process work for another card, or another of its handoffs is built
-  on the held commit. Then rewinding the worktree would throw that work away."
+  holds in-process work for another card, or another of its handoffs, held,
+  queued or already delivered, is built on the held commit. Then rewinding
+  the worktree would throw that work away."
   [root wt sender commit task-id task]
   (let [in-proc (glob-handoffs (fs/path wt ".swarmforge" "handoffs" "inbox" "in_process"))
         wanted (set (remove str/blank? [task-id task]))]
     (boolean (or (some #(not-any? wanted (handoff-card-ids %)) in-proc)
-                 (later-handoff-on-top? root wt sender commit wanted)))))
+                 (later-handoff-on-top? root wt sender commit wanted)
+                 (later-delivery-on-top? wt sender commit wanted)))))
+
+(defn header-card-ids [headers]
+  (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
+             (str/split (or (get headers "with_task_ids") "") #","))
+       (map #(some-> % str/trim))
+       (remove str/blank?)
+       distinct
+       vec))
 
 (defn requeue-retry! [wt headers]
   (let [task-id (or (not-empty (get headers "task_id")) (get headers "task"))
         task (or (get headers "task") task-id)
         new-dir (fs/path wt ".swarmforge" "handoffs" "inbox" "new")
+        with-ids (rest (header-card-ids headers))
         file (fs/path new-dir (str "00_retry_" (str/replace (or task-id "task") #"[^A-Za-z0-9]+" "_") ".handoff"))]
-    (doseq [path (task-inbox-files wt "completed" task-id task)]
+    (doseq [path (distinct (concat (task-inbox-files wt "completed" task-id task)
+                                   (mapcat #(task-inbox-files wt "completed" % nil) with-ids)))]
       (strip-header! path "handed_task_ids"))
     (fs/create-dirs new-dir)
     (spit (str file)
@@ -1451,6 +1507,7 @@
                "type: note\n"
                "task_id: " task-id "\n"
                "task: " task "\n"
+               (when (seq with-ids) (str "with_task_ids: " (str/join "," with-ids) "\n"))
                "\n"
                "Retry audit. Redo this card on top of the current tree.\n"))))
 
@@ -1473,14 +1530,6 @@
                  (when base (str "task_base_commit: " base "\n"))
                  "\n"
                  "Retry audit.\n")))))
-
-(defn header-card-ids [headers]
-  (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
-             (str/split (or (get headers "with_task_ids") "") #","))
-       (map #(some-> % str/trim))
-       (remove str/blank?)
-       distinct
-       vec))
 
 (defn restore-task-base!
   "Put the mail of every card the held handoff carried back in process, so
@@ -1547,6 +1596,9 @@
       (conflict! (str "The " (get headers "from") " has moved on past this card; Delete would discard later work. Use Retry: " task)))
     (when (not-empty (get headers "with_task_ids"))
       (conflict! (str "This handoff carries several cards; use Retry: " task)))
+    (when (some #(and (not= :history (handoff-state %)) (> (count (handoff-card-ids %)) 1))
+                (task-handoffs root task-id task))
+      (conflict! (str "Live mail carries this card together with other cards; use Retry: " task)))
     (when commit
       (snapshot-rejected! root task-id commit n))
     (rollback-to-base! wt headers)
@@ -2414,12 +2466,17 @@
     (mapv (fn [name] [(open-project-root root name) name]) (forge/read-open-projects root))
     [[(str root) ""]]))
 
-(defn attention-events [root]
-  (vec (mapcat (fn [[proot project]]
-                 (try
-                   (concat (approval-events proot project) (clarification-events proot project))
-                   (catch Exception _ [])))
-               (attention-roots root))))
+(defn attention-scan
+  "Events of every open project, plus the projects that failed to read."
+  [root]
+  (reduce (fn [acc [proot project]]
+            (try
+              (update acc :events into (concat (approval-events proot project)
+                                               (clarification-events proot project)))
+              (catch Exception _
+                (update acc :failed conj project))))
+          {:events [] :failed #{}}
+          (attention-roots root)))
 
 (defn event-key [{:keys [event id project]}]
   (str project "/" event "/" id))
@@ -2470,8 +2527,9 @@
   pending approval not notified before."
   [root]
   (when-let [cmd (conf-setting root "notify-cmd")]
-    (let [events (attention-events root)
-          seen (read-notified root)]
+    (let [{:keys [events failed]} (attention-scan root)
+          seen (read-notified root)
+          kept (filter #(contains? failed (first (str/split % #"/" 2))) seen)]
       (doseq [event events
               :when (not (contains? seen (event-key event)))]
         (try
@@ -2479,7 +2537,7 @@
           (catch Exception e
             (binding [*out* *err*]
               (println (str "notify-cmd failed: " (.getMessage e)))))))
-      (write-notified! root (map event-key events)))))
+      (write-notified! root (distinct (concat kept (map event-key events)))))))
 
 (defn start-notifier! [root]
   (future

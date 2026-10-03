@@ -222,11 +222,27 @@
     (fs/create-dirs (fs/path inbox "completed"))
     (fs/move file (fs/path inbox "completed" (fs/file-name file)) {:replace-existing true})))
 
+(defn role-worktree
+  "The current role's worktree from roles.tsv, else the git top level, so a
+  role running from a subdirectory still sees its own inbox."
+  []
+  (let [role (current-role)]
+    (or (some (fn [cols]
+                (let [wt (nth cols 2 nil)]
+                  (when (and role (= role (first cols)) (not (str/blank? wt)))
+                    wt)))
+              (role-rows))
+        (git-root)
+        (System/getProperty "user.dir"))))
+
+(defn role-inbox []
+  (fs/path (role-worktree) ".swarmforge" "handoffs" "inbox"))
+
 (defn exit-if-paused!
   "While the swarm drains, take no new mail: in-process work continues, notes
   from other roles are shown and archived, and otherwise print PAUSED."
   []
-  (let [inbox (fs/path (System/getProperty "user.dir") ".swarmforge" "handoffs" "inbox")]
+  (let [inbox (role-inbox)]
     (when (and (paused-at? (project-root)) (empty? (in-process-entries inbox)))
       (deliver-paused-notes! inbox)
       (println "PAUSED: the swarm is draining. Take no new work; stop until the operator resumes.")

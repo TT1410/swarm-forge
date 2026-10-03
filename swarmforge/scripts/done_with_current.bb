@@ -29,14 +29,18 @@
                     ["Send a git_handoff for each card (task: <card>; list more cards of the same commit in with_tasks:),"
                      "or run done_with_current.sh --drop to finish and leave them in this lane."])))
 
-(defn check-open-cards! [role-name drop?]
-  (when (handoff-lib/board-present?)
-    (let [labels (mapv handoff-lib/card-label (handoff-lib/open-card-ids role-name))]
-      (when (seq labels)
-        (if drop?
-          (doseq [label labels]
-            (println "DROPPED:" label))
-          (exit! 3 (open-cards-message labels)))))))
+(defn check-open-cards!
+  "With a board, refuse while forwarded cards still sit in this lane. Without
+  one there is no lane to strand them in, so only name them."
+  [role-name drop?]
+  (let [labels (mapv handoff-lib/card-label (handoff-lib/open-card-ids role-name))]
+    (when (seq labels)
+      (cond
+        drop? (doseq [label labels]
+                (println "DROPPED:" label))
+        (handoff-lib/board-present?) (exit! 3 (open-cards-message labels))
+        :else (doseq [label labels]
+                (println "NOT_HANDED_OFF:" label))))))
 
 (defn -main [& args]
   (try

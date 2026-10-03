@@ -406,8 +406,35 @@
 (defn mid-merge? [worktree-path]
   (zero? (:exit (git-in worktree-path "rev-parse" "-q" "--verify" "MERGE_HEAD"))))
 
-(defn commit-synced-roles! [ctx worktree-path]
-  (let [files (filterv #(fs/exists? (fs/path worktree-path %)) (master-tracked-role-files ctx))]
+(defn master-dirty-role-files
+  "Synced paths whose master copy differs from master's HEAD. Committing such a
+  copy into a role branch makes master's later merge of that branch abort with
+  \"local changes would be overwritten\"."
+  [ctx]
+  (let [result (apply git-in (:working-dir ctx) "diff" "--name-only" "HEAD" "--" synced-role-paths)]
+    (if (zero? (:exit result))
+      (set (remove str/blank? (str/split-lines (:out result))))
+      #{})))
+
+(defn use-master-head-for-dirty! [ctx worktree-path dirty]
+  (when (seq dirty)
+    (println (str yellow "Warning: uncommitted edits in the project checkout are not synced to "
+                  worktree-path "; it gets master's committed version of: "
+                  (str/join ", " (sort dirty))
+                  ". Commit them on master and restart to sync them." reset))
+    (if (mid-merge? worktree-path)
+      dirty
+      (let [head (str/trim (:out (git-in (:working-dir ctx) "rev-parse" "HEAD")))]
+        (set (remove #(zero? (:exit (git-in worktree-path "checkout" head "--" %))) dirty))))))
+
+(defn commit-synced-roles!
+  "Commit the synced prompts so a role's later merge of master is clean. Paths
+  with uncommitted master edits get master's HEAD version; one not in HEAD yet
+  is left out of the commit."
+  [ctx worktree-path]
+  (let [unsynced (or (use-master-head-for-dirty! ctx worktree-path (master-dirty-role-files ctx)) #{})
+        files (filterv #(and (fs/exists? (fs/path worktree-path %)) (not (unsynced %)))
+                       (master-tracked-role-files ctx))]
     (when (seq files)
       (apply git-in worktree-path "add" "--" files)
       (when-not (zero? (:exit (apply git-in worktree-path "diff" "--cached" "--quiet" "--" files)))
@@ -419,6 +446,21 @@
             (when-not (zero? (:exit result))
               (println (str yellow "Warning: could not commit synced role prompts in " worktree-path ": "
                             (str/trim (str (:err result) (:out result))) reset)))))))))
+
+(def shared-article-names ["engineering.prompt" "workflow.prompt" "handoffs.prompt"])
+
+(defn install-shared-articles!
+  "A pack installed by its `swarm` wrapper carries main's articles in
+  scripts/shared-articles. Put the shared ones where the constitution reads
+  articles; the pack's own project and local-* articles stay as they are."
+  [ctx]
+  (let [src-dir (fs/path (:script-dir ctx) "shared-articles")
+        dest-dir (fs/path (:swarm-forge-dir ctx) "constitution" "articles")]
+    (doseq [name shared-article-names
+            :let [src (fs/path src-dir name)]
+            :when (fs/regular-file? src)]
+      (fs/create-dirs dest-dir)
+      (fs/copy src (fs/path dest-dir name) {:replace-existing true}))))
 
 (defn sync-worktree-roles! [ctx worktree-path]
   (copy-tree-into! (:roles-dir ctx) (fs/path worktree-path "swarmforge" "roles"))
@@ -630,7 +672,7 @@
                                  (when initial-prompt? (str "-i " prompt)))
                   "grok" (str "grok --cwd " (sq (str role-worktree)) " "
                               (grok-permission-prefix row) (extra-args-prefix row)
-                              "--minimal --rules " prompt
+                              "--minimal --rules \"$(cat " (sq (str system-file)) ")\""
                               (when initial-prompt? (str " --verbatim " prompt)))))
       (= index 0)
       (str "; exit_code=$?; SWARMFORGE_TERMINAL_BACKEND=" (sq (:terminal-backend ctx))
@@ -973,6 +1015,12 @@
       (println (str yellow "Existing SwarmForge session found: " (:session row) ". Killing it..." reset))
       (sh "tmux" "-S" (:tmux-socket ctx) "kill-session" "-t" (:session row)))))
 
+(defn warn-if-paused! [ctx]
+  (when (ready-for-next-guard/paused-at? (:working-dir ctx))
+    (println (str yellow bold "Warning: Swarm is drained; run ./swarm resume" reset
+                  yellow " (roles take no new mail while " (ready-for-next-guard/pause-file (:working-dir ctx))
+                  " exists)." reset))))
+
 (defn announce-ready! [ctx]
   (println)
   (println (str green bold "SwarmForge is ready." reset))
@@ -983,6 +1031,7 @@
   (println)
   (println (str green "Tip: Write a handoff draft and run swarm_handoff.sh while the swarm is running." reset))
   (println (str green "Tip: Reattach manually with 'tmux -S " (:tmux-socket ctx) " attach-session -t <session-name>' if needed." reset))
+  (warn-if-paused! ctx)
   (println))
 
 (defn launch-roles! [ctx]
@@ -1012,6 +1061,7 @@
     (initialize-git-repo! ctx)
     (ensure-runtime-git-excludes! ctx)
     (install-commit-msg-hook! ctx)
+    (install-shared-articles! ctx)
     (let [ctx (prepare-ctx ctx)]
       (check-backend-dependencies! ctx)
       (prepare-workspace! ctx)
@@ -1116,6 +1166,7 @@
     (initialize-git-repo! ctx)
     (ensure-runtime-git-excludes! ctx)
     (install-commit-msg-hook! ctx)
+    (install-shared-articles! ctx)
     (let [ctx (prepare-ctx ctx)]
       (check-backend-dependencies! ctx)
       (prepare-workspace! ctx)
@@ -1188,6 +1239,11 @@
 (defn test-dashboard-port! [root]
   (println (or (dashboard-port (context root)) "")))
 
+(defn require-swarm-root! [root]
+  (when-not (fs/regular-file? (fs/path root ".swarmforge" "roles.tsv"))
+    (fail! (str red "Error:" reset " No swarm at " root
+                ": .swarmforge/roles.tsv is missing. Run this from the project folder (or pass it) after ./swarm has started there."))))
+
 (defn print-drain-status! [root]
   (let [state (ready-for-next-guard/drain-state root)]
     (println (str "PAUSED: " (if (:paused state) "yes" "no")))
@@ -1229,15 +1285,23 @@
       (doseq [cols (ready-for-next-guard/role-rows-at (:working-dir ctx))]
         (wake-role-with-mail! socket cols)))))
 
+(defn test-install-shared-articles! [root]
+  (install-shared-articles! (assoc (context root) :script-dir (fs/path root "swarmforge" "scripts"))))
+
 (defn test-sync-worktree-roles! [root worktree-path]
   (sync-worktree-roles! (context root) (fs/absolutize worktree-path)))
 
 (defn -main [& args]
   (case (first args)
-    "drain" (run-drain! (str (fs/absolutize (or (second args) (System/getProperty "user.dir")))))
+    "drain" (let [root (str (fs/absolutize (or (second args) (System/getProperty "user.dir"))))]
+              (require-swarm-root! root)
+              (run-drain! root))
     "resume" (run-resume! (or (second args) (System/getProperty "user.dir")))
-    "status" (print-drain-status! (str (fs/absolutize (or (second args) (System/getProperty "user.dir")))))
+    "status" (let [root (str (fs/absolutize (or (second args) (System/getProperty "user.dir"))))]
+               (require-swarm-root! root)
+               (print-drain-status! root))
     "--test-sync-worktree-roles" (test-sync-worktree-roles! (second args) (nth args 2))
+    "--test-install-shared-articles" (test-install-shared-articles! (second args))
     "--test-parse" (test-parse! (or (second args) (System/getProperty "user.dir")))
     "--test-required-helpers" (test-required-helpers!)
     "--test-launch-plan" (test-launch-plan! (or (second args) (System/getProperty "user.dir")))

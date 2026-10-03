@@ -174,10 +174,15 @@
   (fs/path (System/getProperty "user.dir") ".swarmforge" "handoffs" "inbox" "completed"))
 
 (defn recent-completed-bases
-  "task_base_commit of the latest completed mails, newest first."
-  []
+  "task_base_commit of the latest completed mails that may hold work for the
+  card: merge-only copies, notes without a card, and mail of the card itself.
+  Newest first."
+  [card-ids]
   (->> (concat (handoff-files (completed-dir))
                (mapcat handoff-files (batch-dirs (completed-dir))))
+       (filter (fn [file]
+                 (or (not (handoff-lib/card-mail? file))
+                     (some (set card-ids) (handoff-lib/mail-card-ids file)))))
        (keep (fn [file]
                (when-let [base (not-empty (header-field file "task_base_commit"))]
                  [(or (header-field file "completed_at") "") base])))
@@ -316,6 +321,15 @@
       (assoc filled "task_id" (get filled "task"))
       filled)))
 
+(defn with-first-card-mail-task
+  "Names the first card mail of current work, skipping merge-only copies."
+  [headers]
+  (let [file (first (filter handoff-lib/card-mail? (in-process-task-files)))
+        id (or (card-id-for (header-field file "task")) (first (handoff-lib/mail-card-ids file)))]
+    (cond-> headers
+      id (assoc "task_id" id)
+      (not-empty (header-field file "task")) (assoc "task" (header-field file "task")))))
+
 (defn with-current-work-task [headers sender]
   (if-let [id (card-id-for (get headers "task"))]
     (assoc headers "task_id" id)
@@ -323,7 +337,7 @@
       (cond
         (= 1 (count open)) (assoc headers "task_id" (first open))
         (seq open) (assoc headers ::open-cards open)
-        (some handoff-lib/card-mail? (in-process-task-files)) (with-in-process-task headers)
+        (some handoff-lib/card-mail? (in-process-task-files)) (with-first-card-mail-task headers)
         :else (with-board-or-lane-task headers sender)))))
 
 (defn with-card-name [headers]
@@ -452,15 +466,15 @@
   "Card work committed before the current base (for example while the role
   merged a merge-only copy or read a note) or before the batch closed: diff
   against the base of a recently completed mail."
-  [sha]
+  [sha card-ids]
   (some (fn [base]
           (when (and (not= base sha) (commit-descends-from? base sha))
             (not-empty (changed-files base sha))))
-        (recent-completed-bases)))
+        (recent-completed-bases card-ids)))
 
-(defn commit-artifacts [sha base]
+(defn commit-artifacts [sha base card-ids]
   (or (not-empty (if base (changed-files base sha) (own-commit-files sha)))
-      (earlier-work-files sha)
+      (earlier-work-files sha card-ids)
       []))
 
 (defn state-dir []
@@ -680,7 +694,8 @@
         lanes (set (cons sender recipients))
         lane (:lane task)]
     (cond-> []
-      (and (seq current) (not (current id)) (not (and task (lanes lane))))
+      (and (seq current) (not (current id))
+           (not (and task (or (lanes lane) (and return? (= "done" lane))))))
       (conj (format "Handoff task_id '%s' does not match current in-process task_id '%s'%s."
                     id (str/join "', '" (sort current))
                     (if (board-present?)
@@ -726,7 +741,8 @@
         (into (mapcat #(card-state-errors % context) (handoff-card-ids headers))))))))
 
 (def active-states
-  [["pending approvals" (fn [] [(fs/path (state-dir) "pending_approval")])]
+  [["outbox" (fn [] [(fs/path (state-dir) "outbox")])]
+   ["pending approvals" (fn [] [(fs/path (state-dir) "pending_approval")])]
    ["sent" (fn []
              (concat [(fs/path (state-dir) "sent")]
                      (for [line (str/split-lines (slurp (str (roles-file))))
@@ -760,11 +776,12 @@
 
 (defn same-active-handoff? [sender recipients headers canonical-commit path]
   (let [h (header-map path)
-        task-id (or (not-empty (get headers "task_id")) (get headers "task"))
-        other-id (or (not-empty (get h "task_id")) (get h "task"))]
+        cards (set (handoff-card-ids headers))
+        other-cards (set (cons (or (not-empty (get h "task_id")) (get h "task"))
+                               (handoff-lib/split-list (get h "with_task_ids"))))]
     (and (= sender (get h "from"))
          (= (set recipients) (set (str/split (or (get h "to") "") #",")))
-         (= task-id other-id)
+         (some cards other-cards)
          (= canonical-commit (get h "commit")))))
 
 (defn duplicate-errors [sender recipients headers canonical-commit]
@@ -1098,6 +1115,10 @@
         (when (and (= "git_handoff" (get headers "type"))
                    (inbound-non-forwarding?))
           (exit! 1 "Current inbound handoff is non-forwarding; do not send a git_handoff."))
+        (when-let [card-commit (and (= "git_handoff" (get headers "type"))
+                                    (not-empty (str/trim (or (get headers "card_commit") ""))))]
+          (when-not (resolve-commit card-commit)
+            (exit! 1 (str "Header 'card_commit' must name a commit; got '" card-commit "'."))))
         (when (and (= "git_handoff" (get headers "type"))
                    (not (commit-on-sender-branch? sha)))
           (exit! 1 (str "Result commit " sha " is not reachable from sender worktree")))
@@ -1115,7 +1136,7 @@
             (error-report draft all-errors)
             (System/exit 2))
           (let [files (when (= "git_handoff" (get headers "type"))
-                        (commit-artifacts sha (task-base headers)))]
+                        (commit-artifacts sha (task-base headers) (handoff-card-ids headers)))]
             (when (and (= "git_handoff" (get headers "type")) (empty? files))
               (exit! 1 (str "Result commit " sha " has no changed files")))
             (let [submit! #(write-handoffs! {:headers headers

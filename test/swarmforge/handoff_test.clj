@@ -2007,10 +2007,10 @@
     (setup-project! root)
     (board! root [["Card A" "sender" "card-a"]])
     (let [copy-base (head-sha root)]
-      (put-handoff! root "completed" "00_copy.handoff"
-                    {:id "copy" :from "receiver" :to "sender" :priority "00" :type "git_handoff"
-                     :task "other" :commit copy-base :task-base-commit copy-base
-                     :completed-at "2026-10-03T00:00:00Z" :body "merge"})
+      (write-file (handoff-path root "completed" "00_copy.handoff")
+                  (str "id: copy\nfrom: receiver\nto: sender\npriority: 00\ntype: git_handoff\n"
+                       "task: other\ncommit: " copy-base "\ntask_base_commit: " copy-base "\n"
+                       "non-forwarding: true\ncompleted_at: 2026-10-03T00:00:00Z\n\nmerge\n"))
       (commit-file! root "fix.md" "fix\n")
       (put-handoff! root "in_process" "50_a.handoff"
                     {:id "a" :from "(New Task)" :to "sender" :priority "50" :type "note"
@@ -2037,6 +2037,79 @@
       (is (zero? (:exit result)) (:err result))
       (is (= "c.md" (header queued "artifacts")))
       (is (nil? (header queued "task_base_commit"))))))
+
+(deftest swarm-handoff-returns-a-done-card-while-holding-other-work
+  ;; Given QA works on X1 and finds a defect in Done card D40
+  ;; When QA returns D40 to coder
+  ;; Then the return is queued and X1 stays current work
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["D40" "done" "d40"] ["X1" "QA" "x1"]])
+    (put-handoff! root "in_process" "50_x1.handoff"
+                  {:id "x1m" :from "hardender" :to "QA" :recipient "QA" :priority "50"
+                   :type "git_handoff" :task-id "x1" :task "X1" :commit (head-sha root)
+                   :task-base-commit (head-sha root)})
+    (commit-work! root)
+    (let [result (submit-draft! root "QA" "type: git_handoff\nto: coder\npriority: 50\ntask: D40\nreturn: true\n")]
+      (is (zero? (:exit result)) (:err result))
+      (is (= "d40" (header (queued-path (:out result)) "task_id")))
+      (is (fs/exists? (handoff-path root "in_process" "50_x1.handoff"))))))
+
+(deftest done-with-current-names-unhanded-batch-cards-without-a-board
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root {"sender" "batch" "receiver" "task"})
+    (put-batch! root [{:task "Card A" :id "card-a"} {:task "Card B" :id "card-b"}])
+    (commit-work! root)
+    (let [handoff (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card A\n")
+          done (run {:dir root :env {"SWARMFORGE_ROLE" "sender"} :ok? false} (script "done_with_current.sh"))]
+      (is (zero? (:exit handoff)) (:err handoff))
+      (is (zero? (:exit done)))
+      (is (str/includes? (:out done) "NOT_HANDED_OFF: card-b")))))
+
+(deftest swarm-handoff-names-a-card-commit-that-does-not-resolve
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (board! root [["Mine" "sender" "mine"]])
+    (commit-work! root)
+    (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Mine\ncard_commit: nosuch\n")]
+      (is (not (zero? (:exit result))))
+      (is (str/includes? (:err result) "card_commit")))))
+
+(deftest swarm-handoff-refuses-a-card-already-sent-with-the-same-commit
+  ;; Given Card B already went out with Card A in one handoff
+  ;; When Card B is drafted again for the same commit and recipient
+  ;; Then the helper refuses the duplicate
+  (let [root (tmp-dir)]
+    (batch-board-project! root)
+    (let [first-send (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card A\nwith_tasks: Card B\n")
+          again (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card B\n")]
+      (is (zero? (:exit first-send)) (:err first-send))
+      (is (not (zero? (:exit again))))
+      (is (str/includes? (str (:out again) (:err again)) "Duplicate")))))
+
+(deftest swarm-handoff-keeps-refusing-an-unchanged-card-after-another-card
+  ;; Given card A was finished earlier and card B changed nothing
+  ;; When card B is handed off
+  ;; Then A's files are not listed for B and the empty handoff is refused
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (board! root [["Card A" "sender" "card-a"] ["Card B" "sender" "card-b"]])
+    (let [a-base (head-sha root)]
+      (commit-file! root "a.md" "card a\n")
+      (put-handoff! root "completed" "50_a.handoff"
+                    {:id "a" :from "(New Task)" :to "sender" :priority "50" :type "note"
+                     :task-id "card-a" :task "Card A" :task-base-commit a-base
+                     :completed-at "2026-10-03T00:00:00Z" :body "A"})
+      (put-handoff! root "in_process" "50_b.handoff"
+                    {:id "b" :from "(New Task)" :to "sender" :priority "50" :type "note"
+                     :task-id "card-b" :task "Card B" :task-base-commit (head-sha root) :body "B"})
+      (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card B\n")]
+        (is (not (zero? (:exit result))))
+        (is (str/includes? (:err result) "no changed files"))))))
 
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.handoff-test)]
