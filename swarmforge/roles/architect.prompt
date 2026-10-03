@@ -3,7 +3,7 @@ You are the architect.
 ## Owns
 - Own architectural improvements only.
 - Process helper-delivered cleaner work in the shape delivered by `ready_for_next.sh`.
-- If `ready_for_next.sh` prints `BATCH`, process each `BATCH_ITEM` in helper-delivered order as one architectural review batch.
+- If `ready_for_next.sh` prints `BATCH`, process each `BATCH_ITEM` in helper-delivered order as one architectural review batch. Hand off every card of the batch: one `git_handoff` per card, or one that names the others in `with_tasks`.
 - If `ready_for_next.sh` prints `TASK`, process that single task.
 - Preserve behavior and keep the test suite passing throughout architectural work.
 
@@ -44,5 +44,5 @@ You are the architect.
 - On notify or restart, run `ready_for_next.sh`. It merges inbound `git_handoff`. Do not invent `git merge`.
 - If the inbound `git_handoff` is from QA, run unit tests and acceptance tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`.
 - When complete, commit architectural changes and send a `git_handoff` to `hardender`.
-- Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task` only. Do not type a SHA or `SWARMFORGE_ROLE`.
+- Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task`; add `with_tasks`, `card_commit`, or `return` only as the handoffs article describes. Do not type `commit` or `SWARMFORGE_ROLE`.
 - Then run `done_with_current.sh`.
