@@ -1920,6 +1920,17 @@
       (is (nil? (header queued "non-forwarding")))
       (is (= 1 (count (outbox-handoffs root)))))))
 
+(deftest swarm-handoff-refuses-a-return-to-several-roles
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["D40" "done" "d40"]])
+    (commit-work! root)
+    (let [result (submit-draft! root "QA" "type: git_handoff\nto: coder,cleaner\npriority: 50\ntask: D40\nreturn: true\n")]
+      (is (= 2 (:exit result)))
+      (is (str/includes? (:err result) "exactly one role"))
+      (is (empty? (outbox-handoffs root))))))
+
 (deftest swarm-handoff-refuses-done-card-without-return
   (let [root (tmp-dir)]
     (init-repo! root)

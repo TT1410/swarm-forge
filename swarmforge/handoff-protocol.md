@@ -544,8 +544,10 @@ On restart, an agent should run `ready_for_next.sh` and follow its output.
 
 Tmux wake-ups are intentionally lossy. They only prompt an idle agent to check
 its durable inbox. A busy agent can ignore them. The daemon repeats the wake-up
-every two minutes for a role that has startable mail in `inbox/new/`, nothing
-in `inbox/in_process/`, and no undelivered outbound handoff. A newer merge-only
+for a role that has startable mail in `inbox/new/`, nothing in
+`inbox/in_process/`, and no undelivered outbound handoff: first after two
+minutes, then backing off to 4, 8 and at most 16 minutes until the role takes
+work or new mail arrives. A newer merge-only
 copy from the same sender replaces unread older copies whose commits it
 contains. After `done_with_current.sh`
 prints `MAIL_WAITING`, the agent runs `ready_for_next.sh` to accept the next
