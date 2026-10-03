@@ -165,19 +165,92 @@
                        " characters (got " (count name) ")."))
     :else (safe-paths/require-task-name! name)))
 
-(defn create-task! [root name text card-type]
-  (require-task-name! name)
-  (let [card-type (if (str/blank? card-type) (card-type/default-type root) card-type)]
-    (when-not (card-type/known? root card-type)
-      (throw (ex-info (str "Unknown type: " card-type) {:http-status 400})))
-    (let [task-id (new-task-id name)]
-      (pack-board root "create"
-                  "--name" name
-                  "--type" card-type
-                  "--waiting"
-                  "--task-id" task-id
-                  "--text" (or text ""))
-      task-id)))
+(defn normalize-level [level]
+  (let [text (some-> level str str/trim str/lower-case not-empty)]
+    (cond
+      (nil? text) nil
+      (handoff-lib/level-priority text) text
+      :else (bad-request! (str "Level must be critical, high, normal or low; got '" level "'.")))))
+
+(defn resolve-card-ids
+  "Card names or ids -> task ids of cards on the board."
+  [root refs]
+  (let [board (board-tasks root)]
+    (->> refs
+         (map #(some-> % str str/trim))
+         (remove str/blank?)
+         (mapv (fn [ref]
+                 (or (some #(when (or (= ref (:id %)) (= ref (:name %))) (:id %)) board)
+                     (bad-request! (str "Unknown card: " ref)))))
+         distinct
+         vec)))
+
+(defn blocker-graph [root]
+  (into {}
+        (for [task (board-tasks root)]
+          [(:id task) (vec (:blocked_by (handoff-lib/read-card-meta root (:id task))))])))
+
+(defn reaches? [graph from to]
+  (loop [todo [from] seen #{}]
+    (when-let [id (first todo)]
+      (cond
+        (= id to) true
+        (contains? seen id) (recur (rest todo) seen)
+        :else (recur (concat (rest todo) (get graph id)) (conj seen id))))))
+
+(defn check-blockers! [root task-id blockers]
+  (when (some #{task-id} blockers)
+    (bad-request! "A card cannot block itself."))
+  (let [graph (assoc (blocker-graph root) task-id blockers)
+        names (into {} (map (juxt :id :name) (board-tasks root)))]
+    (doseq [b blockers]
+      (when (reaches? graph b task-id)
+        (bad-request! (str "That would make a cycle: " (get names b b)
+                           " already waits for " (get names task-id task-id) "."))))))
+
+(defn set-card-links!
+  "Blockers hold a waiting card: the lieutenant cannot start it until they
+  are done. Related cards are only shown. Both are kept by task id."
+  [root task-id {:keys [blocked_by related]}]
+  (let [blockers (resolve-card-ids root blocked_by)
+        related (vec (remove #{task-id} (resolve-card-ids root related)))]
+    (check-blockers! root task-id blockers)
+    (handoff-lib/update-card-meta!
+     root task-id
+     (fn [meta]
+       (cond-> (dissoc meta :blocked_by :related)
+         (seq blockers) (assoc :blocked_by blockers)
+         (seq related) (assoc :related related))))))
+
+(defn create-task!
+  ([root name text card-type] (create-task! root name text card-type {}))
+  ([root name text card-type {:keys [level blocked_by related]}]
+   (require-task-name! name)
+   (let [card-type (if (str/blank? card-type) (card-type/default-type root) card-type)
+         level (normalize-level level)
+         blockers (resolve-card-ids root blocked_by)
+         related (resolve-card-ids root related)]
+     (when-not (card-type/known? root card-type)
+       (throw (ex-info (str "Unknown type: " card-type) {:http-status 400})))
+     (let [task-id (new-task-id name)]
+       ;; The meta comes first, so the card never shows without its level.
+       (handoff-lib/write-card-meta!
+        root task-id
+        (cond-> {}
+          level (assoc :level level)
+          (seq blockers) (assoc :blocked_by blockers)
+          (seq related) (assoc :related related)))
+       (try
+         (pack-board root "create"
+                     "--name" name
+                     "--type" card-type
+                     "--waiting"
+                     "--task-id" task-id
+                     "--text" (or text ""))
+         (catch Exception e
+           (handoff-lib/delete-card-meta! root task-id)
+           (throw e)))
+       task-id))))
 
 (defn lt-task-type? [card-type]
   (contains? #{"LT" "lt"} (or card-type "")))
@@ -194,7 +267,7 @@
                         (str "Notify: new-task LT " project "/" name "\n" (or text "")))))
 
 (defn post-tasks [root body]
-  (let [{:keys [name text project type]} (json/parse-string (or body "{}") true)
+  (let [{:keys [name text project type] :as opts} (json/parse-string (or body "{}") true)
         dest (if (and (forge/forge? root) (not (str/blank? project)))
                (str (forge/project-dir root project))
                root)]
@@ -205,7 +278,8 @@
         (when (forge/forge? root)
           (notify-lt-task! root dest name text))
         (do
-          (create-task! dest name text type)
+          (create-task! dest name text type
+                        (select-keys opts [:level :blocked_by :related]))
           (notify-new-task! root dest name)))
       (json-ok)
       (catch Exception e
@@ -260,6 +334,17 @@
 (defn conflict! [message]
   (throw (ex-info message {:http-status 409})))
 
+(defn outbox-mail? [path]
+  (= "outbox" (str (fs/file-name (fs/parent path)))))
+
+(defn held-handoff?
+  "A git handoff the paused daemon keeps in its outbox. It stays there until
+  Resume, so it can be changed like mail in an inbox."
+  [root path]
+  (and (outbox-mail? path)
+       (ready-for-next-guard/paused-at? root)
+       (= "git_handoff" (get-in (parse-message path) [:headers "type"]))))
+
 (defn queued-card-handoffs
   "The card's handoffs still waiting in an inbox/new or outbox.
   Refuses with 409 when any handoff of the card is in process or waits for approval."
@@ -278,7 +363,7 @@
       (conflict! (str "Card is waiting for approval; use Attention: " name)))
     (when (some #(> (count (handoff-task-ids %)) 1) (:queued by-state))
       (conflict! (str "Card travels in a batch that carries other cards too: " name)))
-    (when (some #(= "outbox" (str (fs/file-name (fs/parent %)))) (:queued by-state))
+    (when (some #(and (outbox-mail? %) (not (held-handoff? root %))) (:queued by-state))
       (conflict! (str "Card is being delivered; try again in a moment: " name)))
     {:task task :queued (vec (:queued by-state))}))
 
@@ -352,13 +437,74 @@
         {:keys [queued]} (queued-card-handoffs root name)]
     (when (empty? queued)
       (conflict! (str "Card has no queued handoff to reorder: " name)))
-    (doseq [path queued]
+    (doseq [path queued
+            ;; merge-only copies keep 00 so every role merges before new work
+            :when (not= "true" (get-in (parse-message path) [:headers "non-forwarding"]))]
       (reprioritize-handoff! path priority name))))
+
+(defn set-task-level!
+  "Set a card's level. Its forward mail still waiting in an inbox (or held
+  in an outbox while paused) is reordered now; a card in progress gets the
+  level from its next handoff. A batch that carries other cards keeps its
+  priority."
+  [root name level]
+  (let [level (or (normalize-level level) (bad-request! "Missing level"))
+        task (or (task-by-name root name)
+                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))
+        priority (handoff-lib/level-priority level)]
+    (when (= "done" (:lane task))
+      (conflict! (str "Card is done: " name)))
+    (handoff-lib/update-card-meta! root (:id task) #(assoc % :level level))
+    (doseq [path (task-handoffs root (:id task) name)
+            :let [headers (:headers (parse-message path))]
+            :when (and (= :queued (handoff-state path))
+                       (or (not (outbox-mail? path)) (held-handoff? root path))
+                       (not= "true" (get headers "non-forwarding"))
+                       (= 1 (count (handoff-task-ids path))))]
+      (reprioritize-handoff! path priority name))))
+
+(defn post-task-links [root body]
+  (let [{:keys [name project] :as opts} (json/parse-string (or body "{}") true)]
+    (json-action #(let [dest (project-dest root project)
+                        task (or (task-by-name dest name)
+                                 (throw (ex-info (str "Unknown task name: " name) {:http-status 404})))]
+                    (set-card-links! dest (:id task) opts)))))
+
+(defn swarm-command!
+  "Run a swarmforge.bb subcommand (drain, resume, daemon) for root, the same
+  way ./swarm does."
+  [root command what]
+  (let [result (sh "bb" (str (fs/path script-dir "swarmforge.bb")) command (str root))]
+    (when-not (zero? (:exit result))
+      (throw (ex-info (str/trim (str "Could not " what ": " (:err result) (:out result)))
+                      {:http-status 500})))))
+
+(def restart-lock (Object.))
+
+(defn restart-daemon! [root]
+  ;; Two overlapping restarts could stop, stop, start, start and leave two
+  ;; daemons delivering the same outboxes.
+  (locking restart-lock
+    (swarm-command! root "daemon" "restart the handoff daemon")))
+
+(defn post-restart-daemon [root body]
+  (let [{:keys [project]} (json/parse-string (or body "{}") true)]
+    (json-action #(restart-daemon! (project-dest root project)))))
+
+(defn post-pause [root body]
+  (let [{:keys [project]} (json/parse-string (or body "{}") true)]
+    (json-action #(swarm-command! (project-dest root project) "drain" "pause the swarm"))))
+
+(defn post-resume [root body]
+  (let [{:keys [project]} (json/parse-string (or body "{}") true)]
+    (json-action #(swarm-command! (project-dest root project) "resume" "resume the swarm"))))
 
 (defn post-dequeue-task [root body]
   (let [{:keys [name project]} (json/parse-string (or body "{}") true)]
     (json-action #(dequeue-task! (project-dest root project) name))))
 
 (defn post-task-priority [root body]
-  (let [{:keys [name priority project]} (json/parse-string (or body "{}") true)]
-    (json-action #(reprioritize-task! (project-dest root project) name priority))))
+  (let [{:keys [name priority level project]} (json/parse-string (or body "{}") true)]
+    (json-action #(if (str/blank? level)
+                    (reprioritize-task! (project-dest root project) name priority)
+                    (set-task-level! (project-dest root project) name level)))))

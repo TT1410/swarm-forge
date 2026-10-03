@@ -123,10 +123,51 @@
     (assoc headers "commit" (worktree-head))
     headers))
 
+(defn cards-level-priority
+  "The priority the levels of a forward git handoff's cards give it: the
+  most urgent card's. Nil for other mail, merge-only copies and cards
+  without a level."
+  [headers]
+  (when (and (= "git_handoff" (get headers "type"))
+             (not= "true" (get headers "non-forwarding")))
+    (let [root (project-root)
+          ids (->> (concat [(get headers "task_id")]
+                           (str/split (or (get headers "with_task_ids") "") #",")
+                           (parsed-task-id-list (get headers "batch_task_ids")))
+                   (map #(some-> % str/trim))
+                   (remove str/blank?)
+                   distinct)]
+      (first (sort (keep #(handoff-lib/level-priority
+                           (:level (handoff-lib/read-card-meta root %)))
+                         ids))))))
+
+(defn level-may-set-priority?
+  "50 or no priority on a forward git handoff leaves the priority to the
+  cards' levels."
+  [headers]
+  (and (= "git_handoff" (get headers "type"))
+       (not= "true" (get headers "non-forwarding"))
+       (let [typed (some-> (get headers "priority") str/trim)]
+         (or (contains? #{nil "" "50"} typed) (not (valid-priority? typed))))))
+
+(defn card-level-priority
+  "The level priority, when the draft leaves the default 50 or no priority.
+  Agents type 50 by habit, so 50 or no priority means \"the card decides\".
+  Any other number is the role's deliberate choice (an architect's 00
+  follow-up, QA's urgent 10) and wins."
+  [headers]
+  (when (level-may-set-priority? headers)
+    (cards-level-priority headers)))
+
 (defn fill-priority [headers]
-  (if (valid-priority? (get headers "priority"))
-    headers
-    (assoc headers "priority" "50")))
+  ;; Whether the card's level decides is judged from the draft, so the audit
+  ;; survives a level being set, changed or cleared before the resubmit.
+  (assoc (if-let [level-priority (card-level-priority headers)]
+           (assoc headers "priority" level-priority)
+           (if (valid-priority? (get headers "priority"))
+             headers
+             (assoc headers "priority" "50")))
+         :swarmforge/level-decides (level-may-set-priority? headers)))
 
 (defn fill-card-type [headers sender]
   (if-not (= "git_handoff" (get headers "type"))

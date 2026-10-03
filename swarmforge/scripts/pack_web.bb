@@ -18,6 +18,10 @@
 (load-file (str (fs/path script-dir "forge.bb")))
 (load-file (str (fs/path script-dir "card_type.bb")))
 (load-file (str (fs/path script-dir "ready_for_next_guard.bb")))
+(try
+  (require 'handoff-lib)
+  (catch Exception _
+    (load-file (str (fs/path script-dir "handoff_lib.bb")))))
 
 (def usage-text
   (str "Usage:\n"
@@ -88,7 +92,8 @@
          handoff-files batch-dirs in-process-dir allowed-doc?
          delete-approval! retry-approval! parse-message pane-status-for role-rows
          recorded-pane html-escape worktree-for-role project-query master-role
-         session-alive? work-entry file-view header-batch-task-ids)
+         session-alive? work-entry file-view header-batch-task-ids
+         handoff-dirs comma-list tmux-socket session-name)
 
 (defn usage []
   (binding [*out* *err*]
@@ -512,6 +517,7 @@
     (= "/api/tasks/rename" uri) (post-rename-task root body)
     (= "/api/tasks/dequeue" uri) (post-dequeue-task root body)
     (= "/api/tasks/priority" uri) (post-task-priority root body)
+    (= "/api/tasks/links" uri) (post-task-links root body)
     (= "/api/tasks/delete" uri)
     (post-delete-task (scoped-approval-root root uri body) body)
     (= "/api/tasks/retry" uri)
@@ -519,6 +525,9 @@
     (= "/api/chat" uri) (post-chat root body)
     (= "/api/teardown" uri) (teardown-response root body)
     (= "/api/board/allow" uri) (post-board-allow root body)
+    (= "/api/daemon/restart" uri) (post-restart-daemon root body)
+    (= "/api/pause" uri) (post-pause root body)
+    (= "/api/resume" uri) (post-resume root body)
     (str/starts-with? (or uri "") "/api/approvals/")
     (post-approval (scoped-approval-root root uri body) uri body)
     (str/starts-with? (or uri "") "/api/clarifications/")

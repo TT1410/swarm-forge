@@ -205,9 +205,9 @@
 
 (defn work-in-flight
   ([root] (work-in-flight root (role-heats root)))
-  ([root heats]
-   (let [socket (tmux-socket root)
-         all-tasks (tasks root)]
+  ([root heats] (work-in-flight root heats (tasks root)))
+  ([root heats all-tasks]
+   (let [socket (tmux-socket root)]
      (mapv #(work-row-for-role root socket % all-tasks heats) (role-rows root)))))
 
 (defn executing-task? [root task]

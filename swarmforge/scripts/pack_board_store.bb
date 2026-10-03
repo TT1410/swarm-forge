@@ -178,7 +178,11 @@
     (let [now (timestamp)
           stamp (str/replace now #"[^0-9A-Za-z]" "")
           body (or text "")
-          filename (str "50_" stamp "_from_New_Task_to_" (slug-role lane) ".handoff")
+          ;; The card's level, set on the dashboard, orders its first mail too.
+          priority (or (handoff-lib/level-priority
+                        (:level (handoff-lib/read-card-meta root task-id)))
+                       "50")
+          filename (str priority "_" stamp "_from_New_Task_to_" (slug-role lane) ".handoff")
           outbox (fs/path root ".swarmforge" "handoffs" "outbox")
           file (fs/path outbox filename)]
       (fs/create-dirs outbox)
@@ -186,7 +190,7 @@
             (str "id: " stamp "_from_New_Task\n"
                  "from: (New Task)\n"
                  "to: " lane "\n"
-                 "priority: 50\n"
+                 "priority: " priority "\n"
                  "type: note\n"
                  "task_id: " task-id "\n"
                  "task: " name "\n"
@@ -304,6 +308,7 @@
           (write-rows file (filterv #(not= (str/lower-case name)
                                            (str/lower-case (or (row-name %) "")))
                                     rows))
+          (handoff-lib/delete-card-meta! root (:id (card-type/parse-row root (find-task rows name))))
           (fs/delete-if-exists (task-body-file root name))
           (write-recut! root name))))))
 

@@ -132,10 +132,30 @@
         :else
         (exit! 1 (str "create refused: " reason))))))
 
+(defn open-blocker-names
+  "Names of the cards that still block this one: blockers set on the
+  dashboard (Links) that are not done. A deleted blocker no longer holds it."
+  [root name]
+  (let [rows (map #(card-type/parse-row root %) (read-rows (tasks-file root)))
+        row (some #(when (= (str/lower-case (or name "")) (str/lower-case (or (:name %) ""))) %) rows)
+        by-id (into {} (map (juxt :id identity) rows))]
+    (when row
+      (->> (:blocked_by (handoff-lib/read-card-meta root (:id row)))
+           (keep #(get by-id %))
+           (remove #(= "done" (:lane %)))
+           (mapv :name)))))
+
 (defn require-start-when-stuck! [opts]
   (when (waiting-start? opts)
     (when-let [reason (stuck-create-reason (resolve-root opts))]
-      (exit! 1 (str "start refused: " reason)))))
+      (exit! 1 (str "start refused: " reason)))
+    ;; Only the lieutenant's start waits for blockers. The daemon moves a
+    ;; card after its mail is already delivered; refusing then would leave
+    ;; the mail retrying and the board wrong.
+    (when-let [blockers (and (= "lieutenant" (:caller opts))
+                             (seq (open-blocker-names (resolve-root opts) (task-name opts))))]
+      (exit! 1 (str "start refused: blocked by " (str/join ", " blockers)
+                    "; start it when they are done, or ask the operator to change its links")))))
 
 (defn set-lane! [opts lane]
   (let [act (if (= "done" lane) "done" "move")]

@@ -1,8 +1,24 @@
-let stateLoading = false;
+let stateLoading = null;
+let stateAgain = false;
 
-async function loadState() {
-  if (stateLoading) return;
-  stateLoading = true;
+// One /api/state request at a time: on a slow server, polls and actions
+// queue a single follow-up instead of piling requests up.
+function loadState() {
+  if (stateLoading) {
+    stateAgain = true;
+    return stateLoading;
+  }
+  stateLoading = loadStateOnce().finally(() => {
+    stateLoading = null;
+    if (stateAgain) {
+      stateAgain = false;
+      loadState();
+    }
+  });
+  return stateLoading;
+}
+
+async function loadStateOnce() {
   try {
     const res = await fetch("/api/state", {cache: "no-store"});
     if (!res.ok) throw new Error("offline");
@@ -10,13 +26,12 @@ async function loadState() {
     lastState = data;
     $("error").textContent = "";
     renderChrome(data);
+    renderBanners(data);
     renderBoard(data);
     renderAttention(data);
     renderChat(data);
   } catch (_) {
     $("error").textContent = "Swarm disconnected";
-  } finally {
-    stateLoading = false;
   }
 }
 
@@ -40,9 +55,12 @@ function selectedType() {
 function updateNewTaskNote() {
   const note = $("nt-note");
   if (!note) return;
-  note.textContent = selectedType() === "LT"
+  const lt = selectedType() === "LT";
+  note.textContent = lt
     ? "Sends the name and text to the lieutenant. Does not create a card."
-    : "Creates a waiting card. The lieutenant starts it when the plan is ready.";
+    : "Creates a waiting card. The lieutenant starts it when the plan is ready. The level sets its priority: Critical runs first, Low last.";
+  const cardOnly = $("nt-card-options");
+  if (cardOnly) cardOnly.style.display = lt ? "none" : "";
 }
 
 function resetTypeRadios() {
@@ -85,6 +103,8 @@ function openNewTask(project) {
   taskProject = project || "";
   fillTaskTypes(taskProject);
   resetTypeRadios();
+  $("nt-level").value = "normal";
+  fillCardPicker($("nt-blockers"), taskProject, null, []);
   updateNewTaskNote();
   $("new-task-layer").classList.add("open");
   $("nt-name").focus();
@@ -239,6 +259,23 @@ async function submitNewTask() {
   }
   const payload = {name, text, type: selectedType()};
   if (taskProject) payload.project = taskProject;
+  if (payload.type !== "LT") {
+    payload.level = $("nt-level").value;
+    const blockers = pickedNames($("nt-blockers"));
+    if (blockers.length) payload.blocked_by = blockers;
+  }
+  if (newTaskInFlight) return;
+  newTaskInFlight = true;
+  try {
+    await sendNewTask(payload);
+  } finally {
+    newTaskInFlight = false;
+  }
+}
+
+let newTaskInFlight = false;
+
+async function sendNewTask(payload) {
   const res = await fetch("/api/tasks", {
     method: "POST",
     headers: {"Content-Type": "application/json"},
@@ -496,6 +533,8 @@ $("btn-open-project").onclick = (event) => {
 };
 $("nt-cancel").onclick = closeNewTask;
 $("nt-ok").onclick = submitNewTask;
+$("ln-ok").onclick = submitLinks;
+$("ln-cancel").onclick = closeLinks;
 $("rt-delete").onclick = deleteRejected;
 $("rt-retry").onclick = retryRejected;
 $("rt-accept").onclick = acceptRejected;
@@ -525,5 +564,18 @@ document.addEventListener("click", (event) => {
                     "agent-" + (project ? project + "-" : "") + role);
   }
 });
+const layerClosers = {
+  "links-layer": closeLinks,
+  "clar-layer": closeClarification,
+  "new-task-layer": closeNewTask,
+  "new-project-layer": closeNewProject,
+  "reject-layer": closeRejectDialog
+};
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  const layer = document.querySelector(".float-layer.open");
+  if (layer && layerClosers[layer.id]) layerClosers[layer.id]();
+});
+setupClarificationDialog();
 loadState();
 setInterval(loadState, 2000);

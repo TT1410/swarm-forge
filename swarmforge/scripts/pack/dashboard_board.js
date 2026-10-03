@@ -33,6 +33,23 @@ function cardEl(task, opts) {
   const auditValue = document.createElement("span");
   auditValue.textContent = String(task.audit_count || 0);
   audit.append(auditIcon, auditValue);
+  if (task.level && task.level !== "normal") {
+    const level = document.createElement("span");
+    level.className = "pill pill-level level-" + task.level;
+    level.dataset.level = task.level;
+    level.textContent = task.level.charAt(0).toUpperCase() + task.level.slice(1);
+    level.title = "Level " + task.level + ": its handoffs take this priority";
+    meta.appendChild(level);
+  }
+  const links = cardLinks(task);
+  if (links) meta.appendChild(links);
+  if (task.return_count) {
+    const returns = document.createElement("span");
+    returns.className = "return-count";
+    returns.title = "Returned for rework " + task.return_count + " time(s)";
+    returns.textContent = "\u21a9" + task.return_count;
+    meta.appendChild(returns);
+  }
   meta.appendChild(audit);
   if (!task.merging && task.lane !== "done") meta.appendChild(cardMenu(task));
   const title = document.createElement("div");
@@ -42,6 +59,12 @@ function cardEl(task, opts) {
   name.textContent = task.name;
   title.appendChild(name);
   card.append(meta, title);
+  if (task.stuck) {
+    card.classList.add("card-stuck");
+    card.dataset.stuck = task.stuck;
+    card.title = task.status || "";
+  }
+  if (task.returned_from) card.dataset.returnedFrom = task.returned_from;
   if (task.queued) {
     card.classList.add("card-queued");
     card.setAttribute("data-queued", "true");
@@ -63,6 +86,13 @@ function cardEl(task, opts) {
     } else {
       status.textContent = task.status || "";
     }
+    if (task.returned_from) {
+      const back = document.createElement("span");
+      back.className = "status-returned";
+      back.textContent = "\u21a9 Returned by " + displayName(task.returned_from);
+      back.title = displayName(task.returned_from) + " sent this card back for rework";
+      status.prepend(back, document.createTextNode(task.status ? " \u00b7 " : ""));
+    }
     card.appendChild(status);
   }
   card.onclick = () => {
@@ -71,6 +101,33 @@ function cardEl(task, opts) {
     openGrowable("/task?" + qs, "task-" + (task.name || ""));
   };
   return card;
+}
+
+function linkSummary(task) {
+  const parts = [];
+  if ((task.blockers || []).length) {
+    parts.push("Blocked by: " + task.blockers.map((b) => b.name + (b.done ? " (done)" : "")).join(", "));
+  }
+  if ((task.blocks || []).length) parts.push("Blocks: " + task.blocks.join(", "));
+  if ((task.related || []).length) parts.push("Related: " + task.related.join(", "));
+  return parts.join("\n");
+}
+
+// The card's height is fixed, so links show as one mark in the meta row;
+// its title lists them and Links... edits them.
+function cardLinks(task) {
+  const summary = linkSummary(task);
+  if (!summary) return null;
+  const mark = document.createElement("span");
+  mark.className = "card-links" + (task.blocked ? " blocked" : "");
+  mark.dataset.links = summary;
+  if ((task.blockers || []).length) mark.dataset.blockers = task.blockers.map((b) => b.name).join(",");
+  if ((task.blocks || []).length) mark.dataset.blocks = task.blocks.join(",");
+  if ((task.related || []).length) mark.dataset.related = task.related.join(",");
+  mark.textContent = task.blocked ? "\u26d4" : "\ud83d\udd17";
+  mark.title = summary;
+  mark.setAttribute("aria-label", summary);
+  return mark;
 }
 
 const openCardMenus = new Set();
@@ -106,6 +163,8 @@ function cardMenu(task) {
   const list = document.createElement("div");
   list.className = "menu-list";
   list.appendChild(cardMenuItem("Rename\u2026", () => renameTask(task)));
+  list.appendChild(cardMenuItem("Change level\u2026", () => changeLevel(task)));
+  list.appendChild(cardMenuItem("Links\u2026", () => openLinks(task)));
   if (task.queued) {
     list.appendChild(cardMenuItem("Change priority\u2026", () => reprioritizeTask(task)));
     list.appendChild(cardMenuItem("Remove from queue", () => dequeueTask(task)));
@@ -169,6 +228,71 @@ async function reprioritizeTask(task) {
     task.queue_priority || "50");
   if (value === null || !value.trim()) return;
   await postTaskAction("/api/tasks/priority", taskPayload(task, {priority: value.trim()}));
+}
+
+async function changeLevel(task) {
+  const value = prompt("Level for " + task.name + ": critical, high, normal or low", task.level || "normal");
+  if (value === null || !value.trim()) return;
+  await postTaskAction("/api/tasks/priority", taskPayload(task, {level: value.trim().toLowerCase()}));
+}
+
+let linksTask = null;
+
+function tasksFor(project) {
+  const data = lastState || {};
+  if (!project) return data.tasks || [];
+  const proj = (data.projects || []).find((p) => p.name === project);
+  return (proj && proj.tasks) || [];
+}
+
+function fillCardPicker(select, project, except, chosen) {
+  select.replaceChildren();
+  const seen = new Set();
+  tasksFor(project).forEach((t) => {
+    if (t.merging || t.name === except || seen.has(t.name)) return;
+    seen.add(t.name);
+    const opt = document.createElement("option");
+    opt.value = t.name;
+    opt.textContent = t.name + (t.lane === "done" ? " (done)" : " \u00b7 " + displayName(t.lane));
+    opt.selected = (chosen || []).indexOf(t.name) >= 0;
+    select.appendChild(opt);
+  });
+}
+
+function pickedNames(select) {
+  return [...select.selectedOptions].map((opt) => opt.value);
+}
+
+function openLinks(task) {
+  linksTask = task;
+  $("ln-title").textContent = "Links of " + task.name;
+  fillCardPicker($("ln-blockers"), task.project, task.name, (task.blockers || []).map((b) => b.name));
+  fillCardPicker($("ln-related"), task.project, task.name, task.related || []);
+  $("links-layer").classList.add("open");
+}
+
+const linksInFlight = new Set();
+
+async function submitLinks() {
+  if (!linksTask) return;
+  const task = linksTask;
+  const key = cardMenuKey(task);
+  if (linksInFlight.has(key)) return;
+  linksInFlight.add(key);
+  try {
+    const ok = await postTaskAction("/api/tasks/links", taskPayload(task, {
+      blocked_by: pickedNames($("ln-blockers")),
+      related: pickedNames($("ln-related"))
+    }));
+    if (ok && linksTask === task) closeLinks();
+  } finally {
+    linksInFlight.delete(key);
+  }
+}
+
+function closeLinks() {
+  linksTask = null;
+  $("links-layer").classList.remove("open");
 }
 
 async function dequeueTask(task) {
@@ -342,17 +466,132 @@ function projectBand(proj) {
     cl.textContent = "Open";
     cl.onclick = () => openProject(proj.name);
   }
-  header.append(title, state, nt, cl);
+  const open = (proj.state || "open") === "open";
+  if (open) header.append(title, state, pauseButton(proj, proj.name), nt, cl);
+  else header.append(title, state, nt, cl);
   const cols = document.createElement("div");
   cols.className = "columns";
+  if (proj.drain && proj.drain.paused) cols.classList.add("paused-board");
   const lanes = proj.lanes || [];
   lanes.forEach((lane) => cols.appendChild(columnEl(lane, proj.tasks || [], proj.name, proj.role_heats)));
-  band.append(header, cols);
+  band.append(header, ...(open ? swarmBanners(proj, proj.name) : []), cols);
   return band;
+}
+
+const swarmInFlight = new Set();
+
+async function postSwarm(path, project, failure) {
+  const key = path + "|" + (project || "");
+  if (swarmInFlight.has(key)) return;
+  swarmInFlight.add(key);
+  try {
+    const payload = project ? {project} : {};
+    const res = await fetch(path, {
+      method: "POST",
+      headers: {"Content-Type": "application/json"},
+      body: JSON.stringify(payload)
+    });
+    if (!res.ok) {
+      let msg = failure;
+      try { msg = (await res.json()).error || msg; } catch (_) {}
+      alert(msg);
+    }
+  } catch (_) {
+    alert(failure);
+  } finally {
+    swarmInFlight.delete(key);
+  }
+  loadState();
+}
+
+function pauseSwarm(project) {
+  if (!confirm("Pause " + (project || "the swarm") + "? Roles finish their current turn, then no task moves until Resume.")) return;
+  postSwarm("/api/pause", project, "Could not pause the swarm");
+}
+
+function resumeSwarm(project) {
+  postSwarm("/api/resume", project, "Could not resume the swarm");
+}
+
+function pauseButton(state, project, btn) {
+  const paused = !!(state.drain && state.drain.paused);
+  btn = btn || document.createElement("button");
+  btn.type = "button";
+  btn.className = paused ? "btn btn-primary btn-sm" : "btn btn-sm";
+  btn.textContent = paused ? "Resume" : "Pause";
+  btn.dataset.pauseToggle = paused ? "resume" : "pause";
+  btn.onclick = () => (paused ? resumeSwarm(project) : pauseSwarm(project));
+  return btn;
+}
+
+function bannerEl(kind, title, detail, action) {
+  const box = document.createElement("div");
+  box.className = "swarm-banner banner-" + kind;
+  box.dataset.banner = kind;
+  const head = document.createElement("strong");
+  head.textContent = title;
+  const text = document.createElement("span");
+  text.className = "detail";
+  text.textContent = detail;
+  box.append(head, text);
+  if (action) box.appendChild(action);
+  return box;
+}
+
+function swarmBanners(state, project) {
+  const out = [];
+  const live = (state.work_in_flight || []).some((row) => row.state !== "no_session");
+  if (state.daemon && !state.daemon.running && live) {
+    const restart = document.createElement("button");
+    restart.type = "button";
+    restart.className = "btn btn-sm btn-danger";
+    restart.textContent = "Restart daemon";
+    restart.onclick = () => postSwarm("/api/daemon/restart", project, "Could not restart the handoff daemon");
+    out.push(bannerEl("daemon", "HANDOFFS STOPPED",
+      "The handoff daemon is not running, so no handoff is delivered and no task moves.", restart));
+  }
+  const drain = state.drain || {};
+  if (drain.paused) {
+    const busy = (drain.busy || []).map((row) => displayName(row.role));
+    const parts = [busy.length ? "Still finishing the current turn: " + busy.join(", ") + "."
+                               : "Nothing is in progress."];
+    if (drain.held) parts.push(drain.held + " handoff(s) held until Resume.");
+    parts.push("No task moves until Resume.");
+    const resume = document.createElement("button");
+    resume.type = "button";
+    resume.className = "btn btn-sm btn-primary";
+    resume.textContent = "Resume";
+    resume.onclick = () => resumeSwarm(project);
+    out.push(bannerEl("paused", "\u23f8 PAUSED", parts.join(" "), resume));
+  }
+  return out;
+}
+
+function renderBanners(data) {
+  const box = $("swarm-banners");
+  const toggle = $("btn-pause");
+  if (data.forge) {
+    box.replaceChildren();
+    box.dataset.sig = "";
+    toggle.style.display = "none";
+    return;
+  }
+  // Rebuild banners only when they change, and update the Pause button in
+  // place, so a click or keyboard focus survives the poll.
+  const banners = swarmBanners(data, "");
+  const sig = banners.map((el) => el.textContent).join("|");
+  if (box.dataset.sig !== sig) {
+    box.replaceChildren(...banners);
+    box.dataset.sig = sig;
+  }
+  pauseButton(data, "", toggle);
+  toggle.style.display = "";
+  toggle.className = toggle.className.replace(" btn-sm", "");
 }
 
 function renderBoard(data) {
   const board = document.querySelector(".board");
+  board.classList.toggle("paused-board", !data.forge && !!(data.drain && data.drain.paused));
   if (data.forge) {
     board.replaceChildren();
     (data.projects || []).forEach((proj) => board.appendChild(projectBand(proj)));

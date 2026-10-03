@@ -383,6 +383,8 @@
         _ (setup-pack! root)
         _ (create-task root "HTW" "specifier")
         _ (create-task root "Holy Hand Grenade" "specifier")
+        _ (queue-inbox-mail! root ["specifier"] "specifier" {:from "(New Task)" :task "HTW"})
+        _ (queue-inbox-mail! root ["specifier"] "specifier" {:from "(New Task)" :task "Holy Hand Grenade"})
         result (pack-web-env root {} "--test-status-pane" (str root)
                              "I'm specifying HTW.\nesc to interrupt · 1s\n")
         state (json/parse-string (:out result) true)
@@ -405,6 +407,7 @@
         _ (create-task root "Holy Hand Grenade" "coder")
         _ (put-in-process! root roles "coder"
                            {:from "specifier" :task "Holy Hand Grenade"})
+        _ (queue-inbox-mail! root roles "coder" {:from "specifier" :task "HTW"})
         result (pack-web-env root {} "--test-status-pane" (str root)
                              "I'm merging the grenade.\nesc to interrupt · 1s\n")
         state (json/parse-string (:out result) true)

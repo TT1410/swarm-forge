@@ -79,6 +79,9 @@
   (reject-if (not (role-name? role))
              (str "Invalid role '" role "' on line " line-no
                   ": use letters, digits, and hyphens, beginning with a letter"))
+  (reject-if (#{"todo" "waiting" "done"} (str/lower-case role))
+             (str "Invalid role '" role "' on line " line-no
+                  ": waiting, todo and done are board columns, not roles"))
   (reject-if (contains? roles role)
              (str "Duplicate role '" role "' in " (:config-file ctx)))
   (reject-if (and (not (special-worktree? worktree)) (contains? worktrees worktree))

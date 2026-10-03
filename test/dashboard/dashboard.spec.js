@@ -283,6 +283,42 @@ test.describe("pack dashboard", () => {
     }
   });
 
+  test("New Task level and blockers show on the waiting card and can be changed", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      // A pending clarification refuses new cards; this test is about cards.
+      fs.rmSync(path.join(local.root, "projects/htw/.swarmforge/dashboard/clarifications/pending/clar-1.request"));
+      await page.goto(local.url);
+      await page.locator(".project-header button", { hasText: "New Task" }).click();
+      await expect(page.locator("#nt-card-options")).toBeHidden();
+      await page.locator("input[name=nt-type][value=utility]").check();
+      await expect(page.locator("#nt-card-options")).toBeVisible();
+      await page.locator("#nt-name").fill("Later");
+      await page.locator("#nt-level").selectOption("high");
+      await page.locator("#nt-blockers").selectOption("HTW");
+      await page.locator("#nt-ok").click();
+      const card = page.locator('.col[data-lane="waiting"] .card[data-task-name="Later"]');
+      await expect(card.locator("[data-level=\"high\"]")).toHaveText("High");
+      await expect(card.locator(".card-links")).toHaveAttribute("data-blockers", "HTW");
+      await expect(card.locator(".card-links")).toHaveClass(/blocked/);
+      await expect(page.locator('.card[data-task-name="HTW"] .card-links')).toHaveAttribute("data-blocks", "Later");
+      await card.locator(".card-menu-btn").click();
+      page.once("dialog", (dialog) => dialog.accept("low"));
+      await card.locator(".card-menu .menu-list button", { hasText: "Change level" }).click();
+      await expect(card.locator("[data-level=\"low\"]")).toHaveText("Low");
+      await card.locator(".card-menu-btn").click();
+      await card.locator(".card-menu .menu-list button", { hasText: "Links" }).click();
+      await expect(page.locator("#links-layer")).toBeVisible();
+      await expect(page.locator("#ln-blockers option:checked")).toHaveText(["HTW \u00b7 Specifier"]);
+      await page.locator("#ln-blockers").selectOption([]);
+      await page.locator("#ln-ok").click();
+      await expect(page.locator("#links-layer")).toBeHidden();
+      await expect(card.locator(".card-links")).toHaveCount(0);
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
   test("Clarification answer can also go to other roles", async ({ page }) => {
     let posted = null;
     await page.route("**/api/clarifications/**", async (route) => {
@@ -293,7 +329,7 @@ test.describe("pack dashboard", () => {
     const row = page.locator("#attention-clarifications .att-row");
     await expect(row.locator("[data-also-role]")).toHaveCount(1);
     await row.locator("[data-also-role=\"coder\"]").check();
-    await row.locator("input[type=text]").fill("Yes, all 20.");
+    await row.locator("textarea.clar-answer").fill("Yes, all 20.");
     await row.locator("button", { hasText: "Submit" }).click();
     await expect.poll(() => posted).not.toBeNull();
     expect(posted).toEqual({ text: "Yes, all 20.", also: ["coder"] });
@@ -443,7 +479,7 @@ test.describe("pack dashboard", () => {
     await expect(page.locator("#attention-clarifications .att-project")).toHaveText("htw");
   });
 
-  test("Attention truncates long text instead of scrolling", async ({ page }) => {
+  test("Attention shows a long question in four lines and expands it", async ({ page }) => {
     const request = path.join(
       handle.root,
       "projects/htw/.swarmforge/dashboard/clarifications/pending/clar-long.request"
@@ -451,19 +487,20 @@ test.describe("pack dashboard", () => {
     writeFile(
       request,
       "id: clar-long\nstatus: pending\nrole: specifier\ncreated_at: 2026-01-01T00:00:00Z\n\n" +
-        "This deliberately long clarification keeps going so the compact Attention bar " +
-        "must shorten it with an ellipsis while the full-window control remains visible.\n"
+        "Line one\nLine two\nLine three\nLine four\nLine five\nLine six\n"
     );
     try {
-      await page.setViewportSize({ width: 760, height: 700 });
       await page.goto(handle.url);
-      const row = page.locator("#attention-clarifications .att-row", { hasText: "deliberately long" });
-      const summary = row.locator(".att-summary");
-      await expect(page.locator("#attention")).toHaveCSS("overflow", "hidden");
-      await expect(row).toHaveCSS("flex-wrap", "nowrap");
-      await expect(summary).toHaveCSS("text-overflow", "ellipsis");
+      const row = page.locator("#attention-clarifications .att-row", { hasText: "Line one" });
+      const body = row.locator(".clar-body");
+      await expect(body).toHaveClass(/clamped/);
+      await expect(body).toHaveCSS("white-space", "pre-wrap");
+      expect(await body.evaluate((el) => el.scrollHeight > el.clientHeight)).toBe(true);
+      await row.locator("button.clar-toggle").click();
+      await expect(body).not.toHaveClass(/clamped/);
+      await expect(row.locator("button.clar-toggle")).toHaveText("Collapse");
       await expect(row.locator(".att-expand")).toBeVisible();
-      expect(await summary.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+      await expect(page.locator("#attention")).toHaveCSS("overflow-y", "auto");
     } finally {
       fs.unlinkSync(request);
     }
@@ -522,39 +559,132 @@ test.describe("pack dashboard", () => {
     }
   });
 
-  test("Clarification expand icon OK posts the answer and closes attention", async ({ page, context }) => {
+  test("Clarification expand icon opens an in-page dialog that posts the answer", async ({ page }) => {
     const local = await startDashboard();
     try {
       await page.goto(local.url);
-      await expect(page.locator(
-        "#attention-clarifications .att-expand + input[type=text]"
-      )).toHaveCount(1);
-      const popupPromise = context.waitForEvent("page");
       await page.locator("#attention-clarifications .att-expand").click();
-      const clar = await popupPromise;
-      await clar.waitForLoadState("domcontentloaded");
-      await expect(clar.locator("#clar-request")).toContainText("Does the bat drop to any of 20 rooms?");
-      await clar.locator("#clar-response").fill("Yes, any of the 20 rooms.");
-      await clar.locator("#clar-ok").click();
+      await expect(page.locator("#clar-layer")).toBeVisible();
+      await expect(page.locator("#clar-request")).toContainText("Does the bat drop to any of 20 rooms?");
+      await page.locator("#clar-response").fill("Yes, any of the 20 rooms.");
+      await expect(page.locator("#attention-clarifications textarea.clar-answer"))
+        .toHaveValue("Yes, any of the 20 rooms.");
+      await page.locator("#clar-ok").click();
       await expect(page.locator("#attention-clarifications .att-row")).toHaveCount(0);
+      await expect(page.locator("#clar-layer")).toBeHidden();
     } finally {
       await stopDashboard(local);
     }
   });
 
-  test("Clarification Dismiss closes the window and leaves attention", async ({ page, context }) => {
+  test("Clarification dialog Close and Escape keep the draft in attention", async ({ page }) => {
     const local = await startDashboard();
     try {
       await page.goto(local.url);
-      const popupPromise = context.waitForEvent("page");
       await page.locator("#attention-clarifications .att-expand").click();
-      const clar = await popupPromise;
-      await clar.waitForLoadState("domcontentloaded");
-      await clar.locator("#clar-response").fill("draft only");
-      await clar.locator("#clar-dismiss").click();
-      await expect(clar.isClosed()).toBeTruthy();
+      await page.locator("#clar-response").fill("draft only");
+      await page.locator("#clar-cancel").click();
+      await expect(page.locator("#clar-layer")).toBeHidden();
       await expect(page.locator("#attention-clarifications .att-row")).toHaveCount(1);
       await expect(page.locator("#attention-clarifications [data-clar-id]")).toHaveValue("draft only");
+      await page.locator("#attention-clarifications .att-expand").click();
+      await expect(page.locator("#clar-response")).toHaveValue("draft only");
+      await page.keyboard.press("Escape");
+      await expect(page.locator("#clar-layer")).toBeHidden();
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("Clarification keeps the question's line breaks and takes a multi-line answer", async ({ page }) => {
+    const local = await startDashboard();
+    let posted = null;
+    try {
+      writeFile(
+        path.join(local.root, "projects/htw/.swarmforge/dashboard/clarifications/pending/clar-1.request"),
+        "id: clar-1\nstatus: pending\nrole: specifier\ncreated_at: 2026-01-01T00:00:00Z\n\n" +
+          "Two questions:\n1. Does the bat drop to any of 20 rooms?\n2. Can it drop into a pit?\n"
+      );
+      await page.route("**/api/clarifications/**", async (route) => {
+        posted = JSON.parse(route.request().postData() || "{}");
+        await route.fulfill({ status: 200, contentType: "application/json", body: "{\"ok\":true}" });
+      });
+      await page.goto(local.url);
+      const body = page.locator("#attention-clarifications .clar-body");
+      await expect(body).toHaveCSS("white-space", "pre-wrap");
+      expect(await body.evaluate((el) => el.textContent)).toContain("questions:\n1. Does");
+      const answer = page.locator("#attention-clarifications textarea.clar-answer");
+      await answer.fill("Yes.");
+      await answer.press("Enter");
+      await answer.type("No pits.");
+      expect(posted).toBeNull();
+      await answer.press("Control+Enter");
+      await expect.poll(() => posted).not.toBeNull();
+      expect(posted).toEqual({ text: "Yes.\nNo pits." });
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("a stuck card is red and a returned card shows who returned it", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      const project = path.join(local.root, "projects/htw");
+      writeFile(
+        path.join(project, ".swarmforge/board/tasks.tsv"),
+        "HTW\tspecifier\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000000Z-htw\t0\tQA\n" +
+          "Orphan\tcoder\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000001Z-orphan\t0\tutility\n" +
+          "Rework\tcoder\t2026-01-01T00:00:00Z\t2026-01-01T00:00:00Z\t20260101T000002Z-rework\t0\tutility\n"
+      );
+      writeFile(
+        path.join(project, ".worktrees/coder/.swarmforge/handoffs/inbox/completed/50_orphan.handoff"),
+        "from: specifier\nto: coder\npriority: 50\ntype: git_handoff\ntask_id: 20260101T000001Z-orphan\ntask: Orphan\n\npayload\n"
+      );
+      writeFile(
+        path.join(project, ".worktrees/coder/.swarmforge/handoffs/inbox/new/50_rework.handoff"),
+        "id: 20260101T000005000000Z_1_from_specifier\nfrom: specifier\nto: coder\npriority: 50\n" +
+          "type: git_handoff\ntask_id: 20260101T000002Z-rework\ntask: Rework\nreturn: true\n\npayload\n"
+      );
+      await page.goto(local.url);
+      const orphan = page.locator(".card[data-task-name=\"Orphan\"]");
+      await expect(orphan).toHaveAttribute("data-stuck", "no_mail");
+      await expect(orphan).toHaveClass(/card-stuck/);
+      await expect(orphan.locator(".status")).toContainText("No mail");
+      const rework = page.locator(".card[data-task-name=\"Rework\"]");
+      await expect(rework).toHaveAttribute("data-returned-from", "specifier");
+      await expect(rework.locator(".return-count")).toHaveText("\u21a91");
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("a paused project shows a banner and a Resume button", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      writeFile(path.join(local.root, "projects/htw/.swarmforge/paused"), "now\n");
+      await page.goto(local.url);
+      const banner = page.locator(".project-band [data-banner=\"paused\"]");
+      await expect(banner).toContainText("PAUSED");
+      await expect(banner).toContainText("No task moves until Resume.");
+      await expect(page.locator(".project-header [data-pause-toggle=\"resume\"]")).toHaveText("Resume");
+      await expect(page.locator(".project-band .columns")).toHaveClass(/paused-board/);
+      fs.rmSync(path.join(local.root, "projects/htw/.swarmforge/paused"));
+      await expect(banner).toHaveCount(0);
+      await expect(page.locator(".project-header [data-pause-toggle=\"pause\"]")).toHaveText("Pause");
+    } finally {
+      await stopDashboard(local);
+    }
+  });
+
+  test("Pause on a project band pauses that project", async ({ page }) => {
+    const local = await startDashboard();
+    try {
+      await page.goto(local.url);
+      page.once("dialog", (dialog) => dialog.accept());
+      await page.locator(".project-header [data-pause-toggle=\"pause\"]").click();
+      const pause = path.join(local.root, "projects/htw/.swarmforge/paused");
+      await expect.poll(() => fs.existsSync(pause)).toBe(true);
+      await expect(page.locator(".project-band [data-banner=\"paused\"]")).toBeVisible();
     } finally {
       await stopDashboard(local);
     }
@@ -776,6 +906,43 @@ test.describe("mocked dashboard buttons", () => {
     }));
     expect(statusGeometry.height).toBe(statusGeometry.lineHeight * 3);
     expect(statusGeometry.scrollHeight).toBeGreaterThan(statusGeometry.height);
+  });
+
+  test("a stopped handoff daemon shows a banner whose Restart posts the project", async ({ page }) => {
+    let posted = null;
+    await page.route("**/api/state", (route) => {
+      route.fulfill({ json: mockForgeState([], { projects: [{
+        name: "htw",
+        open: true,
+        state: "open",
+        card_types: ["utility"],
+        lanes: ["waiting", "specifier", "coder", "done"],
+        tasks: [],
+        role_heats: {},
+        drain: { paused: false, drained: true, busy: [], held: 0 },
+        daemon: { running: false },
+        work_in_flight: [{ role: "coder", state: "idle", tasks: [], batch_tasks: [] }]
+      }] }) });
+    });
+    await page.route("**/api/daemon/restart", async (route) => {
+      posted = JSON.parse(route.request().postData() || "{}");
+      await route.fulfill({ status: 200, contentType: "application/json", body: "{\"ok\":true}" });
+    });
+    await page.goto(handle.url);
+    const banner = page.locator(".project-band [data-banner=\"daemon\"]");
+    await expect(banner).toContainText("HANDOFFS STOPPED");
+    await expect(page.locator("#btn-pause")).toBeHidden();
+    await banner.locator("button", { hasText: "Restart daemon" }).click();
+    await expect.poll(() => posted).toEqual({ project: "htw" });
+  });
+
+  test("Escape closes the New Task dialog", async ({ page }) => {
+    await page.route("**/api/state", (route) => route.fulfill({ json: mockForgeState([]) }));
+    await page.goto(handle.url);
+    await page.locator(".project-header button", { hasText: "New Task" }).click();
+    await expect(page.locator("#new-task-layer")).toHaveClass(/open/);
+    await page.keyboard.press("Escape");
+    await expect(page.locator("#new-task-layer")).not.toHaveClass(/open/);
   });
 
   test("New Task OK parks the card in waiting", async ({ page }) => {

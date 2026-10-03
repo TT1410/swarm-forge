@@ -63,6 +63,13 @@
     (fs/delete-if-exists path))
   (remove-empty-sender-audit-dir! sender))
 
+(defn audited-priority
+  "A priority the card's level decides is not the role's choice, so a level
+  set, changed or cleared on the dashboard between audit and resubmit keeps
+  the audit."
+  [headers]
+  (if (:swarmforge/level-decides headers) "level" (get headers "priority")))
+
 (defn invocation-fingerprint [draft sender headers]
   {:sender sender
    :task-id (audit-task-id headers)
@@ -70,7 +77,7 @@
    :batch-task-ids (audit-task-ids headers)
    :type (get headers "type")
    :recipients (vec (str/split (or (get headers "to") "") #"," -1))
-   :priority (get headers "priority")
+   :priority (audited-priority headers)
    :task (get headers "task")
    :commit (get headers "commit")
    :task-base-commit (or (current-task-base) "")
@@ -94,7 +101,7 @@
    :batch-task-ids (audit-task-ids headers)
    :type (get headers "type")
    :recipients (vec recipients)
-   :priority (get headers "priority")
+   :priority (audited-priority headers)
    :task (get headers "task")
    :commit canonical-commit
    :artifacts (vec artifacts)

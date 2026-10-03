@@ -5,22 +5,43 @@
 (load-file (str (fs/path script-dir "pack_web_heat.bb")))
 (load-file (str (fs/path script-dir "pack_web_chat.bb")))
 
+(defn daemon-pid-file [root]
+  (fs/path root ".swarmforge" "daemon" "handoffd.pid"))
+
+(defn pid-alive? [pid]
+  (boolean
+   (try
+     (let [handle (java.lang.ProcessHandle/of (Long/parseLong pid))]
+       (and (.isPresent handle) (.isAlive (.get handle))))
+     (catch Exception _ false))))
+
+(defn daemon-state
+  "Whether the handoff daemon runs. Without it no handoff leaves an outbox,
+  so the whole swarm stands still."
+  [root]
+  (let [file (daemon-pid-file root)
+        pid (when (fs/regular-file? file) (str/trim (slurp (str file))))]
+    {:running (and (not (str/blank? pid)) (pid-alive? pid))}))
+
 (defn dashboard-state [root]
+  ;; The card list reads every mail header, so build it once per poll.
   (let [master (master-role root)
-        heats (role-heats root)]
+        heats (role-heats root)
+        all-tasks (tasks root)]
     {:master_role master
      :master_display (display-name-for-role master)
      :card_types (card-type/card-types root)
      :lanes (display-lanes root)
-     :tasks (tasks root)
+     :tasks all-tasks
      :role_heats heats
      :approvals (approvals root)
      :delivery_failures (delivery-failures root)
      :board_allows (board-allows root)
-     :work_in_flight (work-in-flight root heats)
+     :work_in_flight (work-in-flight root heats all-tasks)
      :chat (list-chat root)
      :clarifications (list-clarifications root)
-     :drain (ready-for-next-guard/drain-state root)}))
+     :drain (ready-for-next-guard/drain-state root)
+     :daemon (daemon-state root)}))
 
 (defn tagged [project items]
   (mapv #(assoc % :project project) items))
@@ -31,17 +52,19 @@
 (defn project-slice [forge name entry]
   (let [root (open-project-root forge name)]
     (try
-      (let [heats (role-heats root)]
+      (let [heats (role-heats root)
+            all-tasks (tasks root)]
         {:name name
          :open (= "open" (:state entry))
          :state (:state entry)
          :error (:error entry)
          :card_types (card-type/card-types root)
          :lanes (display-lanes root)
-         :tasks (tagged name (tasks root))
+         :tasks (tagged name all-tasks)
          :role_heats heats
          :drain (ready-for-next-guard/drain-state root)
-         :work_in_flight (tagged name (work-in-flight root heats))})
+         :daemon (daemon-state root)
+         :work_in_flight (tagged name (work-in-flight root heats all-tasks))})
       (catch Exception _
         {:name name
          :open (= "open" (:state entry))

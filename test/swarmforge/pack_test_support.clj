@@ -239,6 +239,17 @@
         (when batch-task-ids (str "batch_task_ids: " (pr-str batch-task-ids) "\n"))
         "\n"
         "payload\n")))
+(defn queue-inbox-mail! [root roles role {:keys [from task]}]
+  (write-file
+   (fs/path (pack-worktree root roles role) ".swarmforge/handoffs/inbox/new"
+            (str "50_" (str/replace task #"[^A-Za-z0-9]+" "-") "_from_" from "_to_" role ".handoff"))
+   (str "from: " from "\n"
+        "to: " role "\n"
+        "priority: 50\n"
+        "type: git_handoff\n"
+        "task: " task "\n"
+        "\n"
+        "payload\n")))
 (defn web-state [root]
   (json/parse-string (:out (pack-web root true "--test-state" (str root))) true))
 (defn task-card [root name]

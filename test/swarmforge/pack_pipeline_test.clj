@@ -954,3 +954,91 @@
       (is (= ["00_b_from_QA_to_coder.handoff"] (inbox-names root roles "coder")))
       (finally
         (stop-tmux! sock)))))
+
+(deftest paused-swarm-holds-git-handoffs-until-resume
+  ;; Given coder hands a card to cleaner while the swarm is paused
+  ;; When handoffd polls
+  ;; Then the handoff waits in the outbox and the card stays in coder,
+  ;; drain reports it held, and after resume it is delivered
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner"]
+        sock (do (setup-pack! root roles)
+                 (create-task root "HTW" "coder")
+                 (queue-handoff! root {:from "coder" :to "cleaner" :task "HTW"})
+                 (start-tmux! root roles))]
+    (try
+      (write-file (fs/path root ".swarmforge/paused") "now\n")
+      (handoffd-once root)
+      (is (= 1 (count (handoff-names (fs/path root ".swarmforge/handoffs/outbox")))))
+      (is (= "coder" (task-lane root "HTW")))
+      (is (= [] (inbox-names root roles "cleaner")))
+      (let [state (web-state root)
+            drain (:drain state)]
+        (is (= true (:paused drain)))
+        (is (= true (:drained drain)) "held mail does not keep the swarm from draining")
+        (is (= 1 (:held drain)))
+        (is (= "Handoff held until Resume" (:status (task-card root "HTW")))))
+      (fs/delete (fs/path root ".swarmforge/paused"))
+      (handoffd-once root)
+      (is (= "cleaner" (task-lane root "HTW")))
+      (is (seq (inbox-names root roles "cleaner")))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest paused-swarm-still-delivers-notes
+  ;; Given a note from coder to cleaner while the swarm is paused
+  ;; When handoffd polls
+  ;; Then the note is delivered; only git handoffs wait
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner"]
+        sock (do (setup-pack! root roles)
+                 (start-tmux! root roles))]
+    (try
+      (write-file (fs/path root ".swarmforge/handoffs/outbox/50_note_from_coder_to_cleaner.handoff")
+                  "id: n1_from_coder\nfrom: coder\nto: cleaner\npriority: 50\ntype: note\n\nheads up\n")
+      (write-file (fs/path root ".swarmforge/paused") "now\n")
+      (handoffd-once root)
+      (is (= [] (handoff-names (fs/path root ".swarmforge/handoffs/outbox"))))
+      (is (= 1 (count (inbox-names root roles "cleaner"))))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest paused-swarm-still-sends-specifier-handoffs-to-approval
+  ;; Given the specifier hands a card to coder while the swarm is paused
+  ;; When handoffd polls
+  ;; Then it goes to approval as usual, not into the outbox hold
+  (let [root (tmp-dir)
+        sock (do (setup-pack! root six-pack-roles)
+                 (create-task root "htw-console-app" "specifier")
+                 (increment-audit! root (:id (task-card root "htw-console-app")))
+                 (queue-handoff! root {:from "specifier" :to "coder" :task "htw-console-app"})
+                 (start-tmux! root six-pack-roles))]
+    (try
+      (write-file (fs/path root ".swarmforge/paused") "now\n")
+      (handoffd-once root)
+      (is (= ["50_from_specifier_to_coder.handoff"] (pending-names root)))
+      (is (= "specifier" (task-lane root "htw-console-app")))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest handoffd-failure-writes-the-error-next-to-the-failed-file
+  ;; Given a handoff to a role that does not exist
+  ;; When handoffd fails it permanently
+  ;; Then failed/ holds the file and its .error, and the card says why
+  (let [root (tmp-dir)
+        roles ["coder" "cleaner"]
+        sock (do (setup-pack! root roles)
+                 (create-task root "HTW" "coder")
+                 (queue-handoff! root {:from "coder" :to "nobody" :task "HTW"})
+                 (start-tmux! root roles))]
+    (try
+      (handoffd-once root)
+      (let [failed (fs/path root ".swarmforge/handoffs/failed")
+            [name] (handoff-names failed)]
+        (is (some? name))
+        (is (fs/regular-file? (fs/path failed (str name ".error"))))
+        (let [card (task-card root "HTW")]
+          (is (= "failed" (:stuck card)))
+          (is (str/starts-with? (:status card) "Delivery failed: "))))
+      (finally
+        (stop-tmux! sock)))))
