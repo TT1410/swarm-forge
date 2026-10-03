@@ -149,7 +149,11 @@
   (when (waiting-start? opts)
     (when-let [reason (stuck-create-reason (resolve-root opts))]
       (exit! 1 (str "start refused: " reason)))
-    (when-let [blockers (seq (open-blocker-names (resolve-root opts) (task-name opts)))]
+    ;; Only the lieutenant's start waits for blockers. The daemon moves a
+    ;; card after its mail is already delivered; refusing then would leave
+    ;; the mail retrying and the board wrong.
+    (when-let [blockers (and (= "lieutenant" (:caller opts))
+                             (seq (open-blocker-names (resolve-root opts) (task-name opts))))]
       (exit! 1 (str "start refused: blocked by " (str/join ", " blockers)
                     "; start it when they are done, or ask the operator to change its links")))))
 

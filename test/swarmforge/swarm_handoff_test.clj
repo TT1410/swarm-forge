@@ -1457,3 +1457,24 @@
       (is (zero? (:exit second-call)) (:err second-call))
       (is (not (str/includes? (:out second-call) "AUDIT_REQUIRED")))
       (is (= "10" (header queued "priority"))))))
+
+(deftest swarm-handoff-keeps-the-audit-when-a-level-is-set-before-resubmit
+  ;; Given coder's first submit of U1 asked for an audit with no level set
+  ;; When the card gets level high before the resubmit
+  ;; Then the resubmit is queued at 30 without a new audit
+  (let [root (tmp-dir)
+        draft (fs/path root "tmp" "u1.handoff")
+        opts {:dir root :env {"SWARMFORGE_ROLE" "coder"} :ok? false}]
+    (init-repo! root)
+    (setup-project! root six-pack-role-rows)
+    (board! root [["U1" "coder" "u1" "utility"]])
+    (commit-work! root)
+    (write-file draft "type: git_handoff\nto: cleaner\npriority: 50\ntask: U1\n")
+    (let [first-call (run opts (script "swarm_handoff.sh") (str draft))]
+      (is (str/includes? (:out first-call) "AUDIT_REQUIRED") (:err first-call)))
+    (card-level! root "u1" "high")
+    (let [second-call (run opts (script "swarm_handoff.sh") (str draft))
+          queued (queued-path (:out second-call))]
+      (is (zero? (:exit second-call)) (:err second-call))
+      (is (not (str/includes? (:out second-call) "AUDIT_REQUIRED")))
+      (is (= "30" (header queued "priority"))))))

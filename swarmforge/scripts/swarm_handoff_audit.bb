@@ -63,15 +63,12 @@
     (fs/delete-if-exists path))
   (remove-empty-sender-audit-dir! sender))
 
-(declare cards-level-priority)
-
 (defn audited-priority
-  "A priority that comes from the card's level is not the role's choice, so
-  a level change on the dashboard between audit and resubmit keeps the audit."
+  "A priority the card's level decides is not the role's choice, so a level
+  set, changed or cleared on the dashboard between audit and resubmit keeps
+  the audit."
   [headers]
-  (let [priority (get headers "priority")
-        level-priority (cards-level-priority headers)]
-    (if (and level-priority (= priority level-priority)) "level" priority)))
+  (if (:swarmforge/level-decides headers) "level" (get headers "priority")))
 
 (defn invocation-fingerprint [draft sender headers]
   {:sender sender

@@ -1837,6 +1837,11 @@
     (is (= 400 (:status (api-post root "/api/tasks/links" {:name "A" :blocked_by ["B"]}))))
     (is (= 400 (:status (api-post root "/api/tasks/links" {:name "B" :blocked_by ["B"]}))))
     (is (= 400 (:status (api-post root "/api/tasks/links" {:name "B" :blocked_by ["Nope"]}))))
+    (is (= 200 (:status (api-post root "/api/tasks" {:name "C" :type "utility" :blocked_by ["A"]}))))
+    ;; The daemon moves a card after its mail is delivered, so a blocker
+    ;; never refuses it
+    (pack-board root true "move" "--root" (str root) "--name" "C" "--lane" "coder" "--caller" "handoffd")
+    (is (= "coder" (task-lane root "C")))
     (pack-board root true "done" "--root" (str root) "--name" "A" "--caller" "handoffd")
     (is (nil? (:blocked (task-card root "B"))))
     (is (= [{:name "A" :done true}] (:blockers (task-card root "B"))))
