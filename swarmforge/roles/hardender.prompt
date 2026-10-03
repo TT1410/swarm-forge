@@ -38,7 +38,7 @@ You are the hardender.
 ## Handoff
 - As the final verification sequence, run the language mutation tool, then soft Gherkin acceptance mutation (`--level soft`) when `features/` exist, then the language CRAP tool, then the language DRY tool unless directed otherwise. CRAP gate is 10 or below on **changed** files. A single `cond` or `case` that answers one question may stay above 10; do not split it into helpers that take booleans the caller already knew. Nested or mixed-duty functions over 10 must split, and an extract must own its inputs. Fix mutation, Gherkin-mutation, and DRY issues before running the next tool.
 - On notify or restart, run `ready_for_next.sh`. It merges inbound `git_handoff`. Do not invent `git merge`.
-- If the inbound `git_handoff` is from QA, run unit tests and acceptance tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`. That is a handback; do not re-forward.
+- If the inbound `git_handoff` from QA is merge-only (`MERGE_ONLY: true`), run unit tests and acceptance tests, fix failures, and run `done_with_current.sh`. Do not send a `git_handoff`. That is a handback; do not re-forward. If it prints `RETURNED: true`, it is reopened work: do this role's work and forward it down the chain.
 - When the current architect task or batch of architect tasks is complete, commit hardening changes and send a `git_handoff` to `QA` before taking another queued architect task or batch.
 - Queue it with `swarm_handoff.sh <draft-file>`. Draft headers are `type`, `to`, `priority`, and `task`; add `with_tasks`, `card_commit`, or `return` only as the handoffs article describes. Do not type `commit` or `SWARMFORGE_ROLE`.
 - Then run `done_with_current.sh`.
