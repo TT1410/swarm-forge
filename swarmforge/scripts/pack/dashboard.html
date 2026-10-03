@@ -124,6 +124,13 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
 .float textarea{min-height:140px;resize:vertical}
 .float .actions{display:flex;gap:8px;justify-content:flex-end}
 .note{font-size:11px;color:var(--muted);margin:-4px 0 10px}
+.swarm-banner{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:8px 14px;font-size:13px;border-bottom:1px solid var(--line)}
+.swarm-banner strong{font-size:14px;letter-spacing:.04em}
+.swarm-banner .detail{flex:1;min-width:12rem}
+.banner-paused{background:#e3e8f2;color:#22324f;border-bottom-color:#9fb0cf}
+.banner-daemon{background:#fbe4e4;color:var(--red);border-bottom-color:#e0a6a6}
+.project-band .swarm-banner{border:1px solid var(--line);border-radius:8px;margin:0 0 8px}
+.paused-board .card{opacity:.6}
 .nt-route{display:flex;gap:12px;margin-bottom:10px}
 .nt-route select,.nt-route input{border:1px solid #c6cbc5;border-radius:6px;padding:6px 8px;font:inherit;font-size:12px}
 .nt-route input{width:5rem}
@@ -154,10 +161,12 @@ header.top h1{margin:0;font-size:15px}.meta{color:var(--muted);font-size:12px}.m
         <button class="btn" type="button" id="btn-open-project">Open Project</button>
         <div class="menu-list" id="open-project-list"></div>
       </div>
+      <button class="btn" type="button" id="btn-pause">Pause</button>
       <button class="btn btn-primary" type="button" id="btn-new-task">New Task</button>
     </div>
   </header>
   <p id="error" class="error"></p>
+  <div id="swarm-banners"></div>
 
   <div class="attention" id="attention">
     <div class="tag">Attention</div>
@@ -477,17 +486,111 @@ function projectBand(proj) {
   cl.className = "btn btn-sm";
   cl.textContent = "Close";
   cl.onclick = () => closeProject(proj.name);
-  header.append(title, nt, cl);
+  header.append(title, pauseButton(proj, proj.name), nt, cl);
   const cols = document.createElement("div");
   cols.className = "columns";
+  if (proj.drain && proj.drain.paused) cols.classList.add("paused-board");
   const lanes = (proj.lanes || []).concat(["done"]);
   lanes.forEach((lane) => cols.appendChild(columnEl(lane, proj.tasks || [], proj.name)));
-  band.append(header, cols);
+  band.append(header, ...swarmBanners(proj, proj.name), cols);
   return band;
+}
+
+async function postSwarm(path, project, failure) {
+  const payload = project ? {project} : {};
+  const res = await fetch(path, {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify(payload)
+  });
+  if (!res.ok) {
+    let msg = failure;
+    try { msg = (await res.json()).error || msg; } catch (_) {}
+    alert(msg);
+  }
+  loadState();
+}
+
+function pauseSwarm(project) {
+  if (!confirm("Pause the swarm? Roles finish their current turn, then no task moves until Resume.")) return;
+  postSwarm("/api/pause", project, "Could not pause the swarm");
+}
+
+function resumeSwarm(project) {
+  postSwarm("/api/resume", project, "Could not resume the swarm");
+}
+
+function pauseButton(state, project) {
+  const paused = !!(state.drain && state.drain.paused);
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = paused ? "btn btn-primary btn-sm" : "btn btn-sm";
+  btn.textContent = paused ? "Resume" : "Pause";
+  btn.dataset.pauseToggle = paused ? "resume" : "pause";
+  btn.onclick = () => (paused ? resumeSwarm(project) : pauseSwarm(project));
+  return btn;
+}
+
+function bannerEl(kind, title, detail, action) {
+  const box = document.createElement("div");
+  box.className = "swarm-banner banner-" + kind;
+  box.dataset.banner = kind;
+  const head = document.createElement("strong");
+  head.textContent = title;
+  const text = document.createElement("span");
+  text.className = "detail";
+  text.textContent = detail;
+  box.append(head, text);
+  if (action) box.appendChild(action);
+  return box;
+}
+
+function swarmBanners(state, project) {
+  const out = [];
+  const live = (state.work_in_flight || []).some((row) => row.state !== "no_session");
+  if (state.daemon && !state.daemon.running && live) {
+    const restart = document.createElement("button");
+    restart.type = "button";
+    restart.className = "btn btn-sm btn-danger";
+    restart.textContent = "Restart daemon";
+    restart.onclick = () => postSwarm("/api/daemon/restart", project, "Could not restart the handoff daemon");
+    out.push(bannerEl("daemon", "HANDOFFS STOPPED",
+      "The handoff daemon is not running, so no handoff is delivered and no task moves.", restart));
+  }
+  const drain = state.drain || {};
+  if (drain.paused) {
+    const busy = (drain.busy || []).map((row) => displayName(row.role));
+    const parts = [busy.length ? "Still finishing the current turn: " + busy.join(", ") + "."
+                               : "Nothing is in progress."];
+    if (drain.held) parts.push(drain.held + " handoff(s) held until Resume.");
+    parts.push("No task moves until Resume.");
+    const resume = document.createElement("button");
+    resume.type = "button";
+    resume.className = "btn btn-sm btn-primary";
+    resume.textContent = "Resume";
+    resume.onclick = () => resumeSwarm(project);
+    out.push(bannerEl("paused", "⏸ PAUSED", parts.join(" "), resume));
+  }
+  return out;
+}
+
+function renderBanners(data) {
+  const box = $("swarm-banners");
+  if (data.forge) {
+    box.replaceChildren();
+    $("btn-pause").style.display = "none";
+    return;
+  }
+  box.replaceChildren(...swarmBanners(data, ""));
+  const toggle = pauseButton(data, "");
+  toggle.id = "btn-pause";
+  toggle.className = toggle.className.replace(" btn-sm", "");
+  $("btn-pause").replaceWith(toggle);
 }
 
 function renderBoard(data) {
   const board = document.querySelector(".board");
+  board.classList.toggle("paused-board", !data.forge && !!(data.drain && data.drain.paused));
   if (data.forge) {
     board.replaceChildren();
     (data.projects || []).forEach((proj) => board.appendChild(projectBand(proj)));
@@ -1176,6 +1279,7 @@ async function loadState() {
     lastState = data;
     $("error").textContent = "";
     renderChrome(data);
+    renderBanners(data);
     renderBoard(data);
     renderAttention(data);
     renderWork(data);

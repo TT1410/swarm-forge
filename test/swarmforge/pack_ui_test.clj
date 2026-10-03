@@ -3294,3 +3294,61 @@
       (is (zero? (:exit (pack-web root false "--test-delete-approval" (str root) "50_offer"))))
       (is (nil? (task-lane root "A")))
       (is (fs/exists? b-sent)))))
+
+(deftest paused-swarm-holds-git-handoffs-until-resume
+  ;; Given coder hands a card to cleaner while the swarm is paused
+  ;; When handoffd polls
+  ;; Then the handoff waits in the outbox and the card stays in coder,
+  ;; drain reports it held, and after resume it is delivered
+  (let [root (tmp-dir)
+        roles six-pack-roles
+        sock (do (setup-pack! root roles)
+                 (create-task root "HTW" "coder")
+                 (queue-handoff! root {:from "coder" :to "cleaner" :task "HTW"})
+                 (start-tmux! root roles))]
+    (try
+      (write-file (fs/path root ".swarmforge/paused") "now\n")
+      (handoffd-once root)
+      (is (= ["50_from_coder_to_cleaner.handoff"]
+             (handoff-names (fs/path root ".swarmforge/handoffs/outbox"))))
+      (is (= "coder" (task-lane root "HTW")))
+      (is (= [] (inbox-names root roles "cleaner")))
+      (let [drain (:drain (web-state root))]
+        (is (= true (:paused drain)))
+        (is (= true (:drained drain)) "held mail does not keep the swarm from draining")
+        (is (= 1 (:held drain))))
+      (fs/delete (fs/path root ".swarmforge/paused"))
+      (handoffd-once root)
+      (is (= "cleaner" (task-lane root "HTW")))
+      (is (seq (inbox-names root roles "cleaner")))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest paused-swarm-still-sends-new-cards-to-approval
+  ;; Given the specifier hands a new card to coder while the swarm is paused
+  ;; When handoffd polls
+  ;; Then it goes to approval as usual, not into the outbox hold
+  (let [root (tmp-dir)
+        sock (do (setup-pack! root six-pack-roles)
+                 (create-task root "htw-console-app" "specifier")
+                 (queue-handoff! root {:from "specifier" :to "coder" :task "htw-console-app"})
+                 (start-tmux! root six-pack-roles))]
+    (try
+      (write-file (fs/path root ".swarmforge/paused") "now\n")
+      (handoffd-once root)
+      (is (= ["50_from_specifier_to_coder.handoff"] (pending-names root)))
+      (is (= "specifier" (task-lane root "htw-console-app")))
+      (finally
+        (stop-tmux! sock)))))
+
+(deftest pack-web-state-reports-whether-the-handoff-daemon-runs
+  ;; Given no daemon pid, then a live pid
+  ;; Then the state says the daemon is down, then running
+  (let [root (tmp-dir)]
+    (setup-pack! root ["specifier" "coder"])
+    (is (= {:running false} (:daemon (web-state root))))
+    (write-file (fs/path root ".swarmforge/daemon/handoffd.pid")
+                (str (.pid (java.lang.ProcessHandle/current)) "\n"))
+    (is (= {:running true} (:daemon (web-state root))))
+    (write-file (fs/path root ".swarmforge/daemon/handoffd.pid") "999999999\n")
+    (is (= {:running false} (:daemon (web-state root))))))

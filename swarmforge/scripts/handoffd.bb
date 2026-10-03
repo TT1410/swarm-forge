@@ -461,15 +461,28 @@
         (Thread/sleep step)
         (recur (- remaining step))))))
 
-(defn process-outbox-file! [roles socket path]
-  (let [headers (:headers (parse-message path))
-        from (get headers "from")]
-    (if (should-hold? roles headers)
-      (hold! (fs/path path))
-      (deliver! roles socket (or from "") (fs/path path)))))
-
 (defn pause-file []
   (fs/path state-dir "paused"))
+
+(defn paused? []
+  (fs/exists? (pause-file)))
+
+(defn process-outbox-file!
+  "Deliver one outbox file. While the swarm is paused a git handoff stays in
+  the outbox, so no card changes lane until resume; one that needs approval
+  still goes to approval, and notes are still delivered."
+  [roles socket path]
+  (let [headers (:headers (parse-message path))
+        from (get headers "from")]
+    (cond
+      (should-hold? roles headers)
+      (hold! (fs/path path))
+
+      (and (paused?) (= "git_handoff" (get headers "type")))
+      nil
+
+      :else
+      (deliver! roles socket (or from "") (fs/path path)))))
 
 (def renotify-max-ms (* 16 60 1000))
 
@@ -481,8 +494,13 @@
   (and (>= (- now-ms @started-at-ms) renotify-ms)
        (>= (- now-ms (get @last-notified role @started-at-ms)) (renotify-interval role))))
 
-(defn mail-card-keys [path]
-  (handoff-task-keys (:headers (parse-message path))))
+(defn mail-card-keys
+  "A role can take mail between the listing and this read; mail that is gone
+  carries no cards."
+  [path]
+  (try
+    (handoff-task-keys (:headers (parse-message path)))
+    (catch java.nio.file.NoSuchFileException _ [])))
 
 (defn startable-mail? [role-info]
   (let [held (->> (listed-handoffs (pending-dir))
@@ -503,10 +521,15 @@
   "Agents that ended their turn miss the one-shot wake message; remind idle
   roles that still have mail."
   [roles socket]
-  (when-not (fs/exists? (pause-file))
+  (when-not (paused?)
     (let [now-ms (System/currentTimeMillis)]
       (doseq [role-info (vals roles)
-              :let [idle? (idle-with-mail? roles role-info)]
+              :let [idle? (try
+                            (idle-with-mail? roles role-info)
+                            (catch Exception e
+                              (log! "renotify-skipped" (:role role-info) (.getMessage e))
+                              ::unknown))]
+              :when (not= ::unknown idle?)
               :when (do (when-not idle? (reset-renotify-backoff! (:role role-info)))
                         (and idle? (renotify-due? (:role role-info) now-ms)))]
         (try
@@ -536,7 +559,10 @@
               (catch Exception nested
                 (log! "failed-to-archive" path (.getMessage nested)))))))
       (when-not once?
-        (renotify-idle-roles! roles socket)))))
+        (try
+          (renotify-idle-roles! roles socket)
+          (catch Exception e
+            (log! "renotify-error" (.getMessage e))))))))
 
 (defn shutdown! []
   (reset! stopping-flag true)
@@ -554,7 +580,12 @@
   (log! "started")
   (try
     (while (not (should-stop?))
-      (poll-once!)
+      ;; One bad poll (a file that moved mid-read, a missing socket file)
+      ;; must not end the daemon: every queued handoff would wait forever.
+      (try
+        (poll-once!)
+        (catch Exception e
+          (log! "poll-error" (.getMessage e))))
       (sleep-poll! poll-ms))
     (finally
       (fs/delete-if-exists pid-file)

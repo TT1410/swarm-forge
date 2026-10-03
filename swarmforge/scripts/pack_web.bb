@@ -789,6 +789,36 @@
                (when-not (str/ends-with? text "\n") "\n")))
     id))
 
+(defn daemon-pid-file [root]
+  (fs/path root ".swarmforge" "daemon" "handoffd.pid"))
+
+(defn pid-alive? [pid]
+  (boolean
+   (try
+     (let [handle (java.lang.ProcessHandle/of (Long/parseLong pid))]
+       (and (.isPresent handle) (.isAlive (.get handle))))
+     (catch Exception _ false))))
+
+(defn daemon-state
+  "Whether the handoff daemon runs. Without it no handoff leaves an outbox,
+  so the whole swarm stands still."
+  [root]
+  (let [file (daemon-pid-file root)
+        pid (when (fs/regular-file? file) (str/trim (slurp (str file))))]
+    {:running (and (not (str/blank? pid)) (pid-alive? pid))}))
+
+(defn swarm-command!
+  "Run a swarmforge.bb subcommand (drain, resume, daemon) for root, the same
+  way ./swarm does."
+  [root command what]
+  (let [result (sh "bb" (str (fs/path script-dir "swarmforge.bb")) command (str root))]
+    (when-not (zero? (:exit result))
+      (throw (ex-info (str/trim (str "Could not " what ": " (:err result) (:out result)))
+                      {:http-status 500})))))
+
+(defn restart-daemon! [root]
+  (swarm-command! root "daemon" "restart the handoff daemon"))
+
 (defn dashboard-state [root]
   (let [master (master-role root)]
     {:master_role master
@@ -799,7 +829,8 @@
      :work_in_flight (work-in-flight root)
      :chat (list-chat root)
      :clarifications (list-clarifications root)
-     :drain (ready-for-next-guard/drain-state root)}))
+     :drain (ready-for-next-guard/drain-state root)
+     :daemon (daemon-state root)}))
 
 (defn tagged [project items]
   (mapv #(assoc % :project project) items))
@@ -814,7 +845,9 @@
        :open true
        :lanes (lanes root)
        :tasks (tagged name (tasks root))
-       :work_in_flight (tagged name (work-in-flight root))}
+       :work_in_flight (tagged name (work-in-flight root))
+       :drain (ready-for-next-guard/drain-state root)
+       :daemon (daemon-state root)}
       (catch Exception _
         {:name name
          :open true
@@ -1220,6 +1253,18 @@
     (doseq [path queued]
       (reprioritize-handoff! path priority name))))
 
+(defn post-restart-daemon [root body]
+  (let [{:keys [project]} (json/parse-string (or body "{}") true)]
+    (json-action #(restart-daemon! (project-dest root project)))))
+
+(defn post-pause [root body]
+  (let [{:keys [project]} (json/parse-string (or body "{}") true)]
+    (json-action #(swarm-command! (project-dest root project) "drain" "pause the swarm"))))
+
+(defn post-resume [root body]
+  (let [{:keys [project]} (json/parse-string (or body "{}") true)]
+    (json-action #(swarm-command! (project-dest root project) "resume" "resume the swarm"))))
+
 (defn post-dequeue-task [root body]
   (let [{:keys [name project]} (json/parse-string (or body "{}") true)]
     (json-action #(dequeue-task! (project-dest root project) name))))
@@ -1589,6 +1634,8 @@
                          (keys reviews)))))
 
 (defn retry-approval! [root id comments]
+  (when (ready-for-next-guard/paused-at? root)
+    (conflict! "The swarm is paused. Resume it before Retry: Retry restarts the work at once."))
   (let [src (require-pending! root id)
         headers (:headers (parse-message src))
         task (get headers "task")
@@ -2121,6 +2168,9 @@
     (post-retry-task (scoped-approval-root root uri body) body)
     (= "/api/chat" uri) (post-chat root body)
     (= "/api/teardown" uri) (teardown-response root body)
+    (= "/api/daemon/restart" uri) (post-restart-daemon root body)
+    (= "/api/pause" uri) (post-pause root body)
+    (= "/api/resume" uri) (post-resume root body)
     (str/starts-with? (or uri "") "/api/approvals/")
     (post-approval (scoped-approval-root root uri body) uri body)
     (str/starts-with? (or uri "") "/api/clarifications/")
