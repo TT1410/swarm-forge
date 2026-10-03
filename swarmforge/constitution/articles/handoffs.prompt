@@ -30,6 +30,9 @@ task: <short-stable-task-name>
   carries several cards, list the others in `with_tasks: <card>[,<card>...]`.
   The batch stays in process until each card is handed off. If the helper
   prints `CURRENT_WORK_OPEN`, hand off the cards it lists.
+- If a later card's commit is already on top of the card you hand off, add
+  `card_commit: <sha>` with that card's commit. Do not switch branches or
+  detach HEAD for it.
 - To send a card back for more work, for example a defect the last role found,
   add `return: true`. A returned card leaves Done and goes to the recipient.
 - After completing a forward inbound task, always send a `git_handoff` to the

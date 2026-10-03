@@ -1959,6 +1959,85 @@
       (is (= "do-x" (header (queued-path (:out result)) "task_id")))
       (is (not (fs/exists? (handoff-path root "in_process" "50_note.handoff")))))))
 
+(defn commit-file! [root file text]
+  (write-file (fs/path root file) text)
+  (run {:dir root} "git" "add" file)
+  (run {:dir root} "git" "commit" "-q" "-m" (str "Add " file))
+  (head-sha root))
+
+(deftest swarm-handoff-sends-the-named-card-commit-below-head
+  ;; Given two cards committed one after another
+  ;; When the first card is handed off with card_commit
+  ;; Then the handoff carries that commit and only its files
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (board! root [["Card A" "sender" "card-a"] ["Card B" "sender" "card-b"]])
+    (let [a-sha (commit-file! root "a.md" "card a\n")
+          _ (commit-file! root "b.md" "card b\n")
+          result (submit-draft! root "sender" (str "type: git_handoff\nto: receiver\npriority: 50\n"
+                                                   "task: Card A\ncard_commit: " a-sha "\n"))
+          queued (queued-path (:out result))]
+      (is (zero? (:exit result)) (:err result))
+      (is (= a-sha (header queued "commit")))
+      (is (= "a.md" (header queued "artifacts"))))))
+
+(deftest swarm-handoff-refuses-a-card-commit-off-the-branch
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (board! root [["Card A" "sender" "card-a"]])
+    (run {:dir root} "git" "checkout" "-q" "-b" "side")
+    (let [side (commit-file! root "side.md" "side\n")]
+      (run {:dir root} "git" "checkout" "-q" "master")
+      (commit-file! root "a.md" "card a\n")
+      (let [result (submit-draft! root "sender" (str "type: git_handoff\nto: receiver\npriority: 50\n"
+                                                     "task: Card A\ncard_commit: " side "\n"))]
+        (is (not (zero? (:exit result))))
+        (is (str/includes? (:err result) "not reachable"))
+        (is (empty? (outbox-handoffs root)))))))
+
+(deftest swarm-handoff-counts-card-work-committed-under-a-merge-only-copy
+  ;; Given the role committed card work while a merge-only copy was current
+  ;; And the card's mail then took that HEAD as its base
+  ;; When the card is handed off
+  ;; Then artifacts list that work instead of refusing an empty diff
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (board! root [["Card A" "sender" "card-a"]])
+    (let [copy-base (head-sha root)]
+      (put-handoff! root "completed" "00_copy.handoff"
+                    {:id "copy" :from "receiver" :to "sender" :priority "00" :type "git_handoff"
+                     :task "other" :commit copy-base :task-base-commit copy-base
+                     :completed-at "2026-10-03T00:00:00Z" :body "merge"})
+      (commit-file! root "fix.md" "fix\n")
+      (put-handoff! root "in_process" "50_a.handoff"
+                    {:id "a" :from "(New Task)" :to "sender" :priority "50" :type "note"
+                     :task-id "card-a" :task "Card A" :task-base-commit (head-sha root) :body "A"})
+      (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card A\n")
+            queued (queued-path (:out result))]
+        (is (zero? (:exit result)) (:err result))
+        (is (= "fix.md" (header queued "artifacts")))))))
+
+(deftest swarm-handoff-ignores-the-base-of-a-note-without-a-card
+  ;; Given card work is committed and then a plain note became current work
+  ;; When the card is handed off
+  ;; Then the note's base does not hide that work
+  (let [root (tmp-dir)]
+    (init-repo! root)
+    (setup-project! root)
+    (board! root [["Card C" "sender" "card-c"]])
+    (commit-file! root "c.md" "card c\n")
+    (put-handoff! root "in_process" "50_note.handoff"
+                  {:id "note" :from "designer" :to "sender" :priority "50" :type "note"
+                   :task-base-commit (head-sha root) :body "fyi"})
+    (let [result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 50\ntask: Card C\n")
+          queued (queued-path (:out result))]
+      (is (zero? (:exit result)) (:err result))
+      (is (= "c.md" (header queued "artifacts")))
+      (is (nil? (header queued "task_base_commit"))))))
+
 (defn -main [& _]
   (let [{:keys [fail error]} (run-tests 'swarmforge.handoff-test)]
     (System/exit (+ fail error))))

@@ -35,7 +35,7 @@
                        "dequeued_at" "completed_at" "task_base_commit" "non-forwarding"
                        "with_task_ids" "handed_task_ids"})
 (def allowed-fields #{"type" "to" "priority" "task_id" "task" "commit" "message"
-                      "with_tasks" "return"})
+                      "with_tasks" "return" "card_commit"})
 (def allowed-types #{"git_handoff" "note"})
 (def script-dir (fs/parent *file*))
 (try
@@ -170,9 +170,21 @@
   (when-let [file (first (in-process-task-files))]
     (header-field file "task")))
 
-(defn current-task-base []
-  (when-let [file (first (in-process-task-files))]
-    (header-field file "task_base_commit")))
+(defn completed-dir []
+  (fs/path (System/getProperty "user.dir") ".swarmforge" "handoffs" "inbox" "completed"))
+
+(defn recent-completed-bases
+  "task_base_commit of the latest completed mails, newest first."
+  []
+  (->> (concat (handoff-files (completed-dir))
+               (mapcat handoff-files (batch-dirs (completed-dir))))
+       (keep (fn [file]
+               (when-let [base (not-empty (header-field file "task_base_commit"))]
+                 [(or (header-field file "completed_at") "") base])))
+       (sort-by first #(compare %2 %1))
+       (map second)
+       distinct
+       (take 5)))
 
 (defn current-work-present? []
   (seq (in-process-task-files)))
@@ -272,6 +284,15 @@
                         (some #{key} (handoff-lib/mail-card-ids %))))
            %)
         (in-process-task-files)))
+
+(defn task-base
+  "Base of the mail that carries the card being handed off. Notes without a
+  card and merge-only copies give no base: no card work started under them."
+  [headers]
+  (when-let [key (not-empty (or (not-empty (get headers "task_id")) (get headers "task")))]
+    (some-> (in-process-mail-for-card key)
+            (header-field "task_base_commit")
+            not-empty)))
 
 (defn card-id-for [key]
   (when-not (str/blank? key)
@@ -417,14 +438,30 @@
        distinct
        vec))
 
-(defn commit-artifacts [sha]
-  (if-let [base (not-empty (current-task-base))]
-    (named-files (command (git-cwd) "git" "diff" "--name-only" "--diff-filter=ACMRT" base sha))
-    (let [against-parent (command (git-cwd) "git" "diff" "--name-only" "--diff-filter=ACMRT" (str sha "^") sha)]
-      (if (zero? (:exit against-parent))
-        (named-files against-parent)
-        (named-files (command (git-cwd) "git" "diff-tree" "--root"
-                              "--no-commit-id" "--name-only" "--diff-filter=ACMRT" "-r" sha))))))
+(defn changed-files [base sha]
+  (named-files (command (git-cwd) "git" "diff" "--name-only" "--diff-filter=ACMRT" base sha)))
+
+(defn own-commit-files [sha]
+  (let [against-parent (command (git-cwd) "git" "diff" "--name-only" "--diff-filter=ACMRT" (str sha "^") sha)]
+    (if (zero? (:exit against-parent))
+      (named-files against-parent)
+      (named-files (command (git-cwd) "git" "diff-tree" "--root"
+                            "--no-commit-id" "--name-only" "--diff-filter=ACMRT" "-r" sha)))))
+
+(defn earlier-work-files
+  "Card work committed before the current base (for example while the role
+  merged a merge-only copy or read a note) or before the batch closed: diff
+  against the base of a recently completed mail."
+  [sha]
+  (some (fn [base]
+          (when (and (not= base sha) (commit-descends-from? base sha))
+            (not-empty (changed-files base sha))))
+        (recent-completed-bases)))
+
+(defn commit-artifacts [sha base]
+  (or (not-empty (if base (changed-files base sha) (own-commit-files sha)))
+      (earlier-work-files sha)
+      []))
 
 (defn state-dir []
   (fs/path (project-root) ".swarmforge" "handoffs"))
@@ -510,7 +547,7 @@
    :with-task-ids (get headers "with_task_ids")
    :return (return-handoff? headers)
    :commit (get headers "commit")
-   :task-base-commit (or (current-task-base) "")
+   :task-base-commit (or (task-base headers) "")
    :non-forwarding (= "true" (get headers "non-forwarding"))
    :draft-fingerprint (sha256 (slurp (str draft)))})
 
@@ -535,7 +572,7 @@
    :return (return-handoff? headers)
    :commit canonical-commit
    :artifacts (vec artifacts)
-   :task-base-commit (or (current-task-base) "")
+   :task-base-commit (or (task-base headers) "")
    :non-forwarding (= "true" (get headers "non-forwarding"))
    :draft-fingerprint (sha256 (slurp (str draft)))})
 
@@ -584,9 +621,22 @@
 (defn valid-priority? [priority]
   (boolean (and priority (re-matches #"[0-9][0-9]" priority))))
 
-(defn fill-commit [headers]
+(defn resolve-commit [commit]
+  (let [result (command (git-cwd) "git" "rev-parse" "--short=10" "--verify" "--quiet"
+                        (str commit "^{commit}"))]
+    (when (zero? (:exit result))
+      (not-empty (str/trim (:out result))))))
+
+(defn fill-commit
+  "git_handoff sends HEAD. A typed commit is ignored, but card_commit may
+  name an earlier commit of this branch, for example the commit of one card
+  when a later card's commit is already on top."
+  [headers]
   (if (= "git_handoff" (get headers "type"))
-    (assoc headers "commit" (worktree-head))
+    (let [card-commit (not-empty (str/trim (or (get headers "card_commit") "")))]
+      (assoc headers "commit" (if card-commit
+                                (or (resolve-commit card-commit) card-commit)
+                                (worktree-head))))
     headers))
 
 (defn fill-priority [headers]
@@ -733,7 +783,7 @@
 (defn ancestry-errors [headers canonical-commit]
   (if-not (= "git_handoff" (get headers "type"))
     []
-    (let [base (current-task-base)]
+    (let [base (task-base headers)]
       (cond-> []
         (and (not (str/blank? base))
              (not (str/blank? canonical-commit))
@@ -819,7 +869,7 @@
           [nil (format "Header 'commit' must resolve to a commit; '%s' resolves to '%s'." commit object-type)])))))
 
 (def allowed-fields-by-type
-  {"git_handoff" #{"type" "to" "priority" "task_id" "task" "commit" "with_tasks" "return"}
+  {"git_handoff" #{"type" "to" "priority" "task_id" "task" "commit" "with_tasks" "return" "card_commit"}
    "note" #{"type" "to" "priority" "message"}})
 
 (defn field-allowed? [type field]
@@ -872,6 +922,10 @@
       (into (git-required-errors headers))
       (and (not= "git_handoff" type) (not (str/blank? commit)))
       (conj "Header 'commit' is only allowed for git_handoff.")
+      (and (= "git_handoff" type)
+           (not (str/blank? (get headers "card_commit")))
+           (not (resolve-commit (str/trim (get headers "card_commit")))))
+      (conj (format "Header 'card_commit' must name a commit; got '%s'." (get headers "card_commit")))
       (and (not= "git_handoff" type) (not (str/blank? task-name)))
       (conj "Header 'task' is only allowed for git_handoff."))))
 
@@ -972,8 +1026,8 @@
                 (conj (str "with_task_ids: " (get headers "with_task_ids")))
                 (and (= "git_handoff" type) (return-handoff? headers) (not reverse?))
                 (conj "return: true")
-                (and (= "git_handoff" type) (not (str/blank? (current-task-base))))
-                (conj (str "task_base_commit: " (current-task-base)))
+                (and (= "git_handoff" type) (not (str/blank? (task-base headers))))
+                (conj (str "task_base_commit: " (task-base headers)))
                 non-forwarding?
                 (conj "non-forwarding: true")
                 (= "note" type)
@@ -1061,7 +1115,7 @@
             (error-report draft all-errors)
             (System/exit 2))
           (let [files (when (= "git_handoff" (get headers "type"))
-                        (commit-artifacts sha))]
+                        (commit-artifacts sha (task-base headers)))]
             (when (and (= "git_handoff" (get headers "type")) (empty? files))
               (exit! 1 (str "Result commit " sha " has no changed files")))
             (let [submit! #(write-handoffs! {:headers headers

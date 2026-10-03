@@ -403,6 +403,18 @@ every carried card to the first recipient's lane, or marks every carried card
 Done when the last role sends it. `return: true` sends a card back instead: it
 is not merge-only, it reopens a Done card, and it sends no reverse copies.
 
+The handoff sends the sender worktree HEAD; a typed `commit` is ignored. When
+a later card's commit is already on top, `card_commit: <sha>` sends that
+earlier commit instead; it must be on the sender branch and descend from the
+card's task base.
+
+`artifacts` lists the files changed since the `task_base_commit` of the mail
+that carries the card. Notes without a card and merge-only copies give no
+base; without one, artifacts come from the commit itself. When that diff is
+empty (card work committed under a merge-only copy or a note, or a no-change
+merge on top), artifacts come from the base of a recently completed mail.
+`swarm_handoff.sh` refuses only when none of these shows a change.
+
 ### `ready_for_next_task.sh`
 
 Responsibilities:
