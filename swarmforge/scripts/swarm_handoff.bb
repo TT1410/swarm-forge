@@ -555,7 +555,7 @@
   "A priority that comes from the card's level is not the role's choice, so
   a level change on the dashboard between audit and resubmit keeps the audit."
   [headers]
-  (if (::from-level headers) "level" (get headers "priority")))
+  (if (::level-decides headers) "level" (get headers "priority")))
 
 (defn invocation-fingerprint [draft sender headers]
   {:sender sender
@@ -659,19 +659,23 @@
                                 (worktree-head))))
     headers))
 
+(defn level-may-set-priority?
+  "Agents type 50 by habit, so 50 or no priority on a forward git handoff
+  means \"the card decides\". Any other number is the role's deliberate
+  choice (an architect's 00 follow-up, QA's urgent 10) and wins."
+  [headers]
+  (and (= "git_handoff" (get headers "type"))
+       (not= "true" (get headers "non-forwarding"))
+       (let [typed (some-> (get headers "priority") str/trim)]
+         (or (contains? #{nil "" "50"} typed) (not (valid-priority? typed))))))
+
 (defn card-level-priority
   "The priority a forward git handoff takes from its cards' levels, the most
   urgent card first, when the draft leaves the default 50 or no priority.
   Merge-only copies, a priority the role chose, and cards without a level
   keep the draft's priority."
   [headers]
-  (when (and (= "git_handoff" (get headers "type"))
-             (not= "true" (get headers "non-forwarding"))
-             ;; Agents type 50 by habit, so 50 or no priority means "the
-             ;; card decides". Any other number is the role's deliberate
-             ;; choice (an architect's 00 follow-up, QA's urgent 10) and wins.
-             (let [typed (some-> (get headers "priority") str/trim)]
-               (or (contains? #{nil "" "50"} typed) (not (valid-priority? typed)))))
+  (when (level-may-set-priority? headers)
     (let [root (project-root)
           ids (->> (cons (get headers "task_id")
                          (str/split (or (get headers "with_task_ids") "") #","))
@@ -682,12 +686,17 @@
                            (:level (handoff-lib/read-card-meta root %)))
                          ids))))))
 
-(defn fill-priority [headers]
+(defn fill-priority* [headers]
   (if-let [level-priority (card-level-priority headers)]
-    (assoc headers "priority" level-priority ::from-level true)
+    (assoc headers "priority" level-priority)
     (if (valid-priority? (get headers "priority"))
       headers
       (assoc headers "priority" "50"))))
+
+(defn fill-priority [headers]
+  ;; Whether the card's level decides is judged from the draft, so the audit
+  ;; survives a level being set, changed or cleared before the resubmit.
+  (assoc (fill-priority* headers) ::level-decides (level-may-set-priority? headers)))
 
 (defn prepare-headers [headers sender]
   (-> headers
