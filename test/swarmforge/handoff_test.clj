@@ -2160,3 +2160,15 @@
           queued (queued-path (:out both))]
       (is (zero? (:exit both)) (:err both))
       (is (= "10" (header queued "priority"))))))
+
+(deftest swarm-handoff-keeps-a-priority-the-role-chose-over-the-card-level
+  ;; Given Card B has level low
+  ;; When the sender hands off Card B with priority: 00 typed in the draft
+  ;; Then the handoff keeps 00, so a role's urgent follow-up still goes first
+  (let [root (tmp-dir)
+        _ (batch-board-project! root)
+        _ (write-file (fs/path root ".swarmforge/board/meta/card-b.edn") "{:level \"low\"}\n")
+        result (submit-draft! root "sender" "type: git_handoff\nto: receiver\npriority: 00\ntask: Card B\n")
+        queued (queued-path (:out result))]
+    (is (zero? (:exit result)) (:err result))
+    (is (= "00" (header queued "priority")))))

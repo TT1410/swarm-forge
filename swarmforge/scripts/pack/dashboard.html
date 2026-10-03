@@ -1618,7 +1618,27 @@ function renderAttention(data) {
   renderClarifications(data.clarifications);
 }
 
-async function loadState() {
+let stateLoading = null;
+let stateAgain = false;
+
+// One /api/state request at a time: on a slow server, polls and actions
+// queue a single follow-up instead of piling requests up.
+function loadState() {
+  if (stateLoading) {
+    stateAgain = true;
+    return stateLoading;
+  }
+  stateLoading = loadStateOnce().finally(() => {
+    stateLoading = null;
+    if (stateAgain) {
+      stateAgain = false;
+      loadState();
+    }
+  });
+  return stateLoading;
+}
+
+async function loadStateOnce() {
   try {
     const res = await fetch("/api/state", {cache: "no-store"});
     if (!res.ok) throw new Error("offline");

@@ -379,16 +379,29 @@
   rereads only the mail that changed."
   (atom {}))
 
-(defn cached-headers [path]
-  (let [key (str path)
-        mtime (try (.toMillis (fs/last-modified-time path)) (catch Exception _ nil))]
+(defn cached-headers* [path key cached]
+  (let [mtime (try (.toMillis (fs/last-modified-time path)) (catch Exception _ nil))]
     (when mtime
-      (let [[seen headers] (get @header-cache key)]
+      (let [[seen headers] cached]
         (if (= seen mtime)
           headers
           (when-let [h (try (:headers (parse-message path)) (catch Exception _ nil))]
             (swap! header-cache assoc key [mtime h])
             h))))))
+
+(defn archived-mail? [key]
+  (let [p (str/replace key "\\" "/")]
+    (or (str/includes? p "/handoffs/sent/")
+        (str/includes? p "/handoffs/inbox/completed/"))))
+
+(defn cached-headers [path]
+  (let [key (str path)
+        cached (get @header-cache key)]
+    ;; Sent and completed mail is written once, so a big archive costs no
+    ;; file-time reads on later polls.
+    (if (and cached (archived-mail? key))
+      (second cached)
+      (cached-headers* path key cached))))
 
 (defn mail-state [path]
   (let [p (str/replace (str path) "\\" "/")]
@@ -401,36 +414,72 @@
       (str/includes? p "/handoffs/sent/") :sent
       (str/includes? p "/handoffs/failed/") :failed)))
 
+(defn mail-files
+  "Every .handoff under dir, at any depth, in one directory walk."
+  [dir]
+  (if (fs/directory? dir) (fs/glob dir "**.handoff") []))
+
+(def mail-folders
+  [["inbox/new" :new] ["inbox/in_process" :in_process] ["inbox/completed" :completed]
+   ["pending_approval" :pending] ["outbox" :outbox] ["sent" :sent] ["failed" :failed]])
+
+(def archive-states #{:completed :sent})
+
+(defn mail-keys [headers]
+  ;; By card id; by name only for old mail without one, so an archived
+  ;; or renamed card's mail never lands on a new card of the same name.
+  (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
+             (str/split (or (get headers "with_task_ids") "") #","))
+       (map #(some-> % str/trim))
+       (remove str/blank?)
+       distinct))
+
+(defn folder-entries [folder state]
+  (vec (for [path (mail-files folder)
+             :let [headers (cached-headers path)]
+             :when (and headers (not= "true" (get headers "non-forwarding")))
+             key (mail-keys headers)]
+         [key {:state state :path path :headers headers}])))
+
+(def folder-cache
+  "Archive folder -> [mtime entries]. sent/ and completed/ only gain files,
+  so an unchanged folder is not walked again."
+  (atom {}))
+
+(defn cached-folder-entries [folder state]
+  (if-not (archive-states state)
+    (folder-entries folder state)
+    (let [key (str folder)
+          mtime (try (.toMillis (fs/last-modified-time folder)) (catch Exception _ nil))
+          [seen entries] (get @folder-cache key)]
+      (cond
+        (nil? mtime) []
+        (= seen mtime) entries
+        :else (let [entries (folder-entries folder state)]
+                (swap! folder-cache assoc key [mtime entries])
+                entries)))))
+
 (defn card-mail-entries [root]
+  ;; The state comes from the folder, so each file costs one cached lookup.
   (for [dir (handoff-dirs root)
-        path (glob-handoffs dir)
-        :let [state (mail-state path)
-              headers (when state (cached-headers path))]
-        :when (and state headers (not= "true" (get headers "non-forwarding")))
-        ;; By card id; by name only for old mail without one, so an archived
-        ;; or renamed card's mail never lands on a new card of the same name.
-        key (->> (cons (or (not-empty (get headers "task_id")) (get headers "task"))
-                       (str/split (or (get headers "with_task_ids") "") #","))
-                 (map #(some-> % str/trim))
-                 (remove str/blank?)
-                 distinct)]
-    [key {:state state :path path :headers headers}]))
+        [sub state] mail-folders
+        entry (cached-folder-entries (fs/path dir sub) state)]
+    entry))
+
+(def last-header-sweep (atom 0))
 
 (defn mail-index
   "Card id and card name -> the forwarding mail that carries the card, by
   state. Merge-only copies never move a card, so they are left out."
   [root]
-  (let [seen (atom #{})
-        idx (reduce (fn [idx [key entry]]
-                      (swap! seen conj (str (:path entry)))
-                      (update idx key (fnil conj []) entry))
+  (let [idx (reduce (fn [idx [key entry]] (update idx key (fnil conj []) entry))
                     {}
-                    (card-mail-entries root))]
-    ;; Forget this project's vanished mail; other projects keep theirs.
-    (let [dirs (map str (handoff-dirs root))
-          mine? (fn [k] (some #(str/starts-with? k %) dirs))]
-      (swap! header-cache
-             (fn [cache] (into {} (remove (fn [[k _]] (and (mine? k) (not (@seen k))))) cache))))
+                    (card-mail-entries root))
+        now (System/currentTimeMillis)]
+    ;; Now and then forget headers of mail that is gone.
+    (when (> (- now @last-header-sweep) 300000)
+      (reset! last-header-sweep now)
+      (swap! header-cache (fn [cache] (into {} (filter (fn [[k _]] (fs/exists? k))) cache))))
     idx))
 
 (defn card-mail [mail task]
@@ -639,7 +688,10 @@
 (defn write-reviews! [root id reviews]
   (let [file (reviews-file root id)]
     (fs/create-dirs (fs/parent file))
-    (spit (str file) (json/generate-string reviews))))
+    ;; Write then rename, so a reader never sees a half-written file.
+    (let [tmp (fs/path (fs/parent file) (str "." (fs/file-name file) ".tmp"))]
+      (spit (str tmp) (json/generate-string reviews))
+      (fs/move tmp file {:replace-existing true :atomic-move true}))))
 
 (defn drop-reviews! [root id]
   (fs/delete-if-exists (reviews-file root id)))
@@ -843,10 +895,11 @@
                (role-heat root role (or alive? (some? *pane-text*)) text (backend-name row))
                (or (:updated_at from-file) (:updated_at card) ""))))
 
-(defn work-in-flight [root]
-  (let [socket (tmux-socket root)
-        all-tasks (tasks root)]
-    (mapv #(work-row-for-role root socket % all-tasks) (role-rows root))))
+(defn work-in-flight
+  ([root] (work-in-flight root (tasks root)))
+  ([root all-tasks]
+  (let [socket (tmux-socket root)]
+    (mapv #(work-row-for-role root socket % all-tasks) (role-rows root)))))
 
 (defn chat-pending-dir [root]
   (fs/path root ".swarmforge" "dashboard" "requests" "pending"))
@@ -970,13 +1023,15 @@
     (swarm-command! root "daemon" "restart the handoff daemon")))
 
 (defn dashboard-state [root]
-  (let [master (master-role root)]
+  ;; The card list reads every mail header, so build it once per poll.
+  (let [master (master-role root)
+        all-tasks (tasks root)]
     {:master_role master
      :master_display (display-name-for-role master)
      :lanes (lanes root)
-     :tasks (tasks root)
+     :tasks all-tasks
      :approvals (approvals root)
-     :work_in_flight (work-in-flight root)
+     :work_in_flight (work-in-flight root all-tasks)
      :chat (list-chat root)
      :clarifications (list-clarifications root)
      :drain (ready-for-next-guard/drain-state root)
@@ -991,13 +1046,14 @@
 (defn project-slice [forge name]
   (let [root (open-project-root forge name)]
     (try
+      (let [all-tasks (tasks root)]
       {:name name
        :open true
        :lanes (lanes root)
-       :tasks (tagged name (tasks root))
-       :work_in_flight (tagged name (work-in-flight root))
+       :tasks (tagged name all-tasks)
+       :work_in_flight (tagged name (work-in-flight root all-tasks))
        :drain (ready-for-next-guard/drain-state root)
-       :daemon (daemon-state root)}
+       :daemon (daemon-state root)})
       (catch Exception _
         {:name name
          :open true

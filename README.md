@@ -240,8 +240,9 @@ The board has a TODO column. New Task can keep a card there instead of sending
 it to the swarm; Start (in the card menu) sends it to a role later. A card gets
 a level when it is created on the dashboard: Critical, High, Normal or Low. The
 level sets the priority of the card's handoffs at every role (10, 30, 50, 70;
-lower runs first), whatever the agent typed in its draft. Cards without a level
-keep the priority the agent typed. A Retry note keeps its own priority; the
+lower runs first) when the agent leaves the default 50 or no priority. A
+priority the role chose on purpose, such as an architect's 00 follow-up, still
+wins, and cards without a level keep the priority the agent typed. A Retry note keeps its own priority; the
 next handoff takes the level again. Merge-only copies keep priority 00. Because batch
 roles take only mail of one priority per batch, cards of different levels are
 batched separately, and Low cards wait while higher-level work keeps arriving.

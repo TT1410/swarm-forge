@@ -663,11 +663,17 @@
 
 (defn card-level-priority
   "The priority a forward git handoff takes from its cards' levels, the most
-  urgent card first. Merge-only copies keep their own priority, and cards
-  without a level leave the priority to the draft."
+  urgent card first, when the draft leaves the default 50 or no priority.
+  Merge-only copies, a priority the role chose, and cards without a level
+  keep the draft's priority."
   [headers]
   (when (and (= "git_handoff" (get headers "type"))
-             (not= "true" (get headers "non-forwarding")))
+             (not= "true" (get headers "non-forwarding"))
+             ;; Agents type 50 by habit, so 50 or no priority means "the
+             ;; card decides". Any other number is the role's deliberate
+             ;; choice (an architect's 00 follow-up, QA's urgent 10) and wins.
+             (let [typed (some-> (get headers "priority") str/trim)]
+               (or (contains? #{nil "" "50"} typed) (not (valid-priority? typed)))))
     (let [root (project-root)
           ids (->> (cons (get headers "task_id")
                          (str/split (or (get headers "with_task_ids") "") #","))

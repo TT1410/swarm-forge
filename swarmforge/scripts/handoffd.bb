@@ -453,8 +453,23 @@
                          (str/ends-with? (fs/file-name %) ".handoff")))
            (sort-by #(fs/file-name %))))))
 
+(def daemon-mode? (atom false))
+
+(def own-pid (str (.pid (java.lang.ProcessHandle/current))))
+
+(defn delete-own-pid-file! []
+  (when (= own-pid (try (str/trim (slurp (str pid-file))) (catch Exception _ nil)))
+    (fs/delete-if-exists pid-file)))
+
+(defn daemon-superseded?
+  "The daemon's pid file is gone (its project was deleted) or names another
+  daemon. Either way this one must stop, or two daemons deliver the same mail."
+  []
+  (and @daemon-mode?
+       (not= own-pid (try (str/trim (slurp (str pid-file))) (catch Exception _ nil)))))
+
 (defn should-stop? []
-  (or @stopping-flag (fs/exists? stop-file)))
+  (or @stopping-flag (fs/exists? stop-file) (daemon-superseded?)))
 
 (defn sleep-poll! [ms]
   (loop [remaining ms]
@@ -569,7 +584,7 @@
 (defn shutdown! []
   (reset! stopping-flag true)
   (try
-    (fs/delete-if-exists pid-file)
+    (delete-own-pid-file!)
     (log! "stopped")
     (catch Exception _ nil)))
 
@@ -578,7 +593,8 @@
 (defn run-daemon! []
   (fs/create-dirs daemon-dir)
   (fs/delete-if-exists stop-file)
-  (spit (str pid-file) (str (.pid (java.lang.ProcessHandle/current)) "\n"))
+  (spit (str pid-file) (str own-pid "\n"))
+  (reset! daemon-mode? true)
   (reset! started-at-ms (System/currentTimeMillis))
   (.addShutdownHook (Runtime/getRuntime) (Thread. shutdown!))
   (log! "started")
@@ -598,7 +614,7 @@
               (log! "poll-error" msg)))))
       (sleep-poll! poll-ms))
     (finally
-      (fs/delete-if-exists pid-file)
+      (delete-own-pid-file!)
       (log! "stopped"))))
 
 (defn -main [& args]

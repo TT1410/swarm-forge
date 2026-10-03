@@ -441,3 +441,23 @@
         (is (= ["renotify-error"] @logged)))
       (finally
         (fs/delete-tree root)))))
+
+(deftest handoffd-stops-when-its-pid-file-is-gone-or-taken
+  ;; A deleted project or a newer daemon must end this one, so two daemons
+  ;; never deliver the same outboxes
+  (let [root (tmp-dir)]
+    (try
+      (fs/create-dirs (fs/path root ".swarmforge/daemon"))
+      (handoffd/configure! [(str root)])
+      (reset! handoffd/daemon-mode? true)
+      (spit (str handoffd/pid-file) (str handoffd/own-pid "\n"))
+      (is (false? (handoffd/should-stop?)))
+      (spit (str handoffd/pid-file) "1\n")
+      (is (true? (handoffd/should-stop?)))
+      (handoffd/delete-own-pid-file!)
+      (is (fs/exists? handoffd/pid-file) "another daemon's pid file is left alone")
+      (fs/delete handoffd/pid-file)
+      (is (true? (handoffd/should-stop?)))
+      (finally
+        (reset! handoffd/daemon-mode? false)
+        (fs/delete-tree root)))))
